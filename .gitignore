@@ -1,0 +1,11 @@
+node_modules
+dist
+out
+.DS_Store
+.eslintcache
+*.log*
+.env
+.env.local
+.env.*.local
+electron.vite.config.*.mjs
+FANXMUSIC_CLEAN_REBUILD_MASTER_PROMPT.md

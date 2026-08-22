@@ -1,0 +1,119 @@
+@import 'tailwindcss';
+
+@theme {
+  /* Black and Green Music UI */
+  
+  /* Canvas and Surfaces */
+  --color-canvas: #000000;
+  --color-surface: #121212;
+  --color-surface-elevated: #1f1f1f;
+  --color-border: #2a2a2a;
+  
+  /* Text */
+  --color-text: #ffffff;
+  --color-text-muted: #b3b3b3;
+  
+  /* Accents */
+  --color-primary-amber: #1ed760;
+  --color-primary-amber-hover: #1fdf64;
+  --color-secondary-cyan: #7dd3fc;
+  
+  /* States */
+  --color-success: #1ed760;
+  --color-warning: #facc15;
+  --color-danger: #ef4444;
+  --color-focus: #3b82f6;
+  
+  /* UI Element States */
+  --color-hover: rgba(255, 255, 255, 0.1);
+  --color-active: rgba(255, 255, 255, 0.14);
+
+  /* Map to standard shadcn names for compatibility */
+  --color-background: var(--color-canvas);
+  --color-foreground: var(--color-text);
+  
+  --color-card: var(--color-surface);
+  --color-card-foreground: var(--color-text);
+  
+  --color-popover: var(--color-surface-elevated);
+  --color-popover-foreground: var(--color-text);
+  
+  --color-primary: var(--color-primary-amber);
+  --color-primary-foreground: #ffffff;
+  
+  --color-secondary: var(--color-secondary-cyan);
+  --color-secondary-foreground: #ffffff;
+  
+  --color-muted: var(--color-surface-elevated);
+  --color-muted-foreground: var(--color-text-muted);
+  
+  --color-accent: var(--color-hover);
+  --color-accent-foreground: var(--color-text);
+  
+  /* Radii */
+  --radius-lg: 8px;
+  --radius-md: 6px;
+  --radius-sm: 4px;
+}
+
+@layer base {
+  :root {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  html, body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background-color: var(--color-canvas);
+    color: var(--color-text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  
+  * {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    cursor: default;
+  }
+
+  /* Make header elements draggable */
+  .draggable-header {
+    -webkit-app-region: drag;
+  }
+
+  /* Make interactive elements undraggable */
+  button, a, input, [role='button'], .no-drag {
+    -webkit-app-region: no-drag !important;
+    cursor: pointer;
+  }
+
+  input {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+    cursor: text !important;
+  }
+  
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 5px;
+    border: 2px solid var(--color-canvas);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #666;
+  }
+}

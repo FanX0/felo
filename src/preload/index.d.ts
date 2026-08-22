@@ -1,0 +1,92 @@
+import { ElectronAPI } from '@electron-toolkit/preload'
+
+declare global {
+  interface Window {
+    electron: ElectronAPI
+    api: {
+      // Library
+      selectFolder: () => Promise<string | null>
+      scanLibrary: (folderPath: string) => Promise<number>
+      getSongs: () => Promise<any[]>
+
+      // Library Roots
+      getLibraryRoots: () => Promise<any[]>
+      removeLibraryRoot: (rootId: string) => Promise<void>
+      removeSong: (songId: string) => Promise<void>
+
+      // Artists & Albums
+      getArtists: () => Promise<any[]>
+      getAlbums: () => Promise<any[]>
+      searchSongs: (query: string) => Promise<any[]>
+      searchArtists: (query: string) => Promise<any[]>
+      searchAppleMusic: (query: string) => Promise<{
+        'Top Results': any[]
+        Artists: any[]
+        Albums: any[]
+        Songs: any[]
+      }>
+      searchAppleMusicArtistSongs: (artistName: string) => Promise<any[]>
+      searchMusicBrainz: (query: string) => Promise<{
+        'Top Results': any[]
+        Artists: any[]
+        Albums: any[]
+        Songs: any[]
+      }>
+
+      // Playlists
+      getPlaylists: () => Promise<any[]>
+      getPlaylist: (playlistId: string) => Promise<any | null>
+      createPlaylist: (input: {
+        name: string
+        description?: string
+        songIds?: string[]
+      }) => Promise<any>
+      fetchPlaylistImportMetadata: (url: string) => Promise<any>
+      deletePlaylist: (playlistId: string) => Promise<void>
+      addSongToPlaylist: (playlistId: string, songId: string) => Promise<any>
+      removeSongFromPlaylist: (playlistId: string, songId: string) => Promise<any>
+
+      // Lyrics
+      fetchLyrics: (songInfo: {
+        title: string
+        artist: string
+        album?: string
+        duration?: number
+      }) => Promise<any | null>
+
+      // Settings
+      getSetting: (key: string) => Promise<any>
+      setSetting: (key: string, value: any) => Promise<void>
+
+      // Streaming account tests
+      testQobuzAccount: (accounts: any) => Promise<{ status: string; message: string }>
+      testDeezerAccount: (accounts: any) => Promise<{ status: string; message: string }>
+
+      // Provider downloads
+      searchDownloadSource: (
+        source: 'qobuz' | 'deezer',
+        query: string,
+        accounts: any
+      ) => Promise<any[]>
+      startDownload: (request: any) => Promise<{ started: true; transferId: string }>
+      onDownloadProgress: (listener: (event: any) => void) => () => void
+
+      // System
+      getAppVersion: () => Promise<string>
+      checkForUpdates: () => Promise<{
+        status: 'up-to-date' | 'available' | 'unavailable' | 'error'
+        currentVersion: string
+        latestVersion?: string
+        releaseUrl?: string
+        message?: string
+      }>
+      openExternal: (url: string) => Promise<void>
+      revealInExplorer: (filePath: string) => Promise<void>
+
+      // Window
+      minimizeWindow: () => void
+      maximizeWindow: () => void
+      closeWindow: () => void
+    }
+  }
+}
