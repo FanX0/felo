@@ -40,6 +40,14 @@ declare global {
         name: string
         description?: string
         songIds?: string[]
+        tracks?: Array<{
+          title: string
+          artist?: string
+          album?: string
+          duration?: number
+          matchedSongId?: string
+          coverArt?: string
+        }>
       }) => Promise<any>
       fetchPlaylistImportMetadata: (url: string) => Promise<any>
       deletePlaylist: (playlistId: string) => Promise<void>
@@ -59,8 +67,12 @@ declare global {
       setSetting: (key: string, value: any) => Promise<void>
 
       // Streaming account tests
-      testQobuzAccount: (accounts: any) => Promise<{ status: string; message: string }>
-      testDeezerAccount: (accounts: any) => Promise<{ status: string; message: string }>
+      testQobuzAccount: (
+        accounts: any
+      ) => Promise<{ status: string; message: string; rawError?: string }>
+      testDeezerAccount: (
+        accounts: any
+      ) => Promise<{ status: string; message: string; rawError?: string }>
 
       // Provider downloads
       searchDownloadSource: (
@@ -81,6 +93,7 @@ declare global {
         message?: string
       }>
       openExternal: (url: string) => Promise<void>
+      onAuthCallback: (listener: (url: string) => void) => () => void
       revealInExplorer: (filePath: string) => Promise<void>
 
       // Window

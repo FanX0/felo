@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import {
   DEFAULT_DOWNLOAD_PRIORITY,
+  DOWNLOAD_LOCATION_SETTING,
   DOWNLOAD_PRIORITY_SETTING,
   DOWNLOAD_SOURCES,
   DownloadSourceId,
@@ -53,6 +54,7 @@ interface ProviderTestStatus {
   loading: boolean
   success?: boolean
   message?: string
+  rawError?: string
 }
 
 // Reusable toggle switch
@@ -155,6 +157,8 @@ export default function Settings() {
   const [playbackStorageMode, setPlaybackStorageMode] = useState<PlaybackStorageMode>('stream')
   const [streamCacheLimit, setStreamCacheLimit] = useState(3)
   const [modeMessage, setModeMessage] = useState('')
+  const [downloadLocation, setDownloadLocation] = useState('')
+  const [locationMessage, setLocationMessage] = useState('')
   const [showQobuzSecret, setShowQobuzSecret] = useState(false)
   const [showDeezerArl, setShowDeezerArl] = useState(false)
   const [accountMessage, setAccountMessage] = useState('')
@@ -203,6 +207,7 @@ export default function Settings() {
       const savedMode = await window.api?.getSetting?.(PLAYBACK_STORAGE_SETTING)
       const savedCacheLimit = await window.api?.getSetting?.(STREAM_CACHE_SETTING)
       const savedAccounts = await window.api?.getSetting?.(STREAMING_ACCOUNTS_SETTING)
+      const savedLocation = await window.api?.getSetting?.(DOWNLOAD_LOCATION_SETTING)
 
       if (Array.isArray(savedPriority) && savedPriority.length > 0) {
         setDownloadPriority(
@@ -219,6 +224,9 @@ export default function Settings() {
       }
       if (savedAccounts && typeof savedAccounts === 'object') {
         setAccounts((current) => ({ ...current, ...savedAccounts }))
+      }
+      if (typeof savedLocation === 'string' && savedLocation.trim()) {
+        setDownloadLocation(savedLocation.trim())
       }
     } catch (err) {
       console.error('Failed to load download settings:', err)
@@ -298,6 +306,38 @@ export default function Settings() {
     setTimeout(() => setModeMessage(''), 2500)
   }
 
+  const handleSelectDownloadLocation = async () => {
+    try {
+      if (!window.api?.selectFolder) return
+      const folderPath = await window.api.selectFolder()
+      if (folderPath) {
+        setDownloadLocation(folderPath)
+        await window.api?.setSetting?.(DOWNLOAD_LOCATION_SETTING, folderPath)
+        setLocationMessage('Download destination updated.')
+        setTimeout(() => setLocationMessage(''), 3000)
+      }
+    } catch (err) {
+      console.error('Failed to select download folder:', err)
+    }
+  }
+
+  const handleResetDownloadLocation = async () => {
+    try {
+      setDownloadLocation('')
+      await window.api?.setSetting?.(DOWNLOAD_LOCATION_SETTING, '')
+      setLocationMessage('Reset to default Music/Felo directory.')
+      setTimeout(() => setLocationMessage(''), 3000)
+    } catch (err) {
+      console.error('Failed to reset download location:', err)
+    }
+  }
+
+  const handleOpenDownloadLocation = async () => {
+    if (downloadLocation) {
+      await window.api?.revealInExplorer?.(downloadLocation)
+    }
+  }
+
   const updateAccount = <K extends keyof StreamingAccounts>(
     key: K,
     value: StreamingAccounts[K]
@@ -321,13 +361,15 @@ export default function Settings() {
         success: result?.status === 'success',
         message:
           result?.message ||
-          (result?.status === 'success' ? 'Connected successfully!' : 'Connection failed')
+          (result?.status === 'success' ? 'Connected successfully!' : 'Connection failed'),
+        rawError: result?.rawError
       })
     } catch (err: any) {
       setQobuzTestStatus({
         loading: false,
         success: false,
-        message: err?.message || 'Qobuz test failed'
+        message: err?.message || 'Qobuz test failed',
+        rawError: err?.stack || err?.message
       })
     }
   }
@@ -342,13 +384,15 @@ export default function Settings() {
         success: result?.status === 'success',
         message:
           result?.message ||
-          (result?.status === 'success' ? 'Connected successfully!' : 'Connection failed')
+          (result?.status === 'success' ? 'Connected successfully!' : 'Connection failed'),
+        rawError: result?.rawError
       })
     } catch (err: any) {
       setDeezerTestStatus({
         loading: false,
         success: false,
-        message: err?.message || 'Deezer test failed'
+        message: err?.message || 'Deezer test failed',
+        rawError: err?.stack || err?.message
       })
     }
   }
@@ -696,6 +740,67 @@ export default function Settings() {
             </div>
           </SettingsSection>
 
+          {/* Download Location */}
+          <SettingsSection
+            icon={<FolderPlus className="w-5 h-5" />}
+            iconColor="bg-primary-amber/10 text-primary-amber"
+            title="Download Location"
+            description="Choose where downloaded tracks, albums, and playlist files are saved on your device."
+          >
+            <div className="rounded-lg border border-border/40 bg-canvas/40 p-5">
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <span className="text-xs font-bold text-text">Target Folder</span>
+                    <div className="mt-1.5 flex items-center gap-2 rounded-md border border-border bg-surface-elevated px-3 py-2 text-sm text-text font-mono">
+                      <HardDrive className="h-4 w-4 shrink-0 text-primary-amber" />
+                      <span className="truncate">
+                        {downloadLocation || 'Default (~/Music/Felo)'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 pt-0 md:pt-5">
+                    <button
+                      type="button"
+                      onClick={handleSelectDownloadLocation}
+                      className="rounded-md bg-hover border border-border px-3.5 py-2 text-xs font-bold text-text hover:border-primary-amber/50 transition-colors"
+                    >
+                      Change Folder
+                    </button>
+                    {downloadLocation && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={handleOpenDownloadLocation}
+                          className="rounded-md bg-surface-elevated border border-border px-3 py-2 text-xs font-bold text-text hover:bg-hover transition-colors"
+                          title="Open folder in File Explorer"
+                        >
+                          Open
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleResetDownloadLocation}
+                          className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs font-bold text-danger hover:bg-danger/20 transition-colors"
+                          title="Reset to default directory"
+                        >
+                          Reset
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <p className="text-[11px] text-text-muted">
+                  Downloaded audio from Qobuz, Deezer, and other connectors will be stored in this directory.
+                </p>
+                {locationMessage && (
+                  <div className="mt-1 text-xs font-bold text-success">
+                    {locationMessage}
+                  </div>
+                )}
+              </div>
+            </div>
+          </SettingsSection>
+
           {/* Streaming Accounts */}
           <SettingsSection
             icon={<Headphones className="w-5 h-5" />}
@@ -705,10 +810,13 @@ export default function Settings() {
           >
             <div className="space-y-5">
               <div className="rounded-lg border border-border/40 bg-canvas/40 p-5">
-                <h3 className="mb-4 flex items-center gap-2 text-lg font-bold text-text">
-                  <span className="h-2.5 w-2.5 rounded-full bg-secondary-cyan" />
-                  Qobuz Hi-Res Configuration
-                </h3>
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="flex items-center gap-2 text-lg font-bold text-text">
+                    <span className="h-2.5 w-2.5 rounded-full bg-secondary-cyan" />
+                    Qobuz Hi-Res Configuration
+                  </h3>
+                  <span className="text-[11px] text-text-muted">Hi-Res FLAC up to 24-bit/192kHz</span>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <label className="space-y-1.5">
                     <span className="text-xs font-bold text-text">Authentication Method</span>
@@ -724,16 +832,19 @@ export default function Settings() {
                     </select>
                   </label>
                   <label className="space-y-1.5">
-                    <span className="text-xs font-bold text-text">Email or User ID</span>
+                    <span className="text-xs font-bold text-text">
+                      {accounts.qobuzAuthMethod === 'token' ? 'User ID (or Email)' : 'Email'}
+                    </span>
                     <input
+                      placeholder={accounts.qobuzAuthMethod === 'token' ? 'e.g. 2759740' : 'user@example.com'}
                       value={accounts.qobuzUser}
-                      onChange={(event) => updateAccount('qobuzUser', event.target.value)}
+                      onChange={(event) => updateAccount('qobuzUser', event.target.value.trim())}
                       className="w-full rounded-md border border-border bg-surface-elevated px-3 py-2 text-sm text-text outline-none"
                     />
                   </label>
                   <label className="space-y-1.5">
                     <span className="flex items-center justify-between text-xs font-bold text-text">
-                      User Auth Token
+                      {accounts.qobuzAuthMethod === 'token' ? 'User Auth Token' : 'Password'}
                       <button
                         type="button"
                         onClick={() => setShowQobuzSecret((show) => !show)}
@@ -744,8 +855,20 @@ export default function Settings() {
                     </span>
                     <input
                       type={showQobuzSecret ? 'text' : 'password'}
+                      placeholder={
+                        accounts.qobuzAuthMethod === 'token'
+                          ? 'Paste user_auth_token'
+                          : 'Enter Qobuz password'
+                      }
                       value={accounts.qobuzSecret}
-                      onChange={(event) => updateAccount('qobuzSecret', event.target.value)}
+                      onChange={(event) =>
+                        updateAccount(
+                          'qobuzSecret',
+                          accounts.qobuzAuthMethod === 'token'
+                            ? event.target.value.replace(/\s+/g, '')
+                            : event.target.value
+                        )
+                      }
                       className="w-full rounded-md border border-border bg-surface-elevated px-3 py-2 text-sm text-text outline-none"
                     />
                   </label>
@@ -763,28 +886,39 @@ export default function Settings() {
                     </select>
                   </label>
                   <label className="space-y-1.5">
-                    <span className="text-xs font-bold text-text">App ID</span>
+                    <span className="text-xs font-bold text-text">
+                      App ID <span className="font-normal text-text-muted">(Optional - auto-detected)</span>
+                    </span>
                     <input
+                      placeholder="Leave blank to auto-detect"
                       value={accounts.qobuzAppId}
-                      onChange={(event) => updateAccount('qobuzAppId', event.target.value)}
+                      onChange={(event) => updateAccount('qobuzAppId', event.target.value.trim())}
                       className="w-full rounded-md border border-border bg-surface-elevated px-3 py-2 text-sm text-text outline-none"
                     />
                   </label>
                   <label className="space-y-1.5">
-                    <span className="text-xs font-bold text-text">App Secret</span>
+                    <span className="text-xs font-bold text-text">
+                      App Secret <span className="font-normal text-text-muted">(Optional - auto-detected)</span>
+                    </span>
                     <input
+                      placeholder="Leave blank to auto-detect"
                       value={accounts.qobuzAppSecret}
-                      onChange={(event) => updateAccount('qobuzAppSecret', event.target.value)}
+                      onChange={(event) => updateAccount('qobuzAppSecret', event.target.value.trim())}
                       className="w-full rounded-md border border-border bg-surface-elevated px-3 py-2 text-sm text-text outline-none"
                     />
                   </label>
                 </div>
+
+                <div className="mt-3 rounded-md bg-surface-elevated/40 border border-border/30 p-2.5 text-[11px] text-text-muted">
+                  <strong>How to get Qobuz Auth Token:</strong> Log in to <span className="text-secondary-cyan font-mono">play.qobuz.com</span> in your browser. Open DevTools (F12) → Application → Local Storage (or Cookies) and copy your <span className="text-text font-mono">user_auth_token</span> and <span className="text-text font-mono">user_id</span>. An active Qobuz subscription or trial is required.
+                </div>
+
                 <div className="mt-4 flex justify-end">
                   <button
                     type="button"
                     onClick={handleTestQobuz}
                     disabled={qobuzTestStatus.loading}
-                    className="flex items-center gap-2 rounded-md border border-border bg-hover px-4 py-2 text-xs font-bold text-text disabled:opacity-60"
+                    className="flex items-center gap-2 rounded-md border border-border bg-hover px-4 py-2 text-xs font-bold text-text disabled:opacity-60 hover:border-secondary-cyan/50 transition-colors"
                   >
                     <Plug className={`h-4 w-4 ${qobuzTestStatus.loading ? 'animate-pulse' : ''}`} />
                     {qobuzTestStatus.loading ? 'Testing Qobuz...' : 'Test Qobuz Account'}
@@ -792,22 +926,35 @@ export default function Settings() {
                 </div>
                 {qobuzTestStatus.message && (
                   <div
-                    className={`mt-4 rounded-md border px-3 py-2 text-xs font-bold ${
+                    className={`mt-4 rounded-md border p-3 text-xs font-medium ${
                       qobuzTestStatus.success
                         ? 'border-success/30 bg-success/10 text-success'
                         : 'border-danger/30 bg-danger/10 text-danger'
                     }`}
                   >
-                    {qobuzTestStatus.message}
+                    <div>{qobuzTestStatus.message}</div>
+                    {qobuzTestStatus.rawError && !qobuzTestStatus.success && (
+                      <details className="mt-2 text-[11px] text-text-muted">
+                        <summary className="cursor-pointer hover:underline text-text-muted">
+                          View details
+                        </summary>
+                        <pre className="mt-1.5 max-h-36 overflow-auto rounded bg-black/40 p-2 font-mono text-[10px] text-danger/90 whitespace-pre-wrap select-text">
+                          {qobuzTestStatus.rawError}
+                        </pre>
+                      </details>
+                    )}
                   </div>
                 )}
               </div>
 
               <div className="rounded-lg border border-border/40 bg-canvas/40 p-5">
-                <h3 className="mb-4 flex items-center gap-2 text-lg font-bold text-text">
-                  <Headphones className="h-5 w-5 text-purple-400" />
-                  Deezer Lossless Configuration
-                </h3>
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="flex items-center gap-2 text-lg font-bold text-text">
+                    <Headphones className="h-5 w-5 text-purple-400" />
+                    Deezer Lossless Configuration
+                  </h3>
+                  <span className="text-[11px] text-text-muted">FLAC 16-bit / 44.1kHz & MP3</span>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <label className="space-y-1.5 md:col-span-2">
                     <span className="flex items-center justify-between text-xs font-bold text-text">
@@ -822,8 +969,9 @@ export default function Settings() {
                     </span>
                     <input
                       type={showDeezerArl ? 'text' : 'password'}
+                      placeholder="Paste your 192-character ARL cookie value"
                       value={accounts.deezerArl}
-                      onChange={(event) => updateAccount('deezerArl', event.target.value)}
+                      onChange={(event) => updateAccount('deezerArl', event.target.value.replace(/\s+/g, ''))}
                       className="w-full rounded-md border border-border bg-surface-elevated px-3 py-2 text-sm text-text outline-none"
                     />
                     <span className="text-[11px] text-text-muted">
@@ -847,7 +995,7 @@ export default function Settings() {
                       type="button"
                       onClick={handleTestDeezer}
                       disabled={deezerTestStatus.loading}
-                      className="flex items-center gap-2 rounded-md border border-border bg-hover px-4 py-2 text-xs font-bold text-text disabled:opacity-60"
+                      className="flex items-center gap-2 rounded-md border border-border bg-hover px-4 py-2 text-xs font-bold text-text disabled:opacity-60 hover:border-purple-400/50 transition-colors"
                     >
                       <Plug
                         className={`h-4 w-4 ${deezerTestStatus.loading ? 'animate-pulse' : ''}`}
@@ -856,15 +1004,30 @@ export default function Settings() {
                     </button>
                   </div>
                 </div>
+
+                <div className="mt-3 rounded-md bg-surface-elevated/40 border border-border/30 p-2.5 text-[11px] text-text-muted">
+                  <strong>How to get Deezer ARL:</strong> Open <span className="text-purple-400 font-mono">deezer.com</span> in your browser and log in. Open DevTools (F12) → Application / Storage → Cookies → <span className="text-text font-mono">https://www.deezer.com</span> → find and copy the <span className="text-text font-mono">arl</span> cookie value. (ARL tokens expire after ~3 months).
+                </div>
+
                 {deezerTestStatus.message && (
                   <div
-                    className={`mt-4 rounded-md border px-3 py-2 text-xs font-bold ${
+                    className={`mt-4 rounded-md border p-3 text-xs font-medium ${
                       deezerTestStatus.success
                         ? 'border-success/30 bg-success/10 text-success'
                         : 'border-danger/30 bg-danger/10 text-danger'
                     }`}
                   >
-                    {deezerTestStatus.message}
+                    <div>{deezerTestStatus.message}</div>
+                    {deezerTestStatus.rawError && !deezerTestStatus.success && (
+                      <details className="mt-2 text-[11px] text-text-muted">
+                        <summary className="cursor-pointer hover:underline text-text-muted">
+                          View details
+                        </summary>
+                        <pre className="mt-1.5 max-h-36 overflow-auto rounded bg-black/40 p-2 font-mono text-[10px] text-danger/90 whitespace-pre-wrap select-text">
+                          {deezerTestStatus.rawError}
+                        </pre>
+                      </details>
+                    )}
                   </div>
                 )}
               </div>
@@ -873,7 +1036,7 @@ export default function Settings() {
                 <button
                   type="button"
                   onClick={saveStreamingAccounts}
-                  className="rounded-md bg-success px-4 py-2 text-xs font-bold text-white"
+                  className="rounded-md bg-success px-4 py-2 text-xs font-bold text-white hover:bg-success/90 transition-colors"
                 >
                   Save Streaming Settings
                 </button>

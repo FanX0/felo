@@ -122,18 +122,89 @@ function patchTomlSection(
   return `${input.slice(0, bodyStart)}${replacementBody}${input.slice(bodyEnd)}`
 }
 
+function sanitizeToken(value?: string): string {
+  return (value || '').replace(/\s+/g, '')
+}
+
+function sanitizeText(value?: string): string {
+  return (value || '').trim()
+}
+
+const DEFAULT_STREAMRIP_TOML = `[downloads]
+source_subdirectories = false
+disc_subdirectories = true
+concurrency = true
+max_connections = 6
+requests_per_minute = 60
+verify_ssl = true
+
+[qobuz]
+quality = 4
+download_booklets = true
+use_auth_token = true
+email_or_userid = ""
+password_or_token = ""
+app_id = ""
+secrets = []
+
+[deezer]
+quality = 2
+arl = ""
+use_deezloader = true
+deezloader_warnings = true
+
+[artwork]
+embed = true
+embed_size = "large"
+save_artwork = true
+
+[filepaths]
+add_singles_to_folder = false
+folder_format = "{albumartist} - {title} ({year})"
+track_format = "{tracknumber:02}. {artist} - {title}"
+restrict_characters = false
+`
+
+function getCustomDownloadDirectory(): string {
+  try {
+    const row = getDb()
+      .prepare("SELECT value FROM app_settings WHERE key = 'download.location'")
+      .get() as { value?: string } | undefined
+    if (row?.value) {
+      let parsed = row.value
+      try {
+        parsed = JSON.parse(row.value)
+      } catch {
+        parsed = row.value.replace(/^"|"$/g, '')
+      }
+      if (typeof parsed === 'string' && parsed.trim().length > 0) {
+        return path.resolve(parsed.trim())
+      }
+    }
+  } catch {
+    // fallback
+  }
+  return path.join(app.getPath('music'), 'Felo')
+}
+
 function ensureStreamripConfig(accounts: StreamingAccounts): string {
   const configPath = path.join(app.getPath('userData'), 'streamrip-config.toml')
   const standardConfig = path.join(app.getPath('appData'), 'streamrip', 'config.toml')
 
   if (!fs.existsSync(configPath)) {
-    if (!fs.existsSync(standardConfig)) {
-      throw new Error('Streamrip is not configured. Run `rip config` once, then test the account.')
+    if (fs.existsSync(standardConfig)) {
+      fs.copyFileSync(standardConfig, configPath)
+    } else {
+      fs.writeFileSync(configPath, DEFAULT_STREAMRIP_TOML, 'utf8')
     }
-    fs.copyFileSync(standardConfig, configPath)
   }
 
   let config = fs.readFileSync(configPath, 'utf8')
+  const customFolder = getCustomDownloadDirectory()
+  config = patchTomlSection(config, 'downloads', {
+    folder: customFolder
+  })
+
   if (accounts.qobuzUser || accounts.qobuzSecret) {
     const quality =
       accounts.qobuzQuality === 'hires-max'
@@ -143,21 +214,30 @@ function ensureStreamripConfig(accounts: StreamingAccounts): string {
           : accounts.qobuzQuality === 'cd'
             ? 2
             : 1
+    const cleanUser = sanitizeText(accounts.qobuzUser)
+    const cleanSecret =
+      accounts.qobuzAuthMethod === 'password'
+        ? sanitizeText(accounts.qobuzSecret)
+        : sanitizeToken(accounts.qobuzSecret)
+    const cleanAppId = sanitizeText(accounts.qobuzAppId)
+    const cleanAppSecret = sanitizeText(accounts.qobuzAppSecret)
+
     config = patchTomlSection(config, 'qobuz', {
       quality,
       use_auth_token: accounts.qobuzAuthMethod !== 'password',
-      email_or_userid: accounts.qobuzUser || '',
-      password_or_token: accounts.qobuzSecret || '',
-      app_id: accounts.qobuzAppId || '',
-      secrets: accounts.qobuzAppSecret ? [accounts.qobuzAppSecret] : []
+      email_or_userid: cleanUser,
+      password_or_token: cleanSecret,
+      app_id: cleanAppId,
+      secrets: cleanAppSecret ? [cleanAppSecret] : []
     })
   }
   if (accounts.deezerArl) {
+    const cleanArl = sanitizeToken(accounts.deezerArl)
     const quality =
       accounts.deezerQuality === 'lossless' ? 2 : accounts.deezerQuality === 'mp3-320' ? 1 : 0
     config = patchTomlSection(config, 'deezer', {
       quality,
-      arl: accounts.deezerArl,
+      arl: cleanArl,
       use_deezloader: true
     })
   }
@@ -213,15 +293,17 @@ function moveCompletedFile(
 ): { filePath: string; replaced: boolean; oldPath?: string } {
   const sourceLabel = source === 'qobuz' ? 'Qobuz' : 'Deezer'
   const downloadedExtension = path.extname(downloadedPath).toLowerCase()
+  const customDownloadDir = getCustomDownloadDirectory()
+  const isVirtual = !song?.filePath || String(song.filePath).startsWith('virtual:')
   const libraryRoot = song?.rootId
     ? (getDb().prepare('SELECT path FROM library_roots WHERE id = ?').get(song.rootId) as any)?.path
     : null
-  const targetDirectory = song?.filePath
+  const targetDirectory = !isVirtual && song?.filePath
     ? path.dirname(song.filePath)
-    : libraryRoot || path.join(app.getPath('music'), 'Felo')
+    : customDownloadDir || libraryRoot || path.join(app.getPath('music'), 'Felo')
   fs.mkdirSync(targetDirectory, { recursive: true })
 
-  if (conflictMode === 'replace' && song?.filePath) {
+  if (conflictMode === 'replace' && !isVirtual && song?.filePath) {
     const oldPath = path.resolve(song.filePath)
     const directTargetPath = path.join(
       targetDirectory,

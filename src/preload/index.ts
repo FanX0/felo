@@ -1,6 +1,18 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
+const authCallbackListeners = new Set<(url: string) => void>()
+const pendingAuthCallbacks: string[] = []
+
+ipcRenderer.on('auth:callback', (_event, url: unknown) => {
+  if (typeof url !== 'string' || !url.startsWith('felo://auth/callback')) return
+  if (authCallbackListeners.size === 0) {
+    pendingAuthCallbacks.push(url)
+    return
+  }
+  authCallbackListeners.forEach((listener) => listener(url))
+})
+
 // Typed API exposed to renderer
 const api = {
   // Library
@@ -77,6 +89,11 @@ const api = {
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('system:getVersion'),
   checkForUpdates: (): Promise<any> => ipcRenderer.invoke('system:checkForUpdates'),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('system:openExternal', url),
+  onAuthCallback: (listener: (url: string) => void): (() => void) => {
+    authCallbackListeners.add(listener)
+    pendingAuthCallbacks.splice(0).forEach(listener)
+    return () => authCallbackListeners.delete(listener)
+  },
   revealInExplorer: (filePath: string): Promise<void> =>
     ipcRenderer.invoke('system:revealFile', filePath),
 

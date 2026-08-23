@@ -131,13 +131,10 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
     [priority]
   )
   const isQobuzConfigured = Boolean(
-    accounts.qobuzUser?.trim() &&
-    accounts.qobuzSecret?.trim() &&
-    accounts.qobuzAppId?.trim() &&
-    accounts.qobuzAppSecret?.trim()
+    accounts.qobuzUser?.trim() && accounts.qobuzSecret?.trim()
   )
   const isDeezerConfigured = Boolean(
-    accounts.deezerArl?.trim() && accounts.deezerArl.trim().length >= 64
+    accounts.deezerArl?.trim() && accounts.deezerArl.trim().length >= 32
   )
   const isActiveSourceConfigured =
     activeSource === 'qobuz'

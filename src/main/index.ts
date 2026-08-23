@@ -6,11 +6,63 @@ import { getDb } from './database'
 import { LibraryService } from './services/LibraryService'
 import { PlaylistService } from './services/PlaylistService'
 import { DownloadService } from './services/DownloadService'
+import { startMusicPresenceIntegrationWatcher } from './services/MusicPresenceService'
 import fs from 'fs'
 import { Readable } from 'stream'
 
 // Ensure DB is initialized
 getDb()
+
+const OAUTH_CALLBACK_PREFIX = 'felo://auth/callback'
+let pendingOAuthCallback: string | null = null
+
+function findOAuthCallback(args: string[]): string | undefined {
+  return args.find((arg) => arg.startsWith(OAUTH_CALLBACK_PREFIX))
+}
+
+function deliverOAuthCallback(callbackUrl: string): void {
+  try {
+    const parsed = new URL(callbackUrl)
+    if (
+      parsed.protocol !== 'felo:' ||
+      parsed.hostname !== 'auth' ||
+      parsed.pathname !== '/callback'
+    ) {
+      return
+    }
+  } catch {
+    return
+  }
+
+  const mainWindow = BrowserWindow.getAllWindows()[0]
+  if (!mainWindow) {
+    pendingOAuthCallback = callbackUrl
+    return
+  }
+
+  mainWindow.webContents.send('auth:callback', callbackUrl)
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (_event, commandLine) => {
+    const callbackUrl = findOAuthCallback(commandLine)
+    if (callbackUrl) deliverOAuthCallback(callbackUrl)
+  })
+}
+
+app.on('open-url', (event, callbackUrl) => {
+  event.preventDefault()
+  deliverOAuthCallback(callbackUrl)
+})
+
+const initialOAuthCallback = findOAuthCallback(process.argv)
+if (initialOAuthCallback) pendingOAuthCallback = initialOAuthCallback
 
 interface LrclibLyrics {
   id?: number
@@ -790,34 +842,56 @@ function isNonEmptyString(value: unknown) {
   return typeof value === 'string' && value.trim().length > 0
 }
 
+function formatProviderError(source: 'qobuz' | 'deezer', raw: string): string {
+  const normalized = raw.toLowerCase()
+  if (source === 'qobuz') {
+    if (normalized.includes('invalid credentials') || normalized.includes('401')) {
+      return 'Authentication failed: Invalid credentials or expired user token. Please check your User ID and Auth Token / Password.'
+    }
+    if (normalized.includes('invalid app id') || normalized.includes('invalidappiderror') || normalized.includes('400')) {
+      return 'Invalid Qobuz App ID. Clear the App ID & App Secret fields in Settings to allow automatic detection.'
+    }
+    if (normalized.includes('free accounts are not eligible') || normalized.includes('ineligibleerror')) {
+      return 'Free Qobuz account detected. Full-track streaming and downloading require an active Qobuz subscription or trial.'
+    }
+    if (normalized.includes('missingcredentialserror')) {
+      return 'Missing credentials: Email/User ID and Auth Token/Password are required.'
+    }
+  } else {
+    if (normalized.includes('authenticationerror') || normalized.includes('login_via_arl')) {
+      return 'Deezer authentication failed: The ARL cookie token is invalid or has expired. Please grab a fresh "arl" cookie from deezer.com in your browser.'
+    }
+    if (normalized.includes('missingcredentialserror')) {
+      return 'Missing credentials: Deezer ARL cookie token is required.'
+    }
+  }
+
+  if (normalized.includes('enoent') || normalized.includes('was not found') || normalized.includes('streamrip')) {
+    return 'Streamrip CLI (`rip`) was not found in your system PATH. Please ensure Python and streamrip are installed.'
+  }
+
+  return raw
+}
+
 function testQobuzAccount(accounts: any) {
   const hasIdentity = isNonEmptyString(accounts?.qobuzUser)
   const hasSecret = isNonEmptyString(accounts?.qobuzSecret)
-  const hasAppId = isNonEmptyString(accounts?.qobuzAppId)
-  const hasAppSecret = isNonEmptyString(accounts?.qobuzAppSecret)
 
   if (!hasIdentity || !hasSecret) {
     return {
       status: 'error',
-      message: 'Qobuz test failed: email/user ID and auth token are required.'
-    }
-  }
-
-  if (!hasAppId || !hasAppSecret) {
-    return {
-      status: 'error',
-      message: 'Qobuz test failed: App ID and App Secret are required.'
+      message: 'Qobuz test failed: Email / User ID and Auth Token (or Password) are required.'
     }
   }
 
   return {
     status: 'success',
-    message: 'Qobuz configuration is complete. Ready for an authorized connector.'
+    message: 'Qobuz configuration is complete.'
   }
 }
 
 function testDeezerAccount(accounts: any) {
-  const arl = typeof accounts?.deezerArl === 'string' ? accounts.deezerArl.trim() : ''
+  const arl = typeof accounts?.deezerArl === 'string' ? accounts.deezerArl.replace(/\s+/g, '') : ''
 
   if (!arl) {
     return {
@@ -826,16 +900,16 @@ function testDeezerAccount(accounts: any) {
     }
   }
 
-  if (arl.length < 64) {
+  if (arl.length < 32) {
     return {
       status: 'error',
-      message: 'Deezer test failed: ARL token looks too short.'
+      message: 'Deezer test failed: ARL cookie token looks too short.'
     }
   }
 
   return {
     status: 'success',
-    message: 'Deezer configuration is complete. Ready for an authorized connector.'
+    message: 'Deezer configuration is complete.'
   }
 }
 
@@ -850,7 +924,7 @@ function createWindow(): void {
     autoHideMenuBar: true,
     frame: false, // Frameless for custom title bar
     titleBarStyle: 'hidden', // macOS: hidden title bar
-    ...(process.platform === 'linux' ? { icon } : {}),
+    icon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false, // Required for better-sqlite3 native module access
@@ -862,6 +936,12 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+  })
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (!pendingOAuthCallback) return
+    mainWindow.webContents.send('auth:callback', pendingOAuthCallback)
+    pendingOAuthCallback = null
   })
 
   // Only allow opening external URLs in the system browser
@@ -881,6 +961,13 @@ function createWindow(): void {
 app.whenReady().then(() => {
   // Set proper app user model ID
   electronApp.setAppUserModelId('com.felo.app')
+  startMusicPresenceIntegrationWatcher()
+
+  if (process.defaultApp && process.argv[1]) {
+    app.setAsDefaultProtocolClient('felo', process.execPath, [resolve(process.argv[1])])
+  } else {
+    app.setAsDefaultProtocolClient('felo')
+  }
 
   // Register the media:// protocol handler for streaming local audio
   protocol.handle('media', (request) => {
@@ -1121,9 +1208,10 @@ app.whenReady().then(() => {
     if (validation.status === 'error') return validation
     try {
       await DownloadService.search('qobuz', 'Daft Punk One More Time', accounts)
-      return { status: 'success', message: 'Qobuz authentication and provider search succeeded.' }
+      return { status: 'success', message: 'Qobuz account connected and verified successfully!' }
     } catch (error) {
-      return { status: 'error', message: error instanceof Error ? error.message : String(error) }
+      const raw = error instanceof Error ? error.message : String(error)
+      return { status: 'error', message: formatProviderError('qobuz', raw), rawError: raw }
     }
   })
 
@@ -1132,9 +1220,10 @@ app.whenReady().then(() => {
     if (validation.status === 'error') return validation
     try {
       await DownloadService.search('deezer', 'Daft Punk One More Time', accounts)
-      return { status: 'success', message: 'Deezer authentication and provider search succeeded.' }
+      return { status: 'success', message: 'Deezer account connected and verified successfully!' }
     } catch (error) {
-      return { status: 'error', message: error instanceof Error ? error.message : String(error) }
+      const raw = error instanceof Error ? error.message : String(error)
+      return { status: 'error', message: formatProviderError('deezer', raw), rawError: raw }
     }
   })
 
@@ -1169,10 +1258,19 @@ app.whenReady().then(() => {
     }
   })
 
-  // System: Reveal file in explorer
-  ipcMain.handle('system:revealFile', (_, filePath: string) => {
-    if (filePath && typeof filePath === 'string' && fs.existsSync(filePath)) {
-      shell.showItemInFolder(resolve(filePath))
+  // System: Reveal file or open directory in explorer
+  ipcMain.handle('system:revealFile', (_, targetPath: string) => {
+    if (targetPath && typeof targetPath === 'string' && fs.existsSync(targetPath)) {
+      const resolved = resolve(targetPath)
+      try {
+        if (fs.statSync(resolved).isDirectory()) {
+          shell.openPath(resolved)
+        } else {
+          shell.showItemInFolder(resolved)
+        }
+      } catch {
+        shell.openPath(resolved)
+      }
     }
   })
 
