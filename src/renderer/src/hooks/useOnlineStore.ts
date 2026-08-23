@@ -1,6 +1,11 @@
 import type { Session, User } from '@supabase/supabase-js'
 import { create } from 'zustand'
-import { getSupabase, isSupabaseConfigured } from '../lib/supabase'
+import {
+  beginOAuthSignIn,
+  completeOAuthSignIn,
+  getSupabase,
+  isSupabaseConfigured
+} from '../lib/supabase'
 import type { OnlineProfile } from '../online/types'
 
 interface OnlineState {
@@ -9,9 +14,12 @@ interface OnlineState {
   session: Session | null
   user: User | null
   profile: OnlineProfile | null
+  authError: string | null
   initialize: () => () => void
   refreshProfile: () => Promise<void>
   signIn: (email: string, password: string) => Promise<void>
+  signInWithProvider: (provider: 'google' | 'discord') => Promise<void>
+  clearAuthError: () => void
   signUp: (
     email: string,
     password: string,
@@ -40,6 +48,7 @@ export const useOnlineStore = create<OnlineState>((set, get) => ({
   session: null,
   user: null,
   profile: null,
+  authError: null,
 
   initialize: () => {
     if (!isSupabaseConfigured) return () => undefined
@@ -63,7 +72,19 @@ export const useOnlineStore = create<OnlineState>((set, get) => ({
       if (user) void get().refreshProfile()
     })
 
-    return () => data.subscription.unsubscribe()
+    const removeAuthCallbackListener = window.api.onAuthCallback((callbackUrl) => {
+      set({ authError: null })
+      void completeOAuthSignIn(callbackUrl).catch((error: unknown) => {
+        set({
+          authError: error instanceof Error ? error.message : 'Unable to complete social sign-in.'
+        })
+      })
+    })
+
+    return () => {
+      data.subscription.unsubscribe()
+      removeAuthCallbackListener()
+    }
   },
 
   refreshProfile: async () => {
@@ -73,9 +94,17 @@ export const useOnlineStore = create<OnlineState>((set, get) => ({
   },
 
   signIn: async (email, password) => {
+    set({ authError: null })
     const { error } = await getSupabase().auth.signInWithPassword({ email, password })
     if (error) throw error
   },
+
+  signInWithProvider: async (provider) => {
+    set({ authError: null })
+    await beginOAuthSignIn(provider)
+  },
+
+  clearAuthError: () => set({ authError: null }),
 
   signUp: async (email, password, username, displayName) => {
     const { data, error } = await getSupabase().auth.signUp({

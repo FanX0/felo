@@ -9,3 +9,5 @@ out
 .env.*.local
 electron.vite.config.*.mjs
 FANXMUSIC_CLEAN_REBUILD_MASTER_PROMPT.md
+
+.vercel

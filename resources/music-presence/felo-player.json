@@ -1,0 +1,17 @@
+{
+  "id": "felo",
+  "name": "Felo",
+  "url": "https://github.com/FanX0/felo",
+  "sources": {
+    "win_winrt": ["com.felo.app", "Felo.exe", "Felo"]
+  },
+  "attributes": {
+    "pure": true,
+    "service": false
+  },
+  "content": ["audio", "audio_music"],
+  "extra": {
+    "discord_application_id": "1540785679859056640"
+  }
+}
+

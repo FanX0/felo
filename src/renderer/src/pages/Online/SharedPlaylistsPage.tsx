@@ -3,19 +3,10 @@ import { ListMusic, Loader2, Music2, Play, Plus, UserPlus } from 'lucide-react'
 import OnlineGate from '../../components/Online/OnlineGate'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { asSharedSong } from '../../lib/onlinePlaylists'
 import { getSupabase } from '../../lib/supabase'
-import type { SharedPlaylist, SharedPlaylistItem, SharedSong } from '../../online/types'
+import type { SharedPlaylist, SharedPlaylistItem } from '../../online/types'
 import type { Song } from '../Library/Library'
-
-function asSharedSong(song: Song): SharedSong {
-  return {
-    localId: song.id,
-    title: song.title,
-    artist: song.artist,
-    album: song.album,
-    duration: song.duration
-  }
-}
 
 function SharedPlaylistsWorkspace(): ReactElement {
   const { user } = useOnlineStore()
@@ -107,7 +98,7 @@ function SharedPlaylistsWorkspace(): ReactElement {
 
   const invite = async (event: FormEvent): Promise<void> => {
     event.preventDefault()
-    if (!active || !inviteUsername.trim()) return
+    if (!active || !user || active.owner_id !== user.id || !inviteUsername.trim()) return
     setMessage('')
     const { data: person, error } = await getSupabase()
       .from('profiles')
@@ -115,6 +106,20 @@ function SharedPlaylistsWorkspace(): ReactElement {
       .eq('username', inviteUsername.trim().toLowerCase())
       .maybeSingle()
     if (error || !person) return setMessage(error?.message || 'Username not found')
+    if (person.id === user.id) return setMessage('You already own this playlist.')
+
+    const { data: relationships, error: relationshipError } = await getSupabase()
+      .from('friend_requests')
+      .select('requester_id, addressee_id')
+      .eq('status', 'accepted')
+      .or(`requester_id.eq.${user.id},addressee_id.eq.${user.id}`)
+    if (relationshipError) return setMessage(relationshipError.message)
+    const isFriend = (relationships || []).some(
+      (relationship) =>
+        relationship.requester_id === person.id || relationship.addressee_id === person.id
+    )
+    if (!isFriend) return setMessage('Add this user as a friend before inviting them.')
+
     const { error: inviteError } = await getSupabase()
       .from('shared_playlist_members')
       .upsert({ playlist_id: active.id, user_id: person.id, role: 'editor' })
@@ -189,20 +194,22 @@ function SharedPlaylistsWorkspace(): ReactElement {
               <p className="text-xs text-text-muted">{items.length} shared songs</p>
             </div>
             <div className="flex items-center gap-2">
-              <form onSubmit={invite} className="flex items-center gap-2">
-                <input
-                  value={inviteUsername}
-                  onChange={(e) => setInviteUsername(e.target.value)}
-                  placeholder="Username"
-                  className="h-9 w-36 rounded-full border border-border bg-canvas px-3 text-sm outline-none focus:border-success"
-                />
-                <button
-                  title="Invite editor"
-                  className="flex h-9 w-9 items-center justify-center rounded-full border border-border text-text-muted hover:text-text"
-                >
-                  <UserPlus className="h-4 w-4" />
-                </button>
-              </form>
+              {active.owner_id === user?.id && (
+                <form onSubmit={invite} className="flex items-center gap-2">
+                  <input
+                    value={inviteUsername}
+                    onChange={(e) => setInviteUsername(e.target.value)}
+                    placeholder="Friend username"
+                    className="h-9 w-40 rounded-full border border-border bg-canvas px-3 text-sm outline-none focus:border-success"
+                  />
+                  <button
+                    title="Invite friend as editor"
+                    className="flex h-9 w-9 items-center justify-center rounded-full border border-border text-text-muted hover:text-text"
+                  >
+                    <UserPlus className="h-4 w-4" />
+                  </button>
+                </form>
+              )}
               <button
                 disabled={!currentSong}
                 onClick={() => void addCurrentSong()}

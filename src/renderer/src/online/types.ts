@@ -8,6 +8,15 @@ export interface OnlineProfile {
   updated_at: string
 }
 
+export interface FriendRequest {
+  id: string
+  requester_id: string
+  addressee_id: string
+  status: 'pending' | 'accepted'
+  created_at: string
+  updated_at: string
+}
+
 export interface SharedSong {
   localId?: string
   title: string
@@ -39,6 +48,7 @@ export interface SharedPlaylist {
   owner_id: string
   name: string
   description: string
+  source_local_playlist_id?: string | null
   created_at: string
   updated_at: string
 }

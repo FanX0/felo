@@ -29,6 +29,22 @@ export const profiles = pgTable('profiles', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 })
 
+export const friendRequests = pgTable(
+  'friend_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    requesterId: uuid('requester_id').notNull(),
+    addresseeId: uuid('addressee_id').notNull(),
+    status: text('status').notNull().default('pending'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index('friend_requests_requester_idx').on(table.requesterId),
+    index('friend_requests_addressee_idx').on(table.addresseeId)
+  ]
+)
+
 export const conversations = pgTable('conversations', {
   id: uuid('id').primaryKey().defaultRandom(),
   ownerId: uuid('owner_id').notNull(),

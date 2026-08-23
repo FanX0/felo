@@ -11,10 +11,25 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+extraResources:
+  - from: resources/music-presence
+    to: music-presence
 win:
-  executableName: felo
+  icon: build/icon.ico
+  executableName: Felo
+protocols:
+  - name: Felo OAuth callback
+    schemes:
+      - felo
 nsis:
-  artifactName: ${name}-${version}-setup.${ext}
+  include: build/installer.nsh
+  artifactName: Felo-${version}-Setup.${ext}
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always

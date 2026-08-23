@@ -29,6 +29,13 @@ $ npm run dev
 
 The migration enables row-level security and Realtime for chat, collaborative playlists, and listening rooms. Drizzle schema changes can be generated with `npm run db:generate` and applied to a configured project with `npm run db:push`.
 
+### Google and Discord sign-in
+
+1. In Supabase, open **Authentication > URL Configuration** and add `felo://auth/callback` to the redirect URL allow list.
+2. Create OAuth applications in Google Cloud and the Discord Developer Portal. In each provider, use `https://<project-ref>.supabase.co/auth/v1/callback` as the authorized redirect URL.
+3. In Supabase, open **Authentication > Providers**, enable Google and Discord, and enter each provider's client ID and client secret.
+4. Restart Felo after installing a packaged build or after running the development build for the first time so the operating system registers the `felo://` protocol.
+
 ### Build
 
 ```bash
