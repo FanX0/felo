@@ -12,9 +12,6 @@ import {
   Plus,
   Music2,
   ListMusic,
-  MessageCircle,
-  Radio,
-  Users,
   X,
   ChevronLeft,
   ChevronRight
@@ -22,6 +19,9 @@ import {
 import { cn } from '../../lib/utils'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { toMediaUrl } from '../../lib/media'
+import type { Playlist } from '../../pages/Playlists/types'
+import CreatePlaylistModal from '../../pages/Playlists/CreatePlaylistModal'
 
 interface SidebarProps {
   isOpen?: boolean
@@ -32,7 +32,8 @@ type UpdateStatus = Awaited<ReturnType<Window['api']['checkForUpdates']>>
 
 export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
   const [songCount, setSongCount] = useState<number>(0)
-  const [isScanning, setIsScanning] = useState<boolean>(false)
+  const [playlists, setPlaylists] = useState<Playlist[]>([])
+  const [isCreatePlaylistOpen, setIsCreatePlaylistOpen] = useState(false)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const {
     transfers,
@@ -51,6 +52,9 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
         const songs = await window.api.getSongs()
         setSongCount(songs?.length || 0)
       }
+      if (window.api?.getPlaylists) {
+        setPlaylists(((await window.api.getPlaylists()) || []) as Playlist[])
+      }
     } catch (err) {
       console.error('Failed to load song count:', err)
     }
@@ -60,7 +64,11 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
     loadStats()
     const handleLibraryUpdate = () => loadStats()
     window.addEventListener('felo:library-updated', handleLibraryUpdate)
-    return () => window.removeEventListener('felo:library-updated', handleLibraryUpdate)
+    window.addEventListener('fanxmusic:library-updated', handleLibraryUpdate)
+    return () => {
+      window.removeEventListener('felo:library-updated', handleLibraryUpdate)
+      window.removeEventListener('fanxmusic:library-updated', handleLibraryUpdate)
+    }
   }, [])
 
   useEffect(() => {
@@ -82,23 +90,98 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
     }
   }, [])
 
-  const handleAddFolder = async () => {
-    try {
-      if (!window.api) {
-        alert('This feature requires running in the Electron desktop app.')
-        return
-      }
-      const folderPath = await window.api.selectFolder()
-      if (folderPath) {
-        setIsScanning(true)
-        await window.api.scanLibrary(folderPath)
-        setIsScanning(false)
-        await loadStats()
-      }
-    } catch (err) {
-      console.error('Error adding folder from sidebar:', err)
-      setIsScanning(false)
-    }
+  if (!isOpen) {
+    return (
+      <aside className="flex h-full w-full select-none flex-col items-center bg-canvas text-text-muted">
+        <div className="h-10 w-full shrink-0 draggable-header" />
+
+        <div className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto px-2 py-2">
+          <button
+            type="button"
+            onClick={onToggle}
+            title="Expand library"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-hover hover:text-text no-drag"
+          >
+            <ListMusic className="h-5 w-5" />
+          </button>
+
+          <NavLink
+            to="/library"
+            title={`Local Songs - ${songCount} songs`}
+            className={({ isActive }) =>
+              cn(
+                'flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md bg-[#2b2b2b] shadow-sm transition-colors no-drag',
+                isActive ? 'ring-2 ring-success' : 'hover:bg-hover'
+              )
+            }
+          >
+            <Music2 className="h-5 w-5 text-white" />
+          </NavLink>
+
+          {playlists.length > 0 ? (
+            playlists.map((playlist) => (
+              <NavLink
+                key={playlist.id}
+                to={`/playlists/${playlist.id}`}
+                title={playlist.name}
+                className={({ isActive }) =>
+                  cn(
+                    'flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md bg-[#2b2b2b] shadow-sm transition-colors no-drag',
+                    isActive ? 'ring-2 ring-success' : 'hover:bg-hover'
+                  )
+                }
+              >
+                {playlist.artworkPath ? (
+                  <img
+                    src={toMediaUrl(playlist.artworkPath) ?? undefined}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <ListMusic className="h-5 w-5 text-text-muted" />
+                )}
+              </NavLink>
+            ))
+          ) : (
+            <NavLink
+              to="/playlists"
+              title="Playlists"
+              className={({ isActive }) =>
+                cn(
+                  'flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-[#2b2b2b] shadow-sm transition-colors no-drag',
+                  isActive ? 'ring-2 ring-success' : 'hover:bg-hover'
+                )
+              }
+            >
+              <ListMusic className="h-5 w-5" />
+            </NavLink>
+          )}
+        </div>
+
+        <div className="w-full border-t border-border/40 bg-surface px-3 py-3">
+          <button
+            type="button"
+            onClick={() => {
+              onToggle?.()
+              setTransfersOpen(true)
+            }}
+            title={
+              transfers.length === 0
+                ? 'Transfers'
+                : `${transfers.length} transfer${transfers.length === 1 ? '' : 's'}`
+            }
+            className="relative flex h-10 w-10 items-center justify-center rounded-md border border-success/30 bg-success/10 text-success transition-colors hover:bg-success/15 no-drag"
+          >
+            <Download className="h-4 w-4" />
+            {transfers.length > 0 && (
+              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[9px] font-bold text-white">
+                {transfers.length > 9 ? '9+' : transfers.length}
+              </span>
+            )}
+          </button>
+        </div>
+      </aside>
+    )
   }
 
   return (
@@ -106,21 +189,26 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
       {/* Draggable header area above sidebar content */}
       <div className="h-10 draggable-header w-full shrink-0"></div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-2 flex flex-col gap-6">
+      <div className="flex-1 overflow-y-auto px-3 py-2">
         {/* Your Library Section */}
-        <div>
-          <div className="flex items-center justify-between text-text-muted hover:text-text transition-colors group mb-4 px-2">
-            <div className="flex items-center gap-3 font-bold text-[15px] tracking-wide">
-              Your Library
-            </div>
-            <div className="flex items-center gap-1 no-drag">
+        <div className="rounded-lg bg-surface p-2">
+          <div className="flex items-center justify-between text-text-muted hover:text-text transition-colors group mb-2 px-2">
+            <NavLink
+              to="/library"
+              className="min-w-0 flex items-center gap-2.5 font-black text-[15px] tracking-wide text-white hover:text-white no-drag"
+            >
+              <ListMusic className="h-5 w-5 shrink-0 text-[#b3b3b3]" />
+              <span className="truncate">Your Library</span>
+            </NavLink>
+            <div className="flex items-center gap-1.5 no-drag">
               <button
-                onClick={handleAddFolder}
-                title="Add Music Folder"
-                disabled={isScanning}
-                className="p-1 rounded-full text-text-muted opacity-0 transition-colors hover:bg-hover hover:text-text group-hover:opacity-100"
+                type="button"
+                onClick={() => setIsCreatePlaylistOpen(true)}
+                title="Create playlist"
+                className="flex items-center gap-1 rounded-full bg-white/10 hover:bg-white/20 px-3 py-1 text-xs font-bold text-white transition-all hover:scale-105 active:scale-95 shadow-sm"
               >
-                <Plus className="w-4 h-4" />
+                <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                <span>Create</span>
               </button>
               <button
                 type="button"
@@ -142,52 +230,76 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
               to="/library"
               className={({ isActive }) =>
                 cn(
-                  'flex items-center gap-3 px-2 py-2 rounded-md no-drag transition-colors',
-                  isActive ? 'bg-surface-elevated' : 'hover:bg-hover/50'
+                  'flex items-center gap-3 rounded-md px-2 py-2 no-drag transition-colors',
+                  isActive ? 'bg-surface-elevated text-text' : 'hover:bg-hover/60'
                 )
               }
             >
-              <div className="w-10 h-10 rounded-md bg-gradient-to-br from-violet-500 via-indigo-400 to-cyan-200 flex items-center justify-center shrink-0 shadow-md">
+              <div className="w-12 h-12 rounded bg-[#2b2b2b] flex items-center justify-center shrink-0 shadow-sm">
                 <Music2 className="w-5 h-5 text-white" />
               </div>
               <div className="flex flex-col overflow-hidden">
                 <span className="text-[15px] font-bold text-text truncate">Local Songs</span>
-                <span className="text-[12px] text-text-muted truncate">{songCount} songs</span>
+                <span className="text-[12px] text-text-muted truncate">
+                  Playlist • {songCount} songs
+                </span>
               </div>
             </NavLink>
 
-            <NavLink
-              to="/playlists"
-              className={({ isActive }) =>
-                cn(
-                  'flex items-center gap-3 px-2 py-2 rounded-md no-drag transition-colors',
-                  isActive ? 'bg-surface-elevated' : 'hover:bg-hover/50'
-                )
-              }
-            >
-              <div className="w-10 h-10 rounded-md bg-gradient-to-br from-sky-500 to-cyan-300 flex items-center justify-center shrink-0 shadow-md">
-                <ListMusic className="w-5 h-5 text-white" />
-              </div>
-              <div className="flex flex-col overflow-hidden">
-                <span className="text-[15px] font-bold text-text truncate">Your Playlists</span>
-                <span className="text-[12px] text-text-muted truncate">Local Playlists</span>
-              </div>
-            </NavLink>
-          </div>
-        </div>
-
-        <div>
-          <div className="mb-2 px-2 text-[11px] font-bold uppercase text-text-muted">Online</div>
-          <div className="flex flex-col gap-1">
-            <NavLink to="/chat" className={({ isActive }) => cn('flex items-center gap-3 rounded-md px-3 py-2.5 no-drag transition-colors', isActive ? 'bg-surface-elevated text-text' : 'hover:bg-hover/50')}>
-              <MessageCircle className="h-5 w-5 shrink-0" /><span className="truncate text-sm font-bold">Chat</span>
-            </NavLink>
-            <NavLink to="/shared-playlists" className={({ isActive }) => cn('flex items-center gap-3 rounded-md px-3 py-2.5 no-drag transition-colors', isActive ? 'bg-surface-elevated text-text' : 'hover:bg-hover/50')}>
-              <Users className="h-5 w-5 shrink-0" /><span className="truncate text-sm font-bold">Together playlists</span>
-            </NavLink>
-            <NavLink to="/listen-together" className={({ isActive }) => cn('flex items-center gap-3 rounded-md px-3 py-2.5 no-drag transition-colors', isActive ? 'bg-surface-elevated text-text' : 'hover:bg-hover/50')}>
-              <Radio className="h-5 w-5 shrink-0" /><span className="truncate text-sm font-bold">Listen together</span>
-            </NavLink>
+            {playlists.length > 0 ? (
+              playlists.map((playlist) => (
+                <NavLink
+                  key={playlist.id}
+                  to={`/playlists/${playlist.id}`}
+                  className={({ isActive }) =>
+                    cn(
+                      'flex items-center gap-3 rounded-md px-2 py-2 no-drag transition-colors',
+                      isActive ? 'bg-surface-elevated text-text' : 'hover:bg-hover/60'
+                    )
+                  }
+                >
+                  {playlist.artworkPath ? (
+                    <img
+                      src={toMediaUrl(playlist.artworkPath) ?? undefined}
+                      alt=""
+                      className="h-12 w-12 shrink-0 rounded object-cover shadow-sm"
+                    />
+                  ) : (
+                    <div className="h-12 w-12 shrink-0 rounded bg-[#2b2b2b] flex items-center justify-center shadow-sm">
+                      <ListMusic className="h-5 w-5 text-text-muted" />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex flex-col">
+                    <span className="truncate text-[15px] font-bold text-text">
+                      {playlist.name}
+                    </span>
+                    <span className="truncate text-[12px] text-text-muted">
+                      Playlist • {playlist.songCount || 0} songs
+                    </span>
+                  </div>
+                </NavLink>
+              ))
+            ) : (
+              <NavLink
+                to="/playlists"
+                className={({ isActive }) =>
+                  cn(
+                    'flex items-center gap-3 rounded-md px-2 py-2 no-drag transition-colors',
+                    isActive ? 'bg-surface-elevated text-text' : 'hover:bg-hover/60'
+                  )
+                }
+              >
+                <div className="h-12 w-12 shrink-0 rounded bg-[#2b2b2b] flex items-center justify-center shadow-sm">
+                  <ListMusic className="h-5 w-5 text-text-muted" />
+                </div>
+                <div className="min-w-0 flex flex-col">
+                  <span className="truncate text-[15px] font-bold text-text">
+                    Create your first playlist
+                  </span>
+                  <span className="truncate text-[12px] text-text-muted">Playlist • 0 songs</span>
+                </div>
+              </NavLink>
+            )}
           </div>
         </div>
       </div>
@@ -393,6 +505,17 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
           )}
         </button>
       </div>
+
+      {isCreatePlaylistOpen && (
+        <CreatePlaylistModal
+          onClose={() => setIsCreatePlaylistOpen(false)}
+          onCreated={(newPlaylist) => {
+            setIsCreatePlaylistOpen(false)
+            void loadStats()
+            navigate(`/playlists/${newPlaylist.id}`)
+          }}
+        />
+      )}
     </aside>
   )
 }
