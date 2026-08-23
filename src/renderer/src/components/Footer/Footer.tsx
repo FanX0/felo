@@ -11,9 +11,12 @@ import {
   PlusCircle,
   Mic2,
   ListVideo,
-  Maximize2
+  Maximize2,
+  Radio,
+  LogOut
 } from 'lucide-react'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { useListeningStore } from '../../hooks/useListeningStore'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toMediaUrl } from '../../lib/media'
@@ -48,6 +51,11 @@ export default function Footer({ onOpenDownloadPanel }: FooterProps) {
   const [isSeeking, setIsSeeking] = useState(false)
   const [previewTime, setPreviewTime] = useState(0)
   const progressRef = useRef<HTMLDivElement>(null)
+
+  const joinedRoom = useListeningStore((state) => state.joinedRoom)
+  const syncStatus = useListeningStore((state) => state.syncStatus)
+  const missingSong = useListeningStore((state) => state.missingSong)
+  const leaveJoinedRoom = useListeningStore((state) => state.leaveJoinedRoom)
 
   const currentSong = queue[currentSongIndex]
   const isLyricsActive = location.pathname === '/lyrics'
@@ -229,6 +237,36 @@ export default function Footer({ onOpenDownloadPanel }: FooterProps) {
           <button className="text-text-muted hover:text-text transition-colors no-drag shrink-0 p-1">
             <PlusCircle className="w-4 h-4" />
           </button>
+        )}
+
+        {/* Listen Together Status Badge */}
+        {joinedRoom && (
+          <div
+            className={`hidden xl:flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs no-drag shrink-0 transition-colors ${
+              syncStatus === 'missing_song'
+                ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+                : 'border-[#1ed760]/30 bg-[#1ed760]/10 text-[#1ed760]'
+            }`}
+          >
+            <Radio className="h-3 w-3 animate-pulse shrink-0" />
+            <button
+              type="button"
+              onClick={() => navigate('/listen-together')}
+              className="truncate max-w-[120px] font-bold text-[11px] hover:underline cursor-pointer text-left"
+              title="Open Listen Together session"
+            >
+              {syncStatus === 'missing_song' ? `Missing: ${missingSong?.title || 'Song'}` : joinedRoom.name}
+            </button>
+            <button
+              type="button"
+              onClick={() => void leaveJoinedRoom()}
+              title="Leave listen together session"
+              className="flex items-center gap-0.5 rounded-full bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white px-2 py-0.5 text-[10px] font-bold transition-all ml-1"
+            >
+              <LogOut className="h-2.5 w-2.5" />
+              <span>Leave</span>
+            </button>
+          </div>
         )}
       </div>
 

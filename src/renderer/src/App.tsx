@@ -7,7 +7,10 @@ import AudioEngine from './components/AudioEngine'
 import DownloadPanel from './components/DownloadPanel/DownloadPanel'
 import type { DownloadTarget } from './components/DownloadPanel/DownloadPanel'
 import DownloadEventBridge from './components/DownloadEventBridge'
+import FriendActivityPanel from './components/FriendActivity/FriendActivityPanel'
+import ListeningPresenceBridge from './components/ListeningPresenceBridge'
 
+import Home from './pages/Home/Home'
 import Library from './pages/Library/Library'
 import Search from './pages/Search/Search'
 import Playlists from './pages/Playlists/Playlists'
@@ -31,6 +34,7 @@ import {
   HardDrive,
   ChevronLeft,
   ChevronRight,
+  Users,
   Minus,
   Square,
   X
@@ -54,13 +58,24 @@ function App() {
   const [isProfileOpen, setIsProfileOpen] = useState(false)
   const [isPrivateSession, setIsPrivateSession] = useState(false)
   const [isDownloadPanelOpen, setIsDownloadPanelOpen] = useState(false)
+  const [isFriendActivityOpen, setIsFriendActivityOpen] = useState(false)
   const [downloadTarget, setDownloadTarget] = useState<DownloadTarget | null>(null)
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+  const [isSidebarOpen, setIsSidebarOpen] = useState(
+    () => localStorage.getItem('felo_sidebar_open') !== 'false'
+  )
   const { configured, initialized, user, profile, initialize, signOut } = useOnlineStore()
 
   const searchModeRef = useRef<HTMLDivElement>(null)
   const profileRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
+
+  const toggleSidebar = (): void => {
+    setIsSidebarOpen((isOpen) => {
+      const nextIsOpen = !isOpen
+      localStorage.setItem('felo_sidebar_open', String(nextIsOpen))
+      return nextIsOpen
+    })
+  }
 
   useEffect(() => initialize(), [initialize])
 
@@ -93,6 +108,7 @@ function App() {
     >
       <AudioEngine />
       <DownloadEventBridge />
+      <ListeningPresenceBridge enabled={!isPrivateSession} />
 
       {/* Top Application Bar (Draggable) */}
       <header className="absolute top-0 left-0 right-0 h-16 draggable-header flex items-center justify-between px-4 z-50 pointer-events-none">
@@ -119,7 +135,7 @@ function App() {
             type="button"
             onClick={() => {
               setIsSidebarOpen(true)
-              navigate('/library')
+              navigate('/')
             }}
             title="Home"
             className="mr-3 flex h-12 w-12 items-center justify-center rounded-full bg-surface-elevated text-text no-drag shadow-md transition-colors hover:bg-hover"
@@ -211,6 +227,27 @@ function App() {
           </form>
         </div>
         <div className="flex items-center gap-3 pointer-events-auto mr-2">
+          <button
+            type="button"
+            onClick={() => {
+              setIsFriendActivityOpen((isOpen) => {
+                const nextIsOpen = !isOpen
+                if (nextIsOpen) {
+                  setIsDownloadPanelOpen(false)
+                  setDownloadTarget(null)
+                }
+                return nextIsOpen
+              })
+            }}
+            title="Friend activity"
+            className={`w-10 h-10 rounded-full flex items-center justify-center no-drag transition-all shadow-sm ${
+              isFriendActivityOpen
+                ? 'bg-primary-amber text-canvas'
+                : 'bg-surface-elevated text-text-muted hover:bg-hover hover:text-text'
+            }`}
+          >
+            <Users className="w-5 h-5" />
+          </button>
           <div ref={profileRef} className="relative">
             <button
               onClick={() => setIsProfileOpen(!isProfileOpen)}
@@ -218,7 +255,11 @@ function App() {
               className="w-10 h-10 rounded-full bg-surface-elevated text-text-muted flex items-center justify-center no-drag hover:bg-hover hover:text-text transition-all shadow-sm"
             >
               {profile?.avatar_url ? (
-                <img src={profile.avatar_url} alt="" className="h-full w-full rounded-full object-cover" />
+                <img
+                  src={profile.avatar_url}
+                  alt=""
+                  className="h-full w-full rounded-full object-cover"
+                />
               ) : (
                 <User className="w-5 h-5" />
               )}
@@ -228,8 +269,12 @@ function App() {
               <div className="absolute right-0 top-full mt-2 w-56 bg-surface-elevated border border-border rounded-lg shadow-xl py-1.5 z-[100] animate-in fade-in slide-in-from-top-1">
                 {/* User Info */}
                 <div className="px-4 py-3 border-b border-border">
-                  <p className="truncate text-sm font-bold text-text">{profile?.display_name || (user ? 'Online profile' : 'Local listener')}</p>
-                  <p className="truncate text-xs text-text-muted">{user?.email || (configured && initialized ? 'Not signed in' : 'Local account')}</p>
+                  <p className="truncate text-sm font-bold text-text">
+                    {profile?.display_name || (user ? 'Online profile' : 'Local listener')}
+                  </p>
+                  <p className="truncate text-xs text-text-muted">
+                    {user?.email || (configured && initialized ? 'Not signed in' : 'Local account')}
+                  </p>
                 </div>
 
                 <div className="py-1">
@@ -274,7 +319,10 @@ function App() {
                 <div className="border-t border-border py-1">
                   {user && (
                     <button
-                      onClick={() => { setIsProfileOpen(false); void signOut() }}
+                      onClick={() => {
+                        setIsProfileOpen(false)
+                        void signOut()
+                      }}
                       className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-danger hover:bg-danger/10 transition-colors"
                     >
                       <LogOut className="w-4 h-4" />
@@ -319,18 +367,11 @@ function App() {
         {/* Left Sidebar */}
         <div
           className={`h-full shrink-0 transition-[width] duration-300 ease-out ${
-            isSidebarOpen ? 'w-[min(20vw,500px)]' : 'w-9'
+            isSidebarOpen ? 'w-[min(20vw,500px)]' : 'w-[72px]'
           }`}
         >
-          <div
-            className={`relative h-full w-[min(20vw,500px)] rounded-lg bg-canvas transition-transform duration-300 ease-out ${
-              isSidebarOpen ? 'translate-x-0' : '-translate-x-[calc(100%-2.25rem)]'
-            }`}
-          >
-            <Sidebar
-              isOpen={isSidebarOpen}
-              onToggle={() => setIsSidebarOpen((isOpen) => !isOpen)}
-            />
+          <div className="relative h-full w-full overflow-visible rounded-lg bg-canvas">
+            <Sidebar isOpen={isSidebarOpen} onToggle={toggleSidebar} />
           </div>
         </div>
 
@@ -342,9 +383,10 @@ function App() {
                 <Route
                   path="/"
                   element={
-                    <Library
-                      onOpenDownloadPanel={() => {
-                        setDownloadTarget(null)
+                    <Home
+                      onOpenDownloadPanel={(target) => {
+                        setDownloadTarget(target)
+                        setIsFriendActivityOpen(false)
                         setIsDownloadPanelOpen(true)
                       }}
                     />
@@ -356,6 +398,7 @@ function App() {
                     <Library
                       onOpenDownloadPanel={() => {
                         setDownloadTarget(null)
+                        setIsFriendActivityOpen(false)
                         setIsDownloadPanelOpen(true)
                       }}
                     />
@@ -367,19 +410,32 @@ function App() {
                     <Search
                       onOpenDownloadPanel={(target) => {
                         setDownloadTarget(target)
+                        setIsFriendActivityOpen(false)
                         setIsDownloadPanelOpen(true)
                       }}
                     />
                   }
                 />
                 <Route path="/playlists" element={<Playlists />} />
-                <Route path="/playlists/:id" element={<PlaylistDetail />} />
+                <Route
+                  path="/playlists/:id"
+                  element={
+                    <PlaylistDetail
+                      onOpenDownloadPanel={(target) => {
+                        setDownloadTarget(target)
+                        setIsFriendActivityOpen(false)
+                        setIsDownloadPanelOpen(true)
+                      }}
+                    />
+                  }
+                />
                 <Route
                   path="/artist/:name"
                   element={
                     <ArtistPage
                       onOpenDownloadPanel={(target) => {
                         setDownloadTarget(target)
+                        setIsFriendActivityOpen(false)
                         setIsDownloadPanelOpen(true)
                       }}
                     />
@@ -389,9 +445,21 @@ function App() {
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/account" element={<AccountPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
+                <Route path="/profile/:username" element={<ProfilePage />} />
                 <Route path="/chat" element={<ChatPage />} />
                 <Route path="/shared-playlists" element={<SharedPlaylistsPage />} />
-                <Route path="/listen-together" element={<ListenTogetherPage />} />
+                <Route
+                  path="/listen-together"
+                  element={
+                    <ListenTogetherPage
+                      onOpenDownloadPanel={(target) => {
+                        setDownloadTarget(target)
+                        setIsFriendActivityOpen(false)
+                        setIsDownloadPanelOpen(true)
+                      }}
+                    />
+                  }
+                />
               </Routes>
             </div>
           </section>
@@ -405,12 +473,16 @@ function App() {
             }}
           />
         )}
+        {isFriendActivityOpen && (
+          <FriendActivityPanel onClose={() => setIsFriendActivityOpen(false)} />
+        )}
       </div>
 
       <div className="px-2 pb-2">
         <Footer
           onOpenDownloadPanel={() => {
             setDownloadTarget(null)
+            setIsFriendActivityOpen(false)
             setIsDownloadPanelOpen((isOpen) => !isOpen)
           }}
         />
