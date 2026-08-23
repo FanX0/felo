@@ -1,8 +1,22 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Clock3, Download, Music2, Pause, Play, Plus, Search, Trash2, X } from 'lucide-react'
+import {
+  Clock3,
+  CloudUpload,
+  Download,
+  Loader2,
+  Music2,
+  Pause,
+  Play,
+  Plus,
+  Search,
+  Trash2,
+  X
+} from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { toMediaUrl } from '../../lib/media'
+import { publishLocalPlaylist } from '../../lib/onlinePlaylists'
 import { Song } from '../Library/Library'
 import { Playlist } from './types'
 
@@ -33,14 +47,23 @@ function qualityLabel(song: Song): string {
   return [rate, depth].filter(Boolean).join(' / ') || song.codec || song.container || ''
 }
 
-export default function PlaylistDetail() {
+import type { DownloadTarget } from '../../components/DownloadPanel/DownloadPanel'
+
+interface PlaylistDetailProps {
+  onOpenDownloadPanel?: (target: DownloadTarget) => void
+}
+
+export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailProps) {
   const { id = '' } = useParams()
   const navigate = useNavigate()
   const { queue, currentSongIndex, isPlaying, setQueue, togglePlay } = usePlayerStore()
+  const { configured, initialized, user } = useOnlineStore()
   const [playlist, setPlaylist] = useState<Playlist | null>(null)
   const [librarySongs, setLibrarySongs] = useState<Song[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isAddOpen, setIsAddOpen] = useState(false)
+  const [isPublishing, setIsPublishing] = useState(false)
+  const [publishMessage, setPublishMessage] = useState('')
 
   const loadPlaylist = async () => {
     setIsLoading(true)
@@ -60,22 +83,82 @@ export default function PlaylistDetail() {
       .getSongs()
       .then((songs) => setLibrarySongs(songs || []))
       .catch(console.error)
+
+    const handleUpdate = () => void loadPlaylist()
+    window.addEventListener('felo:library-updated', handleUpdate)
+    const cleanup = window.api?.onDownloadProgress?.((event: any) => {
+      if (event?.status === 'completed') {
+        void loadPlaylist()
+      }
+    })
+    return () => {
+      window.removeEventListener('felo:library-updated', handleUpdate)
+      cleanup?.()
+    }
   }, [id])
 
   const songs = playlist?.songs || []
+  const downloadedSongs = useMemo(
+    () => songs.filter((song) => song.filePath && !song.filePath.startsWith('virtual:')),
+    [songs]
+  )
+  const downloadedCount = downloadedSongs.length
+  const missingCount = songs.length - downloadedCount
   const currentSong = queue[currentSongIndex]
   const isCurrentPlaylist = Boolean(currentSong && songs.some((song) => song.id === currentSong.id))
   const artworkUrl = toMediaUrl(playlist?.artworkPath)
 
   const togglePlaylist = () => {
-    if (!songs.length) return
+    if (!downloadedSongs.length) return
     if (isCurrentPlaylist) togglePlay()
-    else setQueue(songs, 0)
+    else setQueue(downloadedSongs, 0)
+  }
+
+  const handleDownloadTrack = (song: Song) => {
+    onOpenDownloadPanel?.({
+      id: song.id,
+      title: song.title,
+      artist: song.artist || '',
+      album: song.album || '',
+      duration: song.duration || 0,
+      artworkPath: song.artworkPath,
+      isOnline: true
+    })
+  }
+
+  const handleDownloadMissing = () => {
+    const firstMissing = songs.find((song) => !song.filePath || song.filePath.startsWith('virtual:'))
+    if (firstMissing) {
+      handleDownloadTrack(firstMissing)
+    }
   }
 
   const removeSong = async (songId: string) => {
     const updated = await window.api.removeSongFromPlaylist(id, songId)
     setPlaylist(updated)
+  }
+
+  const publishOnline = async (): Promise<void> => {
+    if (!playlist) return
+    if (!configured) {
+      setPublishMessage('Configure Supabase before using online playlists.')
+      return
+    }
+    if (!user) {
+      navigate('/account')
+      return
+    }
+
+    setIsPublishing(true)
+    setPublishMessage('')
+    try {
+      await publishLocalPlaylist(playlist)
+      navigate('/shared-playlists')
+    } catch (error) {
+      setPublishMessage(error instanceof Error ? error.message : 'Unable to publish playlist.')
+    } finally {
+      setIsPublishing(false)
+    }
   }
 
   const openArtist = (event: React.MouseEvent, artistName?: string) => {
@@ -132,7 +215,9 @@ export default function PlaylistDetail() {
             <span className="font-bold">
               {songs.length} {songs.length === 1 ? 'song' : 'songs'}
             </span>
-            <span className="text-white/65">({songs.length} downloaded, 0 not downloaded)</span>
+            <span className="text-white/65">
+              ({downloadedCount} downloaded{missingCount > 0 ? `, ${missingCount} not downloaded` : ''})
+            </span>
             <span className="text-white/65">•</span>
             <span>Created {new Date(playlist.dateCreated * 1000).toLocaleDateString()}</span>
           </div>
@@ -143,8 +228,14 @@ export default function PlaylistDetail() {
         <button
           type="button"
           onClick={togglePlaylist}
-          disabled={!songs.length}
-          title={isCurrentPlaylist && isPlaying ? 'Pause playlist' : 'Play playlist'}
+          disabled={!downloadedSongs.length}
+          title={
+            !downloadedSongs.length
+              ? 'Download tracks to play locally'
+              : isCurrentPlaylist && isPlaying
+                ? 'Pause playlist'
+                : 'Play playlist'
+          }
           className="flex h-14 w-14 items-center justify-center rounded-full bg-[#1ed760] text-black shadow-lg transition-transform hover:scale-105 disabled:opacity-40"
         >
           {isCurrentPlaylist && isPlaying ? (
@@ -153,14 +244,26 @@ export default function PlaylistDetail() {
             <Play className="ml-1 h-6 w-6 fill-current" />
           )}
         </button>
-        <button
-          type="button"
-          disabled
-          title="All playlist tracks are stored locally"
-          className="text-[#b3b3b3] disabled:opacity-50"
-        >
-          <Download className="h-9 w-9" />
-        </button>
+        {missingCount > 0 ? (
+          <button
+            type="button"
+            onClick={handleDownloadMissing}
+            title={`Download ${missingCount} missing tracks`}
+            className="flex items-center gap-2 rounded-full border border-[#1ed760]/40 bg-[#1ed760]/10 px-4 py-2 text-sm font-bold text-[#1ed760] hover:bg-[#1ed760]/20 transition-all"
+          >
+            <Download className="h-5 w-5" />
+            <span>Download missing ({missingCount})</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled
+            title="All playlist tracks are stored locally"
+            className="text-[#b3b3b3] disabled:opacity-50"
+          >
+            <Download className="h-9 w-9" />
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setIsAddOpen(true)}
@@ -169,6 +272,21 @@ export default function PlaylistDetail() {
         >
           <Plus className="h-10 w-10" />
         </button>
+        <button
+          type="button"
+          onClick={() => void publishOnline()}
+          disabled={isPublishing || (configured && !initialized)}
+          title={user ? 'Publish or update online playlist' : 'Sign in to publish online'}
+          className="flex h-10 items-center gap-2 rounded-full border border-white/20 px-4 text-sm font-bold text-[#d8d8d8] transition-colors hover:border-white/50 hover:text-white disabled:opacity-50"
+        >
+          {isPublishing ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <CloudUpload className="h-4 w-4" />
+          )}
+          {user ? 'Publish online' : 'Sign in to publish'}
+        </button>
+        {publishMessage && <span className="text-sm text-red-300">{publishMessage}</span>}
       </div>
 
       <div className="relative z-10 w-full min-w-0 px-4 pb-28 md:px-6 xl:px-10">
@@ -178,27 +296,50 @@ export default function PlaylistDetail() {
             <span>Title</span>
             <span className="hidden min-w-0 md:block">Album</span>
             <span className="hidden min-w-0 xl:block">Date added</span>
-            <span className="hidden min-w-0 xl:block">Quality</span>
+            <span className="hidden min-w-0 xl:block">Status / Quality</span>
             <Clock3 className="ml-auto h-4 w-4" />
           </div>
 
           {songs.length ? (
             songs.map((song, index) => {
-              const isCurrent = currentSong?.id === song.id
+              const isDownloaded = Boolean(song.filePath && !song.filePath.startsWith('virtual:'))
+              const isCurrent = isDownloaded && currentSong?.id === song.id
               const songArtwork = toMediaUrl(song.artworkPath)
               return (
                 <div
                   key={song.id}
-                  onDoubleClick={() => setQueue(songs, index)}
-                  className={`group grid h-16 w-full min-w-0 grid-cols-[32px_minmax(0,1fr)_64px] items-center gap-2 rounded px-2 text-sm hover:bg-white/10 md:grid-cols-[32px_minmax(0,2fr)_minmax(0,1fr)_64px] md:gap-3 xl:grid-cols-[32px_minmax(0,2.2fr)_minmax(0,1.2fr)_110px_minmax(0,1.1fr)_64px] xl:gap-4 xl:px-4 ${isCurrent ? 'bg-emerald-500/10' : ''}`}
+                  onDoubleClick={() => {
+                    if (isDownloaded) {
+                      const dlIndex = downloadedSongs.findIndex((s) => s.id === song.id)
+                      if (dlIndex >= 0) setQueue(downloadedSongs, dlIndex)
+                    } else {
+                      handleDownloadTrack(song)
+                    }
+                  }}
+                  className={`group grid h-16 w-full min-w-0 grid-cols-[32px_minmax(0,1fr)_64px] items-center gap-2 rounded px-2 text-sm hover:bg-white/10 md:grid-cols-[32px_minmax(0,2fr)_minmax(0,1fr)_64px] md:gap-3 xl:grid-cols-[32px_minmax(0,2.2fr)_minmax(0,1.2fr)_110px_minmax(0,1.1fr)_64px] xl:gap-4 xl:px-4 ${
+                    isCurrent ? 'bg-emerald-500/10' : !isDownloaded ? 'opacity-75 hover:opacity-100' : ''
+                  }`}
                 >
                   <button
                     type="button"
-                    onClick={() => setQueue(songs, index)}
-                    className={`relative flex h-8 items-center justify-start ${isCurrent ? 'text-[#1ed760]' : 'text-[#a7a7a7]'}`}
+                    onClick={() => {
+                      if (isDownloaded) {
+                        const dlIndex = downloadedSongs.findIndex((s) => s.id === song.id)
+                        if (dlIndex >= 0) setQueue(downloadedSongs, dlIndex)
+                      } else {
+                        handleDownloadTrack(song)
+                      }
+                    }}
+                    className={`relative flex h-8 items-center justify-start ${
+                      isCurrent ? 'text-[#1ed760]' : 'text-[#a7a7a7]'
+                    }`}
                   >
                     <span className="group-hover:hidden">{index + 1}</span>
-                    <Play className="hidden h-4 w-4 fill-current text-white group-hover:block" />
+                    {isDownloaded ? (
+                      <Play className="hidden h-4 w-4 fill-current text-white group-hover:block" />
+                    ) : (
+                      <Download className="hidden h-4 w-4 text-[#1ed760] group-hover:block" />
+                    )}
                   </button>
                   <div className="flex min-w-0 items-center gap-3">
                     <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded bg-[#282828]">
@@ -209,10 +350,19 @@ export default function PlaylistDetail() {
                       )}
                     </div>
                     <div className="min-w-0">
-                      <div
-                        className={`truncate text-[16px] ${isCurrent ? 'text-[#1ed760]' : 'text-white'}`}
-                      >
-                        {song.title}
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`truncate text-[16px] ${
+                            isCurrent ? 'text-[#1ed760]' : 'text-white'
+                          }`}
+                        >
+                          {song.title}
+                        </span>
+                        {!isDownloaded && (
+                          <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
+                            Missing
+                          </span>
+                        )}
                       </div>
                       <button
                         type="button"
@@ -234,12 +384,36 @@ export default function PlaylistDetail() {
                     {formatRelativeDate(song.playlistDateAdded)}
                   </div>
                   <div className="hidden min-w-0 items-center gap-2 overflow-hidden text-[#c4cad4] xl:flex">
-                    <span className="hidden shrink-0 font-mono text-xs text-[#9ba7ba] 2xl:inline">
-                      {formatBytes(song.size)}
-                    </span>
-                    <span className="truncate">{qualityLabel(song)}</span>
+                    {isDownloaded ? (
+                      <>
+                        <span className="hidden shrink-0 font-mono text-xs text-[#9ba7ba] 2xl:inline">
+                          {formatBytes(song.size)}
+                        </span>
+                        <span className="truncate">{qualityLabel(song)}</span>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadTrack(song)}
+                        className="flex items-center gap-1.5 rounded-full bg-white/10 hover:bg-[#1ed760] hover:text-black px-2.5 py-1 text-xs font-bold text-white transition-colors"
+                        title="Download track"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        <span>Download</span>
+                      </button>
+                    )}
                   </div>
                   <div className="flex items-center justify-end gap-2">
+                    {!isDownloaded && (
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadTrack(song)}
+                        title="Download track"
+                        className="p-1 text-[#1ed760] hover:scale-110 transition-transform md:hidden"
+                      >
+                        <Download className="h-4 w-4" />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => void removeSong(song.id)}

@@ -109,7 +109,8 @@ export default function CreatePlaylistModal({
       const playlist = await window.api.createPlaylist({
         name,
         description,
-        songIds: matchedSongs.map((song) => song.id)
+        tracks: importedTracks.length ? importedTracks : undefined,
+        songIds: importedTracks.length ? undefined : []
       })
       onCreated(playlist)
     } catch (err) {
@@ -348,8 +349,8 @@ export default function CreatePlaylistModal({
           >
             {isSaving
               ? 'Saving...'
-              : matchedSongs.length
-                ? `Save (${matchedSongs.length} Songs)`
+              : importedTracks.length
+                ? `Save (${importedTracks.length} Songs)`
                 : 'Save'}
           </button>
         </div>

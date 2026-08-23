@@ -1,10 +1,20 @@
 import crypto from 'crypto'
 import { getDb } from '../database'
 
+export interface CreatePlaylistTrackInput {
+  title: string
+  artist?: string
+  album?: string
+  duration?: number
+  matchedSongId?: string
+  coverArt?: string
+}
+
 export interface CreatePlaylistInput {
   name: string
   description?: string
   songIds?: string[]
+  tracks?: CreatePlaylistTrackInput[]
 }
 
 export class PlaylistService {
@@ -84,7 +94,6 @@ export class PlaylistService {
 
     const id = crypto.randomUUID()
     const db = getDb()
-    const songIds = [...new Set(input.songIds || [])]
     const create = db.transaction(() => {
       db.prepare(
         `
@@ -96,10 +105,43 @@ export class PlaylistService {
       const insertItem = db.prepare(
         `
           INSERT INTO playlist_items (id, playlistId, songId, sortOrder)
-          SELECT ?, ?, id, ? FROM songs WHERE id = ?
+          VALUES (?, ?, ?, ?)
         `
       )
-      songIds.forEach((songId, index) => insertItem.run(crypto.randomUUID(), id, index, songId))
+
+      let sortOrder = 0
+
+      if (Array.isArray(input.tracks) && input.tracks.length > 0) {
+        for (const track of input.tracks) {
+          let songId = track.matchedSongId
+
+          if (!songId) {
+            songId = crypto.randomUUID()
+            const title = (track.title || 'Unknown Track').trim()
+            const artist = (track.artist || 'Unknown Artist').trim()
+            const album = (track.album || '').trim()
+            const duration = Number(track.duration) || 0
+            const virtualPath = `virtual:imported:${crypto.randomUUID()}`
+
+            db.prepare(
+              `
+                INSERT INTO songs (id, title, artist, album, duration, filePath, size, isFavorite, playCount)
+                VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0)
+              `
+            ).run(songId, title, artist, album, duration, virtualPath)
+          }
+
+          insertItem.run(crypto.randomUUID(), id, songId, sortOrder++)
+        }
+      } else if (Array.isArray(input.songIds) && input.songIds.length > 0) {
+        const songIds = [...new Set(input.songIds)]
+        for (const songId of songIds) {
+          const exists = db.prepare('SELECT 1 FROM songs WHERE id = ?').get(songId)
+          if (exists) {
+            insertItem.run(crypto.randomUUID(), id, songId, sortOrder++)
+          }
+        }
+      }
     })
     create()
 

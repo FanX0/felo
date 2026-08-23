@@ -283,7 +283,9 @@ export class LibraryService {
 
   static async getSongs() {
     const songs = getDb()
-      .prepare('SELECT * FROM songs ORDER BY artist ASC, album ASC, trackNumber ASC, title ASC')
+      .prepare(
+        "SELECT * FROM songs WHERE filePath NOT LIKE 'virtual:%' ORDER BY artist ASC, album ASC, trackNumber ASC, title ASC"
+      )
       .all() as any[]
     await this.backfillMissingArtwork(songs)
     return songs
@@ -295,8 +297,9 @@ export class LibraryService {
         `
       SELECT a.*, COUNT(s.id) as songCount
       FROM artists a
-      LEFT JOIN songs s ON s.artistId = a.id
+      LEFT JOIN songs s ON s.artistId = a.id AND s.filePath NOT LIKE 'virtual:%'
       GROUP BY a.id
+      HAVING songCount > 0
       ORDER BY a.name ASC
     `
       )
@@ -310,8 +313,9 @@ export class LibraryService {
       SELECT al.*, ar.name as artistName, COUNT(s.id) as songCount
       FROM albums al
       LEFT JOIN artists ar ON al.artistId = ar.id
-      LEFT JOIN songs s ON s.albumId = al.id
+      LEFT JOIN songs s ON s.albumId = al.id AND s.filePath NOT LIKE 'virtual:%'
       GROUP BY al.id
+      HAVING songCount > 0
       ORDER BY al.title ASC
     `
       )

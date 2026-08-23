@@ -1,6 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AlertTriangle,
   CheckCircle2,
   ExternalLink,
   FileText,
@@ -12,6 +11,7 @@ import {
   Search,
   Trash2,
   UploadCloud,
+  Users,
   X
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -108,6 +108,13 @@ export default function Playlists() {
               className={`h-full min-w-0 flex-1 bg-transparent pr-3 text-[16px] text-white outline-none placeholder:text-[#bdbdbd] ${isSearchOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
             />
           </div>
+          <button
+            type="button"
+            onClick={() => navigate('/shared-playlists')}
+            className="flex h-[52px] items-center gap-3 rounded-full border border-white/15 px-6 text-[16px] font-black text-[#d8d8d8] transition-colors hover:border-white/35 hover:text-white"
+          >
+            <Users className="h-5 w-5" /> Online Playlists
+          </button>
           <button
             type="button"
             onClick={() => setIsCreateOpen(true)}
@@ -321,7 +328,13 @@ function parseImportCSV(text: string): ImportedTrack[] {
   )
   const artistIndex = findColumn(headers, ['artistnames', 'artistname', 'artist', 'artists'])
   const albumIndex = findColumn(headers, ['albumname', 'albumtitle', 'album'], ['image'])
-  const coverIndex = findColumn(headers, ['albumimageurl', 'imageurl', 'coverarturl', 'coverurl', 'image'])
+  const coverIndex = findColumn(headers, [
+    'albumimageurl',
+    'imageurl',
+    'coverarturl',
+    'coverurl',
+    'image'
+  ])
   const durationIndex = findColumn(headers, ['trackdurationms', 'durationms', 'duration', 'length'])
 
   if (titleIndex < 0) return []
@@ -364,7 +377,11 @@ function parseM3U(text: string): ImportedTrack[] {
       if (pending?.title) {
         tracks.push(pending)
       } else {
-        const filename = trimmed.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') || trimmed
+        const filename =
+          trimmed
+            .split(/[\\/]/)
+            .pop()
+            ?.replace(/\.[^.]+$/, '') || trimmed
         const [artist, title] = filename.includes(' - ')
           ? filename.split(' - ', 2)
           : ['Unknown Artist', filename]
@@ -438,7 +455,10 @@ function parseImportFile(text: string, fileName: string): ImportedTrack[] {
   return parseImportCSV(text)
 }
 
-function matchImportedTracks(importedTracks: ImportedTrack[], librarySongs: any[]): ImportedTrack[] {
+function matchImportedTracks(
+  importedTracks: ImportedTrack[],
+  librarySongs: any[]
+): ImportedTrack[] {
   return importedTracks.map((track) => {
     const title = normalizeImportValue(track.title)
     const artist = normalizeImportValue(track.artist)
@@ -531,10 +551,13 @@ function CreatePlaylistModal({
     try {
       setIsSaving(true)
       setError('')
-      const songIds = importedTracks
-        .map((track) => track.matchedSongId)
-        .filter((songId): songId is string => Boolean(songId))
-      onCreated(await window.api.createPlaylist({ name, description, songIds }))
+      const playlist = await window.api.createPlaylist({
+        name,
+        description,
+        tracks: importedTracks.length ? importedTracks : undefined,
+        songIds: importedTracks.length ? undefined : []
+      })
+      onCreated(playlist)
     } catch (err) {
       console.error('Failed to create playlist:', err)
       setError('Could not create the playlist.')
@@ -743,7 +766,9 @@ function CreatePlaylistModal({
                         {track.album ? ` · ${track.album}` : ''}
                       </div>
                     </div>
-                    <span className="text-xs text-[#9ca3af]">{formatImportDuration(track.duration)}</span>
+                    <span className="text-xs text-[#9ca3af]">
+                      {formatImportDuration(track.duration)}
+                    </span>
                     <span
                       title={track.matchedSongId ? 'Matched local song' : 'No local match'}
                       className={`h-2.5 w-2.5 rounded-full ${
@@ -758,16 +783,25 @@ function CreatePlaylistModal({
 
           <div className="mt-5 border-t border-white/10 pt-4">
             <div className="flex gap-2 text-xs leading-5 text-[#aeb7c4]">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#f59e0b]" />
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[#1ed760]" />
               <p>
-                Track matching uses your local library. Unmatched imported tracks are not added yet;
-                use the download panel to add missing audio after creating the playlist.
+                {importedTracks.length > 0
+                  ? `All ${importedTracks.length} tracks will be added to your playlist. ${
+                      importedTracks.length - matchedCount > 0
+                        ? `${importedTracks.length - matchedCount} tracks not yet in your local library can be downloaded directly from the playlist.`
+                        : 'All tracks matched in your local library!'
+                    }`
+                  : 'Track matching uses your local library.'}
               </p>
             </div>
           </div>
         </section>
 
-        {error && <p className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
+        {error && (
+          <p className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+            {error}
+          </p>
+        )}
 
         <div className="mt-7 flex justify-end gap-3">
           <button
@@ -782,7 +816,11 @@ function CreatePlaylistModal({
             disabled={!name.trim() || isSaving}
             className="rounded-full bg-[#15883e] px-8 py-3 font-black text-black hover:bg-[#1ed760] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isSaving ? 'Saving...' : importedTracks.length ? `Save (${matchedCount} Songs)` : 'Save'}
+            {isSaving
+              ? 'Saving...'
+              : importedTracks.length
+                ? `Save (${importedTracks.length} Songs)`
+                : 'Save'}
           </button>
         </div>
       </form>

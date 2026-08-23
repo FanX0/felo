@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, useRef } from 'react'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import {
   Search,
-  LayoutGrid,
   List,
   RefreshCw,
   ChevronDown,
@@ -15,7 +14,8 @@ import {
   Trash2,
   Plus,
   ArrowUp,
-  Check
+  Check,
+  Loader2
 } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useNavigate } from 'react-router-dom'
@@ -50,6 +50,8 @@ type LibraryViewMode = 'compact' | 'list'
 
 export default function Library({ onOpenDownloadPanel }: LibraryProps) {
   const [songs, setSongs] = useState<Song[]>([])
+  const [isLoadingSongs, setIsLoadingSongs] = useState(true)
+  const [hasLoadedSongs, setHasLoadedSongs] = useState(false)
   const [isScanning, setIsScanning] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchOpen, setIsSearchOpen] = useState(false)
@@ -68,16 +70,17 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
   const parentRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const viewMenuRef = useRef<HTMLDivElement>(null)
+  const loadGenerationRef = useRef(0)
 
   const filteredSongs = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
     const searchedSongs = !query
       ? songs
       : songs.filter((song) =>
-      [song.title, song.artist, song.album, song.genre]
-        .filter(Boolean)
-        .some((value) => value?.toLowerCase().includes(query))
-    )
+          [song.title, song.artist, song.album, song.genre]
+            .filter(Boolean)
+            .some((value) => value?.toLowerCase().includes(query))
+        )
     return [...searchedSongs].sort((left, right) => {
       if (sortKey === 'dateAdded') return (right.dateAdded || 0) - (left.dateAdded || 0)
       const leftValue = String(left[sortKey] || '').toLowerCase()
@@ -87,6 +90,8 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
   }, [songs, searchQuery, sortKey])
 
   const loadSongs = async () => {
+    const generation = ++loadGenerationRef.current
+    setIsLoadingSongs(true)
     try {
       if (window.api?.getSongs) {
         const data = await window.api.getSongs()
@@ -97,6 +102,11 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
       }
     } catch (err) {
       console.error('Failed to load songs:', err)
+    } finally {
+      if (generation === loadGenerationRef.current) {
+        setIsLoadingSongs(false)
+        setHasLoadedSongs(true)
+      }
     }
   }
 
@@ -200,8 +210,9 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
 
   const formatDuration = (seconds: number) => {
     if (!seconds || isNaN(seconds)) return '0:00'
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
+    const totalSeconds = Math.floor(seconds)
+    const mins = Math.floor(totalSeconds / 60)
+    const secs = totalSeconds % 60
     return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
@@ -268,73 +279,68 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
             />
           </div>
           <div ref={viewMenuRef} className="relative">
-          <div className="flex h-[52px] items-center overflow-hidden rounded-full bg-[#2a2a2a] p-1 text-[#b3b3b3]">
-            <button
-              type="button"
-              title="Grid view"
-              className="flex h-11 w-12 items-center justify-center rounded-full transition-colors hover:bg-white/10 hover:text-white"
-            >
-              <LayoutGrid className="h-5 w-5" />
-            </button>
             <button
               type="button"
               title="Sort and view options"
+              aria-expanded={isViewMenuOpen}
               onClick={(event) => {
                 event.stopPropagation()
                 setIsViewMenuOpen((isOpen) => !isOpen)
               }}
-              className="flex h-11 w-12 items-center justify-center rounded-full bg-white/10 text-white shadow-sm"
+              className={`flex h-[52px] w-[52px] items-center justify-center rounded-full text-[#b3b3b3] shadow-sm transition-colors hover:bg-[#333] hover:text-white ${
+                isViewMenuOpen ? 'bg-[#3a3a3a] text-white' : 'bg-[#2a2a2a]'
+              }`}
             >
               <List className="h-5 w-5" />
             </button>
-          </div>
-          {isViewMenuOpen && (
-            <div
-              className="absolute right-0 top-full z-[1000] mt-2 w-[170px] rounded-sm bg-[#282828] py-3 text-sm shadow-[0_8px_24px_rgba(0,0,0,0.55)]"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className="px-3 pb-2 text-xs font-black text-[#b3b3b3]">Sort by</div>
-              {(['title', 'dateAdded', 'artist', 'album'] as const).map((key) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setSortKey(key)}
-                  className={`flex w-full items-center justify-between px-3 py-2 text-left font-bold transition-colors hover:bg-white/10 ${
-                    sortKey === key ? 'text-[#1ed760]' : 'text-white'
-                  }`}
-                >
-                  <span>{sortLabels[key]}</span>
-                  {sortKey === key && <ArrowUp className="h-4 w-4" />}
-                </button>
-              ))}
+            {isViewMenuOpen && (
+              <div
+                className="absolute right-0 top-full z-[1000] mt-2 w-[170px] rounded-sm bg-[#282828] py-3 text-sm shadow-[0_8px_24px_rgba(0,0,0,0.55)]"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="px-3 pb-2 text-xs font-black text-[#b3b3b3]">Sort by</div>
+                {(['title', 'dateAdded', 'artist', 'album'] as const).map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setSortKey(key)}
+                    className={`flex w-full items-center justify-between px-3 py-2 text-left font-bold transition-colors hover:bg-white/10 ${
+                      sortKey === key ? 'text-[#1ed760]' : 'text-white'
+                    }`}
+                  >
+                    <span>{sortLabels[key]}</span>
+                    {sortKey === key && <ArrowUp className="h-4 w-4" />}
+                  </button>
+                ))}
 
-              <div className="mt-3 px-3 pb-2 text-xs font-black text-[#b3b3b3]">View as</div>
-              {(['compact', 'list'] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => setViewMode(mode)}
-                  className={`flex w-full items-center justify-between px-3 py-2 text-left font-bold transition-colors hover:bg-white/10 ${
-                    viewMode === mode ? 'text-[#1ed760]' : 'text-white'
-                  }`}
-                >
-                  <span className="flex items-center gap-3">
-                    <List className="h-4 w-4" />
-                    {mode === 'compact' ? 'Compact' : 'List'}
-                  </span>
-                  {viewMode === mode && <Check className="h-4 w-4" />}
-                </button>
-              ))}
-            </div>
-          )}
+                <div className="mt-3 px-3 pb-2 text-xs font-black text-[#b3b3b3]">View as</div>
+                {(['compact', 'list'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setViewMode(mode)}
+                    className={`flex w-full items-center justify-between px-3 py-2 text-left font-bold transition-colors hover:bg-white/10 ${
+                      viewMode === mode ? 'text-[#1ed760]' : 'text-white'
+                    }`}
+                  >
+                    <span className="flex items-center gap-3">
+                      <List className="h-4 w-4" />
+                      {mode === 'compact' ? 'Compact' : 'List'}
+                    </span>
+                    {viewMode === mode && <Check className="h-4 w-4" />}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <button
             type="button"
             title="Refresh library"
             onClick={loadSongs}
+            disabled={isLoadingSongs}
             className="flex h-[52px] w-[52px] items-center justify-center rounded-full bg-[#2a2a2a] text-[#b3b3b3] transition-colors hover:bg-[#333] hover:text-white"
           >
-            <RefreshCw className="h-5 w-5" />
+            <RefreshCw className={`h-5 w-5 ${isLoadingSongs ? 'animate-spin' : ''}`} />
           </button>
           <button
             type="button"
@@ -348,7 +354,21 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
         </div>
       </div>
 
-      {songs.length === 0 ? (
+      {isLoadingSongs && !hasLoadedSongs ? (
+        <div
+          className="flex flex-1 flex-col items-center justify-center gap-4 text-text-muted"
+          role="status"
+          aria-live="polite"
+        >
+          <Loader2 className="h-8 w-8 animate-spin text-success" />
+          <div className="text-center">
+            <p className="text-lg font-semibold text-text">Restoring your library...</p>
+            <p className="mt-1 text-sm text-text-muted">
+              Loading saved songs and artwork from this browser
+            </p>
+          </div>
+        </div>
+      ) : songs.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center text-text-muted gap-4">
           <p className="text-lg">Your library is empty.</p>
           <button
@@ -427,7 +447,9 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
                     </div>
 
                     <div className="flex items-center gap-3 overflow-hidden">
-                      <div className={`relative rounded-[4px] bg-surface-elevated shrink-0 shadow-sm flex items-center justify-center overflow-hidden ${viewMode === 'compact' ? 'h-8 w-8' : 'h-10 w-10'}`}>
+                      <div
+                        className={`relative rounded-[4px] bg-surface-elevated shrink-0 shadow-sm flex items-center justify-center overflow-hidden ${viewMode === 'compact' ? 'h-8 w-8' : 'h-10 w-10'}`}
+                      >
                         <span className="text-[8px] text-text-muted">Art</span>
                         {artworkUrl && (
                           <img

@@ -1,0 +1,18 @@
+{
+  "name": "Felo - Local-First Music Player",
+  "short_name": "Felo",
+  "description": "Organize, search, and play your personal music library.",
+  "start_url": "/#/library",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#111111",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

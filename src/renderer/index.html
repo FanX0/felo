@@ -1,12 +1,48 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Felo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Felo - Local-First Music Player</title>
+    <meta
+      name="description"
+      content="Felo is a local-first music player for organizing, searching, and playing your personal music library."
+    />
+    <meta name="application-name" content="Felo" />
+    <meta name="theme-color" content="#111111" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://felo-henna.vercel.app/" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="alternate icon" type="image/png" sizes="512x512" href="/icon.png" />
+    <link rel="apple-touch-icon" sizes="512x512" href="/icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Felo" />
+    <meta property="og:title" content="Felo - Local-First Music Player" />
+    <meta
+      property="og:description"
+      content="Organize, search, and play your personal music library with Felo."
+    />
+    <meta property="og:url" content="https://felo-henna.vercel.app/" />
+    <meta property="og:image" content="https://felo-henna.vercel.app/icon.png" />
+    <meta property="og:image:width" content="512" />
+    <meta property="og:image:height" content="512" />
+    <meta property="og:image:alt" content="Felo app icon" />
+
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Felo - Local-First Music Player" />
+    <meta
+      name="twitter:description"
+      content="Organize, search, and play your personal music library with Felo."
+    />
+    <meta name="twitter:image" content="https://felo-henna.vercel.app/icon.png" />
+    <meta name="twitter:image:alt" content="Felo app icon" />
     <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: media: https://*.mzstatic.com"
+      content="default-src 'self'; script-src 'self' https://itunes.apple.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://itunes.apple.com https://musicbrainz.org https://coverartarchive.org https://lrclib.net; img-src 'self' data: blob: media: https://*.mzstatic.com https://*.supabase.co https://coverartarchive.org https://*.archive.org; media-src 'self' blob: media:; object-src 'none'; base-uri 'self'"
     />
   </head>
 
