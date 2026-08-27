@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import '@uimaxbai/am-lyrics/am-lyrics.js'
-import { AmLyrics } from '@uimaxbai/am-lyrics/react'
 import { Languages, ListMusic, Music2, Sparkles } from 'lucide-react'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 
@@ -16,6 +15,21 @@ interface LyricsData {
   instrumental?: boolean
 }
 
+type AmLyricsElement = HTMLElement & {
+  query?: string
+  ttml?: string
+  songTitle?: string
+  songArtist?: string
+  songAlbum?: string
+  songDurationMs?: number
+  currentTime: number
+  showRomanization: boolean
+  showTranslation: boolean
+  requestUpdate?: () => void
+}
+
+const AmLyricsTag = 'am-lyrics' as any
+
 const TRANSLATION_LANGUAGES = [
   { code: 'en', label: 'English' },
   { code: 'id', label: 'Indonesian' },
@@ -29,13 +43,63 @@ const TRANSLATION_LANGUAGES = [
 ]
 
 function cleanMetadata(value: string) {
-  return value
+  let cleaned = value
+    .normalize('NFKC')
+    .replace(/\.[a-zA-Z0-9]{2,4}$/, '')
+    .replace(/^\s*\d{1,3}[.\-_)]+\s*/, '')
     .replace(
-      /\s*[\[(](?:official|audio|video|lyrics?|remaster(?:ed)?|feat\.?.*?|ft\.?.*?)[\])]\s*/gi,
+      /\s*[\[(]\s*(?:youtube|explicit|official(?:\s*(?:music|lyric|lyrics)?\s*(?:video|audio|mv)?)?|lyrics?(?:\s*video)?|remaster(?:ed)?(?:\s*[\d\w]+)?|hq|hd|visualizer|audio|video|mv|copyright[\s-]*free|feat\.?.*?|ft\.?.*?|single\s*version|bonus\s*track|deluxe(?:\s*edition)?|live(?:\s*at\s*.*)?|\d+)\s*[\])]\s*/gi,
       ' '
     )
+    .replace(/\s+(?:official\s*)?(?:music\s*)?(?:lyric(?:s)?\s*)?(?:video|audio|mv)\s*$/gi, '')
+    .replace(/\s+no\.\s*\d+\s*$/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
+
+  let previous = ''
+  while (cleaned !== previous) {
+    previous = cleaned
+    cleaned = cleaned.replace(/\s*[\[(]\s*(?:youtube|\d+)\s*[\])]\s*$/gi, '').trim()
+  }
+  return cleaned
+}
+
+function isPlaceholderMetadata(value?: string) {
+  return /^(?:unknown|untitled|n\/?a|none|null)(?:\s+(?:artist|album|track))?$/i.test(
+    value?.trim() || ''
+  )
+}
+
+function resolveSongMetadata(song?: { title: string; artist: string; album?: string }) {
+  let title = cleanMetadata(song?.title || '')
+  let artist = isPlaceholderMetadata(song?.artist) ? '' : cleanMetadata(song?.artist || '')
+  const album = isPlaceholderMetadata(song?.album) ? '' : cleanMetadata(song?.album || '')
+
+  const titleParts = title.match(/^(.+?)\s+[-\u2013\u2014|]\s+(.+)$/)
+  if (titleParts) {
+    const inferredArtist = cleanMetadata(titleParts[1])
+    const inferredTitle = cleanMetadata(titleParts[2])
+    const normalize = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s]/gu, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+    const knownArtist = normalize(artist)
+    const titleArtist = normalize(inferredArtist)
+    const titleContainsKnownArtist =
+      knownArtist &&
+      (knownArtist === titleArtist ||
+        knownArtist.includes(titleArtist) ||
+        titleArtist.includes(knownArtist))
+
+    if (!artist || titleContainsKnownArtist) {
+      artist = artist || inferredArtist
+      title = inferredTitle
+    }
+  }
+
+  return { title, artist, album }
 }
 
 function parseSyncedLyrics(lrc: string): ParsedLyric[] {
@@ -59,6 +123,98 @@ function parseSyncedLyrics(lrc: string): ParsedLyric[] {
     .sort((a, b) => a.time - b.time)
 }
 
+function escapeXml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+function formatTtmlTime(seconds: number) {
+  const safeSeconds = Math.max(0, seconds)
+  const minutes = Math.floor(safeSeconds / 60)
+  const remainingSeconds = safeSeconds - minutes * 60
+  return `${String(minutes).padStart(2, '0')}:${remainingSeconds.toFixed(3).padStart(6, '0')}`
+}
+
+function lyricsToTtml(
+  lines: ParsedLyric[],
+  plainLyrics: string,
+  duration?: number,
+  translations: string[] = [],
+  romanizations: string[] = [],
+  translationLanguage = 'en'
+) {
+  const parsedLines =
+    lines.length > 0
+      ? lines
+      : plainLyrics
+          .split('\n')
+          .map((text) => text.trim())
+          .filter(Boolean)
+          .map((text, index, allLines) => ({
+            time:
+              duration && duration > 0
+                ? (index * duration) / Math.max(allLines.length, 1)
+                : index * 4,
+            text
+          }))
+
+  if (parsedLines.length === 0) return ''
+
+  const translationMetadata = translations.length
+    ? `
+          <translations>
+            <translation lang="${escapeXml(translationLanguage)}">
+${translations
+  .map((text, index) => `              <text for="line-${index}">${escapeXml(text)}</text>`)
+  .join('\n')}
+            </translation>
+          </translations>`
+    : ''
+  const romanizationMetadata = romanizations.length
+    ? `
+          <transliterations>
+            <transliteration lang="Latn">
+${romanizations
+  .map((text, index) => `              <text for="line-${index}">${escapeXml(text)}</text>`)
+  .join('\n')}
+            </transliteration>
+          </transliterations>`
+    : ''
+  const metadata =
+    translationMetadata || romanizationMetadata
+      ? `
+  <head>
+    <metadata>
+      <iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">${translationMetadata}${romanizationMetadata}
+      </iTunesMetadata>
+    </metadata>
+  </head>`
+      : ''
+
+  const body = parsedLines
+    .map((line, index) => {
+      const nextTime = parsedLines[index + 1]?.time
+      const finalEnd = duration && duration > line.time ? duration : line.time + 5
+      const endTime = nextTime && nextTime > line.time ? nextTime : finalEnd
+      return `        <p itunes:key="line-${index}" begin="${formatTtmlTime(line.time)}" end="${formatTtmlTime(endTime)}">${escapeXml(line.text)}</p>`
+    })
+    .join('\n')
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+${metadata}
+  <body>
+    <div>
+${body}
+    </div>
+  </body>
+</tt>`
+}
+
 function getStoredMode() {
   const stored =
     localStorage.getItem('felo_lyrics_engine') || localStorage.getItem('fanx_lyrics_engine')
@@ -66,14 +222,12 @@ function getStoredMode() {
   return stored === 'am' || stored === 'classic' ? stored : 'classic'
 }
 
-async function translateLines(lines: string[], language: string) {
-  const joinedText = lines.join('\n')
-  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${language}&dt=t&q=${encodeURIComponent(joinedText)}`
-  const response = await fetch(url)
-  if (!response.ok) throw new Error(`Translation failed: ${response.status}`)
-  const data = await response.json()
-  const translated = data?.[0]?.map((segment: any) => segment?.[0]).join('') || ''
-  return translated.split('\n')
+function containsNonLatinLetters(lines: string[]) {
+  return lines.some((line) =>
+    [...line].some(
+      (character) => /\p{L}/u.test(character) && !/\p{Script=Latin}/u.test(character)
+    )
+  )
 }
 
 function ClassicLyricsDisplay({
@@ -81,13 +235,15 @@ function ClassicLyricsDisplay({
   plainLyrics,
   currentTime,
   onSeek,
-  translations
+  translations,
+  romanizations
 }: {
   lyrics: ParsedLyric[]
   plainLyrics: string
   currentTime: number
   onSeek: (time: number) => void
   translations: string[]
+  romanizations: string[]
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef<HTMLButtonElement>(null)
@@ -138,8 +294,11 @@ function ClassicLyricsDisplay({
               const isActive = index === currentIndex
               const isPast = index < currentIndex
               const translation = translations[index]
+              const romanization = romanizations[index]
               const showTranslation =
                 translation && translation.trim().toLowerCase() !== line.text.trim().toLowerCase()
+              const showRomanization =
+                romanization && romanization.trim().toLowerCase() !== line.text.trim().toLowerCase()
 
               return (
                 <button
@@ -157,8 +316,13 @@ function ClassicLyricsDisplay({
                   style={{ fontSize: 'clamp(2.25rem, 4vw, 3.5rem)' }}
                 >
                   <span>{line.text}</span>
-                  {showTranslation && (
+                  {showRomanization && (
                     <span className="mt-2 block text-[0.55em] font-semibold text-white/70">
+                      {romanization}
+                    </span>
+                  )}
+                  {showTranslation && (
+                    <span className="mt-2 block text-[0.55em] font-semibold text-white/55">
                       {translation}
                     </span>
                   )}
@@ -172,6 +336,11 @@ function ClassicLyricsDisplay({
                 style={{ fontSize: 'clamp(2rem, 3.7vw, 3.1rem)' }}
               >
                 <div>{line}</div>
+                {romanizations[index] && romanizations[index] !== line && (
+                  <div className="mt-2 text-[0.55em] font-semibold text-white/65">
+                    {romanizations[index]}
+                  </div>
+                )}
                 {translations[index] && translations[index] !== line && (
                   <div className="mt-2 text-[0.55em] font-semibold text-white/50">
                     {translations[index]}
@@ -194,18 +363,48 @@ export default function LyricsPage() {
   const [isTranslationOpen, setIsTranslationOpen] = useState(false)
   const [translations, setTranslations] = useState<string[]>([])
   const [isTranslating, setIsTranslating] = useState(false)
-  const amLyricsRef = useRef<any>(null)
+  const [romanizations, setRomanizations] = useState<string[]>([])
+  const [isRomanized, setIsRomanized] = useState(false)
+  const [isRomanizing, setIsRomanizing] = useState(false)
+  const amLyricsRef = useRef<AmLyricsElement | null>(null)
   const translationMenuRef = useRef<HTMLDivElement>(null)
+  const activeSongIdRef = useRef(currentSong?.id)
+  activeSongIdRef.current = currentSong?.id
 
-  const cleanTitle = cleanMetadata(currentSong?.title || '')
-  const cleanArtist = cleanMetadata(currentSong?.artist || '')
+  const resolvedMetadata = useMemo(
+    () => resolveSongMetadata(currentSong),
+    [currentSong?.title, currentSong?.artist, currentSong?.album]
+  )
+  const lookupDuration = currentSong?.duration || (duration > 0 ? Math.round(duration) : undefined)
   const backgroundColor = '#683014'
-  const searchQuery = cleanArtist ? `${cleanTitle} ${cleanArtist}` : cleanTitle
+  const searchQuery = resolvedMetadata.artist
+    ? `${resolvedMetadata.artist} ${resolvedMetadata.title}`
+    : resolvedMetadata.title
 
   const sourceLines = useMemo(() => {
     if (lyricsData?.syncedLyrics.length) return lyricsData.syncedLyrics.map((line) => line.text)
     return lyricsData?.plainLyrics.split('\n').filter((line) => line.trim()) || []
   }, [lyricsData])
+  const canRomanize = useMemo(() => containsNonLatinLetters(sourceLines), [sourceLines])
+  const amLyricsTtml = useMemo(
+    () =>
+      lyricsToTtml(
+        lyricsData?.syncedLyrics || [],
+        lyricsData?.plainLyrics || '',
+        lookupDuration,
+        translations,
+        romanizations,
+        translationLang
+      ),
+    [
+      lyricsData?.rawSyncedLyrics,
+      lyricsData?.plainLyrics,
+      lookupDuration,
+      translations,
+      romanizations,
+      translationLang
+    ]
+  )
 
   useEffect(() => {
     localStorage.setItem('felo_lyrics_engine', lyricsEngine)
@@ -233,14 +432,17 @@ export default function LyricsPage() {
       setIsLoading(true)
       setLyricsData(null)
       setTranslations([])
+      setRomanizations([])
+      setIsRomanized(false)
 
       try {
         const result = await window.api?.fetchLyrics?.({
-          title: cleanTitle || currentSong.title,
-          artist: cleanArtist || currentSong.artist,
-          album: currentSong.album,
-          duration: duration || currentSong.duration
+          title: resolvedMetadata.title || currentSong.title,
+          artist: resolvedMetadata.artist,
+          album: resolvedMetadata.album,
+          duration: lookupDuration
         })
+        if (controller.signal.aborted) return
         if (!result) throw new Error('No lyrics found')
 
         setLyricsData({
@@ -261,36 +463,90 @@ export default function LyricsPage() {
     return () => controller.abort()
   }, [
     currentSong?.id,
-    cleanTitle,
-    cleanArtist,
-    currentSong?.album,
-    currentSong?.duration,
-    duration
+    resolvedMetadata.title,
+    resolvedMetadata.artist,
+    resolvedMetadata.album,
+    lookupDuration
   ])
 
   useEffect(() => {
-    if (amLyricsRef.current) {
-      amLyricsRef.current.currentTime = currentTime * 1000
-    }
+    const element = amLyricsRef.current
+    if (!element || lyricsEngine !== 'am') return
+
+    element.songTitle = resolvedMetadata.title || currentSong?.title
+    element.songArtist = resolvedMetadata.artist || undefined
+    element.songAlbum = resolvedMetadata.album || undefined
+    element.songDurationMs = lookupDuration ? lookupDuration * 1000 : undefined
+    element.query = amLyricsTtml ? undefined : searchQuery || undefined
+    element.showTranslation = translations.length > 0
+    element.showRomanization = isRomanized && romanizations.length > 0
+    element.ttml = amLyricsTtml || undefined
+    element.currentTime = currentTime * 1000
+    element.requestUpdate?.()
+  }, [
+    lyricsEngine,
+    currentSong?.id,
+    currentSong?.title,
+    resolvedMetadata.title,
+    resolvedMetadata.artist,
+    resolvedMetadata.album,
+    lookupDuration,
+    searchQuery,
+    amLyricsTtml,
+    translations.length,
+    romanizations.length,
+    isRomanized
+  ])
+
+  useEffect(() => {
+    if (amLyricsRef.current) amLyricsRef.current.currentTime = currentTime * 1000
   }, [currentTime])
 
   const handleTranslate = useCallback(
     async (language: string) => {
-      setTranslationLang(language)
       setIsTranslationOpen(false)
       if (sourceLines.length === 0) return
 
+      const songId = currentSong?.id
       setIsTranslating(true)
       try {
-        setTranslations(await translateLines(sourceLines, language))
+        const translated = await window.api.translateLyrics(sourceLines, language)
+        if (activeSongIdRef.current !== songId) return
+        setTranslationLang(language)
+        setTranslations(translated)
       } catch (err) {
         console.error('Translation failed:', err)
       } finally {
         setIsTranslating(false)
       }
     },
-    [sourceLines]
+    [currentSong?.id, sourceLines]
   )
+
+  const handleRomanize = useCallback(async () => {
+    if (isRomanized) {
+      setIsRomanized(false)
+      return
+    }
+    if (!canRomanize || sourceLines.length === 0) return
+    if (romanizations.length === sourceLines.length) {
+      setIsRomanized(true)
+      return
+    }
+
+    const songId = currentSong?.id
+    setIsRomanizing(true)
+    try {
+      const romanized = await window.api.romanizeLyrics(sourceLines)
+      if (activeSongIdRef.current !== songId) return
+      setRomanizations(romanized)
+      setIsRomanized(true)
+    } catch (err) {
+      console.error('Romanization failed:', err)
+    } finally {
+      setIsRomanizing(false)
+    }
+  }, [canRomanize, currentSong?.id, isRomanized, romanizations.length, sourceLines])
 
   if (!currentSong) {
     return (
@@ -353,6 +609,19 @@ export default function LyricsPage() {
               <div className="border-b border-white/10 px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-white/40">
                 Translate to
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setTranslations([])
+                  setIsTranslationOpen(false)
+                }}
+                className={`flex w-full items-center justify-between border-b border-white/10 px-4 py-2.5 text-left text-sm transition-colors hover:bg-white/10 ${
+                  translations.length === 0 ? 'font-bold text-white' : 'text-white/75'
+                }`}
+              >
+                Original
+                {translations.length === 0 && <span className="text-primary-amber">OK</span>}
+              </button>
               {TRANSLATION_LANGUAGES.map((language) => (
                 <button
                   key={language.code}
@@ -363,7 +632,7 @@ export default function LyricsPage() {
                   }`}
                 >
                   {language.label}
-                  {translationLang === language.code && (
+                  {translations.length > 0 && translationLang === language.code && (
                     <span className="text-primary-amber">OK</span>
                   )}
                 </button>
@@ -374,10 +643,14 @@ export default function LyricsPage() {
 
         <button
           type="button"
-          title="Romanization"
-          className="rounded-[10px] border border-white/15 bg-white/10 px-3 py-2 text-sm font-black text-white/75 shadow-lg backdrop-blur-xl"
+          title={canRomanize ? 'Romanize to Latin' : 'Lyrics already use Latin characters'}
+          onClick={handleRomanize}
+          disabled={!canRomanize || isRomanizing}
+          className={`rounded-[10px] border border-white/15 px-3 py-2 text-sm font-black shadow-lg backdrop-blur-xl transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+            isRomanized ? 'bg-white/25 text-white' : 'bg-white/10 text-white/75 hover:bg-white/16'
+          }`}
         >
-          A/あ
+          {isRomanizing ? '...' : 'A/あ'}
         </button>
       </div>
 
@@ -385,33 +658,36 @@ export default function LyricsPage() {
         <div className="relative z-10 flex h-full items-center justify-center text-white">
           <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/15 border-t-white" />
         </div>
-      ) : lyricsEngine === 'am' ? (
-        <div className="relative z-10 mx-auto flex h-full max-w-[960px] items-center px-10">
-          <AmLyrics
-            ref={amLyricsRef}
-            songTitle={cleanTitle || currentSong.title}
-            songArtist={cleanArtist || currentSong.artist}
-            songAlbum={currentSong.album}
-            songDurationMs={(duration || currentSong.duration || 0) * 1000 || undefined}
-            query={searchQuery}
-            currentTime={currentTime * 1000}
-            className="h-full w-full text-white"
-            style={
-              {
-                '--lyplus-font-size-base': '42px',
-                '--wipe-gradient-width': '0.75em'
-              } as any
-            }
-          />
-        </div>
       ) : (
-        <ClassicLyricsDisplay
-          lyrics={lyricsData?.syncedLyrics || []}
-          plainLyrics={lyricsData?.plainLyrics || ''}
-          currentTime={currentTime}
-          onSeek={seek}
-          translations={translations}
-        />
+        <>
+          <div
+            className={`relative z-10 mx-auto h-full max-w-[960px] items-center px-10 ${
+              lyricsEngine === 'am' ? 'flex' : 'hidden'
+            }`}
+          >
+            <AmLyricsTag
+              key={`${currentSong.id}-${amLyricsTtml ? 'local' : 'remote'}`}
+              ref={amLyricsRef}
+              className="h-full w-full text-white"
+              style={
+                {
+                  '--lyplus-font-size-base': '42px',
+                  '--wipe-gradient-width': '0.75em'
+                } as any
+              }
+            />
+          </div>
+          <div className={lyricsEngine === 'classic' ? 'h-full' : 'hidden'}>
+            <ClassicLyricsDisplay
+              lyrics={lyricsData?.syncedLyrics || []}
+              plainLyrics={lyricsData?.plainLyrics || ''}
+              currentTime={currentTime}
+              onSeek={seek}
+              translations={translations}
+              romanizations={isRomanized ? romanizations : []}
+            />
+          </div>
+        </>
       )}
     </div>
   )
