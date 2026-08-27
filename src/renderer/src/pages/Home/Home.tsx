@@ -618,6 +618,11 @@ function upgradeArtwork(url?: string): string | undefined {
   return url.replace(/\/\d+x\d+bb\./, '/600x600bb.')
 }
 
+/** Strip source-suffix noise like "(Qobuz)", "(YouTube Music)", etc. from display titles. */
+function displayTitle(raw: string): string {
+  return stripSourceSuffix(raw)
+}
+
 export default function Home({ onOpenDownloadPanel }: HomeProps) {
   const navigate = useNavigate()
   const { queue, currentSongIndex, setQueue, updateSong, setIsPlaying } = usePlayerStore()
@@ -1290,11 +1295,11 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
 
                           {/* Track info */}
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-bold text-white">{track.title}</p>
+                            <p className="truncate text-sm font-bold text-white">{displayTitle(track.title)}</p>
                             <p className="truncate text-xs text-[#a7a7a7]">
                               {track.artist}
                               {track.album && (
-                                <> <span className="text-white/20">•</span> {track.album}</>
+                                <> <span className="text-white/20">•</span> {displayTitle(track.album)}</>
                               )}
                             </p>
                           </div>
@@ -1440,9 +1445,9 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                             className={`truncate text-[14px] font-bold ${
                               isCurrent ? 'text-[#1ed760]' : 'text-white'
                             }`}
-                            title={song.title}
+                            title={displayTitle(song.title)}
                           >
-                            {song.title}
+                            {displayTitle(song.title)}
                           </span>
                           {song.isExplicit && (
                             <span className="shrink-0 rounded bg-white/20 px-1 py-0.2 text-[9px] font-bold text-[#b3b3b3]">
