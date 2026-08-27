@@ -15,7 +15,11 @@ const ARTWORK_EXTENSIONS: Record<string, string> = {
 }
 
 export class LibraryService {
-  static async importDownloadedFile(filePath: string, rootId?: string | null) {
+  static async importDownloadedFile(
+    filePath: string,
+    rootId?: string | null,
+    metadataOverrides?: { title?: string; artist?: string }
+  ) {
     const resolvedPath = path.resolve(filePath)
     const db = getDb()
     const root = rootId
@@ -37,7 +41,7 @@ export class LibraryService {
     const metadata = await mm.parseFile(resolvedPath)
     const stats = fs.statSync(resolvedPath)
     const songId = crypto.createHash('md5').update(resolvedPath).digest('hex')
-    const artistName = metadata.common.artist || 'Unknown Artist'
+    const artistName = metadataOverrides?.artist || metadata.common.artist || 'Unknown Artist'
     const albumTitle = metadata.common.album || 'Unknown Album'
     const albumArtist = metadata.common.albumartist || artistName
     const artistId = crypto.createHash('md5').update(artistName.toLowerCase()).digest('hex')
@@ -68,7 +72,7 @@ export class LibraryService {
     `
     ).run(
       songId,
-      metadata.common.title || path.basename(resolvedPath, path.extname(resolvedPath)),
+      metadataOverrides?.title || metadata.common.title || path.basename(resolvedPath, path.extname(resolvedPath)),
       artistName,
       artistId,
       albumTitle,
@@ -342,6 +346,24 @@ export class LibraryService {
       ).run()
     })
     deleteRoot()
+  }
+
+  static relinkVirtualSong(songId: string, replacementSongId: string): void {
+    if (!songId || !replacementSongId || songId === replacementSongId) return
+    const db = getDb()
+    const virtualSong = db.prepare('SELECT filePath FROM songs WHERE id = ?').get(songId) as any
+    if (!String(virtualSong?.filePath || '').startsWith('virtual:')) return
+
+    const relink = db.transaction(() => {
+      db.prepare('UPDATE OR IGNORE playlist_items SET songId = ? WHERE songId = ?').run(
+        replacementSongId,
+        songId
+      )
+      db.prepare('DELETE FROM playlist_items WHERE songId = ?').run(songId)
+      db.prepare('DELETE FROM play_events WHERE songId = ?').run(songId)
+      db.prepare('DELETE FROM songs WHERE id = ?').run(songId)
+    })
+    relink()
   }
 
   static removeSong(songId: string) {

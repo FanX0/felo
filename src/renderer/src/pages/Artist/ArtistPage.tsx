@@ -15,7 +15,7 @@ import { toMediaUrl } from '../../lib/media'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import type { DownloadTarget } from '../../components/DownloadPanel/DownloadPanel'
 
-interface ArtistPageTrack {
+type ArtistPageTrack = {
   id: string
   title: string
   artist: string
@@ -23,9 +23,12 @@ interface ArtistPageTrack {
   duration: number
   artworkUrl: string
   isLocal: boolean
+  source?: ArtistSource
   localSong?: Song
   url?: string
 }
+
+type ArtistSource = 'library' | 'apple_music' | 'lastfm' | 'musicbrainz'
 
 interface ArtistPageProps {
   onOpenDownloadPanel?: (target: DownloadTarget) => void
@@ -35,6 +38,19 @@ function normalizeArtistName(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function normalizeTrackTitle(value: string): string {
+  return normalizeArtistName(value)
+    .replace(/\bunknown\s+artist\b/g, '')
+    .replace(/\s*\(\d+\)\s*$/g, '')
+    .replace(/\s*\((?:youtube|official)\)\s*$/g, '')
+    .replace(
+      /\s+(?:official\s+(?:music\s+)?video|official\s+mv|official\s+audio|lyrics?\s+video|music\s+video)\s*$/g,
+      ''
+    )
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -74,84 +90,118 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
   const decodedName = name ? decodeURIComponent(name) : 'Unknown Artist'
   const [songs, setSongs] = useState<Song[]>([])
   const [onlineTracks, setOnlineTracks] = useState<ArtistPageTrack[]>([])
+  const [artistSource, setArtistSource] = useState<ArtistSource>('library')
+  const [isOnlineLoading, setIsOnlineLoading] = useState(false)
+  const [onlineError, setOnlineError] = useState('')
   const [isFollowing, setIsFollowing] = useState(false)
   const { setQueue, togglePlay, queue, currentSongIndex, isPlaying } = usePlayerStore()
 
   useEffect(() => {
+    let mounted = true
     const loadSongs = async () => {
       try {
         const data = await window.api?.getSongs?.()
-        setSongs(data || [])
+        if (mounted) setSongs(data || [])
       } catch (err) {
         console.error('Failed to load artist songs:', err)
       }
     }
 
-    loadSongs()
+    void loadSongs()
+    window.addEventListener('felo:library-updated', loadSongs)
+    return () => {
+      mounted = false
+      window.removeEventListener('felo:library-updated', loadSongs)
+    }
   }, [])
 
   useEffect(() => {
+    if (artistSource === 'library') {
+      setOnlineTracks([])
+      setOnlineError('')
+      return
+    }
+
     let cancelled = false
-
     const loadOnlineTracks = async () => {
-      const seedKey = `felo_artist_seed:${normalizeArtistName(decodedName)}`
-      const seededTracks: ArtistPageTrack[] = []
-
+      setIsOnlineLoading(true)
+      setOnlineError('')
       try {
-        const rawSeed = sessionStorage.getItem(seedKey)
-        if (rawSeed) {
-          const item = JSON.parse(rawSeed)
-          seededTracks.push({
-            id: `seed-${item.id || item.title}`,
-            title: item.title || 'Unknown Track',
-            artist: item.artist || decodedName,
-            album: item.album || '',
-            duration: parseDuration(item.duration),
-            artworkUrl: item.thumbnail || '',
-            isLocal: false,
-            url: item.url || ''
-          })
+        let rawTracks: any[] = []
+        if (artistSource === 'apple_music') {
+          rawTracks = (await window.api?.searchAppleMusicArtistSongs?.(decodedName)) || []
+        } else {
+          const results = artistSource === 'lastfm'
+            ? await window.api?.searchLastFm?.(decodedName)
+            : await window.api?.searchMusicBrainz?.(decodedName)
+          rawTracks = results?.Songs || []
         }
-      } catch (err) {
-        console.warn('Failed to load artist seed:', err)
-      }
-
-      try {
-        const appleSongs = await window.api?.searchAppleMusicArtistSongs?.(decodedName)
-        const fetchedTracks: ArtistPageTrack[] = (appleSongs || [])
+        const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+        const fetchedTracks: ArtistPageTrack[] = rawTracks
           .filter((item: any) => item?.title && artistNameMatches(item.artist || '', decodedName))
-          .map((item: any) => ({
-            id: `online-${item.id || item.title}`,
-            title: item.title || 'Unknown Track',
-            artist: item.artist || decodedName,
-            album: item.album || '',
-            duration: parseDuration(item.duration),
-            artworkUrl: item.thumbnail || '',
-            isLocal: false,
-            url: item.url || ''
-          }))
+          .map((item: any) => {
+            const title = String(item.title)
+            const artist = String(item.artist || decodedName)
+            const localSong = songs.find(
+              (candidate) =>
+                normalize(candidate.title || '') === normalize(title) &&
+                (normalize(candidate.artist || '') === normalize(artist) ||
+                  normalize(candidate.artist || '') === normalize(decodedName))
+            )
+            return {
+              id: localSong?.id || `${artistSource}-${item.id || item.title}`,
+              title,
+              artist,
+              album: item.album || localSong?.album || '',
+              duration: parseDuration(item.duration) || localSong?.duration || 0,
+              artworkUrl: item.thumbnail || toMediaUrl(localSong?.artworkPath) || '',
+              isLocal: Boolean(localSong),
+              source: artistSource,
+              localSong,
+              url: item.url || ''
+            }
+          })
+        if (artistSource !== 'apple_music' && fetchedTracks.length) {
+          try {
+            const artworkTracks = (await window.api?.searchAppleMusicArtistSongs?.(decodedName)) || []
+            const artworkByTitle = new Map(
+              artworkTracks
+                .filter((item: any) => item?.title && item?.thumbnail)
+                .map((item: any) => [normalizeArtistName(item.title), item.thumbnail])
+            )
+            fetchedTracks.forEach((track) => {
+              if (!track.artworkUrl || track.artworkUrl.includes('last.fm')) {
+                track.artworkUrl = artworkByTitle.get(normalizeArtistName(track.title)) || track.artworkUrl
+              }
+            })
+          } catch (error) {
+            console.warn('Artist artwork fallback failed:', error)
+          }
+        }
 
         const seen = new Set<string>()
-        const nextTracks = [...seededTracks, ...fetchedTracks].filter((track) => {
+        const uniqueTracks = fetchedTracks.filter((track) => {
           const key = `${normalizeArtistName(track.title)}::${normalizeArtistName(track.artist)}`
           if (seen.has(key)) return false
           seen.add(key)
           return true
         })
-
-        if (!cancelled) setOnlineTracks(nextTracks)
+        if (!cancelled) setOnlineTracks(uniqueTracks)
       } catch (err) {
-        console.warn('Failed to fetch online artist tracks:', err)
-        if (!cancelled) setOnlineTracks(seededTracks)
+        console.warn(`Failed to fetch ${artistSource} artist tracks:`, err)
+        if (!cancelled) {
+          setOnlineTracks([])
+          setOnlineError(err instanceof Error ? err.message : 'Could not load artist tracks.')
+        }
+      } finally {
+        if (!cancelled) setIsOnlineLoading(false)
       }
     }
-
-    loadOnlineTracks()
-
+    void loadOnlineTracks()
     return () => {
       cancelled = true
     }
-  }, [decodedName])
+  }, [artistSource, decodedName])
 
   const artistSongs = useMemo(() => {
     return songs.filter((song) => artistNameMatches(song.artist || '', decodedName))
@@ -172,12 +222,19 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
       isLocal: true,
       localSong: song
     }))
-    const localTitles = new Set(localTracks.map((track) => normalizeArtistName(track.title)))
-    return [
-      ...localTracks,
-      ...onlineTracks.filter((track) => !localTitles.has(normalizeArtistName(track.title)))
-    ]
-  }, [artistSongs, onlineTracks])
+    if (artistSource === 'library') return localTracks
+
+    return onlineTracks.map((track) => {
+      const localSong = artistSongs.find(
+        (candidate) =>
+          normalizeTrackTitle(candidate.title || '') === normalizeTrackTitle(track.title) &&
+          artistNameMatches(candidate.artist || '', track.artist)
+      )
+      return localSong
+        ? { ...track, isLocal: true, localSong }
+        : track
+    })
+  }, [artistSongs, artistSource, onlineTracks])
 
   const currentSongArtwork =
     currentSong && artistNameMatches(currentSong.artist || '', decodedName)
@@ -186,7 +243,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
   const heroArtworkUrl =
     artistTracks.find((track) => track.artworkUrl)?.artworkUrl || currentSongArtwork || ''
   const artistPick = artistTracks[0]
-  const visibleSongs = artistTracks.slice(0, 5)
+  const visibleSongs = artistTracks
 
   const handlePlayAll = () => {
     if (!artistTracks.length) return
@@ -220,7 +277,9 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
         duration: track.duration,
         filePath: '',
         artworkUrl: track.artworkUrl,
-        isOnline: true
+        isOnline: true,
+        autoDownload: true,
+        autoPlay: true
       })
       return
     }
@@ -290,6 +349,9 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
           <img
             src={heroArtworkUrl}
             alt=""
+            onError={(event) => {
+              event.currentTarget.style.display = 'none'
+            }}
             className="h-12 w-12 rounded-md border-2 border-white/20 object-cover"
           />
         )}
@@ -326,15 +388,37 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
 
       <main className="grid grid-cols-[minmax(0,1.9fr)_minmax(300px,1fr)] gap-10 px-10 pb-14 max-[960px]:grid-cols-1">
         <section className="min-w-0">
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <h2 className="text-3xl font-black tracking-normal text-white">Popular</h2>
-            <span className="flex items-center gap-2 text-[14px] text-[#b3b3b3]">
-              <Globe2 className="h-4 w-4" />
-              {artistSongs.length} local • {onlineTracks.length} online
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <h2 className="text-3xl font-black tracking-normal text-white">Popular</h2>
+              <label className="flex items-center gap-2 text-xs text-[#b3b3b3]">
+                <Globe2 className="h-4 w-4" />
+                <select
+                  value={artistSource}
+                  onChange={(event) => setArtistSource(event.target.value as ArtistSource)}
+                  className="rounded-md border border-white/15 bg-[#282828] px-3 py-2 text-sm text-white outline-none"
+                >
+                  <option value="library">Library</option>
+                  <option value="apple_music">Apple Music</option>
+                  <option value="lastfm">Last.fm</option>
+                  <option value="musicbrainz">MusicBrainz</option>
+                </select>
+              </label>
+            </div>
+            <span className="text-[14px] text-[#b3b3b3]">
+              {artistSource === 'library' ? `${artistSongs.length} local tracks` : `${onlineTracks.length} ${artistSource.replace('_', ' ')} tracks`}
             </span>
           </div>
 
-          {visibleSongs.length ? (
+          {isOnlineLoading ? (
+            <div className="rounded-md border border-white/10 bg-white/[0.03] px-5 py-6 text-sm text-[#b3b3b3]">
+              Loading {artistSource.replace('_', ' ')} tracks...
+            </div>
+          ) : onlineError ? (
+            <div className="rounded-md border border-red-400/20 bg-red-400/5 px-5 py-6 text-sm text-red-300">
+              {onlineError}
+            </div>
+          ) : visibleSongs.length ? (
             <div className="flex flex-col">
               {visibleSongs.map((song, index) => {
                 const isCurrent = currentSong?.id === song.localSong?.id
@@ -344,10 +428,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
                   <button
                     key={song.id}
                     type="button"
-                    onClick={() => {
-                      if (!song.localSong) handlePlaySong(index)
-                    }}
-                    onDoubleClick={() => handlePlaySong(index)}
+                    onClick={() => handlePlaySong(index)}
                     className={`group grid h-[58px] grid-cols-[36px_48px_minmax(180px,1fr)_minmax(110px,0.7fr)_72px] items-center gap-3 rounded px-3 text-left transition-colors hover:bg-white/10 ${
                       isCurrent ? 'bg-white/15' : ''
                     }`}
@@ -377,7 +458,14 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
 
                     <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded bg-[#282828] text-[#777]">
                       {artworkUrl ? (
-                        <img src={artworkUrl} alt="" className="h-full w-full object-cover" />
+                        <img
+                          src={artworkUrl}
+                          alt=""
+                          onError={(event) => {
+                            event.currentTarget.style.display = 'none'
+                          }}
+                          className="h-full w-full object-cover"
+                        />
                       ) : (
                         <Music2 className="h-5 w-5" />
                       )}
@@ -420,7 +508,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
             </div>
           ) : (
             <div className="rounded-md border border-white/10 bg-white/[0.03] px-5 py-6 text-sm text-[#b3b3b3]">
-              No tracks found for this artist in your local library.
+              No tracks found for this artist from {artistSource === 'library' ? 'your local library' : artistSource.replace('_', ' ')}.
             </div>
           )}
         </section>
@@ -435,7 +523,14 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
           >
             <span className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded bg-[#282828] text-[#777]">
               {heroArtworkUrl ? (
-                <img src={heroArtworkUrl} alt="" className="h-full w-full object-cover" />
+                <img
+                  src={heroArtworkUrl}
+                  alt=""
+                  onError={(event) => {
+                    event.currentTarget.style.display = 'none'
+                  }}
+                  className="h-full w-full object-cover"
+                />
               ) : (
                 <Music2 className="h-8 w-8" />
               )}
@@ -443,7 +538,14 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
             <span className="min-w-0">
               <span className="mb-2 flex items-center gap-2 text-[13px] font-bold text-[#b3b3b3]">
                 {heroArtworkUrl && (
-                  <img src={heroArtworkUrl} alt="" className="h-6 w-6 rounded-full object-cover" />
+                  <img
+                    src={heroArtworkUrl}
+                    alt=""
+                    onError={(event) => {
+                      event.currentTarget.style.display = 'none'
+                    }}
+                    className="h-6 w-6 rounded-full object-cover"
+                  />
                 )}
                 <span className="truncate">Posted By {decodedName}</span>
               </span>

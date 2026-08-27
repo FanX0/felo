@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   CheckCircle2,
   ExternalLink,
@@ -7,11 +8,11 @@ import {
   MoreVertical,
   Music2,
   Play,
+  Pencil,
   Plus,
   Search,
   Trash2,
   UploadCloud,
-  Users,
   X
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -26,7 +27,11 @@ export default function Playlists() {
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [isCreateOpen, setIsCreateOpen] = useState(false)
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null)
+  const [activeMenu, setActiveMenu] = useState<{
+    playlist: Playlist
+    x: number
+    y: number
+  } | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -52,6 +57,16 @@ export default function Playlists() {
     if (isSearchOpen) searchInputRef.current?.focus()
   }, [isSearchOpen])
 
+  useEffect(() => {
+    const closeMenu = () => setActiveMenu(null)
+    window.addEventListener('click', closeMenu)
+    window.addEventListener('resize', closeMenu)
+    return () => {
+      window.removeEventListener('click', closeMenu)
+      window.removeEventListener('resize', closeMenu)
+    }
+  }, [])
+
   const filteredPlaylists = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
     if (!query) return playlists
@@ -67,12 +82,33 @@ export default function Playlists() {
     if (playlist?.songs?.length) setQueue(playlist.songs, 0)
   }
 
+  const renamePlaylist = async (playlistId: string) => {
+    const playlist = playlists.find((item) => item.id === playlistId)
+    const nextName = window.prompt('Rename playlist', playlist?.name || '')?.trim()
+    if (!nextName || nextName === playlist?.name) return
+    try {
+      const updated = await window.api.renamePlaylist(playlistId, nextName)
+      setPlaylists((current) =>
+        current.map((item) => (item.id === playlistId ? { ...item, ...updated } : item))
+      )
+      setActiveMenu(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to rename playlist.')
+    }
+  }
+
   const deletePlaylist = async (playlistId: string) => {
     const playlist = playlists.find((item) => item.id === playlistId)
-    if (!window.confirm(`Delete "${playlist?.name || 'this playlist'}"?`)) return
+    if (
+      !window.confirm(
+        `Delete "${playlist?.name || 'this playlist'}"? Songs will remain in your library.`
+      )
+    )
+      return
     await window.api.deletePlaylist(playlistId)
     setPlaylists((current) => current.filter((playlist) => playlist.id !== playlistId))
-    setOpenMenuId(null)
+    window.dispatchEvent(new CustomEvent('felo:playlists-updated'))
+    setActiveMenu(null)
   }
 
   return (
@@ -108,13 +144,7 @@ export default function Playlists() {
               className={`h-full min-w-0 flex-1 bg-transparent pr-3 text-[16px] text-white outline-none placeholder:text-[#bdbdbd] ${isSearchOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
             />
           </div>
-          <button
-            type="button"
-            onClick={() => navigate('/shared-playlists')}
-            className="flex h-[52px] items-center gap-3 rounded-full border border-white/15 px-6 text-[16px] font-black text-[#d8d8d8] transition-colors hover:border-white/35 hover:text-white"
-          >
-            <Users className="h-5 w-5" /> Online Playlists
-          </button>
+
           <button
             type="button"
             onClick={() => setIsCreateOpen(true)}
@@ -186,27 +216,31 @@ export default function Playlists() {
                     title="Playlist options"
                     onClick={(event) => {
                       event.stopPropagation()
-                      setOpenMenuId((current) => (current === playlist.id ? null : playlist.id))
+                      const rect = event.currentTarget.getBoundingClientRect()
+                      const menuWidth = 220
+                      const menuHeight = 104
+                      setActiveMenu((current) =>
+                        current?.playlist.id === playlist.id
+                          ? null
+                          : {
+                              playlist,
+                              x: Math.min(
+                                rect.right - menuWidth,
+                                window.innerWidth - menuWidth - 12
+                              ),
+                              y: Math.min(rect.bottom + 8, window.innerHeight - menuHeight - 12)
+                            }
+                      )
                     }}
-                    className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center text-[#b3b3b3] opacity-0 transition-opacity hover:text-white group-hover:opacity-100"
+                    className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[3px] border transition-all ${
+                      activeMenu?.playlist.id === playlist.id
+                        ? 'border-primary-amber bg-hover text-text opacity-100'
+                        : 'border-transparent text-[#b3b3b3] opacity-0 group-hover:opacity-100 hover:border-primary-amber hover:bg-hover hover:text-white'
+                    }`}
                   >
                     <MoreVertical className="h-5 w-5" />
                   </button>
                 </div>
-                {openMenuId === playlist.id && (
-                  <div className="absolute bottom-12 right-3 z-20 w-48 rounded-md border border-white/10 bg-[#282828] p-1 shadow-2xl">
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        void deletePlaylist(playlist.id)
-                      }}
-                      className="flex w-full items-center gap-3 rounded px-3 py-2 text-sm text-red-400 hover:bg-white/10"
-                    >
-                      <Trash2 className="h-4 w-4" /> Delete playlist
-                    </button>
-                  </div>
-                )}
               </div>
             )
           })}
@@ -233,6 +267,45 @@ export default function Playlists() {
           )}
         </div>
       )}
+
+      {activeMenu &&
+        createPortal(
+          <div
+            className="fixed z-[9999] w-[220px] rounded-lg border border-white/15 bg-[#1a1a1a] p-1 shadow-[0_8px_24px_rgba(0,0,0,0.8),0_2px_8px_rgba(0,0,0,0.4)]"
+            style={{ left: activeMenu.x, top: activeMenu.y }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                void playPlaylist(activeMenu.playlist.id)
+                setActiveMenu(null)
+              }}
+              disabled={activeMenu.playlist.songCount === 0}
+              className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Play className="h-4 w-4 fill-current" />
+              Play
+            </button>
+            <button
+              type="button"
+              onClick={() => void renamePlaylist(activeMenu.playlist.id)}
+              className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+            >
+              <Pencil className="h-4 w-4" />
+              Rename playlist
+            </button>
+            <button
+              type="button"
+              onClick={() => void deletePlaylist(activeMenu.playlist.id)}
+              className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-danger transition-colors hover:bg-danger/10"
+            >
+              <Trash2 className="h-4 w-4 fill-current" />
+              Remove playlist
+            </button>
+          </div>,
+          document.body
+        )}
 
       {isCreateOpen && (
         <CreatePlaylistModal
@@ -577,9 +650,9 @@ function CreatePlaylistModal({
             ? '.xml'
             : '.m3u,.m3u8'
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/75 p-4"
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/75 p-4"
       onMouseDown={onClose}
     >
       <form
@@ -824,6 +897,7 @@ function CreatePlaylistModal({
           </button>
         </div>
       </form>
-    </div>
+    </div>,
+    document.body
   )
 }

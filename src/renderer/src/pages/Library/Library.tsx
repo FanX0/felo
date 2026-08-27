@@ -15,7 +15,8 @@ import {
   Plus,
   ArrowUp,
   Check,
-  Loader2
+  Loader2,
+  Share2
 } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useNavigate } from 'react-router-dom'
@@ -186,6 +187,22 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     })
   }
 
+  const handleShareSong = (song: Song) => {
+    sessionStorage.setItem(
+      'felo:pending-chat-song',
+      JSON.stringify({
+        localId: song.id,
+        title: song.title,
+        artist: song.artist,
+        album: song.album,
+        duration: song.duration,
+        artworkUrl: toMediaUrl(song.artworkPath)
+      })
+    )
+    navigate('/chat')
+    setActiveMenu(null)
+  }
+
   const handleShowInExplorer = async (song: Song) => {
     try {
       await window.api?.revealInExplorer(song.filePath)
@@ -221,12 +238,25 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     return (bytes / (1024 * 1024)).toFixed(2) + ' MB'
   }
 
-  const formatAudioQuality = (sampleRate?: number, bitrate?: number) => {
-    // Just mock calculation or use directly if parsed accurately
-    // usually sampleRate is 44100, bitrate is 320000 etc.
-    const khz = sampleRate ? (sampleRate / 1000).toFixed(1) : '44.1'
-    const bit = bitrate && bitrate > 320000 ? '24 bit' : '16 bit'
-    return `${khz}kHz / ${bit}`
+  const formatAudioQuality = (song: Song) => {
+    const rawFormat = String(song.codec || song.container || '').toLowerCase()
+    const format = rawFormat.includes('mp3') || /mpeg.*layer\s*3/.test(rawFormat)
+      ? 'MP3'
+      : rawFormat.includes('flac')
+        ? 'FLAC'
+        : rawFormat.includes('m4a') || rawFormat.includes('aac')
+          ? 'AAC'
+          : rawFormat.includes('opus')
+            ? 'OPUS'
+            : rawFormat.includes('wav')
+              ? 'WAV'
+              : rawFormat.includes('ogg')
+                ? 'OGG'
+                : rawFormat.toUpperCase()
+    const rate = song.sampleRate ? `${(song.sampleRate / 1000).toFixed(1)} kHz` : ''
+    const depth = song.bitDepth ? `${song.bitDepth}-bit` : ''
+    const bitrate = song.bitrate ? `${Math.round(song.bitrate / 1000)} kbps` : ''
+    return [format, [depth, rate, bitrate].filter(Boolean).join(' / ')].filter(Boolean).join(' • ') || 'Unknown format'
   }
 
   const sortLabels: Record<LibrarySortKey, string> = {
@@ -491,8 +521,8 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
                       <span className="hidden shrink-0 text-[11px] font-mono 2xl:inline">
                         {formatSize(song.size)}
                       </span>
-                      <span className="hidden min-w-0 truncate rounded-full border border-primary-amber/30 bg-primary-amber/5 px-2 py-0.5 text-[9px] font-bold tracking-wide text-primary-amber xl:inline-block">
-                        {formatAudioQuality(song.sampleRate, song.bitrate)}
+                      <span className="hidden min-w-0 truncate rounded-full border border-white/15 bg-[#2a2a2a] px-2 py-0.5 text-[9px] font-bold tracking-wide text-[#b3b3b3] xl:inline-block">
+                        {formatAudioQuality(song)}
                       </span>
                       <button
                         type="button"
@@ -530,6 +560,14 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
           >
             <Play className="h-4 w-4 fill-current" />
             Play
+          </button>
+          <button
+            type="button"
+            onClick={() => handleShareSong(activeMenu.song)}
+            className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+          >
+            <Share2 className="h-4 w-4" />
+            Share to Friend Chat
           </button>
           <button
             type="button"

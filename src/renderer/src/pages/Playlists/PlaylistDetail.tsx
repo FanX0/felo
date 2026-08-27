@@ -1,15 +1,19 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Clock3,
   CloudUpload,
   Download,
   Loader2,
   Music2,
+  MoreVertical,
+  Pencil,
   Pause,
   Play,
   Plus,
   Search,
   Trash2,
+  UserPlus,
   X
 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -17,6 +21,7 @@ import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { toMediaUrl } from '../../lib/media'
 import { publishLocalPlaylist } from '../../lib/onlinePlaylists'
+import { getSupabase } from '../../lib/supabase'
 import { Song } from '../Library/Library'
 import { Playlist } from './types'
 
@@ -41,10 +46,62 @@ function formatRelativeDate(timestamp: number): string {
   return new Date(timestamp * 1000).toLocaleDateString()
 }
 
+function songMatchKey(title: string, artist = ''): string {
+  return `${title}::${artist}`
+    .toLowerCase()
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function findMatchingLibrarySong(playlistSong: Song, librarySongs: Song[]): Song | undefined {
+  const normalize = (value: string) => songMatchKey(value)
+  const playlistTitle = normalize(playlistSong.title || '')
+  const playlistArtist = normalize(playlistSong.artist || '')
+  const titleCandidates = [playlistTitle]
+  const displayTitle = playlistSong.title || ''
+  const dashIndex = displayTitle.indexOf(' - ')
+  if (dashIndex >= 0) titleCandidates.push(normalize(displayTitle.slice(dashIndex + 3)))
+
+  return librarySongs.find((local) => {
+    if (!local?.filePath || local.filePath.startsWith('virtual:')) return false
+    const localTitle = normalize(local.title || '')
+    const localArtist = normalize(local.artist || '')
+    const titleMatches = titleCandidates.some(
+      (candidate) =>
+        candidate === localTitle || candidate.includes(localTitle) || localTitle.includes(candidate)
+    )
+    if (!titleMatches) return false
+    return (
+      !playlistArtist ||
+      playlistArtist === 'unknown artist' ||
+      localArtist === playlistArtist ||
+      localArtist.includes(playlistArtist) ||
+      playlistArtist.includes(localArtist)
+    )
+  })
+}
+
 function qualityLabel(song: Song): string {
-  const rate = song.sampleRate ? `${song.sampleRate / 1000}kHz` : ''
-  const depth = song.bitDepth ? `${song.bitDepth} bit` : ''
-  return [rate, depth].filter(Boolean).join(' / ') || song.codec || song.container || ''
+  const rawFormat = String(song.codec || song.container || '').toLowerCase()
+  const format =
+    rawFormat.includes('mp3') || /mpeg.*layer\s*3/.test(rawFormat)
+      ? 'MP3'
+      : rawFormat.includes('flac')
+        ? 'FLAC'
+        : rawFormat.includes('m4a') || rawFormat.includes('aac')
+          ? 'AAC'
+          : rawFormat.includes('opus')
+            ? 'OPUS'
+            : rawFormat.includes('wav')
+              ? 'WAV'
+              : rawFormat.includes('ogg')
+                ? 'OGG'
+                : rawFormat.toUpperCase()
+  const rate = song.sampleRate ? `${(song.sampleRate / 1000).toFixed(1)} kHz` : ''
+  const depth = song.bitDepth ? `${song.bitDepth}-bit` : ''
+  const technical = [depth, rate].filter(Boolean).join(' / ')
+  return [format, technical].filter(Boolean).join(' • ') || 'Unknown format'
 }
 
 import type { DownloadTarget } from '../../components/DownloadPanel/DownloadPanel'
@@ -56,7 +113,7 @@ interface PlaylistDetailProps {
 export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailProps) {
   const { id = '' } = useParams()
   const navigate = useNavigate()
-  const { queue, currentSongIndex, isPlaying, setQueue, togglePlay } = usePlayerStore()
+  const { queue, currentSongIndex, isPlaying, setQueue, enqueueSong, togglePlay } = usePlayerStore()
   const { configured, initialized, user } = useOnlineStore()
   const [playlist, setPlaylist] = useState<Playlist | null>(null)
   const [librarySongs, setLibrarySongs] = useState<Song[]>([])
@@ -64,6 +121,21 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   const [isAddOpen, setIsAddOpen] = useState(false)
   const [isPublishing, setIsPublishing] = useState(false)
   const [publishMessage, setPublishMessage] = useState('')
+  const [onlinePlaylistId, setOnlinePlaylistId] = useState<string | null>(null)
+  const [inviteUsername, setInviteUsername] = useState('')
+  const [inviteMessage, setInviteMessage] = useState('')
+  const [isInviting, setIsInviting] = useState(false)
+  const [isActionsOpen, setIsActionsOpen] = useState(false)
+  const [isRenameOpen, setIsRenameOpen] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [playlistActionError, setPlaylistActionError] = useState('')
+  const [activeSongMenu, setActiveSongMenu] = useState<{
+    song: Song
+    x: number
+    y: number
+  } | null>(null)
+  const downloadMissingPlaylistRef = useRef(false)
 
   const loadPlaylist = async () => {
     setIsLoading(true)
@@ -84,11 +156,37 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
       .then((songs) => setLibrarySongs(songs || []))
       .catch(console.error)
 
-    const handleUpdate = () => void loadPlaylist()
+    const refreshPlaylistAndLibrary = async () => {
+      const [nextPlaylist, nextSongs] = await Promise.all([
+        window.api.getPlaylist(id) as Promise<Playlist | null>,
+        window.api.getSongs()
+      ])
+      setPlaylist(nextPlaylist)
+      setLibrarySongs(nextSongs || [])
+      return { nextPlaylist, nextSongs: (nextSongs || []) as Song[] }
+    }
+    const handleUpdate = () => void refreshPlaylistAndLibrary().catch(console.error)
     window.addEventListener('felo:library-updated', handleUpdate)
-    const cleanup = window.api?.onDownloadProgress?.((event: any) => {
-      if (event?.status === 'completed') {
-        void loadPlaylist()
+    const cleanup = window.api?.onDownloadProgress?.(async (event: any) => {
+      if (event?.status !== 'completed') return
+      try {
+        const { nextPlaylist, nextSongs } = await refreshPlaylistAndLibrary()
+        if (!downloadMissingPlaylistRef.current || !nextPlaylist) return
+
+        const completedLocalSong = event.song?.id
+          ? nextSongs.find((song) => song.id === event.song.id)
+          : nextSongs.find(
+              (song) =>
+                songMatchKey(song.title || '') === songMatchKey(event.song?.title || '') &&
+                songMatchKey(song.artist || '') === songMatchKey(event.song?.artist || '')
+            )
+        if (completedLocalSong) enqueueSong(completedLocalSong)
+
+        // Stop after the selected track. The next missing track is downloaded
+        // only when the user selects it, matching Infinite Radio behavior.
+        downloadMissingPlaylistRef.current = false
+      } catch (error) {
+        console.error('Failed to continue playlist downloads:', error)
       }
     })
     return () => {
@@ -97,7 +195,26 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     }
   }, [id])
 
-  const songs = playlist?.songs || []
+  useEffect(() => {
+    const closeMenu = () => setActiveSongMenu(null)
+    window.addEventListener('click', closeMenu)
+    window.addEventListener('resize', closeMenu)
+    return () => {
+      window.removeEventListener('click', closeMenu)
+      window.removeEventListener('resize', closeMenu)
+    }
+  }, [])
+
+  const playlistSongs = playlist?.songs || []
+  const songs = useMemo(
+    () =>
+      playlistSongs.map((song) => {
+        if (song.filePath && !song.filePath.startsWith('virtual:')) return song
+        const localMatch = findMatchingLibrarySong(song, librarySongs)
+        return localMatch ? { ...song, ...localMatch, id: localMatch.id } : song
+      }),
+    [librarySongs, playlistSongs]
+  )
   const downloadedSongs = useMemo(
     () => songs.filter((song) => song.filePath && !song.filePath.startsWith('virtual:')),
     [songs]
@@ -114,7 +231,20 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     else setQueue(downloadedSongs, 0)
   }
 
-  const handleDownloadTrack = (song: Song) => {
+  const handleTrackClick = (song: Song) => {
+    if (song.filePath && !song.filePath.startsWith('virtual:')) {
+      // An explicit local-track selection should not continue a background
+      // "download missing" sequence or trigger the next missing track.
+      downloadMissingPlaylistRef.current = false
+      const dlIndex = downloadedSongs.findIndex((item) => item.id === song.id)
+      if (dlIndex >= 0) setQueue(downloadedSongs, dlIndex)
+      return
+    }
+    downloadMissingPlaylistRef.current = false
+    handleDownloadTrack(song)
+  }
+
+  const handleDownloadTrack = (song: Song, autoPlay = true) => {
     onOpenDownloadPanel?.({
       id: song.id,
       title: song.title,
@@ -122,13 +252,18 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
       album: song.album || '',
       duration: song.duration || 0,
       artworkPath: song.artworkPath,
-      isOnline: true
+      isOnline: true,
+      autoDownload: true,
+      autoPlay
     })
   }
 
   const handleDownloadMissing = () => {
-    const firstMissing = songs.find((song) => !song.filePath || song.filePath.startsWith('virtual:'))
+    const firstMissing = songs.find(
+      (song) => !song.filePath || song.filePath.startsWith('virtual:')
+    )
     if (firstMissing) {
+      downloadMissingPlaylistRef.current = true
       handleDownloadTrack(firstMissing)
     }
   }
@@ -136,6 +271,35 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   const removeSong = async (songId: string) => {
     const updated = await window.api.removeSongFromPlaylist(id, songId)
     setPlaylist(updated)
+  }
+
+  const renamePlaylist = async () => {
+    const nextName = renameValue.trim()
+    if (!nextName || !playlist) return
+    setIsRenaming(true)
+    setPlaylistActionError('')
+    try {
+      const updated = await window.api.renamePlaylist(id, nextName)
+      setPlaylist(updated)
+      setIsRenameOpen(false)
+      setIsActionsOpen(false)
+    } catch (error) {
+      setPlaylistActionError(error instanceof Error ? error.message : 'Unable to rename playlist.')
+    } finally {
+      setIsRenaming(false)
+    }
+  }
+
+  const deletePlaylist = async () => {
+    if (!playlist) return
+    if (!window.confirm(`Remove "${playlist.name}"? Songs will remain in your library.`)) return
+    try {
+      await window.api.deletePlaylist(id)
+      window.dispatchEvent(new CustomEvent('felo:playlists-updated'))
+      navigate('/playlists')
+    } catch (error) {
+      setPlaylistActionError(error instanceof Error ? error.message : 'Unable to remove playlist.')
+    }
   }
 
   const publishOnline = async (): Promise<void> => {
@@ -152,12 +316,50 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     setIsPublishing(true)
     setPublishMessage('')
     try {
-      await publishLocalPlaylist(playlist)
-      navigate('/shared-playlists')
+      const sharedPlaylistId = await publishLocalPlaylist(playlist)
+      setOnlinePlaylistId(sharedPlaylistId)
+      setPublishMessage('Playlist published online. Invite a friend to collaborate.')
     } catch (error) {
       setPublishMessage(error instanceof Error ? error.message : 'Unable to publish playlist.')
     } finally {
       setIsPublishing(false)
+    }
+  }
+
+  const inviteFriend = async (event: React.FormEvent): Promise<void> => {
+    event.preventDefault()
+    if (!onlinePlaylistId || !user || !inviteUsername.trim()) return
+    setIsInviting(true)
+    setInviteMessage('')
+    try {
+      const { data: person, error: profileError } = await getSupabase()
+        .from('profiles')
+        .select('id, display_name')
+        .eq('username', inviteUsername.trim().toLowerCase())
+        .maybeSingle()
+      if (profileError || !person) throw profileError || new Error('Username not found.')
+      if (person.id === user.id) throw new Error('You already own this playlist.')
+      const { data: relationships, error: relationshipError } = await getSupabase()
+        .from('friend_requests')
+        .select('requester_id, addressee_id')
+        .eq('status', 'accepted')
+        .or(`requester_id.eq.${user.id},addressee_id.eq.${user.id}`)
+      if (relationshipError) throw relationshipError
+      const isFriend = (relationships || []).some(
+        (relationship) =>
+          relationship.requester_id === person.id || relationship.addressee_id === person.id
+      )
+      if (!isFriend) throw new Error('Add this user as a friend before inviting them.')
+      const { error: inviteError } = await getSupabase()
+        .from('shared_playlist_members')
+        .upsert({ playlist_id: onlinePlaylistId, user_id: person.id, role: 'editor' })
+      if (inviteError) throw inviteError
+      setInviteUsername('')
+      setInviteMessage(`${person.display_name} can now edit this playlist.`)
+    } catch (error) {
+      setInviteMessage(error instanceof Error ? error.message : 'Could not invite friend.')
+    } finally {
+      setIsInviting(false)
     }
   }
 
@@ -216,7 +418,8 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
               {songs.length} {songs.length === 1 ? 'song' : 'songs'}
             </span>
             <span className="text-white/65">
-              ({downloadedCount} downloaded{missingCount > 0 ? `, ${missingCount} not downloaded` : ''})
+              ({downloadedCount} downloaded
+              {missingCount > 0 ? `, ${missingCount} not downloaded` : ''})
             </span>
             <span className="text-white/65">•</span>
             <span>Created {new Date(playlist.dateCreated * 1000).toLocaleDateString()}</span>
@@ -224,7 +427,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
         </div>
       </header>
 
-      <div className="relative z-10 flex items-center gap-7 px-10 py-7">
+      <div className="relative z-30 flex items-center gap-7 px-10 py-7">
         <button
           type="button"
           onClick={togglePlaylist}
@@ -236,7 +439,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
                 ? 'Pause playlist'
                 : 'Play playlist'
           }
-          className="flex h-14 w-14 items-center justify-center rounded-full bg-[#1ed760] text-black shadow-lg transition-transform hover:scale-105 disabled:opacity-40"
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-[#2a2a2a] text-white shadow-lg transition-all hover:scale-105 hover:bg-[#353535] disabled:opacity-40"
         >
           {isCurrentPlaylist && isPlaying ? (
             <Pause className="h-6 w-6 fill-current" />
@@ -249,7 +452,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
             type="button"
             onClick={handleDownloadMissing}
             title={`Download ${missingCount} missing tracks`}
-            className="flex items-center gap-2 rounded-full border border-[#1ed760]/40 bg-[#1ed760]/10 px-4 py-2 text-sm font-bold text-[#1ed760] hover:bg-[#1ed760]/20 transition-all"
+            className="flex items-center gap-2 rounded-full border border-white/15 bg-[#2a2a2a] px-4 py-2 text-sm font-bold text-white shadow-md transition-colors hover:bg-[#353535]"
           >
             <Download className="h-5 w-5" />
             <span>Download missing ({missingCount})</span>
@@ -286,8 +489,111 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
           )}
           {user ? 'Publish online' : 'Sign in to publish'}
         </button>
-        {publishMessage && <span className="text-sm text-red-300">{publishMessage}</span>}
+        <div className="relative">
+          <button
+            type="button"
+            title="Playlist options"
+            onClick={() => {
+              setIsActionsOpen((open) => !open)
+              setPlaylistActionError('')
+            }}
+            className="flex h-10 w-10 items-center justify-center rounded-full text-[#b3b3b3] transition-colors hover:bg-white/10 hover:text-white"
+          >
+            <MoreVertical className="h-5 w-5" />
+          </button>
+          {isActionsOpen && (
+            <div className="pointer-events-auto absolute right-0 top-12 z-50 w-52 rounded-lg border border-white/10 bg-[#282828] p-1.5 shadow-2xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setRenameValue(playlist.name)
+                  setIsRenameOpen(true)
+                  setPlaylistActionError('')
+                }}
+                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-semibold text-white hover:bg-white/10"
+              >
+                <Pencil className="h-4 w-4" /> Rename playlist
+              </button>
+              <button
+                type="button"
+                onClick={() => void deletePlaylist()}
+                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-semibold text-red-400 hover:bg-white/10"
+              >
+                <Trash2 className="h-4 w-4" /> Remove playlist
+              </button>
+            </div>
+          )}
+        </div>
+        {publishMessage && <span className="text-sm text-[#1ed760]">{publishMessage}</span>}
+        {playlistActionError && <span className="text-sm text-red-300">{playlistActionError}</span>}
       </div>
+
+      {onlinePlaylistId && user && (
+        <form
+          onSubmit={(event) => void inviteFriend(event)}
+          className="mx-8 mb-5 flex flex-wrap items-center gap-3 rounded-lg border border-white/10 bg-[#1d1d1d] px-4 py-3"
+        >
+          <UserPlus className="h-5 w-5 shrink-0 text-[#1ed760]" />
+          <span className="text-sm font-bold text-white">Invite a friend to collaborate</span>
+          <input
+            value={inviteUsername}
+            onChange={(event) => setInviteUsername(event.target.value)}
+            placeholder="Friend username"
+            className="h-9 min-w-[180px] flex-1 rounded-full border border-white/15 bg-[#121212] px-3 text-sm text-white outline-none focus:border-[#1ed760]"
+          />
+          <button
+            type="submit"
+            disabled={isInviting || !inviteUsername.trim()}
+            className="h-9 rounded-full bg-[#1ed760] px-4 text-sm font-black text-black disabled:opacity-50"
+          >
+            {isInviting ? 'Inviting…' : 'Invite'}
+          </button>
+          {inviteMessage && (
+            <span className="basis-full text-xs text-[#b3b3b3]">{inviteMessage}</span>
+          )}
+        </form>
+      )}
+
+      {isRenameOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <form
+            onSubmit={(event) => {
+              event.preventDefault()
+              void renamePlaylist()
+            }}
+            className="w-full max-w-md rounded-xl border border-white/10 bg-[#282828] p-5 shadow-2xl"
+          >
+            <h2 className="text-lg font-black text-white">Rename playlist</h2>
+            <p className="mt-1 text-sm text-[#b3b3b3]">Choose a new name for this playlist.</p>
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              className="mt-4 w-full rounded-md border border-white/15 bg-[#181818] px-3 py-2.5 text-sm text-white outline-none focus:border-[#1ed760]"
+              maxLength={120}
+            />
+            {playlistActionError && (
+              <p className="mt-2 text-xs text-red-300">{playlistActionError}</p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsRenameOpen(false)}
+                className="rounded-full px-4 py-2 text-sm font-bold text-[#b3b3b3] hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isRenaming || !renameValue.trim()}
+                className="rounded-full bg-[#1ed760] px-5 py-2 text-sm font-black text-black disabled:opacity-50"
+              >
+                {isRenaming ? 'Saving...' : 'Save name'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <div className="relative z-10 w-full min-w-0 px-4 pb-28 md:px-6 xl:px-10">
         <div className="w-full min-w-0">
@@ -304,25 +610,21 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
             songs.map((song, index) => {
               const isDownloaded = Boolean(song.filePath && !song.filePath.startsWith('virtual:'))
               const isCurrent = isDownloaded && currentSong?.id === song.id
+              const isPlayingSong = isCurrent && isPlaying
               const songArtwork = toMediaUrl(song.artworkPath)
               return (
                 <div
                   key={song.id}
-                  onDoubleClick={() => {
-                    if (isDownloaded) {
-                      const dlIndex = downloadedSongs.findIndex((s) => s.id === song.id)
-                      if (dlIndex >= 0) setQueue(downloadedSongs, dlIndex)
-                    } else {
-                      handleDownloadTrack(song)
-                    }
-                  }}
+                  onClick={() => handleTrackClick(song)}
+                  onDoubleClick={(event) => event.preventDefault()}
                   className={`group grid h-16 w-full min-w-0 grid-cols-[32px_minmax(0,1fr)_64px] items-center gap-2 rounded px-2 text-sm hover:bg-white/10 md:grid-cols-[32px_minmax(0,2fr)_minmax(0,1fr)_64px] md:gap-3 xl:grid-cols-[32px_minmax(0,2.2fr)_minmax(0,1.2fr)_110px_minmax(0,1.1fr)_64px] xl:gap-4 xl:px-4 ${
-                    isCurrent ? 'bg-emerald-500/10' : !isDownloaded ? 'opacity-75 hover:opacity-100' : ''
+                    isCurrent ? 'bg-white/10' : !isDownloaded ? 'opacity-75 hover:opacity-100' : ''
                   }`}
                 >
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={(event) => {
+                      event.stopPropagation()
                       if (isDownloaded) {
                         const dlIndex = downloadedSongs.findIndex((s) => s.id === song.id)
                         if (dlIndex >= 0) setQueue(downloadedSongs, dlIndex)
@@ -331,14 +633,18 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
                       }
                     }}
                     className={`relative flex h-8 items-center justify-start ${
-                      isCurrent ? 'text-[#1ed760]' : 'text-[#a7a7a7]'
+                      isPlayingSong ? 'text-[#1ed760]' : 'text-[#a7a7a7]'
                     }`}
                   >
                     <span className="group-hover:hidden">{index + 1}</span>
                     {isDownloaded ? (
-                      <Play className="hidden h-4 w-4 fill-current text-white group-hover:block" />
+                      <Play
+                        className={`hidden h-4 w-4 fill-current group-hover:block ${
+                          isPlayingSong ? 'text-[#1ed760]' : 'text-white'
+                        }`}
+                      />
                     ) : (
-                      <Download className="hidden h-4 w-4 text-[#1ed760] group-hover:block" />
+                      <Download className="hidden h-4 w-4 text-white group-hover:block" />
                     )}
                   </button>
                   <div className="flex min-w-0 items-center gap-3">
@@ -353,7 +659,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
                       <div className="flex items-center gap-2">
                         <span
                           className={`truncate text-[16px] ${
-                            isCurrent ? 'text-[#1ed760]' : 'text-white'
+                            isPlayingSong ? 'text-[#1ed760]' : 'text-white'
                           }`}
                         >
                           {song.title}
@@ -392,35 +698,38 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
                         <span className="truncate">{qualityLabel(song)}</span>
                       </>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleDownloadTrack(song)}
-                        className="flex items-center gap-1.5 rounded-full bg-white/10 hover:bg-[#1ed760] hover:text-black px-2.5 py-1 text-xs font-bold text-white transition-colors"
-                        title="Download track"
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                        <span>Download</span>
-                      </button>
+                      <span className="text-xs text-amber-300">Click track to download</span>
                     )}
                   </div>
                   <div className="flex items-center justify-end gap-2">
-                    {!isDownloaded && (
-                      <button
-                        type="button"
-                        onClick={() => handleDownloadTrack(song)}
-                        title="Download track"
-                        className="p-1 text-[#1ed760] hover:scale-110 transition-transform md:hidden"
-                      >
-                        <Download className="h-4 w-4" />
-                      </button>
-                    )}
                     <button
                       type="button"
-                      onClick={() => void removeSong(song.id)}
-                      title="Remove from playlist"
-                      className="hidden p-1 text-[#b3b3b3] hover:text-red-400 group-hover:block"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        const rect = event.currentTarget.getBoundingClientRect()
+                        const menuWidth = 220
+                        const menuHeight = 136
+                        setActiveSongMenu((current) =>
+                          current?.song.id === song.id
+                            ? null
+                            : {
+                                song,
+                                x: Math.min(
+                                  rect.right - menuWidth,
+                                  window.innerWidth - menuWidth - 12
+                                ),
+                                y: Math.min(rect.bottom + 8, window.innerHeight - menuHeight - 12)
+                              }
+                        )
+                      }}
+                      title="More options"
+                      className={`h-8 w-8 shrink-0 rounded-[3px] border flex items-center justify-center transition-all ${
+                        activeSongMenu?.song.id === song.id
+                          ? 'border-primary-amber bg-hover text-text opacity-100'
+                          : 'border-transparent text-[#b3b3b3] opacity-0 group-hover:opacity-100 hover:border-primary-amber hover:bg-hover hover:text-white'
+                      }`}
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <MoreVertical className="h-4 w-4" />
                     </button>
                     <span className="tabular-nums text-[#c4cad4] group-hover:hidden">
                       {formatDuration(song.duration)}
@@ -445,6 +754,46 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
           )}
         </div>
       </div>
+
+      {activeSongMenu &&
+        createPortal(
+          <div
+            className="fixed z-[9999] w-[220px] rounded-lg border border-white/15 bg-[#1a1a1a] p-1 shadow-[0_8px_24px_rgba(0,0,0,0.8),0_2px_8px_rgba(0,0,0,0.4)]"
+            style={{ left: activeSongMenu.x, top: activeSongMenu.y }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                handleTrackClick(activeSongMenu.song)
+                setActiveSongMenu(null)
+              }}
+              className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+            >
+              {activeSongMenu.song.filePath &&
+              !activeSongMenu.song.filePath.startsWith('virtual:') ? (
+                <Play className="h-4 w-4 fill-current" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              {activeSongMenu.song.filePath && !activeSongMenu.song.filePath.startsWith('virtual:')
+                ? 'Play'
+                : 'Download'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void removeSong(activeSongMenu.song.id)
+                setActiveSongMenu(null)
+              }}
+              className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-danger transition-colors hover:bg-danger/10"
+            >
+              <Trash2 className="h-4 w-4 fill-current" />
+              Remove from playlist
+            </button>
+          </div>,
+          document.body
+        )}
 
       {isAddOpen && (
         <AddSongsModal

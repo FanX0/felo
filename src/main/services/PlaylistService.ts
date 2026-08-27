@@ -88,6 +88,12 @@ export class PlaylistService {
     return playlist
   }
 
+  static findPlaylistByDescription(description: string) {
+    return getDb()
+      .prepare('SELECT id FROM playlists WHERE description = ? LIMIT 1')
+      .get(description) as { id: string } | undefined
+  }
+
   static createPlaylist(input: CreatePlaylistInput) {
     const name = input.name.trim()
     if (!name) throw new Error('Playlist name is required')
@@ -150,6 +156,17 @@ export class PlaylistService {
 
   static deletePlaylist(playlistId: string) {
     getDb().prepare('DELETE FROM playlists WHERE id = ?').run(playlistId)
+  }
+
+  static renamePlaylist(playlistId: string, name: string) {
+    const trimmedName = name.trim()
+    if (!trimmedName) throw new Error('Playlist name is required')
+    const db = getDb()
+    const result = db
+      .prepare("UPDATE playlists SET name = ?, dateModified = strftime('%s', 'now') WHERE id = ?")
+      .run(trimmedName, playlistId)
+    if (result.changes === 0) throw new Error('Playlist not found')
+    return this.getPlaylist(playlistId)
   }
 
   static addSong(playlistId: string, songId: string) {
