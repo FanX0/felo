@@ -61,70 +61,112 @@ const HOME_RECOMMENDED_ALBUMS_KEY = 'felo_home_recommended_albums'
 
 export const spotifyPlaylists = [
   {
-    id: '37i9dQZEVXbObFQZ3JLcXt',
-    title: 'Top 50 Indonesia',
-    category: 'Indonesia',
+    id: '37i9dQZF1DXcBWIGoYBM5M',
+    title: "Today's Top Hits",
+    category: 'Biggest global mainstream hits',
+    update: 'Regularly'
+  },
+  {
+    id: '37i9dQZEVXbMDoHDwVN2tF',
+    title: 'Top 50 - Global',
+    category: 'Global chart',
     update: 'Daily'
+  },
+  {
+    id: '37i9dQZEVXbObFQZ3JLcXt',
+    title: 'Top 50 - Indonesia',
+    category: 'Indonesia chart',
+    update: 'Daily'
+  },
+  {
+    id: '37i9dQZEVXbIZK8aUquyx8',
+    title: 'Top Songs - Indonesia',
+    category: 'Indonesia chart',
+    update: 'Weekly'
   },
   {
     id: '37i9dQZF1DXa2EiKmMLhFD',
     title: 'Hot Hits Indonesia',
-    category: 'Indonesia',
-    update: 'Editorial'
+    category: 'Popular Indonesian + international hits',
+    update: 'Regularly'
   },
   {
-    id: '37i9dQZEVXbMDoHDwVN2tF',
-    title: 'Top 50 Global',
-    category: 'Charts',
-    update: 'Daily'
+    id: '37i9dQZF1DWWhB4HOWKFQc',
+    title: 'Lagi Viral',
+    category: 'Viral songs in Indonesia',
+    update: 'Regularly'
   },
   {
-    id: '37i9dQZEVXbLiRSasKsNU9',
-    title: 'Viral 50 Global',
-    category: 'Viral',
-    update: 'Daily'
-  },
-  {
-    id: '37i9dQZEVXbNG2KDcFcKOF',
-    title: 'Top Songs Global',
-    category: 'Charts',
-    update: 'Weekly'
+    id: '37i9dQZF1DWZxM58TRkuqg',
+    title: 'Puncak Klasemen',
+    category: 'Popular/new Indonesian music',
+    update: 'Regularly'
   },
   {
     id: '37i9dQZF1DX8vAahjzdXGC',
     title: 'New Music Friday Indonesia',
-    category: 'New Releases',
-    update: 'Every Friday'
+    category: 'New Indonesian/global releases',
+    update: 'Friday / weekly'
   },
   {
-    id: '37i9dQZF1DXcBWIGoYBM5M',
-    title: "Today's Top Hits",
-    category: 'Popular',
-    update: 'Editorial'
+    id: '37i9dQZF1DX6yQB7bkflag',
+    title: 'Pop Rising Indonesia',
+    category: 'Rising pop',
+    update: 'Regularly'
   },
   {
-    id: '37i9dQZF1DX3rxVfibe1L0',
-    title: 'Mood Booster',
-    category: 'Mood',
-    update: 'Editorial'
+    id: '37i9dQZF1DX0XUsuxWHRQd',
+    title: 'RapCaviar',
+    category: 'Global hip-hop / rap',
+    update: 'Regularly'
   },
   {
-    id: '37i9dQZF1DWZeKCadgRdKQ',
-    title: 'Deep Focus',
-    category: 'Focus',
-    update: 'Editorial'
+    id: '37i9dQZF1DX4JAvHpjipBk',
+    title: 'New Music Friday',
+    category: 'Major new global releases',
+    update: 'Friday / weekly'
   },
   {
-    id: '37i9dQZF1DWWQRwui0ExPn',
-    title: 'Lofi Beats',
-    category: 'Focus',
-    update: 'Editorial'
+    id: '37i9dQZF1DWUa8ZRTfalHk',
+    title: 'Pop Rising',
+    category: 'New/rising global pop',
+    update: 'Regularly'
+  },
+  {
+    id: '37i9dQZF1DX10zKzsJ2jva',
+    title: 'Viva Latino',
+    category: 'Current Latin hits',
+    update: 'Regularly'
+  },
+  {
+    id: '37i9dQZF1DX4dyzvuaRJ0n',
+    title: 'mint',
+    category: 'Dance / electronic hits',
+    update: 'Regularly'
+  },
+  {
+    id: '37i9dQZF1DX9tPFwDMOaN1',
+    title: 'K-Pop ON! (온)',
+    category: 'Current K-pop hits',
+    update: 'Regularly'
+  },
+  {
+    id: '37i9dQZF1DX4SBhb3fqCJd',
+    title: 'RNB X',
+    category: 'Current R&B',
+    update: 'Regularly'
+  },
+  {
+    id: '37i9dQZF1DX0kbJZpiYdZl',
+    title: 'Hot Hits USA',
+    category: 'Major US hits',
+    update: 'Regularly'
   },
   {
     id: '37i9dQZF1DX76Wlfdnj7AP',
     title: 'Beast Mode',
-    category: 'Workout',
-    update: 'Editorial'
+    category: 'Popular workout / rap',
+    update: 'Regularly'
   }
 ] as const
 
