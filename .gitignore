@@ -11,3 +11,8 @@ electron.vite.config.*.mjs
 FANXMUSIC_CLEAN_REBUILD_MASTER_PROMPT.md
 
 .vercel
+.agents
+.claude
+.zed
+scratch
+skills-lock.json
