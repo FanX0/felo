@@ -101,6 +101,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     x: number
     y: number
   } | null>(null)
+  const [isDownloadingMissing, setIsDownloadingMissing] = useState(false)
   const downloadMissingPlaylistRef = useRef(false)
 
   const loadPlaylist = async () => {
@@ -134,21 +135,45 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     const handleUpdate = () => void refreshPlaylistAndLibrary().catch(console.error)
     window.addEventListener('felo:library-updated', handleUpdate)
     const cleanup = window.api?.onDownloadProgress?.(async (event: any) => {
-      if (event?.status !== 'completed') return
+      if (event?.status !== 'completed' && event?.status !== 'failed') return
       try {
         const { nextPlaylist, nextSongs } = await refreshPlaylistAndLibrary()
-        if (!downloadMissingPlaylistRef.current || !nextPlaylist) return
+        if (!downloadMissingPlaylistRef.current || !nextPlaylist) {
+          setIsDownloadingMissing(false)
+          return
+        }
 
-        const completedLocalSong = event.song?.id
-          ? nextSongs.find((song) => song.id === event.song.id)
-          : findMatchingLibrarySong(event.song?.title || '', event.song?.artist || '', nextSongs)
-        if (completedLocalSong) enqueueSong(completedLocalSong)
+        if (event?.status === 'completed') {
+          const completedLocalSong = event.song?.id
+            ? nextSongs.find((song) => song.id === event.song.id)
+            : findMatchingLibrarySong(event.song?.title || '', event.song?.artist || '', nextSongs)
+          if (completedLocalSong) enqueueSong(completedLocalSong)
+        }
 
-        // Stop after the selected track. The next missing track is downloaded
-        // only when the user selects it, matching Infinite Radio behavior.
-        downloadMissingPlaylistRef.current = false
+        // Recompute all missing songs from the latest playlist & library state
+        const updatedPlaylistSongs = nextPlaylist.songs || []
+        const updatedSongs = updatedPlaylistSongs.map((song: Song) => {
+          if (song.filePath && !song.filePath.startsWith('virtual:')) return song
+          const localMatch = findMatchingLibrarySong(song.title || '', song.artist || '', nextSongs)
+          return localMatch ? { ...song, ...localMatch, id: localMatch.id } : song
+        })
+
+        const nextMissing = updatedSongs.find(
+          (song: Song) => !song.filePath || song.filePath.startsWith('virtual:')
+        )
+
+        if (nextMissing) {
+          setIsDownloadingMissing(true)
+          // Download next missing track 1 by 1 sequentially
+          handleDownloadTrack(nextMissing, false)
+        } else {
+          downloadMissingPlaylistRef.current = false
+          setIsDownloadingMissing(false)
+        }
       } catch (error) {
         console.error('Failed to continue playlist downloads:', error)
+        downloadMissingPlaylistRef.current = false
+        setIsDownloadingMissing(false)
       }
     })
     return () => {
@@ -194,15 +219,13 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   }
 
   const handleTrackClick = (song: Song) => {
+    downloadMissingPlaylistRef.current = false
+    setIsDownloadingMissing(false)
     if (song.filePath && !song.filePath.startsWith('virtual:')) {
-      // An explicit local-track selection should not continue a background
-      // "download missing" sequence or trigger the next missing track.
-      downloadMissingPlaylistRef.current = false
       const dlIndex = downloadedSongs.findIndex((item) => item.id === song.id)
       if (dlIndex >= 0) setQueue(downloadedSongs, dlIndex)
       return
     }
-    downloadMissingPlaylistRef.current = false
     handleDownloadTrack(song)
   }
 
@@ -221,12 +244,19 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   }
 
   const handleDownloadMissing = () => {
+    if (isDownloadingMissing) {
+      downloadMissingPlaylistRef.current = false
+      setIsDownloadingMissing(false)
+      return
+    }
+
     const firstMissing = songs.find(
       (song) => !song.filePath || song.filePath.startsWith('virtual:')
     )
     if (firstMissing) {
       downloadMissingPlaylistRef.current = true
-      handleDownloadTrack(firstMissing)
+      setIsDownloadingMissing(true)
+      handleDownloadTrack(firstMissing, false)
     }
   }
 
@@ -413,11 +443,28 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
           <button
             type="button"
             onClick={handleDownloadMissing}
-            title={`Download ${missingCount} missing tracks`}
-            className="flex items-center gap-2 rounded-full border border-white/15 bg-[#2a2a2a] px-4 py-2 text-sm font-bold text-white shadow-md transition-colors hover:bg-[#353535]"
+            title={
+              isDownloadingMissing
+                ? 'Click to stop downloading missing tracks'
+                : `Download ${missingCount} missing tracks 1 by 1`
+            }
+            className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-bold shadow-md transition-all ${
+              isDownloadingMissing
+                ? 'border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
+                : 'border-white/15 bg-[#2a2a2a] text-white hover:bg-[#353535]'
+            }`}
           >
-            <Download className="h-5 w-5" />
-            <span>Download missing ({missingCount})</span>
+            {isDownloadingMissing ? (
+              <>
+                <Loader2 className="h-5 w-5 animate-spin text-amber-400" />
+                <span>Downloading missing ({missingCount} left)...</span>
+              </>
+            ) : (
+              <>
+                <Download className="h-5 w-5" />
+                <span>Download missing ({missingCount})</span>
+              </>
+            )}
           </button>
         ) : (
           <button
