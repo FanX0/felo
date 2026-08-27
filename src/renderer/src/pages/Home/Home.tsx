@@ -23,7 +23,10 @@ import {
   CHART_CATEGORIES,
   ChartCategory,
   ChartTrack,
-  ChartsService
+  ChartsService,
+  resolveArtist,
+  resolveTitle,
+  stripSourceSuffix
 } from '../../services/ChartsService'
 
 export interface HomeSongItem {
@@ -685,7 +688,9 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
         if (Array.isArray(entries) && entries.length > 0) {
           const mapped: HomeSongItem[] = entries.slice(0, 30).map((entry: any, i: number) => {
             const rawTitle = entry?.['im:name']?.label || entry?.title?.label || 'Unknown Track'
-            const artist = entry?.['im:artist']?.label || 'Unknown Artist'
+            const rawArtist = entry?.['im:artist']?.label || ''
+            const artist = resolveArtist(rawArtist, rawTitle)
+            const title = resolveTitle(rawTitle, artist)
             const rawImages = entry?.['im:image'] || []
             const rawArtwork = rawImages[rawImages.length - 1]?.label
             const releaseDate = entry?.['im:releaseDate']?.label
@@ -694,9 +699,9 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
 
             return {
               id: entry?.id?.attributes?.['im:id'] || `online-${i}`,
-              title: rawTitle,
+              title: title || rawTitle,
               artist,
-              album: entry?.['im:collection']?.['im:name']?.label || '',
+              album: stripSourceSuffix(entry?.['im:collection']?.['im:name']?.label || ''),
               year: year || '2024',
               duration: 180 + ((i * 17) % 110),
               artworkUrl: upgradeArtwork(rawArtwork),
@@ -719,8 +724,10 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
         const entries = data?.feed?.entry || []
         if (Array.isArray(entries) && entries.length > 0) {
           const mappedAlbums: HomeAlbumItem[] = entries.slice(0, 18).map((entry: any, i: number) => {
-            const title = entry?.['im:name']?.label || 'Unknown Album'
-            const artist = entry?.['im:artist']?.label || 'Unknown Artist'
+            const rawTitle = entry?.['im:name']?.label || 'Unknown Album'
+            const rawArtist = entry?.['im:artist']?.label || ''
+            const artist = resolveArtist(rawArtist, rawTitle)
+            const title = resolveTitle(rawTitle, artist)
             const rawImages = entry?.['im:image'] || []
             const rawArtwork = rawImages[rawImages.length - 1]?.label
             const releaseDate = entry?.['im:releaseDate']?.label
@@ -729,7 +736,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
 
             return {
               id: entry?.id?.attributes?.['im:id'] || `album-${i}`,
-              title,
+              title: title || rawTitle,
               artist,
               year: year || '2024',
               artworkUrl: upgradeArtwork(rawArtwork),
