@@ -95,6 +95,149 @@ type AppleMusicSearchResults = Record<
 
 type MusicBrainzSearchResults = AppleMusicSearchResults
 
+type LastFmSearchResults = AppleMusicSearchResults
+
+function lastFmImage(images: unknown): string {
+  if (!Array.isArray(images)) return ''
+  const preferred = ['extralarge', 'large', 'medium', 'small']
+  for (const size of preferred) {
+    const image = images.find((item: any) => item?.size === size)?.['#text']
+    if (typeof image === 'string' && image.trim()) {
+      return image.trim().replace(/^http:\/\//i, 'https://')
+    }
+  }
+  return ''
+}
+
+async function fetchFallbackArtwork(query: string): Promise<AppleMusicSearchItem[]> {
+  try {
+    const response = await fetchItunesJson(
+      `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=music&entity=song&limit=50&country=US`
+    )
+    return (response?.results || [])
+      .map(formatItunesSong)
+      .filter((item: AppleMusicSearchItem | null): item is AppleMusicSearchItem =>
+        Boolean(item?.thumbnail)
+      )
+  } catch {
+    return []
+  }
+}
+
+async function searchLastFm(query: string, apiKey: string): Promise<LastFmSearchResults> {
+  const emptyResults: LastFmSearchResults = {
+    'Top Results': [],
+    Artists: [],
+    Albums: [],
+    Songs: []
+  }
+  const cleanQuery = query.trim()
+  if (!cleanQuery) return emptyResults
+  if (!apiKey.trim()) {
+    throw new Error('Last.fm API key is not configured. Add one in Settings.')
+  }
+
+  const request = async (method: string, params: Record<string, string>) => {
+    const searchParams = new URLSearchParams({
+      method,
+      api_key: apiKey.trim(),
+      format: 'json',
+      limit: '25',
+      ...params
+    })
+    const response = await net.fetch(`https://ws.audioscrobbler.com/2.0/?${searchParams}`)
+    if (!response.ok) throw new Error(`Last.fm search failed (${response.status})`)
+    const data = (await response.json()) as any
+    if (data?.error) throw new Error(`Last.fm: ${data.message || 'request failed'}`)
+    return data
+  }
+
+  const [tracks, artists, albums] = await Promise.all([
+    request('track.search', { track: cleanQuery }),
+    request('artist.search', { artist: cleanQuery }),
+    request('album.search', { album: cleanQuery })
+  ])
+
+  const songs = (tracks?.results?.trackmatches?.track || []).map((item: any, index: number) => ({
+    id: `lastfm-track-${item.mbid || `${item.artist}-${item.name}-${index}`}`,
+    title: String(item.name || 'Unknown Track'),
+    artist: String(item.artist || ''),
+    album: '',
+    type: 'Song',
+    duration: null,
+    trackCount: null,
+    url: String(item.url || ''),
+    thumbnail: lastFmImage(item.image),
+    explicit: false
+  }))
+  const artistItems = (artists?.results?.artistmatches?.artist || []).map(
+    (item: any, index: number) => ({
+      id: `lastfm-artist-${item.mbid || `${item.name}-${index}`}`,
+      title: String(item.name || 'Unknown Artist'),
+      artist: 'Last.fm Artist',
+      album: '',
+      type: 'Artist',
+      duration: null,
+      trackCount: null,
+      url: String(item.url || ''),
+      thumbnail: lastFmImage(item.image),
+      explicit: false
+    })
+  )
+  const albumItems = (albums?.results?.albummatches?.album || []).map(
+    (item: any, index: number) => ({
+      id: `lastfm-album-${item.mbid || `${item.artist}-${item.name}-${index}`}`,
+      title: String(item.name || 'Unknown Album'),
+      artist: String(item.artist || ''),
+      album: 'Album',
+      type: 'Album',
+      duration: null,
+      trackCount: null,
+      url: String(item.url || ''),
+      thumbnail: lastFmImage(item.image),
+      explicit: false
+    })
+  )
+
+  const pageArtwork = await fetchLastFmSearchArtwork(cleanQuery)
+  const fallbackArtwork = await fetchFallbackArtwork(cleanQuery)
+  const matchingArtwork = (title: string, artist: string, album = '') => {
+    const titleKey = title.toLowerCase()
+    const artistKey = artist.toLowerCase()
+    const pageImage = pageArtwork.get(`${titleKey}::${artistKey}`)
+    if (pageImage) return pageImage
+    const exact = fallbackArtwork.find(
+      (item) => item.title.toLowerCase() === titleKey && item.artist.toLowerCase() === artistKey
+    )
+    const albumMatch = fallbackArtwork.find(
+      (item) =>
+        item.album.toLowerCase() === album.toLowerCase() && item.artist.toLowerCase() === artistKey
+    )
+    return exact?.thumbnail || albumMatch?.thumbnail || ''
+  }
+  songs.forEach((song: AppleMusicSearchItem) => {
+    if (!song.thumbnail) song.thumbnail = matchingArtwork(song.title, song.artist)
+  })
+  artistItems.forEach((artist: AppleMusicSearchItem) => {
+    if (!artist.thumbnail) {
+      const match = fallbackArtwork.find(
+        (item) => item.artist.toLowerCase() === artist.title.toLowerCase()
+      )
+      artist.thumbnail = match?.thumbnail || ''
+    }
+  })
+  albumItems.forEach((album: AppleMusicSearchItem) => {
+    if (!album.thumbnail) album.thumbnail = matchingArtwork(album.title, album.artist, album.title)
+  })
+
+  return {
+    'Top Results': [...songs, ...artistItems, ...albumItems].slice(0, 5),
+    Artists: artistItems,
+    Albums: albumItems,
+    Songs: songs
+  }
+}
+
 type MusicBrainzMappedItem = AppleMusicSearchItem & {
   releaseId?: string
   releaseGroupId?: string
@@ -260,6 +403,42 @@ async function searchAppleMusicArtistSongs(artistName: string): Promise<AppleMus
     seen.add(key)
     return true
   })
+}
+
+async function searchAppleMusicItunes(query: string): Promise<AppleMusicSearchResults> {
+  const response = await fetchItunesJson(
+    `https://itunes.apple.com/search?term=${encodeURIComponent(query.trim())}&media=music&entity=song&limit=50&country=US`
+  )
+  const songs: AppleMusicSearchItem[] = (response?.results || [])
+    .map(formatItunesSong)
+    .filter((item: AppleMusicSearchItem | null): item is AppleMusicSearchItem => Boolean(item))
+  const artists = Array.from(
+    new Map<string, AppleMusicSearchItem>(songs.map((song) => [song.artist, song])).values()
+  ).map((song) => ({
+    ...song,
+    id: `artist-${song.artist}`,
+    title: song.artist,
+    artist: 'Artist',
+    album: '',
+    type: 'Artist',
+    duration: null,
+    trackCount: null,
+    url: `https://music.apple.com/us/search?term=${encodeURIComponent(song.artist)}`,
+    thumbnail: ''
+  }))
+  const albums = Array.from(
+    new Map<string, AppleMusicSearchItem>(
+      songs.map((song) => [`${song.artist}-${song.album}`, song])
+    ).values()
+  )
+    .filter((song) => song.album)
+    .map((song) => ({
+      ...song,
+      id: `album-${song.artist}-${song.album}`,
+      title: song.album,
+      type: 'Album'
+    }))
+  return { 'Top Results': songs.slice(0, 1), Songs: songs, Artists: artists, Albums: albums }
 }
 
 async function searchAppleMusic(query: string): Promise<AppleMusicSearchResults> {
@@ -450,7 +629,27 @@ async function fetchMusicBrainzEntity<T>(
       Accept: 'application/json'
     }
   })
-  if (!response.ok) throw new Error(`MusicBrainz ${entity} search failed (${response.status})`)
+  if (!response.ok) {
+    if (response.status === 429 || response.status === 502 || response.status === 503) {
+      await new Promise((resolve) => setTimeout(resolve, 1200))
+      const retry = await net.fetch(`https://musicbrainz.org/ws/2/${entity}?${params.toString()}`, {
+        headers: {
+          'User-Agent': `felo/${app.getVersion()} ( local desktop music search )`,
+          Accept: 'application/json'
+        }
+      })
+      if (!retry.ok) throw new Error(`MusicBrainz ${entity} search failed (${retry.status})`)
+      const data = await retry.json()
+      const key =
+        entity === 'release-group'
+          ? 'release-groups'
+          : entity === 'recording'
+            ? 'recordings'
+            : 'artists'
+      return Array.isArray(data?.[key]) ? data[key] : []
+    }
+    throw new Error(`MusicBrainz ${entity} search failed (${response.status})`)
+  }
   const data = await response.json()
   const key =
     entity === 'release-group'
@@ -495,6 +694,62 @@ async function searchMusicBrainz(query: string): Promise<MusicBrainzSearchResult
   }
 }
 
+async function fetchLastFmSearchArtwork(query: string): Promise<Map<string, string>> {
+  const artwork = new Map<string, string>()
+  try {
+    const response = await net.fetch(`https://www.last.fm/search?q=${encodeURIComponent(query)}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+    })
+    if (!response.ok) return artwork
+    const html = await response.text()
+    const trackPattern =
+      /<tr[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"[\s\S]*?data-track-name="([^"]+)"[\s\S]*?data-artist-name="([^"]+)"/gi
+    let match: RegExpExecArray | null
+    while ((match = trackPattern.exec(html)) !== null) {
+      const key = `${match[2].trim().toLowerCase()}::${match[3].trim().toLowerCase()}`
+      artwork.set(key, match[1].replace(/&amp;/g, '&').replace(/^http:\/\//i, 'https://'))
+    }
+  } catch (error) {
+    console.warn('Last.fm artwork enrichment failed:', error)
+  }
+  return artwork
+}
+
+function decodeSpotifyText(value: string): string {
+  return value
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .trim()
+}
+
+async function fetchSpotifyPlaylistTracks(playlistId: string): Promise<{
+  title: string
+  tracks: Array<{ title: string; artist: string; duration?: number }>
+}> {
+  if (!/^[A-Za-z0-9]+$/.test(playlistId)) throw new Error('Invalid Spotify playlist ID.')
+  const response = await net.fetch(`https://open.spotify.com/embed/playlist/${playlistId}`)
+  if (!response.ok) throw new Error(`Spotify playlist unavailable (${response.status}).`)
+  const html = await response.text()
+  const titleMatch = /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html)
+  const rowPattern =
+    /<h3[^>]*TracklistRow_title[^>]*>([\s\S]*?)<\/h3>[\s\S]*?<h4[^>]*TracklistRow_subtitle[^>]*>([\s\S]*?)<\/h4>[\s\S]*?data-testid="duration-cell">([^<]*)</gi
+  const tracks: Array<{ title: string; artist: string; duration?: number }> = []
+  let match: RegExpExecArray | null
+  while ((match = rowPattern.exec(html)) !== null) {
+    const durationParts = decodeSpotifyText(match[3]).split(':').map(Number)
+    tracks.push({
+      title: decodeSpotifyText(match[1]),
+      artist: decodeSpotifyText(match[2]),
+      duration: durationParts.length === 2 ? durationParts[0] * 60 + durationParts[1] : undefined
+    })
+  }
+  if (!tracks.length) throw new Error('Spotify did not return any playlist tracks.')
+  return { title: decodeSpotifyText(titleMatch?.[1] || ''), tracks }
+}
+
 async function fetchPlaylistImportMetadata(url: string): Promise<{
   name: string
   description: string
@@ -532,15 +787,75 @@ async function fetchPlaylistImportMetadata(url: string): Promise<{
 
 function cleanLyricsMetadata(value: string): string {
   if (!value) return ''
-  return value
+  let cleaned = value
+    .normalize('NFKC')
     .replace(/\.[a-zA-Z0-9]{2,4}$/, '')
+    .replace(/^\s*\d{1,3}[.\-_)]+\s*/, '')
     .replace(
-      /\s*[\(\[](?:explicit|official\s*(?:video|audio|music\s*video|lyric\s*video)?|lyrics?|remaster(?:ed)?(?:\s*[\d\w]+)?|hq|hd|visualizer|feat\.?.*?|ft\.?.*?|single\s*version|bonus\s*track|deluxe(?:\s*edition)?|live(?:\s*at\s*.*)?)[\)\]]\s*/gi,
+      /\s*[\(\[]\s*(?:youtube|explicit|official(?:\s*(?:music|lyric|lyrics)?\s*(?:video|audio|mv)?)?|lyrics?(?:\s*video)?|remaster(?:ed)?(?:\s*[\d\w]+)?|hq|hd|visualizer|audio|video|mv|copyright[\s-]*free|feat\.?.*?|ft\.?.*?|single\s*version|bonus\s*track|deluxe(?:\s*edition)?|live(?:\s*at\s*.*)?|\d+)\s*[\)\]]\s*/gi,
       ' '
     )
+    .replace(/\s+(?:official\s*)?(?:music\s*)?(?:lyric(?:s)?\s*)?(?:video|audio|mv)\s*$/gi, '')
+    .replace(/\s+no\.\s*\d+\s*$/gi, '')
     .replace(/\bunknown\s*artist\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
+
+  let previous = ''
+  while (cleaned !== previous) {
+    previous = cleaned
+    cleaned = cleaned.replace(/\s*[\(\[]\s*(?:youtube|\d+)\s*[\)\]]\s*$/gi, '').trim()
+  }
+  return cleaned
+}
+
+function isPlaceholderLyricsValue(value?: string): boolean {
+  return /^(?:unknown|untitled|n\/?a|none|null)(?:\s+(?:artist|album|track))?$/i.test(
+    value?.trim() || ''
+  )
+}
+
+function resolveLyricsMetadata(songInfo: {
+  title: string
+  artist: string
+  album?: string
+  duration?: number
+}): { title: string; artist: string; album: string; duration?: number } {
+  let title = cleanLyricsMetadata(songInfo.title || '')
+  let artist = isPlaceholderLyricsValue(songInfo.artist)
+    ? ''
+    : cleanLyricsMetadata(songInfo.artist || '')
+  const album = isPlaceholderLyricsValue(songInfo.album)
+    ? ''
+    : cleanLyricsMetadata(songInfo.album || '')
+
+  const titleParts = title.match(/^(.+?)\s+[-\u2013\u2014|]\s+(.+)$/)
+  if (titleParts) {
+    const inferredArtist = cleanLyricsMetadata(titleParts[1])
+    const inferredTitle = cleanLyricsMetadata(titleParts[2])
+    const normalizedArtist = normalizeForCompare(artist)
+    const normalizedInferredArtist = normalizeForCompare(inferredArtist)
+    const titleContainsKnownArtist =
+      normalizedArtist &&
+      (normalizedInferredArtist === normalizedArtist ||
+        normalizedInferredArtist.includes(normalizedArtist) ||
+        normalizedArtist.includes(normalizedInferredArtist))
+
+    if (!artist || titleContainsKnownArtist) {
+      artist = artist || inferredArtist
+      title = inferredTitle
+    }
+  }
+
+  return {
+    title,
+    artist,
+    album,
+    duration:
+      Number.isFinite(songInfo.duration) && Number(songInfo.duration) > 0
+        ? Math.round(Number(songInfo.duration))
+        : undefined
+  }
 }
 
 function hasLyrics(data: LrclibLyrics | null | undefined): data is LrclibLyrics {
@@ -573,21 +888,44 @@ function normalizeForCompare(value?: string): string {
     .trim()
 }
 
-function scoreLyricsCandidate(candidate: LrclibLyrics, track: string, artist: string): number {
+function lyricsTextSimilarity(left: string, right: string): number {
+  if (!left || !right) return 0
+  if (left === right) return 1
+  if (left.includes(right) || right.includes(left)) return 0.82
+
+  const leftTokens = new Set(left.split(' ').filter(Boolean))
+  const rightTokens = new Set(right.split(' ').filter(Boolean))
+  const intersection = [...leftTokens].filter((token) => rightTokens.has(token)).length
+  const union = new Set([...leftTokens, ...rightTokens]).size
+  return union > 0 ? intersection / union : 0
+}
+
+function scoreLyricsCandidate(
+  candidate: LrclibLyrics,
+  track: string,
+  artist: string,
+  album = '',
+  duration?: number
+): number {
   if (!hasLyrics(candidate)) return -1
 
   const candidateTrack = normalizeForCompare(candidate.trackName)
   const candidateArtist = normalizeForCompare(candidate.artistName)
   const targetTrack = normalizeForCompare(track)
   const targetArtist = normalizeForCompare(artist)
-  let score = candidate.syncedLyrics ? 30 : 10
+  const candidateAlbum = normalizeForCompare(candidate.albumName)
+  const targetAlbum = normalizeForCompare(album)
+  let score = candidate.syncedLyrics ? 25 : 8
 
-  if (candidateTrack === targetTrack) score += 50
-  else if (candidateTrack.includes(targetTrack) || targetTrack.includes(candidateTrack)) score += 25
-
-  if (candidateArtist === targetArtist) score += 35
-  else if (candidateArtist.includes(targetArtist) || targetArtist.includes(candidateArtist))
-    score += 15
+  score += lyricsTextSimilarity(candidateTrack, targetTrack) * 65
+  if (targetArtist) score += lyricsTextSimilarity(candidateArtist, targetArtist) * 40
+  if (targetAlbum) score += lyricsTextSimilarity(candidateAlbum, targetAlbum) * 10
+  if (duration && candidate.duration) {
+    const difference = Math.abs(candidate.duration - duration)
+    if (difference <= 2) score += 18
+    else if (difference <= 5) score += 10
+    else if (difference >= 20) score -= 12
+  }
 
   return score
 }
@@ -595,18 +933,22 @@ function scoreLyricsCandidate(candidate: LrclibLyrics, track: string, artist: st
 function pickBestLyrics(
   results: LrclibLyrics | LrclibLyrics[] | null,
   track: string,
-  artist: string
+  artist: string,
+  album = '',
+  duration?: number
 ): LrclibLyrics | null {
   if (!results) return null
   if (!Array.isArray(results)) return hasLyrics(results) ? results : null
 
-  return (
-    [...results]
-      .filter(hasLyrics)
-      .sort(
-        (a, b) => scoreLyricsCandidate(b, track, artist) - scoreLyricsCandidate(a, track, artist)
-      )[0] || null
-  )
+  const ranked = [...results]
+    .filter(hasLyrics)
+    .map((candidate) => ({
+      candidate,
+      score: scoreLyricsCandidate(candidate, track, artist, album, duration)
+    }))
+    .sort((a, b) => b.score - a.score)
+
+  return ranked[0] && ranked[0].score >= 38 ? ranked[0].candidate : null
 }
 
 async function fetchLyricsFromLrclib(songInfo: {
@@ -617,74 +959,225 @@ async function fetchLyricsFromLrclib(songInfo: {
 }): Promise<LrclibLyrics | null> {
   const rawTrack = songInfo.title?.trim() || ''
   const rawArtist = songInfo.artist?.trim() || ''
-  const rawAlbum = songInfo.album?.trim() || ''
-  const cleanTrack = cleanLyricsMetadata(rawTrack)
-  const cleanArtist = cleanLyricsMetadata(rawArtist)
+  const resolved = resolveLyricsMetadata(songInfo)
+  const cleanTrack = resolved.title
+  const cleanArtist = resolved.artist
+  const cleanAlbum = resolved.album
 
   const attempts: Array<{
     endpoint: '/get' | '/get-cached' | '/search'
     params: URLSearchParams
     track: string
     artist: string
+    album: string
+    duration?: number
   }> = []
 
+  const addAttempt = (attempt: (typeof attempts)[number]) => {
+    const key = `${attempt.endpoint}?${attempt.params.toString()}`
+    if (!attempts.some((item) => `${item.endpoint}?${item.params.toString()}` === key)) {
+      attempts.push(attempt)
+    }
+  }
+
   if (cleanTrack && cleanArtist) {
-    attempts.push({
+    const exactParams = new URLSearchParams({
+      track_name: cleanTrack,
+      artist_name: cleanArtist
+    })
+    if (cleanAlbum) exactParams.set('album_name', cleanAlbum)
+    if (resolved.duration) {
+      exactParams.set('duration', String(resolved.duration))
+    }
+    addAttempt({
+      endpoint: '/get',
+      params: exactParams,
+      track: cleanTrack,
+      artist: cleanArtist,
+      album: cleanAlbum,
+      duration: resolved.duration
+    })
+    addAttempt({
       endpoint: '/get',
       params: new URLSearchParams({ track_name: cleanTrack, artist_name: cleanArtist }),
       track: cleanTrack,
-      artist: cleanArtist
+      artist: cleanArtist,
+      album: cleanAlbum,
+      duration: resolved.duration
     })
-    attempts.push({
+    addAttempt({
       endpoint: '/get-cached',
       params: new URLSearchParams({ track_name: cleanTrack, artist_name: cleanArtist }),
       track: cleanTrack,
-      artist: cleanArtist
+      artist: cleanArtist,
+      album: cleanAlbum,
+      duration: resolved.duration
     })
-    attempts.push({
-      endpoint: '/get',
-      params: new URLSearchParams({ track_name: cleanArtist, artist_name: cleanTrack }),
-      track: cleanArtist,
-      artist: cleanTrack
-    })
-  }
-
-  if ((rawTrack !== cleanTrack || rawArtist !== cleanArtist) && rawTrack && rawArtist) {
-    const rawParams = new URLSearchParams({ track_name: rawTrack, artist_name: rawArtist })
-    if (rawAlbum) rawParams.set('album_name', rawAlbum)
-    if (songInfo.duration && songInfo.duration > 0) {
-      rawParams.set('duration', String(Math.round(songInfo.duration)))
-    }
-    attempts.push({ endpoint: '/get', params: rawParams, track: rawTrack, artist: rawArtist })
-  }
-
-  const cleanQuery = `${cleanTrack} ${cleanArtist}`.trim()
-  if (cleanQuery) {
-    attempts.push({
+    addAttempt({
       endpoint: '/search',
-      params: new URLSearchParams({ q: cleanQuery }),
+      params: new URLSearchParams({ track_name: cleanTrack, artist_name: cleanArtist }),
       track: cleanTrack,
-      artist: cleanArtist
+      artist: cleanArtist,
+      album: cleanAlbum,
+      duration: resolved.duration
+    })
+    addAttempt({
+      endpoint: '/search',
+      params: new URLSearchParams({ q: `${cleanArtist} ${cleanTrack}` }),
+      track: cleanTrack,
+      artist: cleanArtist,
+      album: cleanAlbum,
+      duration: resolved.duration
     })
   }
 
-  const rawQuery = `${rawTrack} ${rawArtist}`.trim()
-  if (rawQuery && rawQuery !== cleanQuery) {
-    attempts.push({
+  if (cleanTrack) {
+    addAttempt({
+      endpoint: '/search',
+      params: new URLSearchParams({ q: cleanTrack }),
+      track: cleanTrack,
+      artist: cleanArtist,
+      album: cleanAlbum,
+      duration: resolved.duration
+    })
+  }
+
+  const cleanRawArtist = isPlaceholderLyricsValue(rawArtist) ? '' : cleanLyricsMetadata(rawArtist)
+  const rawQuery = `${cleanLyricsMetadata(rawTrack)} ${cleanRawArtist}`.trim()
+  if (rawQuery) {
+    addAttempt({
       endpoint: '/search',
       params: new URLSearchParams({ q: rawQuery }),
-      track: rawTrack,
-      artist: rawArtist
+      track: cleanTrack || rawTrack,
+      artist: cleanArtist || cleanRawArtist,
+      album: cleanAlbum,
+      duration: resolved.duration
     })
   }
 
   for (const attempt of attempts) {
     const data = await fetchLrclib(attempt.endpoint, attempt.params)
-    const best = pickBestLyrics(data, attempt.track, attempt.artist)
+    const best = pickBestLyrics(
+      data,
+      attempt.track,
+      attempt.artist,
+      attempt.album,
+      attempt.duration
+    )
     if (best) return best
   }
 
   return null
+}
+
+type LyricsTransformMode = 'translate' | 'romanize'
+
+const lyricTransformCache = new Map<string, string>()
+const supportedTranslationLanguages = new Set([
+  'en',
+  'id',
+  'ja',
+  'ko',
+  'zh-CN',
+  'es',
+  'fr',
+  'de',
+  'th'
+])
+
+function containsNonLatinLetters(value: string): boolean {
+  return [...value].some(
+    (character) => /\p{L}/u.test(character) && !/\p{Script=Latin}/u.test(character)
+  )
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolveWait) => setTimeout(resolveWait, milliseconds))
+}
+
+async function transformLyricLine(
+  text: string,
+  mode: LyricsTransformMode,
+  targetLanguage = 'en'
+): Promise<string> {
+  const trimmed = text.trim()
+  if (!trimmed || (mode === 'romanize' && !containsNonLatinLetters(trimmed))) return text
+
+  const cacheKey = `${mode}:${targetLanguage}:${trimmed}`
+  const cached = lyricTransformCache.get(cacheKey)
+  if (cached !== undefined) return cached
+
+  const params = new URLSearchParams({
+    client: 'gtx',
+    sl: 'auto',
+    tl: targetLanguage,
+    dt: mode === 'translate' ? 't' : 'rm',
+    q: trimmed
+  })
+
+  let lastError: unknown
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 8000)
+    try {
+      const response = await net.fetch(
+        `https://translate.googleapis.com/translate_a/single?${params.toString()}`,
+        { signal: controller.signal }
+      )
+      if (!response.ok) throw new Error(`Google Translate returned ${response.status}`)
+
+      const data = await response.json()
+      const segments = Array.isArray(data?.[0]) ? data[0] : []
+      const transformed =
+        mode === 'translate'
+          ? segments.map((segment: any) => segment?.[0] || '').join('')
+          : segments.map((segment: any) => segment?.[3] || '').join(' ')
+      const result = transformed.trim() || text
+      lyricTransformCache.set(cacheKey, result)
+      return result
+    } catch (error) {
+      lastError = error
+      if (attempt < 2) await wait(500 * 2 ** attempt)
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Lyrics transformation failed')
+}
+
+async function transformLyricsLines(
+  input: unknown,
+  mode: LyricsTransformMode,
+  targetLanguage = 'en'
+): Promise<string[]> {
+  if (!Array.isArray(input)) throw new Error('Lyrics lines must be an array')
+  if (mode === 'translate' && !supportedTranslationLanguages.has(targetLanguage)) {
+    throw new Error('Unsupported translation language')
+  }
+
+  const lines = input.map((line) => (typeof line === 'string' ? line : ''))
+  if (lines.length > 300 || lines.reduce((total, line) => total + line.length, 0) > 50000) {
+    throw new Error('Lyrics are too large to transform')
+  }
+
+  const uniqueLines = [...new Set(lines.filter((line) => line.trim()))]
+  const transformed = new Map<string, string>()
+  let nextIndex = 0
+  const workerCount = Math.min(2, uniqueLines.length)
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < uniqueLines.length) {
+        const line = uniqueLines[nextIndex]
+        nextIndex += 1
+        transformed.set(line, await transformLyricLine(line, mode, targetLanguage))
+        await wait(80)
+      }
+    })
+  )
+
+  return lines.map((line) => transformed.get(line) ?? line)
 }
 
 // Register a custom protocol for safe local media access
@@ -848,10 +1341,17 @@ function formatProviderError(source: 'qobuz' | 'deezer', raw: string): string {
     if (normalized.includes('invalid credentials') || normalized.includes('401')) {
       return 'Authentication failed: Invalid credentials or expired user token. Please check your User ID and Auth Token / Password.'
     }
-    if (normalized.includes('invalid app id') || normalized.includes('invalidappiderror') || normalized.includes('400')) {
+    if (
+      normalized.includes('invalid app id') ||
+      normalized.includes('invalidappiderror') ||
+      normalized.includes('400')
+    ) {
       return 'Invalid Qobuz App ID. Clear the App ID & App Secret fields in Settings to allow automatic detection.'
     }
-    if (normalized.includes('free accounts are not eligible') || normalized.includes('ineligibleerror')) {
+    if (
+      normalized.includes('free accounts are not eligible') ||
+      normalized.includes('ineligibleerror')
+    ) {
       return 'Free Qobuz account detected. Full-track streaming and downloading require an active Qobuz subscription or trial.'
     }
     if (normalized.includes('missingcredentialserror')) {
@@ -866,7 +1366,11 @@ function formatProviderError(source: 'qobuz' | 'deezer', raw: string): string {
     }
   }
 
-  if (normalized.includes('enoent') || normalized.includes('was not found') || normalized.includes('streamrip')) {
+  if (
+    normalized.includes('enoent') ||
+    normalized.includes('was not found') ||
+    normalized.includes('streamrip')
+  ) {
     return 'Streamrip CLI (`rip`) was not found in your system PATH. Please ensure Python and streamrip are installed.'
   }
 
@@ -1135,8 +1639,26 @@ app.whenReady().then(() => {
   ipcMain.handle('playlists:fetchImportMetadata', (_, url: string) =>
     fetchPlaylistImportMetadata(url)
   )
+  ipcMain.handle(
+    'playlists:importSpotify',
+    async (_, playlistId: string, requestedName: string) => {
+      const description = `Spotify playlist:${playlistId}`
+      const existing = PlaylistService.findPlaylistByDescription(description)
+      if (existing) return PlaylistService.getPlaylist(existing.id)
+
+      const imported = await fetchSpotifyPlaylistTracks(playlistId)
+      return PlaylistService.createPlaylist({
+        name: requestedName.trim() || imported.title || 'Spotify Playlist',
+        description,
+        tracks: imported.tracks
+      })
+    }
+  )
   ipcMain.handle('playlists:delete', (_, playlistId: string) =>
     PlaylistService.deletePlaylist(playlistId)
+  )
+  ipcMain.handle('playlists:rename', (_, playlistId: string, name: string) =>
+    PlaylistService.renamePlaylist(playlistId, name)
   )
   ipcMain.handle('playlists:addSong', (_, playlistId: string, songId: string) =>
     PlaylistService.addSong(playlistId, songId)
@@ -1150,7 +1672,12 @@ app.whenReady().then(() => {
     if (typeof query !== 'string' || !query.trim()) {
       return { 'Top Results': [], Artists: [], Albums: [], Songs: [] }
     }
-    return searchAppleMusic(query)
+    try {
+      return await searchAppleMusic(query)
+    } catch (error) {
+      console.warn('Apple Music web search failed; using iTunes fallback:', error)
+      return searchAppleMusicItunes(query)
+    }
   })
 
   // Apple Music: fetch a fuller song catalog for one artist page.
@@ -1159,12 +1686,32 @@ app.whenReady().then(() => {
     return searchAppleMusicArtistSongs(artistName)
   })
 
+  // Last.fm: metadata search used for the global catalog browser.
+  ipcMain.handle('search:lastFm', async (_, query: string, configuredApiKey?: string) => {
+    const db = getDb()
+    const row = db
+      .prepare('SELECT value FROM app_settings WHERE key = ?')
+      .get('search.lastFmApiKey') as { value?: string } | undefined
+    let savedApiKey = row?.value || ''
+    try {
+      savedApiKey = JSON.parse(savedApiKey)
+    } catch {
+      // Keep legacy plain-text setting values.
+    }
+    return searchLastFm(query, configuredApiKey || savedApiKey || process.env.LASTFM_API_KEY || '')
+  })
+
   // MusicBrainz: search recordings, artists, and release groups in the main process.
   ipcMain.handle('search:musicBrainz', async (_, query: string) => {
     if (typeof query !== 'string' || !query.trim()) {
       return { 'Top Results': [], Artists: [], Albums: [], Songs: [] }
     }
-    return searchMusicBrainz(query)
+    try {
+      return await searchMusicBrainz(query)
+    } catch (error) {
+      console.warn('MusicBrainz search unavailable:', error)
+      return { 'Top Results': [], Artists: [], Albums: [], Songs: [] }
+    }
   })
 
   // Lyrics: Fetch from LRCLIB in the main process to avoid renderer CORS failures
@@ -1174,6 +1721,12 @@ app.whenReady().then(() => {
       if (!songInfo?.title || !songInfo?.artist) return null
       return fetchLyricsFromLrclib(songInfo)
     }
+  )
+  ipcMain.handle('lyrics:translate', (_, lines: unknown, targetLanguage: string) =>
+    transformLyricsLines(lines, 'translate', targetLanguage)
+  )
+  ipcMain.handle('lyrics:romanize', (_, lines: unknown) =>
+    transformLyricsLines(lines, 'romanize')
   )
 
   // Settings: Get
@@ -1227,10 +1780,33 @@ app.whenReady().then(() => {
     }
   })
 
+  ipcMain.handle('streaming:testSoulseek', async (_, accounts: any) => {
+    try {
+      const results = await DownloadService.search('soulseek', 'Daft Punk', accounts || {})
+      return {
+        status: 'success',
+        message: `Connected to Soulseek P2P network (${results.length} peer matches found)!`
+      }
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : String(error)
+      return { status: 'error', message: `Soulseek connection failed: ${raw}`, rawError: raw }
+    }
+  })
+
   ipcMain.handle(
     'downloads:search',
-    async (_, source: 'qobuz' | 'deezer', query: string, accounts: any) => {
-      if (source !== 'qobuz' && source !== 'deezer') {
+    async (
+      _,
+      source: 'qobuz' | 'deezer' | 'soulseek' | 'youtube',
+      query: string,
+      accounts: any
+    ) => {
+      if (
+        source !== 'qobuz' &&
+        source !== 'deezer' &&
+        source !== 'soulseek' &&
+        source !== 'youtube'
+      ) {
         throw new Error(`The ${source} download connector is not available.`)
       }
       return DownloadService.search(source, query, accounts || {})
@@ -1238,8 +1814,14 @@ app.whenReady().then(() => {
   )
 
   ipcMain.handle('downloads:start', (_, request: any) => {
-    if (!request || (request.source !== 'qobuz' && request.source !== 'deezer')) {
-      throw new Error('Invalid streaming download request.')
+    if (
+      !request ||
+      (request.source !== 'qobuz' &&
+        request.source !== 'deezer' &&
+        request.source !== 'soulseek' &&
+        request.source !== 'youtube')
+    ) {
+      throw new Error('Invalid download request source.')
     }
     return DownloadService.start(request)
   })

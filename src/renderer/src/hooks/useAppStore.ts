@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type SearchMode = 'local' | 'apple_music' | 'musicbrainz'
+export type SearchMode = 'local' | 'apple_music' | 'musicbrainz' | 'lastfm'
 
 interface AppState {
   searchQuery: string

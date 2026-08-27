@@ -1,16 +1,23 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
+  CheckCircle2,
   Radio,
   RotateCw,
   Heart,
   Play,
   Download,
   Music2,
-  Disc3
+  ExternalLink
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import type { DownloadTarget } from '../../components/DownloadPanel/DownloadPanel'
+import { useDownloadStore } from '../../hooks/useDownloadStore'
+import {
+  DEFAULT_DOWNLOAD_PRIORITY,
+  DOWNLOAD_PRIORITY_SETTING,
+  STREAMING_ACCOUNTS_SETTING
+} from '../../lib/downloadConfig'
 import type { Song } from '../Library/Library'
 
 export interface HomeSongItem {
@@ -40,7 +47,173 @@ interface HomeProps {
   onOpenDownloadPanel?: (target: DownloadTarget) => void
 }
 
-type TabType = 'home' | 'hot_new' | 'editors_picks' | 'aoty'
+function readCachedHomeList<T>(key: string, fallback: T[]): T[] {
+  try {
+    const cached = JSON.parse(localStorage.getItem(key) || 'null')
+    return Array.isArray(cached) && cached.length > 0 ? cached : fallback
+  } catch {
+    return fallback
+  }
+}
+
+const HOME_RECOMMENDED_SONGS_KEY = 'felo_home_recommended_songs'
+const HOME_RECOMMENDED_ALBUMS_KEY = 'felo_home_recommended_albums'
+
+export const spotifyPlaylists = [
+  {
+    id: '37i9dQZEVXbObFQZ3JLcXt',
+    title: 'Top 50 Indonesia',
+    category: 'Indonesia',
+    update: 'Daily'
+  },
+  {
+    id: '37i9dQZF1DXa2EiKmMLhFD',
+    title: 'Hot Hits Indonesia',
+    category: 'Indonesia',
+    update: 'Editorial'
+  },
+  {
+    id: '37i9dQZEVXbMDoHDwVN2tF',
+    title: 'Top 50 Global',
+    category: 'Charts',
+    update: 'Daily'
+  },
+  {
+    id: '37i9dQZEVXbLiRSasKsNU9',
+    title: 'Viral 50 Global',
+    category: 'Viral',
+    update: 'Daily'
+  },
+  {
+    id: '37i9dQZEVXbNG2KDcFcKOF',
+    title: 'Top Songs Global',
+    category: 'Charts',
+    update: 'Weekly'
+  },
+  {
+    id: '37i9dQZF1DX8vAahjzdXGC',
+    title: 'New Music Friday Indonesia',
+    category: 'New Releases',
+    update: 'Every Friday'
+  },
+  {
+    id: '37i9dQZF1DXcBWIGoYBM5M',
+    title: "Today's Top Hits",
+    category: 'Popular',
+    update: 'Editorial'
+  },
+  {
+    id: '37i9dQZF1DX3rxVfibe1L0',
+    title: 'Mood Booster',
+    category: 'Mood',
+    update: 'Editorial'
+  },
+  {
+    id: '37i9dQZF1DWZeKCadgRdKQ',
+    title: 'Deep Focus',
+    category: 'Focus',
+    update: 'Editorial'
+  },
+  {
+    id: '37i9dQZF1DWWQRwui0ExPn',
+    title: 'Lofi Beats',
+    category: 'Focus',
+    update: 'Editorial'
+  },
+  {
+    id: '37i9dQZF1DX76Wlfdnj7AP',
+    title: 'Beast Mode',
+    category: 'Workout',
+    update: 'Editorial'
+  }
+] as const
+
+type TabType = 'home' | 'hot_new' | 'editors_picks' | 'aoty' | 'spotify'
+
+function librarySongKey(title: string, artist: string): string {
+  return `${title}::${artist}`
+    .toLowerCase()
+    .replace(/\bunknown\s+artist\b/g, '')
+    .replace(/\s*\(\d+\)\s*$/g, '')
+    .replace(/\s*\((?:youtube|official)\)\s*$/g, '')
+    .replace(
+      /\s+(?:official\s+(?:music\s+)?video|official\s+mv|official\s+audio|lyrics?\s+video|music\s+video)\s*$/g,
+      ''
+    )
+    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+interface ArtworkImageProps {
+  src?: string
+  title: string
+  artist: string
+  alt?: string
+  className: string
+  loading?: 'lazy' | 'eager'
+}
+
+function ArtworkImage({ src, title, artist, alt = '', className, loading = 'lazy' }: ArtworkImageProps) {
+  const [imageSrc, setImageSrc] = useState(src || '')
+  const [failed, setFailed] = useState(!src)
+  const [isLoading, setIsLoading] = useState(Boolean(src))
+  const fallbackAttempted = useRef(false)
+
+  useEffect(() => {
+    setImageSrc(src || '')
+    setFailed(!src)
+    setIsLoading(Boolean(src))
+    fallbackAttempted.current = false
+  }, [src])
+
+  const handleError = async () => {
+    setFailed(true)
+    setIsLoading(true)
+    if (fallbackAttempted.current) {
+      setIsLoading(false)
+      return
+    }
+    fallbackAttempted.current = true
+
+    try {
+      const params = new URLSearchParams({ term: `${artist} ${title}`, entity: 'song', limit: '1' })
+      const response = await fetch(`https://itunes.apple.com/search?${params.toString()}`)
+      const result = await response.json()
+      const artwork = result?.results?.[0]?.artworkUrl100
+      if (typeof artwork === 'string' && artwork) {
+        setImageSrc(artwork.replace('100x100bb', '600x600bb'))
+        setFailed(false)
+        return
+      }
+    } catch {
+      // Fall through to the placeholder when the artwork service is unavailable.
+    }
+
+    setIsLoading(false)
+    setFailed(true)
+  }
+
+  if (failed && !isLoading) {
+    return <Music2 className="h-5 w-5 text-[#555] m-auto mt-3" />
+  }
+
+  return (
+    <div className="relative h-full w-full">
+      {isLoading && <div className="absolute inset-0 animate-pulse bg-white/10" aria-hidden="true" />}
+      {!failed && (
+        <img
+          src={imageSrc}
+          alt={alt}
+          className={`${className} relative transition-opacity duration-200 ${isLoading ? 'opacity-0' : 'opacity-100'}`}
+          loading={loading}
+          onLoad={() => setIsLoading(false)}
+          onError={() => void handleError()}
+        />
+      )}
+    </div>
+  )
+}
 
 // High-quality curated default recommendations matching the screenshot reference
 const CURATED_DEFAULT_SONGS: HomeSongItem[] = [
@@ -285,18 +458,57 @@ function upgradeArtwork(url?: string): string | undefined {
 
 export default function Home({ onOpenDownloadPanel }: HomeProps) {
   const navigate = useNavigate()
-  const { queue, currentSongIndex, setQueue } = usePlayerStore()
+  const { queue, currentSongIndex, setQueue, updateSong, setIsPlaying } = usePlayerStore()
+  const { queueTransfer, updateTransfer } = useDownloadStore()
 
   const [activeTab, setActiveTab] = useState<TabType>('home')
-  const [recommendedSongs, setRecommendedSongs] = useState<HomeSongItem[]>(CURATED_DEFAULT_SONGS)
-  const [recommendedAlbums, setRecommendedAlbums] = useState<HomeAlbumItem[]>(CURATED_DEFAULT_ALBUMS)
+  const [recommendedSongs, setRecommendedSongs] = useState<HomeSongItem[]>(() =>
+    readCachedHomeList(HOME_RECOMMENDED_SONGS_KEY, CURATED_DEFAULT_SONGS)
+  )
+  const [recommendedAlbums, setRecommendedAlbums] = useState<HomeAlbumItem[]>(() =>
+    readCachedHomeList(HOME_RECOMMENDED_ALBUMS_KEY, CURATED_DEFAULT_ALBUMS)
+  )
   const [hotSongs, setHotSongs] = useState<HomeSongItem[]>([])
   const [editorPicks, setEditorPicks] = useState<HomeSongItem[]>([])
   const [aotyAlbums, setAotyAlbums] = useState<HomeAlbumItem[]>([])
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [likedSongIds, setLikedSongIds] = useState<Set<string>>(new Set())
+  const [librarySongs, setLibrarySongs] = useState<Song[]>([])
+  const [librarySongKeys, setLibrarySongKeys] = useState<Set<string>>(new Set())
+  const [importingSpotifyId, setImportingSpotifyId] = useState<string | null>(null)
+  const [spotifyArtwork, setSpotifyArtwork] = useState<Record<string, string>>({})
+  const [isInfiniteRadio, setIsInfiniteRadio] = useState(false)
+  const radioSongsRef = useRef<Song[]>([])
+  const radioRequestedRef = useRef<Set<string>>(new Set())
+  const radioTransfersRef = useRef<Map<string, string>>(new Map())
+  const radioDownloadInFlightRef = useRef(false)
 
   const currentSong = queue[currentSongIndex]
+
+  useEffect(() => {
+    let mounted = true
+    const loadLibraryStatus = async () => {
+      try {
+        const songs = await window.api?.getSongs?.()
+        if (!mounted) return
+        const localSongs = (songs || []) as Song[]
+        setLibrarySongs(localSongs)
+        setLibrarySongKeys(
+          new Set(localSongs.map((song) => librarySongKey(song.title || '', song.artist || '')))
+        )
+      } catch (error) {
+        console.warn('Unable to load homepage library status:', error)
+      }
+    }
+
+    void loadLibraryStatus()
+    const handleLibraryUpdate = () => void loadLibraryStatus()
+    window.addEventListener('felo:library-updated', handleLibraryUpdate)
+    return () => {
+      mounted = false
+      window.removeEventListener('felo:library-updated', handleLibraryUpdate)
+    }
+  }, [])
 
   // Fetch online charts & recommendations from iTunes RSS / Search
   const fetchFeed = useCallback(async () => {
@@ -377,8 +589,31 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
   }, [])
 
   useEffect(() => {
-    void fetchFeed()
-  }, [fetchFeed])
+    localStorage.setItem(HOME_RECOMMENDED_SONGS_KEY, JSON.stringify(recommendedSongs))
+    localStorage.setItem(HOME_RECOMMENDED_ALBUMS_KEY, JSON.stringify(recommendedAlbums))
+  }, [recommendedSongs, recommendedAlbums])
+
+  useEffect(() => {
+    if (activeTab !== 'spotify') return
+    let cancelled = false
+    void Promise.all(
+      spotifyPlaylists.map(async (playlist) => {
+        try {
+          const metadata = await window.api?.fetchPlaylistImportMetadata?.(
+            `https://open.spotify.com/playlist/${playlist.id}`
+          )
+          return [playlist.id, typeof metadata?.thumbnail === 'string' ? metadata.thumbnail : ''] as const
+        } catch {
+          return [playlist.id, ''] as const
+        }
+      })
+    ).then((entries) => {
+      if (!cancelled) setSpotifyArtwork(Object.fromEntries(entries))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab])
 
   const toggleLike = (songId: string) => {
     setLikedSongIds((prev) => {
@@ -389,6 +624,21 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
     })
   }
 
+  const handleOpenSpotifyPlaylist = async (playlist: (typeof spotifyPlaylists)[number]) => {
+    if (importingSpotifyId) return
+    setImportingSpotifyId(playlist.id)
+    try {
+      const localPlaylist = await window.api?.importSpotifyPlaylist?.(playlist.id, playlist.title)
+      if (localPlaylist?.id) navigate(`/playlists/${localPlaylist.id}`)
+      else throw new Error('Spotify playlist import returned no local playlist.')
+    } catch (error) {
+      console.error('Failed to import Spotify playlist:', error)
+      void window.api?.openExternal?.(`https://open.spotify.com/playlist/${playlist.id}`)
+    } finally {
+      setImportingSpotifyId(null)
+    }
+  }
+
   const handleDownload = (song: HomeSongItem) => {
     onOpenDownloadPanel?.({
       id: song.id,
@@ -397,39 +647,218 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
       album: song.album || '',
       duration: song.duration,
       artworkPath: song.artworkUrl,
-      isOnline: true
+      isOnline: true,
+      autoDownload: true,
+      autoPlay: true
     })
   }
 
-  const handlePlaySong = (song: HomeSongItem) => {
-    const queueItem: Song = {
+  const handlePlaySong = async (song: HomeSongItem) => {
+    const songKey = librarySongKey(song.title, song.artist)
+    let localSong = librarySongs.find(
+      (candidate) => librarySongKey(candidate.title, candidate.artist) === songKey
+    )
+
+    // Refresh once on demand so a newly completed download is playable without
+    // requiring a hard refresh or waiting for the library event listener.
+    if (!localSong?.filePath) {
+      try {
+        const latestSongs = (await window.api?.getSongs?.()) as Song[] | undefined
+        if (latestSongs) {
+          setLibrarySongs(latestSongs)
+          setLibrarySongKeys(
+            new Set(latestSongs.map((candidate) => librarySongKey(candidate.title || '', candidate.artist || '')))
+          )
+          localSong = latestSongs.find(
+            (candidate) => librarySongKey(candidate.title, candidate.artist) === songKey
+          )
+        }
+      } catch (error) {
+        console.warn('Unable to refresh library before playback:', error)
+      }
+    }
+
+    if (localSong?.filePath) {
+      setQueue([localSong], 0)
+      return
+    }
+
+    onOpenDownloadPanel?.({
       id: song.id,
       title: song.title,
       artist: song.artist,
       album: song.album || '',
       duration: song.duration,
-      filePath: `virtual:online:${song.id}`,
       artworkPath: song.artworkUrl,
-      size: 0,
-      dateAdded: Math.floor(Date.now() / 1000)
+      isOnline: true,
+      autoDownload: true,
+      autoPlay: true
+    })
+  }
+
+  const startRadioDownload = async (song: Song): Promise<void> => {
+    if (
+      radioDownloadInFlightRef.current ||
+      radioRequestedRef.current.has(song.id) ||
+      (song.filePath && !song.filePath.startsWith('virtual:'))
+    ) return
+
+    radioRequestedRef.current.add(song.id)
+    radioDownloadInFlightRef.current = true
+    const initialSource = DEFAULT_DOWNLOAD_PRIORITY[0]
+    const transferId = queueTransfer({
+      source: initialSource,
+      sourceName: 'Searching providers',
+      title: song.title,
+      artist: song.artist,
+      quality: 'Auto quality',
+      size: 'Searching...',
+      conflictMode: 'keep_both',
+      status: 'queued',
+      progress: 0,
+      message: `Infinite Radio: searching for ${song.title}...`
+    })
+    radioTransfersRef.current.set(transferId, song.id)
+
+    const sourceName = (source: string) =>
+      source === 'qobuz' ? 'Qobuz' : source === 'deezer' ? 'Deezer' : source === 'soulseek' ? 'Soulseek P2P' : 'YouTube Music'
+
+    try {
+      const savedPriority = await window.api?.getSetting?.(DOWNLOAD_PRIORITY_SETTING)
+      const savedAccounts = await window.api?.getSetting?.(STREAMING_ACCOUNTS_SETTING)
+      const priority = Array.isArray(savedPriority) && savedPriority.length > 0
+        ? savedPriority
+        : DEFAULT_DOWNLOAD_PRIORITY
+      const accounts = savedAccounts && typeof savedAccounts === 'object' ? savedAccounts : {}
+
+      for (const source of priority) {
+        updateTransfer(transferId, {
+          source,
+          sourceName: sourceName(source),
+          message: `Infinite Radio: searching ${sourceName(source)}...`
+        })
+        try {
+          const results = await window.api?.searchDownloadSource?.(
+            source,
+            `${song.artist} ${song.title}`,
+            accounts
+          )
+          const result = results?.[0]
+          if (!result) continue
+
+          updateTransfer(transferId, {
+            quality: result.quality || 'Auto quality',
+            size: result.size || 'Calculating...',
+            message: `Infinite Radio: downloading ${song.title} from ${sourceName(source)}...`
+          })
+          await window.api?.startDownload?.({
+            transferId,
+            source,
+            resultId: String(result.id),
+            title: result.title || song.title,
+            artist: result.artist || song.artist,
+            songId: song.id,
+            conflictMode: 'keep_both',
+            accounts
+          })
+          return
+        } catch (error) {
+          console.warn(`Infinite Radio ${source} attempt failed:`, error)
+        }
+      }
+
+      updateTransfer(transferId, {
+        status: 'failed',
+        progress: 0,
+        message: `No provider result found for "${song.title}".`
+      })
+      radioRequestedRef.current.delete(song.id)
+      radioDownloadInFlightRef.current = false
+    } catch (error) {
+      updateTransfer(transferId, {
+        status: 'failed',
+        progress: 0,
+        message: 'Infinite Radio could not start the download.'
+      })
+      radioRequestedRef.current.delete(song.id)
+      radioDownloadInFlightRef.current = false
+      console.warn('Infinite Radio download setup failed:', error)
     }
-    setQueue([queueItem], 0)
   }
 
   const handleStartInfiniteRadio = () => {
-    const list: Song[] = recommendedSongs.map((song) => ({
-      id: song.id,
-      title: song.title,
-      artist: song.artist,
-      album: song.album || '',
-      duration: song.duration,
-      filePath: `virtual:online:${song.id}`,
-      artworkPath: song.artworkUrl,
-      size: 0,
-      dateAdded: Math.floor(Date.now() / 1000)
-    }))
+    const list: Song[] = recommendedSongs.map((song) => {
+      const localSong = librarySongs.find(
+        (candidate) => librarySongKey(candidate.title, candidate.artist) === librarySongKey(song.title, song.artist)
+      )
+
+      return localSong || {
+        id: song.id,
+        title: song.title,
+        artist: song.artist,
+        album: song.album || '',
+        duration: song.duration,
+        filePath: `virtual:online:${song.id}`,
+        artworkPath: song.artworkUrl,
+        size: 0,
+        dateAdded: Math.floor(Date.now() / 1000)
+      }
+    })
+    radioSongsRef.current = list
+    radioRequestedRef.current.clear()
+    radioTransfersRef.current.clear()
+    setIsInfiniteRadio(true)
     setQueue(list, 0)
+    void startRadioDownload(list[0])
   }
+
+  useEffect(() => {
+    if (!isInfiniteRadio) return
+
+    const unsubscribe = window.api?.onDownloadProgress?.((event: any) => {
+      if (event?.status !== 'completed' || !event.transferId) return
+      const songId = radioTransfersRef.current.get(event.transferId)
+      if (!songId) return
+
+      const songIndex = radioSongsRef.current.findIndex((song) => song.id === songId)
+      const song = radioSongsRef.current[songIndex]
+      radioDownloadInFlightRef.current = false
+      if (!song || !event.filePath) return
+
+      const downloadedSong = { ...song, filePath: event.filePath }
+      radioSongsRef.current[songIndex] = downloadedSong
+      setLibrarySongs((previous) => [
+        ...previous.filter(
+          (candidate) => librarySongKey(candidate.title, candidate.artist) !== librarySongKey(downloadedSong.title, downloadedSong.artist)
+        ),
+        downloadedSong
+      ])
+      setLibrarySongKeys((previous) => new Set(previous).add(librarySongKey(downloadedSong.title, downloadedSong.artist)))
+      updateSong(downloadedSong)
+      // The virtual URL may have failed before the download completed.
+      if (songIndex === usePlayerStore.getState().currentSongIndex) setIsPlaying(true)
+      radioTransfersRef.current.delete(event.transferId)
+
+      const nextSong = radioSongsRef.current[songIndex + 1]
+      const currentIndex = usePlayerStore.getState().currentSongIndex
+      if (nextSong && currentIndex >= songIndex) void startRadioDownload(nextSong)
+    })
+
+    return () => unsubscribe?.()
+  }, [isInfiniteRadio, updateSong])
+
+  useEffect(() => {
+    if (!isInfiniteRadio) return
+    const activeSong = radioSongsRef.current[currentSongIndex]
+    const nextSong = radioSongsRef.current[currentSongIndex + 1]
+    if (activeSong) void startRadioDownload(activeSong)
+
+    // Only preload the next song when the current song is already local.
+    // Otherwise the completion handler starts it after the current download ends.
+    if (nextSong && activeSong?.filePath && !activeSong.filePath.startsWith('virtual:')) {
+      void startRadioDownload(nextSong)
+    }
+  }, [currentSongIndex, isInfiniteRadio])
 
   const displayedSongs = useMemo(() => {
     if (activeTab === 'hot_new') return hotSongs.length ? hotSongs : recommendedSongs
@@ -499,15 +928,28 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
             <span className="absolute -bottom-3 left-0 right-0 h-0.5 rounded-full bg-[#1ed760]" />
           )}
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('spotify')}
+          className={`relative text-sm font-bold tracking-tight transition-colors ${
+            activeTab === 'spotify' ? 'text-white font-extrabold' : 'text-[#a7a7a7] hover:text-white'
+          }`}
+        >
+          <span>Spotify</span>
+          {activeTab === 'spotify' && (
+            <span className="absolute -bottom-3 left-0 right-0 h-0.5 rounded-full bg-[#1ed760]" />
+          )}
+        </button>
       </div>
 
-      <div className="px-8 pt-6 space-y-10">
+      <div className="space-y-10 px-4 pt-5 sm:px-8 sm:pt-6">
         {/* Section 1: Recommended Songs */}
-        {activeTab !== 'aoty' && (
+        {(activeTab === 'home' || activeTab === 'hot_new' || activeTab === 'editors_picks') && (
           <section className="space-y-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <h2 className="text-2xl font-black tracking-tight text-white">
+              <div className="flex min-w-0 flex-wrap items-center gap-3">
+                <h2 className="text-xl font-black tracking-tight text-white sm:text-2xl">
                   {activeTab === 'hot_new'
                     ? 'Trending Now'
                     : activeTab === 'editors_picks'
@@ -518,7 +960,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                   <button
                     type="button"
                     onClick={handleStartInfiniteRadio}
-                    className="flex items-center gap-1.5 rounded-full bg-gradient-to-r from-[#e67e22] to-[#d35400] px-3 py-1 text-xs font-bold text-white shadow-md transition-transform hover:scale-105 active:scale-95"
+                    className="inline-flex h-8 items-center gap-2 rounded-full bg-[#2a2a2a] px-4 text-xs font-bold text-white shadow-md transition-all hover:bg-[#353535] hover:shadow-lg active:scale-95"
                   >
                     <Radio className="h-3.5 w-3.5" />
                     <span>Start Infinite Radio</span>
@@ -537,11 +979,12 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
               </button>
             </div>
 
-            {/* 3-column songs grid matching reference screenshot */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2">
+            {/* Keep recommendations readable beside the download panel. */}
+            <div className="grid grid-cols-1 gap-x-6 gap-y-2 md:grid-cols-2">
               {displayedSongs.map((song) => {
                 const isCurrent = currentSong?.title === song.title
                 const isLiked = likedSongIds.has(song.id)
+                const isInLibrary = librarySongKeys.has(librarySongKey(song.title, song.artist))
 
                 return (
                   <div
@@ -551,19 +994,15 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                     {/* Thumbnail & Title/Artist */}
                     <div className="flex min-w-0 flex-1 items-center gap-3">
                       <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded bg-[#282828] shadow-sm">
-                        {song.artworkUrl ? (
-                          <img
-                            src={song.artworkUrl}
-                            alt=""
-                            className="h-full w-full object-cover"
-                            loading="lazy"
-                          />
-                        ) : (
-                          <Music2 className="h-5 w-5 text-[#555] m-auto mt-3" />
-                        )}
+                        <ArtworkImage
+                          src={song.artworkUrl}
+                          title={song.title}
+                          artist={song.artist}
+                          className="h-full w-full object-cover"
+                        />
                         <button
                           type="button"
-                          onClick={() => handlePlaySong(song)}
+                          onClick={() => void handlePlaySong(song)}
                           className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100"
                         >
                           <Play className="h-5 w-5 fill-white text-white" />
@@ -589,6 +1028,9 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                             <span className="shrink-0 rounded border border-white/20 bg-black/40 px-1 py-0.2 text-[9px] font-bold text-[#b3b3b3]">
                               {song.quality}
                             </span>
+                          )}
+                          {isInLibrary && (
+                            <span className="shrink-0 text-[10px] font-bold text-[#1ed760]">In Library</span>
                           )}
                         </div>
                         <p className="truncate text-xs text-[#a7a7a7]" title={song.artist}>
@@ -618,10 +1060,18 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                       <button
                         type="button"
                         onClick={() => handleDownload(song)}
-                        title="Download track"
-                        className="hidden rounded-full p-1 text-[#a7a7a7] transition-colors hover:text-[#1ed760] group-hover:block"
+                        title={isInLibrary ? 'Already in your library' : 'Download track'}
+                        className={`${
+                          isInLibrary
+                            ? 'text-[#1ed760]'
+                            : 'pointer-events-none text-[#a7a7a7] opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[#1ed760]'
+                        } rounded-full p-1 transition-opacity`}
                       >
-                        <Download className="h-4 w-4" />
+                        {isInLibrary ? (
+                          <CheckCircle2 className="h-4 w-4" />
+                        ) : (
+                          <Download className="h-4 w-4" />
+                        )}
                       </button>
                     </div>
                   </div>
@@ -631,9 +1081,113 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
           </section>
         )}
 
-        {/* Section 2: Recommended Albums */}
-        <section className="space-y-4 pt-2">
-          <div className="flex items-center justify-between">
+        {/* Section 2: Spotify Editorial Playlists */}
+        {activeTab === 'spotify' && (
+          <section className="space-y-4 pt-2">
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-black tracking-tight text-white">Spotify Playlists</h2>
+                <p className="mt-1 text-sm text-[#a7a7a7]">
+                  Explore popular charts, moods, and editorial playlists.
+                </p>
+              </div>
+              <span className="hidden rounded-full bg-[#1ed760]/10 px-3 py-1 text-xs font-bold text-[#1ed760] sm:inline-flex">
+                Updated automatically by Spotify
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+              {spotifyPlaylists.map((playlist, index) => (
+                <article
+                  key={playlist.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => void handleOpenSpotifyPlaylist(playlist)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      void handleOpenSpotifyPlaylist(playlist)
+                    }
+                  }}
+                  className="group cursor-pointer overflow-hidden rounded-xl border border-white/10 bg-[#181818] p-3 text-left shadow-lg transition-all hover:-translate-y-0.5 hover:border-[#1ed760]/40 hover:bg-[#202020]"
+                >
+                  <div
+                    className={`relative aspect-square w-full overflow-hidden rounded-lg bg-gradient-to-br ${
+                      index % 4 === 0
+                        ? 'from-emerald-900 via-green-700 to-lime-500'
+                        : index % 4 === 1
+                          ? 'from-indigo-950 via-blue-700 to-cyan-400'
+                          : index % 4 === 2
+                            ? 'from-fuchsia-950 via-purple-700 to-pink-400'
+                            : 'from-amber-950 via-orange-700 to-yellow-400'
+                    }`}
+                  >
+                    <div className="absolute -right-8 -top-10 h-36 w-36 rounded-full bg-white/15 blur-2xl" />
+                    <div className="absolute -bottom-14 -left-8 h-36 w-36 rounded-full bg-black/20 blur-xl" />
+                    {spotifyArtwork[playlist.id] ? (
+                      <img
+                        src={spotifyArtwork[playlist.id]}
+                        alt=""
+                        className="relative z-10 h-full w-full object-cover"
+                        onError={(event) => {
+                          event.currentTarget.style.display = 'none'
+                        }}
+                      />
+                    ) : (
+                      <Music2 className="relative h-16 w-16 text-white/90 drop-shadow-lg" />
+                    )}
+                    <span className="absolute bottom-2 left-2 rounded bg-black/45 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-white">
+                      Spotify playlist
+                    </span>
+                  </div>
+
+                  <div className="mt-3 flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-base font-black text-white" title={playlist.title}>
+                        {playlist.title}
+                      </h3>
+                      <p className="mt-1 truncate text-xs text-[#a7a7a7]">
+                        {playlist.category} <span className="mx-1 text-white/30">•</span> {playlist.update}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        title={`Add ${playlist.title} to local playlists`}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          void handleOpenSpotifyPlaylist(playlist)
+                        }}
+                        disabled={Boolean(importingSpotifyId)}
+                        className="rounded-full bg-[#1ed760] px-3 py-1.5 text-[10px] font-black text-black transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {importingSpotifyId === playlist.id ? 'Adding...' : 'Add to Playlist'}
+                      </button>
+                      <button
+                        type="button"
+                        title={`Open ${playlist.title} in Spotify`}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          void window.api?.openExternal?.(
+                            `https://open.spotify.com/playlist/${playlist.id}`
+                          )
+                        }}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-[#1ed760] hover:text-black"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Section 3: Recommended Albums */}
+        {(activeTab === 'home' || activeTab === 'aoty') && (
+          <section className="space-y-4 pt-2">
+            <div className="flex items-center justify-between">
             <h2 className="text-2xl font-black tracking-tight text-white">
               {activeTab === 'aoty' ? 'Albums of the Year' : 'Recommended Albums'}
             </h2>
@@ -653,20 +1207,17 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
             {displayedAlbums.map((album) => (
               <div
                 key={album.id}
-                onClick={() => navigate(`/search`)}
+                onClick={() => navigate(`/album/${encodeURIComponent(album.artist)}/${encodeURIComponent(album.title)}`)}
                 className="group flex flex-col rounded-xl bg-[#181818] p-3 transition-all hover:bg-[#282828] cursor-pointer"
               >
                 <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-[#222] shadow-md">
-                  {album.artworkUrl ? (
-                    <img
-                      src={album.artworkUrl}
-                      alt={album.title}
-                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <Disc3 className="h-10 w-10 text-[#555] m-auto mt-12" />
-                  )}
+                  <ArtworkImage
+                    src={album.artworkUrl}
+                    title={album.title}
+                    artist={album.artist}
+                    alt={album.title}
+                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                  />
                   <button
                     type="button"
                     onClick={(e) => {
@@ -699,8 +1250,9 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                 </div>
               </div>
             ))}
-          </div>
-        </section>
+            </div>
+          </section>
+        )}
       </div>
     </div>
   )

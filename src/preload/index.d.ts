@@ -32,6 +32,12 @@ declare global {
         Albums: any[]
         Songs: any[]
       }>
+      searchLastFm: (query: string, apiKey?: string) => Promise<{
+        'Top Results': any[]
+        Artists: any[]
+        Albums: any[]
+        Songs: any[]
+      }>
 
       // Playlists
       getPlaylists: () => Promise<any[]>
@@ -50,7 +56,9 @@ declare global {
         }>
       }) => Promise<any>
       fetchPlaylistImportMetadata: (url: string) => Promise<any>
+      importSpotifyPlaylist: (playlistId: string, name: string) => Promise<any>
       deletePlaylist: (playlistId: string) => Promise<void>
+      renamePlaylist: (playlistId: string, name: string) => Promise<any>
       addSongToPlaylist: (playlistId: string, songId: string) => Promise<any>
       removeSongFromPlaylist: (playlistId: string, songId: string) => Promise<any>
 
@@ -61,6 +69,8 @@ declare global {
         album?: string
         duration?: number
       }) => Promise<any | null>
+      translateLyrics: (lines: string[], targetLanguage: string) => Promise<string[]>
+      romanizeLyrics: (lines: string[]) => Promise<string[]>
 
       // Settings
       getSetting: (key: string) => Promise<any>
@@ -73,14 +83,22 @@ declare global {
       testDeezerAccount: (
         accounts: any
       ) => Promise<{ status: string; message: string; rawError?: string }>
+      testSoulseekAccount: (
+        accounts: any
+      ) => Promise<{ status: string; message: string; rawError?: string }>
 
       // Provider downloads
       searchDownloadSource: (
-        source: 'qobuz' | 'deezer',
+        source: 'qobuz' | 'deezer' | 'soulseek' | 'youtube',
         query: string,
         accounts: any
       ) => Promise<any[]>
-      startDownload: (request: any) => Promise<{ started: true; transferId: string }>
+      startDownload: (request: any) => Promise<{
+              started: boolean
+              transferId: string
+              alreadyExists?: boolean
+              duplicateRequest?: boolean
+            }>
       onDownloadProgress: (listener: (event: any) => void) => () => void
 
       // System

@@ -12,9 +12,7 @@ import {
   Plus,
   Music2,
   ListMusic,
-  X,
-  ChevronLeft,
-  ChevronRight
+  X
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
@@ -65,9 +63,11 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
     const handleLibraryUpdate = () => loadStats()
     window.addEventListener('felo:library-updated', handleLibraryUpdate)
     window.addEventListener('fanxmusic:library-updated', handleLibraryUpdate)
+    window.addEventListener('felo:playlists-updated', handleLibraryUpdate)
     return () => {
       window.removeEventListener('felo:library-updated', handleLibraryUpdate)
       window.removeEventListener('fanxmusic:library-updated', handleLibraryUpdate)
+      window.removeEventListener('felo:playlists-updated', handleLibraryUpdate)
     }
   }, [])
 
@@ -170,7 +170,7 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
                 ? 'Transfers'
                 : `${transfers.length} transfer${transfers.length === 1 ? '' : 's'}`
             }
-            className="relative flex h-10 w-10 items-center justify-center rounded-md border border-success/30 bg-success/10 text-success transition-colors hover:bg-success/15 no-drag"
+            className="relative flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-[#2a2a2a] text-[#b3b3b3] transition-colors hover:bg-[#353535] no-drag"
           >
             <Download className="h-4 w-4" />
             {transfers.length > 0 && (
@@ -193,13 +193,15 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
         {/* Your Library Section */}
         <div className="rounded-lg bg-surface p-2">
           <div className="flex items-center justify-between text-text-muted hover:text-text transition-colors group mb-2 px-2">
-            <NavLink
-              to="/library"
+            <button
+              type="button"
+              onClick={onToggle}
+              title="Collapse sidebar"
               className="min-w-0 flex items-center gap-2.5 font-black text-[15px] tracking-wide text-white hover:text-white no-drag"
             >
               <ListMusic className="h-5 w-5 shrink-0 text-[#b3b3b3]" />
               <span className="truncate">Your Library</span>
-            </NavLink>
+            </button>
             <div className="flex items-center gap-1.5 no-drag">
               <button
                 type="button"
@@ -210,18 +212,7 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
                 <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
                 <span>Create</span>
               </button>
-              <button
-                type="button"
-                onClick={onToggle}
-                title={isOpen ? 'Collapse sidebar' : 'Expand sidebar'}
-                className="flex h-7 w-7 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-hover hover:text-text"
-              >
-                {isOpen ? (
-                  <ChevronLeft className="h-4 w-4" />
-                ) : (
-                  <ChevronRight className="h-4 w-4" />
-                )}
-              </button>
+
             </div>
           </div>
 
@@ -349,9 +340,7 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
           </div>
           <span className="shrink-0 text-[11px] font-mono text-text-muted">
             v
-            {updateStatus?.status === 'available'
-              ? updateStatus.latestVersion
-              : updateStatus?.currentVersion || '1.0.0'}
+            {updateStatus?.latestVersion || updateStatus?.currentVersion || '1.0.0'}
           </span>
         </button>
       </div>
@@ -362,7 +351,7 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
           <div className="absolute bottom-full left-0 right-0 z-50 h-[380px] max-h-[70vh] overflow-hidden rounded-t-xl border border-border/70 border-b-0 bg-[#181818] shadow-[0_-8px_24px_rgba(0,0,0,0.6)]">
             <div className="flex h-14 items-center justify-between border-b border-border/60 bg-black/20 px-4">
               <div className="flex items-center gap-2">
-                <DownloadCloud className="h-5 w-5 text-success" />
+                <DownloadCloud className="h-5 w-5 text-white" />
                 <span className="text-sm font-bold text-text">Transfers & Queue</span>
               </div>
               <button
@@ -395,7 +384,7 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
                         className="rounded-md border border-border/60 bg-surface-elevated p-3"
                       >
                         <div className="flex items-start gap-3">
-                          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-black/25 text-success">
+                          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-[#2a2a2a] text-[#b3b3b3]">
                             {transfer.status === 'completed' ? (
                               <CheckCircle2 className="h-4 w-4" />
                             ) : transfer.status === 'failed' ? (
@@ -419,13 +408,13 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
                               >
                                 {transfer.message || transfer.status}
                               </span>
-                              <span className="shrink-0 tabular-nums text-success">
+                              <span className="shrink-0 tabular-nums text-white">
                                 {progress}%
                               </span>
                             </div>
                             <div className="mt-2 h-1 overflow-hidden rounded-full bg-black/30">
                               <div
-                                className="h-full bg-success transition-[width]"
+                                className="h-full bg-white transition-[width]"
                                 style={{ width: `${progress}%` }}
                               />
                             </div>
@@ -436,7 +425,7 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
                                 type="button"
                                 onClick={() => setQueue([transfer.song!], 0)}
                                 title="Play downloaded song"
-                                className="flex h-7 w-7 items-center justify-center rounded-full bg-success text-black transition-transform hover:scale-105"
+                                className="flex h-7 w-7 items-center justify-center rounded-full bg-[#2a2a2a] text-white transition-all hover:scale-105 hover:bg-[#353535]"
                               >
                                 <Play className="ml-0.5 h-3.5 w-3.5 fill-current" />
                               </button>
@@ -462,7 +451,7 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
                   onClick={() => navigate('/settings')}
                   className="flex flex-1 items-center justify-center gap-2 rounded-md border border-border/50 bg-surface-elevated px-3 py-2 text-xs font-bold text-text hover:bg-hover"
                 >
-                  <Download className="h-4 w-4 text-success" />
+                  <Download className="h-4 w-4 text-white" />
                   Download Settings
                 </button>
                 {transfers.length > 0 && (
@@ -486,7 +475,7 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
           className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-hover no-drag"
         >
           <span className="flex min-w-0 items-center gap-3">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-success/30 bg-success/10 text-success">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-[#2a2a2a] text-[#b3b3b3]">
               <Download className="h-4 w-4" />
             </span>
             <span className="min-w-0">

@@ -60,7 +60,7 @@ export default function Inspector({ isOpen, onClose }: InspectorProps) {
               <div className="flex justify-between items-center text-sm">
                 <span className="text-text-muted">Codec</span>
                 <span className="text-text font-mono bg-surface-elevated px-2 py-0.5 rounded">
-                  {currentSong.codec || 'FLAC'}
+                  {currentSong.codec || currentSong.container || 'Unknown'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-sm">
@@ -76,12 +76,12 @@ export default function Inspector({ isOpen, onClose }: InspectorProps) {
                 <span className="text-text">
                   {currentSong.sampleRate
                     ? (currentSong.sampleRate / 1000).toFixed(1) + ' kHz'
-                    : '44.1 kHz'}
+                    : 'Unknown'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-sm">
                 <span className="text-text-muted">Bit Depth</span>
-                <span className="text-text">{currentSong.bitDepth || 16}-bit</span>
+                <span className="text-text">{currentSong.bitDepth ? `${currentSong.bitDepth}-bit` : 'Unknown'}</span>
               </div>
             </div>
 

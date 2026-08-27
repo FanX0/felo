@@ -15,13 +15,14 @@ import Library from './pages/Library/Library'
 import Search from './pages/Search/Search'
 import Playlists from './pages/Playlists/Playlists'
 import PlaylistDetail from './pages/Playlists/PlaylistDetail'
+import AlbumPage from './pages/Album/AlbumPage'
 import ArtistPage from './pages/Artist/ArtistPage'
 import LyricsPage from './pages/Lyrics/LyricsPage'
 import Settings from './pages/Settings/Settings'
 import AccountPage from './pages/Online/AccountPage'
 import ProfilePage from './pages/Online/ProfilePage'
 import ChatPage from './pages/Online/ChatPage'
-import SharedPlaylistsPage from './pages/Online/SharedPlaylistsPage'
+
 import ListenTogetherPage from './pages/Online/ListenTogetherPage'
 import {
   Search as SearchIcon,
@@ -32,7 +33,7 @@ import {
   Globe,
   Database,
   HardDrive,
-  ChevronLeft,
+  Radio,
   ChevronRight,
   Users,
   Minus,
@@ -113,14 +114,7 @@ function App() {
       {/* Top Application Bar (Draggable) */}
       <header className="absolute top-0 left-0 right-0 h-16 draggable-header flex items-center justify-between px-4 z-50 pointer-events-none">
         <div className="w-[min(20vw,450px)] flex items-center gap-2 pointer-events-auto">
-          <button
-            type="button"
-            onClick={() => navigate(-1)}
-            title="Go back"
-            className="w-8 h-8 rounded-full no-drag flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition-colors"
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </button>
+
           <button
             type="button"
             onClick={() => navigate(1)}
@@ -178,6 +172,11 @@ function App() {
                     <Database className="w-3.5 h-3.5" /> MusicBrainz
                   </>
                 )}
+                {searchMode === 'lastfm' && (
+                  <>
+                    <Radio className="w-3.5 h-3.5" /> Last.fm
+                  </>
+                )}
               </button>
 
               {isSearchModeOpen && (
@@ -220,6 +219,18 @@ function App() {
                   >
                     <Database className="w-4 h-4" />
                     MusicBrainz
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchMode('lastfm')
+                      setIsSearchModeOpen(false)
+                    }}
+                    className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'lastfm' ? 'text-primary-amber bg-primary-amber/10' : 'text-text-muted hover:bg-hover hover:text-text'}`}
+                  >
+                    <Radio className="w-4 h-4" />
+                    Last.fm
                   </button>
                 </div>
               )}
@@ -441,13 +452,36 @@ function App() {
                     />
                   }
                 />
+                <Route
+                  path="/album/:artist/:title"
+                  element={
+                    <AlbumPage
+                      onOpenDownloadPanel={(target) => {
+                        setDownloadTarget(target)
+                        setIsFriendActivityOpen(false)
+                        setIsDownloadPanelOpen(true)
+                      }}
+                    />
+                  }
+                />
                 <Route path="/lyrics" element={<LyricsPage />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/account" element={<AccountPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route path="/profile/:username" element={<ProfilePage />} />
-                <Route path="/chat" element={<ChatPage />} />
-                <Route path="/shared-playlists" element={<SharedPlaylistsPage />} />
+                <Route
+                  path="/chat"
+                  element={
+                    <ChatPage
+                      onOpenDownloadPanel={(target) => {
+                        setDownloadTarget(target)
+                        setIsFriendActivityOpen(false)
+                        setIsDownloadPanelOpen(true)
+                      }}
+                    />
+                  }
+                />
+
                 <Route
                   path="/listen-together"
                   element={

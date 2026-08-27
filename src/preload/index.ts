@@ -33,10 +33,11 @@ const api = {
   searchSongs: (query: string) => ipcRenderer.invoke('library:searchSongs', query),
   searchArtists: (query: string) => ipcRenderer.invoke('library:searchArtists', query),
   searchAppleMusic: (query: string): Promise<any> => ipcRenderer.invoke('search:appleMusic', query),
+  searchMusicBrainz: (query: string): Promise<any> => ipcRenderer.invoke('search:musicBrainz', query),
+  searchLastFm: (query: string, apiKey?: string): Promise<any> =>
+    ipcRenderer.invoke('search:lastFm', query, apiKey),
   searchAppleMusicArtistSongs: (artistName: string): Promise<any[]> =>
     ipcRenderer.invoke('search:appleMusicArtistSongs', artistName),
-  searchMusicBrainz: (query: string): Promise<any> =>
-    ipcRenderer.invoke('search:musicBrainz', query),
 
   // Playlists
   getPlaylists: (): Promise<any[]> => ipcRenderer.invoke('playlists:list'),
@@ -49,8 +50,12 @@ const api = {
   }): Promise<any> => ipcRenderer.invoke('playlists:create', input),
   fetchPlaylistImportMetadata: (url: string): Promise<any> =>
     ipcRenderer.invoke('playlists:fetchImportMetadata', url),
+  importSpotifyPlaylist: (playlistId: string, name: string): Promise<any> =>
+    ipcRenderer.invoke('playlists:importSpotify', playlistId, name),
   deletePlaylist: (playlistId: string): Promise<void> =>
     ipcRenderer.invoke('playlists:delete', playlistId),
+  renamePlaylist: (playlistId: string, name: string): Promise<any> =>
+    ipcRenderer.invoke('playlists:rename', playlistId, name),
   addSongToPlaylist: (playlistId: string, songId: string): Promise<any> =>
     ipcRenderer.invoke('playlists:addSong', playlistId, songId),
   removeSongFromPlaylist: (playlistId: string, songId: string): Promise<any> =>
@@ -63,6 +68,10 @@ const api = {
     album?: string
     duration?: number
   }): Promise<any | null> => ipcRenderer.invoke('lyrics:fetch', songInfo),
+  translateLyrics: (lines: string[], targetLanguage: string): Promise<string[]> =>
+    ipcRenderer.invoke('lyrics:translate', lines, targetLanguage),
+  romanizeLyrics: (lines: string[]): Promise<string[]> =>
+    ipcRenderer.invoke('lyrics:romanize', lines),
 
   // Settings
   getSetting: (key: string): Promise<any> => ipcRenderer.invoke('settings:get', key),
@@ -74,10 +83,15 @@ const api = {
     ipcRenderer.invoke('streaming:testQobuz', accounts),
   testDeezerAccount: (accounts: any): Promise<{ status: string; message: string }> =>
     ipcRenderer.invoke('streaming:testDeezer', accounts),
+  testSoulseekAccount: (accounts: any): Promise<{ status: string; message: string }> =>
+    ipcRenderer.invoke('streaming:testSoulseek', accounts),
 
   // Provider downloads
-  searchDownloadSource: (source: 'qobuz' | 'deezer', query: string, accounts: any) =>
-    ipcRenderer.invoke('downloads:search', source, query, accounts),
+  searchDownloadSource: (
+    source: 'qobuz' | 'deezer' | 'soulseek' | 'youtube',
+    query: string,
+    accounts: any
+  ) => ipcRenderer.invoke('downloads:search', source, query, accounts),
   startDownload: (request: any) => ipcRenderer.invoke('downloads:start', request),
   onDownloadProgress: (listener: (event: any) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, payload: any) => listener(payload)

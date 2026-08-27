@@ -17,6 +17,7 @@ interface PlayerState {
 
   // Actions
   setQueue: (queue: Song[], startPlayingIndex?: number) => void
+  enqueueSong: (song: Song) => void
   playSong: (index: number) => void
   togglePlay: () => void
   playNext: () => void
@@ -40,6 +41,44 @@ function shuffleArray<T>(array: T[]): T[] {
     ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
   }
   return shuffled
+}
+
+export const RECENTLY_PLAYED_STORAGE_KEY = 'felo_recently_played'
+export const PLAY_STATS_STORAGE_KEY = 'felo_play_stats'
+export const PLAYED_SONGS_STORAGE_KEY = 'felo_played_songs'
+
+interface StoredPlayStats {
+  playCount: number
+  lastPlayedAt: number
+}
+
+function rememberPlayedSong(song?: Song): void {
+  if (!song) return
+  try {
+    const stored = JSON.parse(localStorage.getItem(RECENTLY_PLAYED_STORAGE_KEY) || '[]') as Song[]
+    const next = [song, ...stored.filter((item) => item.id !== song.id)].slice(0, 12)
+    localStorage.setItem(RECENTLY_PLAYED_STORAGE_KEY, JSON.stringify(next))
+    const playedSongs = JSON.parse(localStorage.getItem(PLAYED_SONGS_STORAGE_KEY) || '{}') as Record<
+      string,
+      Song
+    >
+    playedSongs[song.id] = song
+    localStorage.setItem(PLAYED_SONGS_STORAGE_KEY, JSON.stringify(playedSongs))
+
+    const stats = JSON.parse(localStorage.getItem(PLAY_STATS_STORAGE_KEY) || '{}') as Record<
+      string,
+      StoredPlayStats
+    >
+    const previous = stats[song.id] || { playCount: 0, lastPlayedAt: 0 }
+    stats[song.id] = {
+      playCount: previous.playCount + 1,
+      lastPlayedAt: Date.now()
+    }
+    localStorage.setItem(PLAY_STATS_STORAGE_KEY, JSON.stringify(stats))
+    window.dispatchEvent(new CustomEvent('felo:recently-played-updated'))
+  } catch (error) {
+    console.warn('Failed to save listening history:', error)
+  }
 }
 
 function getMigratedPreference(key: string, legacyKey: string, fallback: string): string {
@@ -67,6 +106,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   setQueue: (newQueue, startPlayingIndex = 0) => {
     const { isShuffle } = get()
+    rememberPlayedSong(newQueue[startPlayingIndex] || newQueue[0])
     if (isShuffle && newQueue.length > 0) {
       const selectedSong = newQueue[startPlayingIndex] || newQueue[0]
       const remaining = newQueue.filter((_, idx) => idx !== startPlayingIndex)
@@ -89,7 +129,20 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
   },
 
+  enqueueSong: (song) => {
+    set((state) => {
+      if (state.queue.some((item) => item.id === song.id)) return state
+      const queue = [...state.queue, song]
+      return {
+        queue,
+        originalQueue: [...state.originalQueue, song]
+      }
+    })
+  },
+
   playSong: (index) => {
+    const song = get().queue[index]
+    rememberPlayedSong(song)
     set({
       currentSongIndex: index,
       isPlaying: true,
@@ -101,6 +154,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const { currentSongIndex, queue, isPlaying } = get()
     if (queue.length === 0) return
     if (currentSongIndex === -1 && queue.length > 0) {
+      rememberPlayedSong(queue[0])
       set({ currentSongIndex: 0, isPlaying: true })
     } else {
       set({ isPlaying: !isPlaying })
@@ -118,9 +172,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
 
     if (currentSongIndex < queue.length - 1) {
+      rememberPlayedSong(queue[currentSongIndex + 1])
       set({ currentSongIndex: currentSongIndex + 1, isPlaying: true, currentTime: 0 })
     } else if (repeatMode === 'all') {
       // Loop back to start
+      rememberPlayedSong(queue[0])
       set({ currentSongIndex: 0, isPlaying: true, currentTime: 0 })
     } else {
       // End of playlist

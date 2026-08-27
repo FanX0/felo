@@ -17,8 +17,11 @@ import {
   Headphones,
   ChevronUp,
   ChevronDown,
+  ExternalLink,
   X,
-  Plug
+  Plug,
+  Eye,
+  EyeOff
 } from 'lucide-react'
 import {
   DEFAULT_DOWNLOAD_PRIORITY,
@@ -26,6 +29,7 @@ import {
   DOWNLOAD_PRIORITY_SETTING,
   DOWNLOAD_SOURCES,
   DownloadSourceId,
+  LASTFM_API_KEY_SETTING,
   PLAYBACK_STORAGE_SETTING,
   PlaybackStorageMode,
   STREAM_CACHE_SETTING,
@@ -48,6 +52,8 @@ interface StreamingAccounts {
   qobuzQuality: string
   deezerArl: string
   deezerQuality: string
+  soulseekUser?: string
+  soulseekPassword?: string
 }
 
 interface ProviderTestStatus {
@@ -159,6 +165,9 @@ export default function Settings() {
   const [modeMessage, setModeMessage] = useState('')
   const [downloadLocation, setDownloadLocation] = useState('')
   const [locationMessage, setLocationMessage] = useState('')
+  const [lastFmApiKey, setLastFmApiKey] = useState('')
+  const [showLastFmApiKey, setShowLastFmApiKey] = useState(false)
+  const [lastFmMessage, setLastFmMessage] = useState('')
   const [showQobuzSecret, setShowQobuzSecret] = useState(false)
   const [showDeezerArl, setShowDeezerArl] = useState(false)
   const [accountMessage, setAccountMessage] = useState('')
@@ -166,6 +175,10 @@ export default function Settings() {
     loading: false
   })
   const [deezerTestStatus, setDeezerTestStatus] = useState<ProviderTestStatus>({
+    loading: false
+  })
+  const [showSoulseekPassword, setShowSoulseekPassword] = useState(false)
+  const [soulseekTestStatus, setSoulseekTestStatus] = useState<ProviderTestStatus>({
     loading: false
   })
   const [accounts, setAccounts] = useState<StreamingAccounts>({
@@ -176,7 +189,9 @@ export default function Settings() {
     qobuzAppSecret: '',
     qobuzQuality: 'hires-max',
     deezerArl: '',
-    deezerQuality: 'lossless'
+    deezerQuality: 'lossless',
+    soulseekUser: '',
+    soulseekPassword: ''
   })
 
   const loadRoots = async () => {
@@ -208,6 +223,7 @@ export default function Settings() {
       const savedCacheLimit = await window.api?.getSetting?.(STREAM_CACHE_SETTING)
       const savedAccounts = await window.api?.getSetting?.(STREAMING_ACCOUNTS_SETTING)
       const savedLocation = await window.api?.getSetting?.(DOWNLOAD_LOCATION_SETTING)
+      const savedLastFmApiKey = await window.api?.getSetting?.(LASTFM_API_KEY_SETTING)
 
       if (Array.isArray(savedPriority) && savedPriority.length > 0) {
         setDownloadPriority(
@@ -227,6 +243,9 @@ export default function Settings() {
       }
       if (typeof savedLocation === 'string' && savedLocation.trim()) {
         setDownloadLocation(savedLocation.trim())
+      }
+      if (typeof savedLastFmApiKey === 'string') {
+        setLastFmApiKey(savedLastFmApiKey)
       }
     } catch (err) {
       console.error('Failed to load download settings:', err)
@@ -392,6 +411,29 @@ export default function Settings() {
         loading: false,
         success: false,
         message: err?.message || 'Deezer test failed',
+        rawError: err?.stack || err?.message
+      })
+    }
+  }
+
+  const handleTestSoulseek = async () => {
+    setSoulseekTestStatus({ loading: true })
+    try {
+      await window.api?.setSetting?.(STREAMING_ACCOUNTS_SETTING, accounts)
+      const result = await window.api?.testSoulseekAccount?.(accounts)
+      setSoulseekTestStatus({
+        loading: false,
+        success: result?.status === 'success',
+        message:
+          result?.message ||
+          (result?.status === 'success' ? 'Connected to Soulseek!' : 'Soulseek connection failed'),
+        rawError: result?.rawError
+      })
+    } catch (err: any) {
+      setSoulseekTestStatus({
+        loading: false,
+        success: false,
+        message: err?.message || 'Soulseek test failed',
         rawError: err?.stack || err?.message
       })
     }
@@ -642,7 +684,7 @@ export default function Settings() {
             icon={<Radio className="w-5 h-5" />}
             iconColor="bg-success/10 text-success"
             title="Playback & Storage Mode"
-            description="Choose whether resolved tracks should be temporary streams or permanent local downloads."
+            description="Choose whether resolved tracks should be cached temporarily for playback or saved permanently to your library."
           >
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <button
@@ -666,8 +708,8 @@ export default function Settings() {
                   )}
                 </div>
                 <p className="mt-2 text-xs leading-relaxed text-text-muted">
-                  Buffer resolved tracks temporarily using the top priority source. Older streamed
-                  files can be pruned to preserve disk space.
+                  Download resolved tracks to a temporary cache using the top-priority source, play them
+                  automatically, and remove older cached files to preserve disk space.
                 </p>
               </button>
 
@@ -697,7 +739,7 @@ export default function Settings() {
                   <div>
                     <div className="font-bold text-text">Stream Cache Retention</div>
                     <p className="mt-1 text-xs text-text-muted">
-                      Number of recent streamed tracks to keep before older files are removed.
+                      Number of recent cached playback tracks to keep before older files are removed.
                     </p>
                   </div>
                   <div className="flex items-center gap-3">
@@ -798,6 +840,67 @@ export default function Settings() {
                   </div>
                 )}
               </div>
+            </div>
+          </SettingsSection>
+
+          {/* Last.fm Search */}
+          <SettingsSection
+            icon={<Radio className="w-5 h-5" />}
+            iconColor="bg-pink-500/10 text-pink-400"
+            title="Last.fm Search"
+            description="Use Last.fm metadata to search artists, albums, and songs globally. A free API key is required for API search."
+          >
+            <div className="space-y-2">
+              <p className="text-xs text-text-muted">
+                Create a free key at{' '}
+                <a
+                  href="https://www.last.fm/api/account/create"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-primary-amber hover:underline"
+                >
+                  last.fm/api/account/create
+                </a>{' '}
+                and paste it below. This enables global Last.fm search; it does not provide audio downloads.
+              </p>
+              <label className="space-y-1.5 block">
+                <span className="text-xs font-bold text-text">API Key</span>
+                <div className="relative">
+                  <input
+                    type={showLastFmApiKey ? 'text' : 'password'}
+                    value={lastFmApiKey}
+                    onChange={(event) => setLastFmApiKey(event.target.value.trim())}
+                    placeholder="Paste your Last.fm API key"
+                    className="w-full rounded-md border border-border bg-surface-elevated px-3 py-2 pr-10 text-sm text-text outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowLastFmApiKey((visible) => !visible)}
+                    title={showLastFmApiKey ? 'Hide Last.fm API key' : 'Show Last.fm API key'}
+                    aria-label={showLastFmApiKey ? 'Hide Last.fm API key' : 'Show Last.fm API key'}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-text-muted hover:bg-hover hover:text-text"
+                  >
+                    {showLastFmApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </label>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await window.api?.setSetting?.(LASTFM_API_KEY_SETTING, lastFmApiKey)
+                    setLastFmMessage('Last.fm API key saved locally.')
+                    setTimeout(() => setLastFmMessage(''), 3000)
+                  }}
+                  className="rounded-md bg-text px-3 py-2 text-xs font-bold text-canvas hover:opacity-90"
+                >
+                  Save Last.fm Key
+                </button>
+                <span className="text-[11px] text-text-muted">Get a free key at last.fm/api</span>
+              </div>
+              {lastFmMessage && (
+                <p className="text-xs font-bold text-success">{lastFmMessage}</p>
+              )}
             </div>
           </SettingsSection>
 
@@ -1030,6 +1133,137 @@ export default function Settings() {
                     )}
                   </div>
                 )}
+              </div>
+
+              {/* Soulseek P2P Card */}
+              <div className="rounded-lg border border-sky-500/30 bg-surface-elevated/40 p-4">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div>
+                    <h4 className="text-sm font-bold text-text">Soulseek P2P Network</h4>
+                    <p className="text-xs text-text-muted">
+                      Peer-to-peer lossless and MP3 music exchange network.
+                    </p>
+                  </div>
+                  <span className="rounded bg-sky-500/10 px-2 py-0.5 text-[11px] font-bold text-sky-400">
+                    FLAC / MP3
+                  </span>
+                </div>
+
+                <div className="mb-4 rounded-md border border-sky-500/20 bg-sky-500/5 p-3">
+                  <div className="flex items-start gap-2">
+                    <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-400" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold text-text">Need a Soulseek account?</p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
+                        Create an account or download the official SoulseekQt client from Soulseek.net.
+                        Then enter the same username and password above.
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void window.api?.openExternal?.('https://www.slsknet.org/news/user')}
+                          className="inline-flex items-center gap-1.5 rounded border border-sky-400/30 bg-sky-400/10 px-2.5 py-1.5 text-[11px] font-bold text-sky-300 hover:bg-sky-400/20"
+                        >
+                          Create Soulseek account
+                          <ExternalLink className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void window.api?.openExternal?.('https://www.slsknet.org/news/node/1')}
+                          className="inline-flex items-center gap-1.5 rounded border border-border bg-hover px-2.5 py-1.5 text-[11px] font-bold text-text-muted hover:text-text"
+                        >
+                          Download SoulseekQt
+                          <ExternalLink className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <label className="space-y-1.5">
+                    <span className="text-xs font-bold text-text">Soulseek Username</span>
+                    <input
+                      placeholder="Optional: use your own account"
+                      value={accounts.soulseekUser || ''}
+                      onChange={(event) => updateAccount('soulseekUser', event.target.value.trim())}
+                      className="w-full rounded-md border border-border bg-surface-elevated px-3 py-2 text-sm text-text outline-none"
+                    />
+                  </label>
+                  <label className="space-y-1.5">
+                    <span className="flex items-center justify-between text-xs font-bold text-text">
+                      <span>Password</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowSoulseekPassword((show) => !show)}
+                        className="text-[11px] text-secondary-cyan"
+                      >
+                        {showSoulseekPassword ? 'Hide' : 'Show'}
+                      </button>
+                    </span>
+                    <input
+                      type={showSoulseekPassword ? 'text' : 'password'}
+                      placeholder="Optional: use your own account password"
+                      value={accounts.soulseekPassword || ''}
+                      onChange={(event) => updateAccount('soulseekPassword', event.target.value)}
+                      className="w-full rounded-md border border-border bg-surface-elevated px-3 py-2 text-sm text-text outline-none"
+                    />
+                  </label>
+                </div>
+
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <div className="text-[11px] text-text-muted">
+                    Leave both fields blank to use a persistent automatic Soulseek account, or enter your own account.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleTestSoulseek}
+                    disabled={soulseekTestStatus.loading}
+                    className="flex items-center gap-2 rounded-md border border-border bg-hover px-4 py-2 text-xs font-bold text-text disabled:opacity-60 hover:border-sky-400/50 transition-colors shrink-0"
+                  >
+                    <Plug
+                      className={`h-4 w-4 ${soulseekTestStatus.loading ? 'animate-pulse' : ''}`}
+                    />
+                    {soulseekTestStatus.loading ? 'Connecting P2P...' : 'Test Soulseek P2P'}
+                  </button>
+                </div>
+
+                {soulseekTestStatus.message && (
+                  <div
+                    className={`mt-4 rounded-md border p-3 text-xs font-medium ${
+                      soulseekTestStatus.success
+                        ? 'border-success/30 bg-success/10 text-success'
+                        : 'border-danger/30 bg-danger/10 text-danger'
+                    }`}
+                  >
+                    <div>{soulseekTestStatus.message}</div>
+                    {soulseekTestStatus.rawError && !soulseekTestStatus.success && (
+                      <details className="mt-2 text-[11px] text-text-muted">
+                        <summary className="cursor-pointer hover:underline text-text-muted">
+                          View details
+                        </summary>
+                        <pre className="mt-1.5 max-h-36 overflow-auto rounded bg-black/40 p-2 font-mono text-[10px] text-danger/90 whitespace-pre-wrap select-text">
+                          {soulseekTestStatus.rawError}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* YouTube Music Card */}
+              <div className="rounded-lg border border-red-500/30 bg-surface-elevated/40 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-bold text-text">YouTube Music</h4>
+                    <p className="text-xs text-text-muted">
+                      Downloads and audio conversion powered by yt-dlp & ffmpeg. No login required.
+                    </p>
+                  </div>
+                  <span className="rounded bg-red-500/10 px-2 py-0.5 text-[11px] font-bold text-red-400">
+                    256k MP3 / Opus
+                  </span>
+                </div>
               </div>
 
               <div className="flex items-center gap-3">

@@ -696,17 +696,137 @@ async function searchBrowserMusicBrainz(query: string): Promise<CatalogSearchRes
   }
 }
 
+function lastFmImageUrl(images: unknown): string {
+  if (!Array.isArray(images)) return ''
+  for (const size of ['extralarge', 'large', 'medium', 'small']) {
+    const image = images.find((item: any) => item?.size === size)?.['#text']
+    if (typeof image === 'string' && image.trim()) {
+      return image.trim().replace(/^http:\/\//i, 'https://')
+    }
+  }
+  return ''
+}
+
+async function searchBrowserLastFm(query: string): Promise<CatalogSearchResults> {
+  const apiKey = await webApi.getSetting('search.lastFmApiKey')
+  if (typeof apiKey !== 'string' || !apiKey.trim()) {
+    throw new Error('Last.fm API key is not configured. Add one in Settings.')
+  }
+  const makeRequest = async (method: string, parameter: string) => {
+    const params = new URLSearchParams({
+      method,
+      api_key: apiKey.trim(),
+      format: 'json',
+      limit: '25',
+      [parameter]: query.trim()
+    })
+    return fetchJson(`https://ws.audioscrobbler.com/2.0/?${params}`, 'Last.fm search')
+  }
+  const [trackData, artistData, albumData] = await Promise.all([
+    makeRequest('track.search', 'track'),
+    makeRequest('artist.search', 'artist'),
+    makeRequest('album.search', 'album')
+  ])
+  const mapItem = (item: any, type: string, index: number): CatalogSearchItem => ({
+    id: `lastfm-${type.toLowerCase()}-${item.mbid || `${item.artist || ''}-${item.name}-${index}`}`,
+    title: String(item.name || 'Unknown'),
+    artist: String(item.artist || (type === 'Artist' ? 'Last.fm Artist' : '')),
+    album: type === 'Album' ? 'Album' : '',
+    type,
+    duration: null,
+    trackCount: null,
+    url: String(item.url || ''),
+    thumbnail: lastFmImageUrl(item.image),
+    explicit: false
+  })
+  const songs = (trackData?.results?.trackmatches?.track || []).map((item: any, i: number) =>
+    mapItem(item, 'Song', i)
+  )
+  const artists = (artistData?.results?.artistmatches?.artist || []).map((item: any, i: number) =>
+    mapItem(item, 'Artist', i)
+  )
+  const albums = (albumData?.results?.albummatches?.album || []).map((item: any, i: number) =>
+    mapItem(item, 'Album', i)
+  )
+  return {
+    'Top Results': [...songs, ...artists, ...albums].slice(0, 5),
+    Songs: songs,
+    Artists: artists,
+    Albums: albums
+  }
+}
+
 function cleanLyricsMetadata(value: string): string {
   if (!value) return ''
-  return value
+  let cleaned = value
+    .normalize('NFKC')
     .replace(/\.[a-zA-Z0-9]{2,4}$/, '')
+    .replace(/^\s*\d{1,3}[.\-_)]+\s*/, '')
     .replace(
-      /\s*[\(\[](?:explicit|official\s*(?:video|audio|music\s*video|lyric\s*video)?|lyrics?|remaster(?:ed)?(?:\s*[\d\w]+)?|hq|hd|visualizer|feat\.?.*?|ft\.?.*?|single\s*version|bonus\s*track|deluxe(?:\s*edition)?|live(?:\s*at\s*.*)?)[\)\]]\s*/gi,
+      /\s*[\(\[]\s*(?:youtube|explicit|official(?:\s*(?:music|lyric|lyrics)?\s*(?:video|audio|mv)?)?|lyrics?(?:\s*video)?|remaster(?:ed)?(?:\s*[\d\w]+)?|hq|hd|visualizer|audio|video|mv|copyright[\s-]*free|feat\.?.*?|ft\.?.*?|single\s*version|bonus\s*track|deluxe(?:\s*edition)?|live(?:\s*at\s*.*)?|\d+)\s*[\)\]]\s*/gi,
       ' '
     )
+    .replace(/\s+(?:official\s*)?(?:music\s*)?(?:lyric(?:s)?\s*)?(?:video|audio|mv)\s*$/gi, '')
+    .replace(/\s+no\.\s*\d+\s*$/gi, '')
     .replace(/\bunknown\s*artist\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
+
+  let previous = ''
+  while (cleaned !== previous) {
+    previous = cleaned
+    cleaned = cleaned.replace(/\s*[\(\[]\s*(?:youtube|\d+)\s*[\)\]]\s*$/gi, '').trim()
+  }
+  return cleaned
+}
+
+function isPlaceholderLyricsValue(value?: string): boolean {
+  return /^(?:unknown|untitled|n\/?a|none|null)(?:\s+(?:artist|album|track))?$/i.test(
+    value?.trim() || ''
+  )
+}
+
+function resolveLyricsMetadata(songInfo: {
+  title: string
+  artist: string
+  album?: string
+  duration?: number
+}): { title: string; artist: string; album: string; duration?: number } {
+  let title = cleanLyricsMetadata(songInfo.title || '')
+  let artist = isPlaceholderLyricsValue(songInfo.artist)
+    ? ''
+    : cleanLyricsMetadata(songInfo.artist || '')
+  const album = isPlaceholderLyricsValue(songInfo.album)
+    ? ''
+    : cleanLyricsMetadata(songInfo.album || '')
+
+  const titleParts = title.match(/^(.+?)\s+[-\u2013\u2014|]\s+(.+)$/)
+  if (titleParts) {
+    const inferredArtist = cleanLyricsMetadata(titleParts[1])
+    const inferredTitle = cleanLyricsMetadata(titleParts[2])
+    const normalizedArtist = normalizeLyricsCompare(artist)
+    const normalizedInferredArtist = normalizeLyricsCompare(inferredArtist)
+    const titleContainsKnownArtist =
+      normalizedArtist &&
+      (normalizedInferredArtist === normalizedArtist ||
+        normalizedInferredArtist.includes(normalizedArtist) ||
+        normalizedArtist.includes(normalizedInferredArtist))
+
+    if (!artist || titleContainsKnownArtist) {
+      artist = artist || inferredArtist
+      title = inferredTitle
+    }
+  }
+
+  return {
+    title,
+    artist,
+    album,
+    duration:
+      Number.isFinite(songInfo.duration) && Number(songInfo.duration) > 0
+        ? Math.round(Number(songInfo.duration))
+        : undefined
+  }
 }
 
 function hasLyrics(data: LrclibLyrics | null | undefined): data is LrclibLyrics {
@@ -737,21 +857,44 @@ function normalizeLyricsCompare(value?: string): string {
     .trim()
 }
 
-function scoreLyricsCandidate(candidate: LrclibLyrics, track: string, artist: string): number {
+function lyricsTextSimilarity(left: string, right: string): number {
+  if (!left || !right) return 0
+  if (left === right) return 1
+  if (left.includes(right) || right.includes(left)) return 0.82
+
+  const leftTokens = new Set(left.split(' ').filter(Boolean))
+  const rightTokens = new Set(right.split(' ').filter(Boolean))
+  const intersection = [...leftTokens].filter((token) => rightTokens.has(token)).length
+  const union = new Set([...leftTokens, ...rightTokens]).size
+  return union > 0 ? intersection / union : 0
+}
+
+function scoreLyricsCandidate(
+  candidate: LrclibLyrics,
+  track: string,
+  artist: string,
+  album = '',
+  duration?: number
+): number {
   if (!hasLyrics(candidate)) return -1
 
   const candidateTrack = normalizeLyricsCompare(candidate.trackName)
   const candidateArtist = normalizeLyricsCompare(candidate.artistName)
   const targetTrack = normalizeLyricsCompare(track)
   const targetArtist = normalizeLyricsCompare(artist)
-  let score = candidate.syncedLyrics ? 30 : 10
+  const candidateAlbum = normalizeLyricsCompare(candidate.albumName)
+  const targetAlbum = normalizeLyricsCompare(album)
+  let score = candidate.syncedLyrics ? 25 : 8
 
-  if (candidateTrack === targetTrack) score += 50
-  else if (candidateTrack.includes(targetTrack) || targetTrack.includes(candidateTrack)) score += 25
-
-  if (candidateArtist === targetArtist) score += 35
-  else if (candidateArtist.includes(targetArtist) || targetArtist.includes(candidateArtist))
-    score += 15
+  score += lyricsTextSimilarity(candidateTrack, targetTrack) * 65
+  if (targetArtist) score += lyricsTextSimilarity(candidateArtist, targetArtist) * 40
+  if (targetAlbum) score += lyricsTextSimilarity(candidateAlbum, targetAlbum) * 10
+  if (duration && candidate.duration) {
+    const difference = Math.abs(candidate.duration - duration)
+    if (difference <= 2) score += 18
+    else if (difference <= 5) score += 10
+    else if (difference >= 20) score -= 12
+  }
 
   return score
 }
@@ -759,18 +902,22 @@ function scoreLyricsCandidate(candidate: LrclibLyrics, track: string, artist: st
 function pickBestLyrics(
   results: LrclibLyrics | LrclibLyrics[] | null,
   track: string,
-  artist: string
+  artist: string,
+  album = '',
+  duration?: number
 ): LrclibLyrics | null {
   if (!results) return null
   if (!Array.isArray(results)) return hasLyrics(results) ? results : null
 
-  return (
-    [...results]
-      .filter(hasLyrics)
-      .sort(
-        (a, b) => scoreLyricsCandidate(b, track, artist) - scoreLyricsCandidate(a, track, artist)
-      )[0] || null
-  )
+  const ranked = [...results]
+    .filter(hasLyrics)
+    .map((candidate) => ({
+      candidate,
+      score: scoreLyricsCandidate(candidate, track, artist, album, duration)
+    }))
+    .sort((a, b) => b.score - a.score)
+
+  return ranked[0] && ranked[0].score >= 38 ? ranked[0].candidate : null
 }
 
 async function fetchBrowserLyrics(songInfo: {
@@ -781,84 +928,111 @@ async function fetchBrowserLyrics(songInfo: {
 }): Promise<LrclibLyrics | null> {
   const rawTrack = songInfo.title?.trim() || ''
   const rawArtist = songInfo.artist?.trim() || ''
-  const rawAlbum = songInfo.album?.trim() || ''
-  const cleanTrack = cleanLyricsMetadata(rawTrack)
-  const cleanArtist = cleanLyricsMetadata(rawArtist)
+  const resolved = resolveLyricsMetadata(songInfo)
+  const cleanTrack = resolved.title
+  const cleanArtist = resolved.artist
+  const cleanAlbum = resolved.album
 
   const attempts: Array<{
     endpoint: '/get' | '/get-cached' | '/search'
     params: URLSearchParams
     track: string
     artist: string
+    album: string
+    duration?: number
   }> = []
+
+  const addAttempt = (attempt: (typeof attempts)[number]) => {
+    const key = `${attempt.endpoint}?${attempt.params.toString()}`
+    if (!attempts.some((item) => `${item.endpoint}?${item.params.toString()}` === key)) {
+      attempts.push(attempt)
+    }
+  }
 
   if (cleanTrack && cleanArtist) {
     const exactParams = new URLSearchParams({
       track_name: cleanTrack,
       artist_name: cleanArtist
     })
-    if (rawAlbum) exactParams.set('album_name', cleanLyricsMetadata(rawAlbum))
-    if (songInfo.duration && songInfo.duration > 0) {
-      exactParams.set('duration', String(Math.round(songInfo.duration)))
+    if (cleanAlbum) exactParams.set('album_name', cleanAlbum)
+    if (resolved.duration) {
+      exactParams.set('duration', String(resolved.duration))
     }
-    attempts.push({
+    addAttempt({
       endpoint: '/get',
       params: exactParams,
       track: cleanTrack,
-      artist: cleanArtist
+      artist: cleanArtist,
+      album: cleanAlbum,
+      duration: resolved.duration
     })
-    attempts.push({
+    addAttempt({
+      endpoint: '/get',
+      params: new URLSearchParams({ track_name: cleanTrack, artist_name: cleanArtist }),
+      track: cleanTrack,
+      artist: cleanArtist,
+      album: cleanAlbum,
+      duration: resolved.duration
+    })
+    addAttempt({
       endpoint: '/get-cached',
       params: new URLSearchParams({ track_name: cleanTrack, artist_name: cleanArtist }),
       track: cleanTrack,
-      artist: cleanArtist
+      artist: cleanArtist,
+      album: cleanAlbum,
+      duration: resolved.duration
     })
-    attempts.push({
-      endpoint: '/get',
-      params: new URLSearchParams({ track_name: cleanArtist, artist_name: cleanTrack }),
-      track: cleanArtist,
-      artist: cleanTrack
-    })
-  }
-
-  if ((rawTrack !== cleanTrack || rawArtist !== cleanArtist) && rawTrack && rawArtist) {
-    const rawParams = new URLSearchParams({ track_name: rawTrack, artist_name: rawArtist })
-    if (rawAlbum) rawParams.set('album_name', rawAlbum)
-    if (songInfo.duration && songInfo.duration > 0) {
-      rawParams.set('duration', String(Math.round(songInfo.duration)))
-    }
-    attempts.push({ endpoint: '/get', params: rawParams, track: rawTrack, artist: rawArtist })
-  }
-
-  const cleanQuery = `${cleanTrack} ${cleanArtist}`.trim()
-  if (cleanQuery) {
-    attempts.push({
+    addAttempt({
       endpoint: '/search',
       params: new URLSearchParams({ track_name: cleanTrack, artist_name: cleanArtist }),
       track: cleanTrack,
-      artist: cleanArtist
+      artist: cleanArtist,
+      album: cleanAlbum,
+      duration: resolved.duration
     })
-    attempts.push({
+    addAttempt({
       endpoint: '/search',
-      params: new URLSearchParams({ q: cleanQuery }),
+      params: new URLSearchParams({ q: `${cleanArtist} ${cleanTrack}` }),
       track: cleanTrack,
-      artist: cleanArtist
+      artist: cleanArtist,
+      album: cleanAlbum,
+      duration: resolved.duration
     })
   }
 
-  const rawQuery = `${rawTrack} ${rawArtist}`.trim()
-  if (rawQuery && rawQuery !== cleanQuery) {
-    attempts.push({
+  if (cleanTrack) {
+    addAttempt({
+      endpoint: '/search',
+      params: new URLSearchParams({ q: cleanTrack }),
+      track: cleanTrack,
+      artist: cleanArtist,
+      album: cleanAlbum,
+      duration: resolved.duration
+    })
+  }
+
+  const cleanRawArtist = isPlaceholderLyricsValue(rawArtist) ? '' : cleanLyricsMetadata(rawArtist)
+  const rawQuery = `${cleanLyricsMetadata(rawTrack)} ${cleanRawArtist}`.trim()
+  if (rawQuery) {
+    addAttempt({
       endpoint: '/search',
       params: new URLSearchParams({ q: rawQuery }),
-      track: rawTrack,
-      artist: rawArtist
+      track: cleanTrack || rawTrack,
+      artist: cleanArtist || cleanRawArtist,
+      album: cleanAlbum,
+      duration: resolved.duration
     })
   }
 
   for (const attempt of attempts) {
     const data = await fetchLrclib(attempt.endpoint, attempt.params)
-    const best = pickBestLyrics(data, attempt.track, attempt.artist)
+    const best = pickBestLyrics(
+      data,
+      attempt.track,
+      attempt.artist,
+      attempt.album,
+      attempt.duration
+    )
     if (best) return best
   }
 
@@ -1180,6 +1354,52 @@ function desktopOnly(): never {
   throw new Error('This feature is available in the Felo desktop app.')
 }
 
+function browserContainsNonLatinLetters(value: string): boolean {
+  return [...value].some(
+    (character) => /\p{L}/u.test(character) && !/\p{Script=Latin}/u.test(character)
+  )
+}
+
+async function transformBrowserLyricLine(
+  text: string,
+  mode: 'translate' | 'romanize',
+  targetLanguage = 'en'
+): Promise<string> {
+  if (!text.trim() || (mode === 'romanize' && !browserContainsNonLatinLetters(text))) return text
+
+  const params = new URLSearchParams({
+    client: 'gtx',
+    sl: 'auto',
+    tl: targetLanguage,
+    dt: mode === 'translate' ? 't' : 'rm',
+    q: text
+  })
+  const response = await fetch(
+    `https://translate.googleapis.com/translate_a/single?${params.toString()}`
+  )
+  if (!response.ok) throw new Error(`Google Translate returned ${response.status}`)
+
+  const data = await response.json()
+  const segments = Array.isArray(data?.[0]) ? data[0] : []
+  const result =
+    mode === 'translate'
+      ? segments.map((segment: any) => segment?.[0] || '').join('')
+      : segments.map((segment: any) => segment?.[3] || '').join(' ')
+  return result.trim() || text
+}
+
+async function transformBrowserLyrics(
+  lines: string[],
+  mode: 'translate' | 'romanize',
+  targetLanguage = 'en'
+): Promise<string[]> {
+  const results: string[] = []
+  for (const line of lines) {
+    results.push(await transformBrowserLyricLine(line, mode, targetLanguage))
+  }
+  return results
+}
+
 const webApi: Window['api'] = {
   selectFolder: selectBrowserFolder,
   scanLibrary: scanBrowserFolder,
@@ -1231,6 +1451,7 @@ const webApi: Window['api'] = {
   searchAppleMusic: searchBrowserAppleMusic,
   searchAppleMusicArtistSongs: searchBrowserAppleMusicArtistSongs,
   searchMusicBrainz: searchBrowserMusicBrainz,
+  searchLastFm: searchBrowserLastFm,
   getPlaylists: async () => {
     await initializeBrowserLibrary()
     return readBrowserPlaylists()
@@ -1246,8 +1467,19 @@ const webApi: Window['api'] = {
     return createBrowserPlaylist(input)
   },
   fetchPlaylistImportMetadata: async () => desktopOnly(),
+  importSpotifyPlaylist: async () => desktopOnly(),
   deletePlaylist: async (playlistId) => {
     writeBrowserPlaylists(readBrowserPlaylists().filter((playlist) => playlist.id !== playlistId))
+  },
+  renamePlaylist: async (playlistId, name) => {
+    const trimmedName = name.trim()
+    if (!trimmedName) throw new Error('Playlist name is required')
+    const playlists = readBrowserPlaylists()
+    const playlist = playlists.find((item) => item.id === playlistId)
+    if (!playlist) throw new Error('Playlist not found')
+    const updated = { ...playlist, name: trimmedName, dateModified: Math.floor(Date.now() / 1000) }
+    writeBrowserPlaylists(playlists.map((item) => (item.id === playlistId ? updated : item)))
+    return getBrowserPlaylist(playlistId)
   },
   addSongToPlaylist: async (playlistId, songId) => {
     await initializeBrowserLibrary()
@@ -1261,6 +1493,9 @@ const webApi: Window['api'] = {
       songIds.filter((candidateId) => candidateId !== songId)
     ),
   fetchLyrics: fetchBrowserLyrics,
+  translateLyrics: (lines, targetLanguage) =>
+    transformBrowserLyrics(lines, 'translate', targetLanguage),
+  romanizeLyrics: (lines) => transformBrowserLyrics(lines, 'romanize'),
   getSetting: async (key) => {
     const value = localStorage.getItem(`felo-web-setting:${key}`)
     if (value === null) return null
@@ -1280,6 +1515,10 @@ const webApi: Window['api'] = {
   testDeezerAccount: async () => ({
     status: 'error',
     message: 'Deezer account testing requires the Felo desktop app.'
+  }),
+  testSoulseekAccount: async () => ({
+    status: 'error',
+    message: 'Soulseek account testing requires the Felo desktop app.'
   }),
   searchDownloadSource: async () => [],
   startDownload: async () => desktopOnly(),
