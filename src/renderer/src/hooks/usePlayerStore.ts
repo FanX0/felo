@@ -56,7 +56,7 @@ function rememberPlayedSong(song?: Song): void {
   if (!song) return
   try {
     const stored = JSON.parse(localStorage.getItem(RECENTLY_PLAYED_STORAGE_KEY) || '[]') as Song[]
-    const next = [song, ...stored.filter((item) => item.id !== song.id)].slice(0, 12)
+    const next = [song, ...stored.filter((item) => item.id !== song.id)].slice(0, 500)
     localStorage.setItem(RECENTLY_PLAYED_STORAGE_KEY, JSON.stringify(next))
     const playedSongs = JSON.parse(localStorage.getItem(PLAYED_SONGS_STORAGE_KEY) || '{}') as Record<
       string,
@@ -152,13 +152,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   togglePlay: () => {
     const { currentSongIndex, queue, isPlaying } = get()
-    if (queue.length === 0) return
-    if (currentSongIndex === -1 && queue.length > 0) {
-      rememberPlayedSong(queue[0])
-      set({ currentSongIndex: 0, isPlaying: true })
-    } else {
-      set({ isPlaying: !isPlaying })
+    if (queue.length === 0 || currentSongIndex < 0 || currentSongIndex >= queue.length) {
+      if (typeof window !== 'undefined' && window.api?.getSongs) {
+        void window.api.getSongs().then((songs: Song[]) => {
+          if (Array.isArray(songs) && songs.length > 0) {
+            const sorted = [...songs].sort((a, b) => (b.dateAdded || 0) - (a.dateAdded || 0))
+            get().setQueue(sorted, 0)
+          }
+        })
+      }
+      return
     }
+    set({ isPlaying: !isPlaying })
   },
 
   playNext: () => {
@@ -260,9 +265,22 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   updateSong: (song) => {
-    set((state) => ({
-      queue: state.queue.map((item) => (item.id === song.id ? song : item)),
-      originalQueue: state.originalQueue.map((item) => (item.id === song.id ? song : item))
-    }))
+    set((state) => {
+      const normalize = (v?: string) => (v || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+      const isMatch = (item: Song) =>
+        item.id === song.id ||
+        (normalize(item.title) === normalize(song.title) &&
+          normalize(item.artist) === normalize(song.artist))
+
+      const newQueue = state.queue.map((item) => (isMatch(item) ? { ...item, ...song } : item))
+      const newOriginalQueue = state.originalQueue.map((item) =>
+        isMatch(item) ? { ...item, ...song } : item
+      )
+
+      return {
+        queue: newQueue,
+        originalQueue: newOriginalQueue
+      }
+    })
   }
 }))

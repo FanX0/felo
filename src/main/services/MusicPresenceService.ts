@@ -132,14 +132,19 @@ function configureSettings(settingsPath: string): void {
   writeJson(settingsPath, settings)
 }
 
+function setReadOnly(filePath: string, enabled: boolean): void {
+  try {
+    const { execFileSync } = require('child_process')
+    execFileSync('attrib', [enabled ? '+R' : '-R', filePath], { stdio: 'ignore' })
+  } catch {
+    // Best effort
+  }
+}
+
 function configurePlayersDatabase(playersPath: string): void {
   if (!fs.existsSync(playersPath)) return
 
-  try {
-    fs.chmodSync(playersPath, 0o666)
-  } catch {
-    // Best effort only.
-  }
+  setReadOnly(playersPath, false)
 
   const players = readJson<Record<string, any>>(playersPath, {
     $schema: 'https://live.musicpresence.app/v3/schemas/players.schema.json',
@@ -163,6 +168,7 @@ function configurePlayersDatabase(playersPath: string): void {
   ]
 
   writeJson(playersPath, players)
+  setReadOnly(playersPath, true)
 }
 
 export function configureMusicPresenceIntegration(): void {
@@ -186,14 +192,42 @@ export function configureMusicPresenceIntegration(): void {
     }
 
     configurePlayersDatabase(path.join(assetsRoot, 'players.json'))
+    console.log('[MusicPresence] Auto-configured Felo player integration successfully.')
   } catch (error) {
     console.warn('Unable to configure Music Presence integration:', error)
   }
 }
 
+export function runMusicPresenceSetupScript(): Promise<{ success: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') {
+      return resolve({ success: false, error: 'Windows only' })
+    }
+
+    try {
+      const { spawn } = require('child_process')
+      const scriptPath = path.join(app.getAppPath(), 'scripts', 'setup-felo-music-presence.js')
+      const fallbackScript = path.join(process.cwd(), 'scripts', 'setup-felo-music-presence.js')
+      const targetScript = fs.existsSync(scriptPath) ? scriptPath : fallbackScript
+
+      if (!fs.existsSync(targetScript)) {
+        return resolve({ success: false, error: 'Setup script not found' })
+      }
+
+      const child = spawn('node', [targetScript], {
+        detached: true,
+        stdio: 'ignore'
+      })
+      child.unref()
+      resolve({ success: true })
+    } catch (err: any) {
+      resolve({ success: false, error: err?.message || String(err) })
+    }
+  })
+}
+
 export function startMusicPresenceIntegrationWatcher(): void {
   if (process.platform !== 'win32') return
-
+  // Perform one-shot safe configuration on startup
   configureMusicPresenceIntegration()
-  setInterval(configureMusicPresenceIntegration, 60_000).unref()
 }

@@ -25,8 +25,7 @@ import {
   ChartCategory,
   ChartTrack,
   ChartsService,
-  resolveArtist,
-  resolveTitle,
+  AppleChartSection,
   stripSourceSuffix
 } from '../../services/ChartsService'
 import { findMatchingLibrarySong, isSongInLibrary } from '../../lib/songMatching'
@@ -75,7 +74,7 @@ function readCachedHomeList<T>(key: string, fallback: T[]): T[] {
 const HOME_RECOMMENDED_SONGS_KEY = 'felo_home_recommended_songs'
 const HOME_RECOMMENDED_ALBUMS_KEY = 'felo_home_recommended_albums'
 
-type TabType = 'home' | 'hot_new' | 'charts' | 'spotify' | 'aoty'
+type TabType = 'home' | 'hot_new' | 'apple' | 'spotify' | 'aoty' | 'lastfm'
 
 interface ArtworkImageProps {
   src?: string
@@ -144,6 +143,133 @@ function ArtworkImage({ src, title, artist, alt = '', className, loading = 'lazy
         />
       )}
     </div>
+  )
+}
+
+// ─── Unified Media Card Convention ───────────────────────────────────────────
+interface UnifiedMediaCardProps {
+  title: string
+  subtitle: string
+  artworkUrl?: string
+  badge?: string
+  sourceTag?: string
+  score?: number | null
+  onClick?: () => void
+  onAction?: (e: React.MouseEvent) => void
+  actionIcon?: React.ReactNode
+  actionTitle?: string
+  actionLoading?: boolean
+  actionText?: string
+}
+
+function UnifiedMediaCard({
+  title,
+  subtitle,
+  artworkUrl,
+  badge,
+  sourceTag,
+  score,
+  onClick,
+  onAction,
+  actionIcon,
+  actionTitle,
+  actionLoading,
+  actionText
+}: UnifiedMediaCardProps) {
+  const scoreColor =
+    score == null
+      ? ''
+      : score >= 85
+        ? 'bg-[#1ed760] text-black'
+        : score >= 70
+          ? 'bg-[#f5a623] text-black'
+          : 'bg-[#e55353] text-white'
+
+  return (
+    <article
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onClick?.()
+        }
+      }}
+      className="group flex flex-col cursor-pointer overflow-hidden rounded-xl border border-white/5 bg-[#181818] p-3 text-left shadow-lg transition-all hover:-translate-y-0.5 hover:border-white/20 hover:bg-[#222222]"
+    >
+      <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-[#222] shadow-md">
+        <ArtworkImage
+          src={artworkUrl}
+          title={title}
+          artist={subtitle}
+          alt={title}
+          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+        />
+
+        {/* Critic score badge */}
+        {score != null && (
+          <span
+            className={`absolute top-2 left-2 z-20 rounded px-1.5 py-0.5 text-[11px] font-black tabular-nums shadow ${scoreColor}`}
+            title="Critic score"
+          >
+            {score}
+          </span>
+        )}
+
+        {/* Badge in top right */}
+        {badge && (
+          <span className="absolute top-2 right-2 z-20 rounded bg-black/75 backdrop-blur-xs px-2 py-0.5 text-[10px] font-black tracking-wide text-white border border-white/10 shadow">
+            {badge}
+          </span>
+        )}
+
+        {/* Source tag in bottom left */}
+        {sourceTag && (
+          <span className="absolute bottom-2 left-2 z-20 rounded bg-black/55 backdrop-blur-xs px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-white border border-white/10">
+            {sourceTag}
+          </span>
+        )}
+
+        {/* Floating Action Button */}
+        {onAction && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onAction(e)
+            }}
+            title={actionTitle}
+            disabled={actionLoading}
+            className={`absolute right-2 bottom-2 z-20 flex items-center justify-center rounded-full bg-white text-black shadow-lg transition-all ${
+              actionText
+                ? 'px-3 py-1 text-[11px] font-black hover:scale-105'
+                : 'h-9 w-9 opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 hover:scale-105'
+            }`}
+          >
+            {actionLoading ? (
+              <span className="text-xs font-bold">...</span>
+            ) : actionIcon ? (
+              actionIcon
+            ) : (
+              <Play className="h-4 w-4 fill-current" />
+            )}
+            {actionText && <span className="ml-1">{actionText}</span>}
+          </button>
+        )}
+      </div>
+
+      <div className="mt-3 flex items-start justify-between gap-2 min-w-0">
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-sm font-bold text-white group-hover:underline" title={title}>
+            {title}
+          </h3>
+          <p className="truncate text-xs text-[#a7a7a7] mt-0.5" title={subtitle}>
+            {subtitle}
+          </p>
+        </div>
+      </div>
+    </article>
   )
 }
 
@@ -383,11 +509,6 @@ function formatDuration(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
-function upgradeArtwork(url?: string): string | undefined {
-  if (!url) return undefined
-  return url.replace(/\/\d+x\d+bb\./, '/600x600bb.')
-}
-
 /** Strip source-suffix noise like "(Qobuz)", "(YouTube Music)", etc. from display titles. */
 function displayTitle(raw: string): string {
   return stripSourceSuffix(raw)
@@ -406,7 +527,10 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
     readCachedHomeList(HOME_RECOMMENDED_ALBUMS_KEY, CURATED_DEFAULT_ALBUMS)
   )
   const [hotSongs, setHotSongs] = useState<HomeSongItem[]>([])
-  const [aotyAlbums, setAotyAlbums] = useState<HomeAlbumItem[]>([])
+  const [hotNewAlbums, setHotNewAlbums] = useState<HomeAlbumItem[]>([])
+  const [aotyAlbums, setAotyAlbums] = useState<any[]>([])
+  const [aotyCategory, setAotyCategory] = useState<'must-hear' | 'highest-rated' | 'new-releases' | 'anticipated'>('must-hear')
+  const [isLoadingAoty, setIsLoadingAoty] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [likedSongIds, setLikedSongIds] = useState<Set<string>>(new Set())
   const [librarySongs, setLibrarySongs] = useState<Song[]>([])
@@ -416,9 +540,10 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
   const [isLoadingSpotifyTracks, setIsLoadingSpotifyTracks] = useState(false)
   const [spotifyArtwork, setSpotifyArtwork] = useState<Record<string, string>>({})
   const [spotifySection, setSpotifySection] = useState<SpotifySection>('all')
-  const [selectedChartCategory, setSelectedChartCategory] = useState<ChartCategory>(CHART_CATEGORIES[0])
-  const [chartTracks, setChartTracks] = useState<ChartTrack[]>([])
-  const [isLoadingCharts, setIsLoadingCharts] = useState(false)
+  const [appleSection, setAppleSection] = useState<AppleChartSection>('all')
+  const [selectedAppleChart, setSelectedAppleChart] = useState<ChartCategory | null>(null)
+  const [appleTracks, setAppleTracks] = useState<ChartTrack[]>([])
+  const [isLoadingAppleTracks, setIsLoadingAppleTracks] = useState(false)
   const [isInfiniteRadio, setIsInfiniteRadio] = useState(false)
   const radioSongsRef = useRef<Song[]>([])
   const radioRequestedRef = useRef<Set<string>>(new Set())
@@ -451,84 +576,38 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
     }
   }, [])
 
-  // Fetch online charts & recommendations from iTunes RSS / Search
+  // Fetch online charts & recommendations via Monochrome-style Explore Feed API
   const fetchFeed = useCallback(async () => {
     setIsRefreshing(true)
     try {
-      // 1. Fetch Top Trending Songs
-      const songsRes = await fetch('https://itunes.apple.com/us/rss/topsongs/limit=50/json')
-      if (songsRes.ok) {
-        const data = await songsRes.json()
-        const entries = data?.feed?.entry || []
-        if (Array.isArray(entries) && entries.length > 0) {
-          const mapped: HomeSongItem[] = entries.slice(0, 30).map((entry: any, i: number) => {
-            const rawTitle = entry?.['im:name']?.label || entry?.title?.label || 'Unknown Track'
-            const rawArtist = entry?.['im:artist']?.label || ''
-            const artist = resolveArtist(rawArtist, rawTitle)
-            const title = resolveTitle(rawTitle, artist)
-            const rawImages = entry?.['im:image'] || []
-            const rawArtwork = rawImages[rawImages.length - 1]?.label
-            const releaseDate = entry?.['im:releaseDate']?.label
-            const year = releaseDate ? new Date(releaseDate).getFullYear() : undefined
-            const isExplicit = Boolean(entry?.['im:contentAdvisory']?.label?.toLowerCase().includes('explicit'))
-
-            return {
-              id: entry?.id?.attributes?.['im:id'] || `online-${i}`,
-              title: title || rawTitle,
-              artist,
-              album: stripSourceSuffix(entry?.['im:collection']?.['im:name']?.label || ''),
-              year: year || '2024',
-              duration: 180 + ((i * 17) % 110),
-              artworkUrl: upgradeArtwork(rawArtwork),
-              quality: i % 3 === 0 ? 'HD FLAC' : 'FLAC',
-              isExplicit
-            }
-          })
-
-          setHotSongs(mapped)
-          // Mix curated with fresh hits for recommended
-          const shuffled = [...CURATED_DEFAULT_SONGS].sort(() => 0.5 - Math.random())
-          setRecommendedSongs([...shuffled.slice(0, 10), ...mapped.slice(0, 11)])
-        }
-      }
-
-      // 2. Fetch Top Albums
-      const albumsRes = await fetch('https://itunes.apple.com/us/rss/topalbums/limit=30/json')
-      if (albumsRes.ok) {
-        const data = await albumsRes.json()
-        const entries = data?.feed?.entry || []
-        if (Array.isArray(entries) && entries.length > 0) {
-          const mappedAlbums: HomeAlbumItem[] = entries.slice(0, 18).map((entry: any, i: number) => {
-            const rawTitle = entry?.['im:name']?.label || 'Unknown Album'
-            const rawArtist = entry?.['im:artist']?.label || ''
-            const artist = resolveArtist(rawArtist, rawTitle)
-            const title = resolveTitle(rawTitle, artist)
-            const rawImages = entry?.['im:image'] || []
-            const rawArtwork = rawImages[rawImages.length - 1]?.label
-            const releaseDate = entry?.['im:releaseDate']?.label
-            const year = releaseDate ? new Date(releaseDate).getFullYear() : undefined
-            const songCount = Number(entry?.['im:itemCount']?.label) || 12
-
-            return {
-              id: entry?.id?.attributes?.['im:id'] || `album-${i}`,
-              title: title || rawTitle,
-              artist,
-              year: year || '2024',
-              artworkUrl: upgradeArtwork(rawArtwork),
-              songCount
-            }
-          })
-
-          setAotyAlbums(mappedAlbums.slice(0, 12))
-          setRecommendedAlbums([...CURATED_DEFAULT_ALBUMS, ...mappedAlbums.slice(0, 6)])
+      if (window.api?.fetchExploreFeed) {
+        const feed = await window.api.fetchExploreFeed()
+        if (feed) {
+          if (Array.isArray(feed.trendingSongs) && feed.trendingSongs.length > 0) {
+            setRecommendedSongs(feed.trendingSongs)
+          }
+          if (Array.isArray(feed.hotNewSongs) && feed.hotNewSongs.length > 0) {
+            setHotSongs(feed.hotNewSongs)
+          }
+          if (Array.isArray(feed.recommendedAlbums) && feed.recommendedAlbums.length > 0) {
+            setRecommendedAlbums(feed.recommendedAlbums)
+          }
+          if (Array.isArray(feed.hotNewAlbums) && feed.hotNewAlbums.length > 0) {
+            setHotNewAlbums(feed.hotNewAlbums)
+          }
+          return
         }
       }
     } catch (err) {
-      console.warn('Using curated home defaults due to network:', err)
+      console.warn('Explore feed error, falling back to curated:', err)
     } finally {
       setIsRefreshing(false)
     }
   }, [])
+
+  useEffect(() => {
+    void fetchFeed()
+  }, [fetchFeed])
 
   useEffect(() => {
     localStorage.setItem(HOME_RECOMMENDED_SONGS_KEY, JSON.stringify(recommendedSongs))
@@ -536,8 +615,13 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
   }, [recommendedSongs, recommendedAlbums])
 
   useEffect(() => {
-    if (activeTab !== 'spotify') return
+    if (activeTab !== 'spotify') {
+      // Reset drill-down view when navigating away from Spotify tab
+      setSelectedSpotifyPlaylist(null)
+      return
+    }
     let cancelled = false
+    // Fetch artwork for all playlists lazily (they are cheap oembed calls)
     void Promise.all(
       spotifyPlaylists.map(async (playlist) => {
         try {
@@ -581,21 +665,82 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
   }, [selectedSpotifyPlaylist])
 
   useEffect(() => {
-    if (activeTab !== 'charts') return
+    if (activeTab !== 'apple') {
+      setSelectedAppleChart(null)
+      return
+    }
+  }, [activeTab])
+
+  useEffect(() => {
+    if (!selectedAppleChart) {
+      setAppleTracks([])
+      return
+    }
     let cancelled = false
-    setIsLoadingCharts(true)
-    ChartsService.fetchCategoryTracks(selectedChartCategory, 50)
+    setIsLoadingAppleTracks(true)
+    ChartsService.fetchCategoryTracks(selectedAppleChart, 100)
       .then((tracks) => {
-        if (!cancelled) setChartTracks(tracks)
+        if (!cancelled) setAppleTracks(tracks)
       })
-      .catch((err) => console.warn('Charts load failed:', err))
+      .catch((err) => {
+        console.warn('Apple chart load failed:', err)
+        if (!cancelled) setAppleTracks([])
+      })
       .finally(() => {
-        if (!cancelled) setIsLoadingCharts(false)
+        if (!cancelled) setIsLoadingAppleTracks(false)
       })
     return () => {
       cancelled = true
     }
-  }, [activeTab, selectedChartCategory])
+  }, [selectedAppleChart])
+
+  useEffect(() => {
+    if (activeTab !== 'aoty') return
+    let cancelled = false
+    setIsLoadingAoty(true)
+    window.api?.fetchAotyAlbums?.(aotyCategory)
+      .then((albums: any[]) => {
+        if (!cancelled) {
+          setAotyAlbums(Array.isArray(albums) && albums.length > 0 ? albums : [])
+        }
+      })
+      .catch((err: any) => {
+        console.warn('AOTY load failed:', err)
+        if (!cancelled) setAotyAlbums([])
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingAoty(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab, aotyCategory])
+
+  const [lastFmCategory, setLastFmCategory] = useState<string>('tracks')
+  const [lastFmItems, setLastFmItems] = useState<any[]>([])
+  const [isLoadingLastFm, setIsLoadingLastFm] = useState(false)
+
+  useEffect(() => {
+    if (activeTab !== 'lastfm') return
+    let cancelled = false
+    setIsLoadingLastFm(true)
+    const isTag = !['tracks', 'artists'].includes(lastFmCategory)
+    window.api?.fetchLastFmCharts?.(isTag ? 'tag' : lastFmCategory, isTag ? lastFmCategory : undefined)
+      .then((items: any[]) => {
+        if (!cancelled) setLastFmItems(Array.isArray(items) ? items : [])
+      })
+      .catch((err: any) => {
+        console.warn('Last.fm charts load error:', err)
+        if (!cancelled) setLastFmItems([])
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingLastFm(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab, lastFmCategory])
+
 
   const toggleLike = (songId: string) => {
     setLikedSongIds((prev) => {
@@ -828,9 +973,9 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
   }, [activeTab, hotSongs, recommendedSongs])
 
   const displayedAlbums = useMemo(() => {
-    if (activeTab === 'aoty') return aotyAlbums.length ? aotyAlbums : recommendedAlbums
+    if (activeTab === 'hot_new') return hotNewAlbums.length ? hotNewAlbums : recommendedAlbums
     return recommendedAlbums
-  }, [activeTab, aotyAlbums, recommendedAlbums])
+  }, [activeTab, hotNewAlbums, recommendedAlbums])
 
   return (
     <div className="relative min-h-full w-full bg-[#121212] text-white select-none pb-24">
@@ -851,26 +996,13 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
 
         <button
           type="button"
-          onClick={() => setActiveTab('hot_new')}
+          onClick={() => setActiveTab('apple')}
           className={`relative text-sm font-bold tracking-tight transition-colors ${
-            activeTab === 'hot_new' ? 'text-white font-extrabold' : 'text-[#a7a7a7] hover:text-white'
+            activeTab === 'apple' ? 'text-white font-extrabold' : 'text-[#a7a7a7] hover:text-white'
           }`}
         >
-          <span>Hot & New</span>
-          {activeTab === 'hot_new' && (
-            <span className="absolute -bottom-3 left-0 right-0 h-0.5 rounded-full bg-[#1ed760]" />
-          )}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('charts')}
-          className={`relative text-sm font-bold tracking-tight transition-colors ${
-            activeTab === 'charts' ? 'text-white font-extrabold' : 'text-[#a7a7a7] hover:text-white'
-          }`}
-        >
-          <span>Charts</span>
-          {activeTab === 'charts' && (
+          <span>Apple</span>
+          {activeTab === 'apple' && (
             <span className="absolute -bottom-3 left-0 right-0 h-0.5 rounded-full bg-[#1ed760]" />
           )}
         </button>
@@ -900,194 +1032,310 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
             <span className="absolute -bottom-3 left-0 right-0 h-0.5 rounded-full bg-[#1ed760]" />
           )}
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('lastfm')}
+          className={`relative text-sm font-bold tracking-tight transition-colors ${
+            activeTab === 'lastfm' ? 'text-white font-extrabold' : 'text-[#a7a7a7] hover:text-white'
+          }`}
+        >
+          <span>Last.fm</span>
+          {activeTab === 'lastfm' && (
+            <span className="absolute -bottom-3 left-0 right-0 h-0.5 rounded-full bg-[#1ed760]" />
+          )}
+        </button>
       </div>
 
       <div className="space-y-10 px-4 pt-5 sm:px-8 sm:pt-6">
-        {/* Charts Tab */}
-        {activeTab === 'charts' && (
+        {/* ─── Apple Music Tab (Charts & Curated Playlists) ────────────────────────── */}
+        {activeTab === 'apple' && (
           <section className="space-y-5 pt-2">
-            {/* Header */}
-            <div>
-              <h2 className="text-2xl font-black tracking-tight text-white">Live Music Charts</h2>
-              <p className="mt-1 text-sm text-[#a7a7a7]">
-                Real-time top charts updated daily.
-              </p>
-            </div>
+            {selectedAppleChart ? (
+              <div className="space-y-6">
+                {/* Back button */}
+                <button
+                  type="button"
+                  onClick={() => setSelectedAppleChart(null)}
+                  className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-black text-white transition-colors hover:bg-white/10"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  <span>Back to Apple charts</span>
+                </button>
 
-            <div className="flex gap-5">
-              {/* Sidebar: Category Picker */}
-              <aside className="hidden sm:flex w-52 shrink-0 flex-col gap-1">
-                <p className="mb-2 text-[10px] font-extrabold uppercase tracking-widest text-[#a7a7a7]">Sources</p>
-                {CHART_CATEGORIES.map((cat) => {
-                  const isActive = selectedChartCategory.id === cat.id
-                  return (
-                    <button
-                      key={cat.id}
-                      type="button"
-                      onClick={() => setSelectedChartCategory(cat)}
-                      className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-semibold transition-all ${
-                        isActive
-                          ? 'bg-white text-black'
-                          : 'text-[#a7a7a7] hover:bg-white/5 hover:text-white'
-                      }`}
-                    >
-                      <span className="text-base leading-none">{cat.icon}</span>
-                      <span className="truncate leading-snug">{cat.name.replace(/^.+? /, '')}</span>
-                    </button>
-                  )
-                })}
-              </aside>
-
-              {/* Mobile: Horizontal pills */}
-              <div className="flex sm:hidden flex-wrap gap-2 w-full">
-                {CHART_CATEGORIES.map((cat) => {
-                  const isActive = selectedChartCategory.id === cat.id
-                  return (
-                    <button
-                      key={cat.id}
-                      type="button"
-                      onClick={() => setSelectedChartCategory(cat)}
-                      className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${
-                        isActive
-                          ? 'bg-white text-black'
-                          : 'bg-[#242424] text-[#a7a7a7] hover:bg-[#2e2e2e] hover:text-white'
-                      }`}
-                    >
-                      <span>{cat.icon}</span>
-                      <span>{cat.name.split(' ').slice(-2).join(' ')}</span>
-                    </button>
-                  )
-                })}
-              </div>
-
-              {/* Chart Track List */}
-              <div className="flex-1 min-w-0">
-                {/* Active chart title */}
-                <div className="mb-4 flex items-center gap-3">
-                  <span className="text-2xl leading-none">{selectedChartCategory.icon}</span>
-                  <div>
-                    <h3 className="text-lg font-black text-white">{selectedChartCategory.name}</h3>
-                    <p className="text-xs text-[#a7a7a7]">Live top chart</p>
+                {/* Hero Header */}
+                <div className="flex flex-col sm:flex-row items-start sm:items-end gap-6 rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-[#181818] p-6 shadow-xl">
+                  <div className="relative h-40 w-40 shrink-0 overflow-hidden rounded-xl bg-[#222] shadow-2xl">
+                    <ArtworkImage
+                      src={selectedAppleChart.coverUrl}
+                      title={selectedAppleChart.name}
+                      artist="Apple Music"
+                      className="h-full w-full object-cover"
+                    />
                   </div>
-                  {isLoadingCharts && (
-                    <div className="ml-auto h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white" />
-                  )}
+                  <div className="min-w-0 flex-1">
+                    <span className="inline-flex items-center gap-1.5 rounded bg-black/60 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-white border border-white/10">
+                      {selectedAppleChart.badge || 'Apple Music Chart'}
+                    </span>
+                    <h1 className="mt-2 text-2xl sm:text-4xl font-black tracking-tight text-white">
+                      {selectedAppleChart.name}
+                    </h1>
+                    <p className="mt-2 text-sm text-[#a7a7a7]">
+                      {selectedAppleChart.description || 'Top chart tracks updated daily from Apple Music.'}
+                    </p>
+                    <div className="mt-5 flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        disabled={appleTracks.length === 0}
+                        onClick={() => {
+                          if (appleTracks.length > 0) {
+                            const songItems: Song[] = appleTracks.map((t) => ({
+                              id: t.id,
+                              title: t.title,
+                              artist: t.artist,
+                              album: t.album || '',
+                              duration: t.duration || 0,
+                              filePath: `virtual:apple:${t.id}`,
+                              artworkPath: t.artworkUrl,
+                              dateAdded: Math.floor(Date.now() / 1000)
+                            }))
+                            setQueue(songItems, 0)
+                          }
+                        }}
+                        className="flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-xs font-black text-black transition-opacity hover:opacity-90 disabled:opacity-50"
+                      >
+                        <Play className="h-4 w-4 fill-black" />
+                        <span>Play Chart</span>
+                      </button>
+                      <span className="text-xs font-bold text-[#a7a7a7]">{appleTracks.length} tracks</span>
+                    </div>
+                  </div>
                 </div>
 
-                {isLoadingCharts ? (
-                  <div className="space-y-2">
-                    {Array.from({ length: 10 }).map((_, i) => (
-                      <div key={i} className="flex items-center gap-3 rounded-xl bg-white/5 px-4 py-3 animate-pulse">
-                        <div className="w-7 h-4 rounded bg-white/10" />
-                        <div className="h-10 w-10 shrink-0 rounded-lg bg-white/10" />
-                        <div className="flex-1 space-y-2">
-                          <div className="h-3 w-2/3 rounded bg-white/10" />
-                          <div className="h-2.5 w-1/3 rounded bg-white/5" />
+                {/* Tracks list */}
+                <div className="space-y-2">
+                  <h3 className="text-lg font-black text-white">Tracklist</h3>
+
+                  {isLoadingAppleTracks ? (
+                    <div className="space-y-2">
+                      {Array.from({ length: 12 }).map((_, i) => (
+                        <div key={i} className="flex items-center gap-3 rounded-xl bg-white/5 px-4 py-3 animate-pulse">
+                          <div className="w-7 h-4 rounded bg-white/10" />
+                          <div className="h-10 w-10 shrink-0 rounded-lg bg-white/10" />
+                          <div className="flex-1 space-y-2">
+                            <div className="h-3 w-2/3 rounded bg-white/10" />
+                            <div className="h-2.5 w-1/3 rounded bg-white/5" />
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : chartTracks.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center gap-3 py-20 text-center">
-                    <Music2 className="h-12 w-12 text-white/20" />
-                    <p className="text-sm font-semibold text-[#a7a7a7]">Could not load chart data.</p>
-                    <p className="text-xs text-white/30">Check your internet connection and try again.</p>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedChartCategory({ ...selectedChartCategory })}
-                      className="mt-2 rounded-full bg-white/10 px-5 py-2 text-xs font-bold text-white hover:bg-white/20"
-                    >
-                      Retry
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {chartTracks.map((track) => {
-                      const isInLibrary = isSongInLibrary(track.title, track.artist, librarySongs)
-                      const isCurrent = currentSong?.title === track.title
-                      const trackSongItem: HomeSongItem = {
-                        id: track.id,
-                        title: track.title,
-                        artist: track.artist,
-                        album: track.album || '',
-                        duration: track.duration || 0,
-                        artworkUrl: track.artworkUrl
-                      }
+                      ))}
+                    </div>
+                  ) : appleTracks.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                      <Music2 className="h-12 w-12 text-white/20" />
+                      <p className="text-sm font-semibold text-[#a7a7a7]">Could not load chart tracks.</p>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedAppleChart({ ...selectedAppleChart })}
+                        className="mt-2 rounded-full bg-white/10 px-5 py-2 text-xs font-bold text-white hover:bg-white/20"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {appleTracks.map((track) => {
+                        const isInLibrary = isSongInLibrary(track.title, track.artist, librarySongs)
+                        const isCurrent = currentSong?.title === track.title
+                        const trackSongItem: HomeSongItem = {
+                          id: track.id,
+                          title: track.title,
+                          artist: track.artist,
+                          album: track.album || '',
+                          duration: track.duration || 0,
+                          artworkUrl: track.artworkUrl
+                        }
 
-                      return (
-                        <div
-                          key={track.id}
-                          onClick={() => void handlePlaySong(trackSongItem)}
-                          className="group flex cursor-pointer items-center justify-between gap-3 rounded-xl px-3 py-2 transition-colors hover:bg-white/10"
-                        >
-                          <div className="flex min-w-0 flex-1 items-center gap-3">
-                            {/* Rank */}
-                            <span className="w-7 shrink-0 text-right text-sm font-extrabold text-[#a7a7a7] tabular-nums">
-                              {track.rank}
-                            </span>
+                        return (
+                          <div
+                            key={track.id}
+                            onClick={() => void handlePlaySong(trackSongItem)}
+                            className="group flex cursor-pointer items-center justify-between gap-3 rounded-xl px-3 py-2 transition-colors hover:bg-white/10"
+                          >
+                            <div className="flex min-w-0 flex-1 items-center gap-3">
+                              <span className="w-7 shrink-0 text-right text-sm font-extrabold text-[#a7a7a7] tabular-nums">
+                                {track.rank}
+                              </span>
 
-                            {/* Artwork & Play button */}
-                            <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-[#282828] shadow-sm">
-                              {track.artworkUrl ? (
-                                <img
-                                  src={track.artworkUrl}
-                                  alt=""
-                                  loading="lazy"
-                                  className="h-full w-full object-cover"
-                                  onError={(e) => {
-                                    e.currentTarget.style.display = 'none'
+                              <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-[#282828] shadow-sm">
+                                {track.artworkUrl ? (
+                                  <img
+                                    src={track.artworkUrl}
+                                    alt=""
+                                    loading="lazy"
+                                    className="h-full w-full object-cover"
+                                    onError={(e) => {
+                                      e.currentTarget.style.display = 'none'
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="flex h-full w-full items-center justify-center">
+                                    <Music2 className="h-5 w-5 text-white/30" />
+                                  </div>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    void handlePlaySong(trackSongItem)
                                   }}
-                                />
-                              ) : (
-                                <div className="flex h-full w-full items-center justify-center">
-                                  <Music2 className="h-5 w-5 text-white/30" />
-                                </div>
-                              )}
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  void handlePlaySong(trackSongItem)
-                                }}
-                                className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100"
-                              >
-                                <Play className="h-5 w-5 fill-white text-white" />
-                              </button>
+                                  className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100"
+                                >
+                                  <Play className="h-5 w-5 fill-white text-white" />
+                                </button>
+                              </div>
+
+                              <div className="min-w-0 flex-1">
+                                <p className={`truncate text-sm font-bold ${isCurrent ? 'text-white' : 'text-white'}`}>
+                                  {displayTitle(track.title)}
+                                </p>
+                                <p className="truncate text-xs text-[#a7a7a7]">
+                                  {track.artist}
+                                  {track.album && (
+                                    <> <span className="text-white/20">•</span> {displayTitle(track.album)}</>
+                                  )}
+                                </p>
+                              </div>
                             </div>
 
-                            {/* Track info */}
-                            <div className="min-w-0 flex-1">
-                              <p className={`truncate text-sm font-bold ${isCurrent ? 'text-[#1ed760]' : 'text-white'}`}>
-                                {displayTitle(track.title)}
-                              </p>
-                              <p className="truncate text-xs text-[#a7a7a7]">
-                                {track.artist}
-                                {track.album && (
-                                  <> <span className="text-white/20">•</span> {displayTitle(track.album)}</>
-                                )}
-                              </p>
+                            <div className="flex shrink-0 items-center gap-2 pr-2">
+                              {track.duration && track.duration > 0 && (
+                                <span className="text-xs text-[#a7a7a7] tabular-nums">
+                                  {Math.floor(track.duration / 60)}:{String(Math.floor(track.duration % 60)).padStart(2, '0')}
+                                </span>
+                              )}
+                              {isInLibrary && (
+                                <span title="In your library">
+                                  <CheckCircle2 className="h-4 w-4 text-white" />
+                                </span>
+                              )}
                             </div>
                           </div>
-
-                          {/* Actions */}
-                          {isInLibrary && (
-                            <div className="flex shrink-0 items-center pr-2">
-                              <span title="In Library">
-                                <CheckCircle2 className="h-4 w-4 text-[#1ed760]" />
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
+            ) : (
+              <>
+                <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+                  <div>
+                    <h2 className="text-2xl font-black tracking-tight text-white">Apple Music Charts</h2>
+                    <p className="mt-1 text-sm text-[#a7a7a7]">
+                      Top songs, global leaderboards, and genre charts updated daily.
+                    </p>
+                  </div>
+                  <span className="self-start sm:self-auto rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-white">
+                    Live Apple Feeds
+                  </span>
+                </div>
+
+                {/* Sub-tabs Filter Pills */}
+                <div className="flex flex-wrap items-center gap-2 border-b border-white/5 pb-3">
+                  {[
+                    { id: 'all' as const, label: 'All Charts', count: CHART_CATEGORIES.length },
+                    {
+                      id: 'charts' as const,
+                      label: 'Top 100',
+                      count: CHART_CATEGORIES.filter((c) => c.section === 'charts').length
+                    },
+                    {
+                      id: 'pop' as const,
+                      label: 'Pop',
+                      count: CHART_CATEGORIES.filter((c) => c.section === 'pop').length
+                    },
+                    {
+                      id: 'hiphop' as const,
+                      label: 'Hip-Hop / Rap',
+                      count: CHART_CATEGORIES.filter((c) => c.section === 'hiphop').length
+                    },
+                    {
+                      id: 'rock' as const,
+                      label: 'Rock',
+                      count: CHART_CATEGORIES.filter((c) => c.section === 'rock').length
+                    },
+                    {
+                      id: 'alternative' as const,
+                      label: 'Alternative',
+                      count: CHART_CATEGORIES.filter((c) => c.section === 'alternative').length
+                    },
+                    {
+                      id: 'electronic' as const,
+                      label: 'Dance & EDM',
+                      count: CHART_CATEGORIES.filter((c) => c.section === 'electronic').length
+                    },
+                    {
+                      id: 'rnb' as const,
+                      label: 'R&B / Soul',
+                      count: CHART_CATEGORIES.filter((c) => c.section === 'rnb').length
+                    },
+                    {
+                      id: 'genres' as const,
+                      label: 'Genres',
+                      count: CHART_CATEGORIES.filter((c) => c.section === 'genres').length
+                    }
+                  ].map((tab) => {
+                    const isActive = appleSection === tab.id
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setAppleSection(tab.id)}
+                        className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
+                          isActive
+                            ? 'bg-white text-black shadow-md'
+                            : 'bg-[#242424] text-[#a7a7a7] hover:bg-[#2e2e2e] hover:text-white'
+                        }`}
+                      >
+                        <span>{tab.label}</span>
+                        <span
+                          className={`rounded-full px-1.5 py-0.2 text-[10px] font-extrabold ${
+                            isActive ? 'bg-black/15 text-black' : 'bg-white/10 text-[#a7a7a7]'
+                          }`}
+                        >
+                          {tab.count}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* Apple Charts Grid */}
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+                  {(appleSection === 'all'
+                    ? CHART_CATEGORIES
+                    : CHART_CATEGORIES.filter((c) => c.section === appleSection)
+                  ).map((chart) => (
+                    <UnifiedMediaCard
+                      key={chart.id}
+                      title={chart.name}
+                      subtitle={chart.description || 'Apple Music Top Chart'}
+                      artworkUrl={chart.coverUrl}
+                      badge={chart.badge}
+                      sourceTag="Apple Music"
+                      onClick={() => setSelectedAppleChart(chart)}
+                      onAction={() => setSelectedAppleChart(chart)}
+                      actionTitle={`Explore ${chart.name}`}
+                      actionIcon={<Play className="h-4 w-4 fill-current" />}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
           </section>
         )}
 
-        {/* Section 1: Recommended Songs */}
+        {/* ─── Section 1: Recommended Songs ─────────────────────────────────────────── */}
         {(activeTab === 'home' || activeTab === 'hot_new') && (
           <section className="space-y-4">
             <div className="flex items-center justify-between">
@@ -1142,69 +1390,54 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                         <button
                           type="button"
                           onClick={() => void handlePlaySong(song)}
-                          className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100"
+                          className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100"
                         >
-                          <Play className="h-5 w-5 fill-white text-white" />
+                          <Play className="h-4 w-4 fill-white text-white" />
                         </button>
                       </div>
 
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
-                          <span
-                            className={`truncate text-[14px] font-bold ${
-                              isCurrent ? 'text-[#1ed760]' : 'text-white'
-                            }`}
-                            title={displayTitle(song.title)}
-                          >
+                          <p className={`truncate text-sm font-bold ${isCurrent ? 'text-white' : 'text-white'}`}>
                             {displayTitle(song.title)}
-                          </span>
+                          </p>
                           {song.isExplicit && (
-                            <span className="shrink-0 rounded bg-white/20 px-1 py-0.2 text-[9px] font-bold text-[#b3b3b3]">
+                            <span className="rounded bg-white/20 px-1 py-0.5 text-[9px] font-bold uppercase text-[#a7a7a7]">
                               E
                             </span>
                           )}
-                          {song.quality && (
-                            <span className="shrink-0 rounded border border-white/20 bg-black/40 px-1 py-0.2 text-[9px] font-bold text-[#b3b3b3]">
-                              {song.quality}
-                            </span>
-                          )}
-                          {isInLibrary && (
-                            <span className="shrink-0 text-[10px] font-bold text-[#1ed760]">In Library</span>
-                          )}
                         </div>
-                        <p className="truncate text-xs text-[#a7a7a7]" title={song.artist}>
-                          {song.artist}
-                          {song.year ? ` • ${song.year}` : ''}
-                        </p>
+                        <p className="truncate text-xs text-[#a7a7a7]">{song.artist}</p>
                       </div>
                     </div>
 
-                    {/* Actions: Heart, Duration, Download */}
-                    <div className="flex shrink-0 items-center gap-2.5">
+                    {/* Actions & Meta */}
+                    <div className="flex items-center gap-3">
+                      {song.quality && (
+                        <span className="hidden sm:inline-block rounded border border-white/20 px-1.5 py-0.5 text-[10px] font-bold text-[#a7a7a7]">
+                          {song.quality}
+                        </span>
+                      )}
+
                       <button
                         type="button"
                         onClick={() => toggleLike(song.id)}
-                        className={`transition-transform hover:scale-110 ${
-                          isLiked ? 'text-[#1ed760]' : 'text-[#a7a7a7] hover:text-white'
+                        className={`text-xs transition-colors ${
+                          isLiked ? 'text-white' : 'text-[#a7a7a7] opacity-0 group-hover:opacity-100 hover:text-white'
                         }`}
-                        title={isLiked ? 'Liked' : 'Like'}
                       >
                         <Heart className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`} />
                       </button>
-
-                      <span className="w-8 text-right font-mono text-xs text-[#a7a7a7]">
-                        {formatDuration(song.duration)}
-                      </span>
 
                       <button
                         type="button"
                         onClick={() => handleDownload(song)}
                         title={isInLibrary ? 'Already in your library' : 'Download track'}
-                        className={`${
+                        className={`text-xs transition-colors ${
                           isInLibrary
-                            ? 'text-[#1ed760]'
-                            : 'pointer-events-none text-[#a7a7a7] opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[#1ed760]'
-                        } rounded-full p-1 transition-opacity`}
+                            ? 'text-white'
+                            : 'text-[#a7a7a7] opacity-0 group-hover:opacity-100 hover:text-white'
+                        }`}
                       >
                         {isInLibrary ? (
                           <CheckCircle2 className="h-4 w-4" />
@@ -1212,6 +1445,10 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                           <Download className="h-4 w-4" />
                         )}
                       </button>
+
+                      <span className="w-9 text-right text-xs text-[#a7a7a7]">
+                        {formatDuration(song.duration)}
+                      </span>
                     </div>
                   </div>
                 )
@@ -1220,24 +1457,22 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
           </section>
         )}
 
-        {/* Section 2: Spotify Editorial Playlists */}
+        {/* ─── Spotify Tab ──────────────────────────────────────────────────────────── */}
         {activeTab === 'spotify' && (
           <section className="space-y-5 pt-2">
             {selectedSpotifyPlaylist ? (
               <div className="space-y-6">
-                {/* Back button */}
                 <button
                   type="button"
                   onClick={() => setSelectedSpotifyPlaylist(null)}
-                  className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-white/20"
+                  className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-black text-white transition-colors hover:bg-white/10"
                 >
                   <ArrowLeft className="h-4 w-4" />
-                  <span>Back to Spotify Playlists</span>
+                  <span>Back to Spotify playlists</span>
                 </button>
 
-                {/* Playlist Banner Header */}
-                <div className="flex flex-col sm:flex-row items-start sm:items-end gap-5 rounded-2xl bg-gradient-to-b from-white/10 to-white/5 p-6 border border-white/10">
-                  <div className="relative h-36 w-36 sm:h-44 sm:w-44 shrink-0 overflow-hidden rounded-xl bg-[#282828] shadow-2xl">
+                <div className="flex flex-col sm:flex-row items-start sm:items-end gap-6 rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-[#181818] p-6 shadow-xl">
+                  <div className="relative h-40 w-40 shrink-0 overflow-hidden rounded-xl bg-[#222] shadow-2xl">
                     {spotifyArtwork[selectedSpotifyPlaylist.id] ? (
                       <img
                         src={spotifyArtwork[selectedSpotifyPlaylist.id]}
@@ -1245,100 +1480,90 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                         className="h-full w-full object-cover"
                       />
                     ) : (
-                      <div className="flex h-full w-full items-center justify-center">
-                        <Music2 className="h-16 w-16 text-white/30" />
+                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-emerald-900 to-green-700">
+                        <Music2 className="h-16 w-16 text-white/90" />
                       </div>
                     )}
                   </div>
-
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <span className="rounded bg-[#1ed760]/20 px-2.5 py-0.5 text-[11px] font-black text-[#1ed760] uppercase tracking-wider">
-                      {selectedSpotifyPlaylist.badge}
+                  <div className="min-w-0 flex-1">
+                    <span className="inline-flex items-center gap-1.5 rounded bg-black/60 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-white border border-white/10">
+                      Spotify Playlist
                     </span>
-                    <h2 className="text-3xl font-black text-white tracking-tight">{selectedSpotifyPlaylist.title}</h2>
-                    <p className="text-sm text-[#a7a7a7]">
-                      {selectedSpotifyPlaylist.category} • {selectedSpotifyPlaylist.update} update
+                    <h1 className="mt-2 text-2xl sm:text-4xl font-black tracking-tight text-white">
+                      {selectedSpotifyPlaylist.title}
+                    </h1>
+                    <p className="mt-2 text-sm text-[#a7a7a7]">
+                      {selectedSpotifyPlaylist.category} • {selectedSpotifyPlaylist.update}
                     </p>
-
-                    <div className="pt-2 flex items-center gap-3">
+                    <div className="mt-5 flex flex-wrap items-center gap-3">
                       <button
                         type="button"
                         onClick={() => void handleImportSpotifyPlaylist(selectedSpotifyPlaylist)}
                         disabled={Boolean(importingSpotifyId)}
-                        className="inline-flex items-center gap-2 rounded-full bg-[#1ed760] px-5 py-2.5 text-xs font-black text-black transition-transform hover:scale-105 active:scale-95 disabled:opacity-60"
+                        className="flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-xs font-black text-black transition-opacity hover:opacity-90 disabled:opacity-60"
                       >
                         <Plus className="h-4 w-4" />
-                        <span>{importingSpotifyId === selectedSpotifyPlaylist.id ? 'Adding to local...' : 'Add to Local Playlists'}</span>
+                        <span>{importingSpotifyId === selectedSpotifyPlaylist.id ? 'Importing...' : 'Add to Local Playlists'}</span>
                       </button>
+                      <span className="text-xs font-bold text-[#a7a7a7]">{spotifyTracks.length} tracks</span>
                     </div>
                   </div>
                 </div>
 
-                {/* Playlist Tracks Table */}
-                <div className="space-y-1">
+                {/* Tracks list */}
+                <div className="space-y-2">
+                  <h3 className="text-lg font-black text-white">Tracklist preview</h3>
                   {isLoadingSpotifyTracks ? (
                     <div className="space-y-2">
                       {Array.from({ length: 8 }).map((_, i) => (
-                        <div key={i} className="flex items-center gap-3 rounded-xl bg-white/5 px-4 py-3 animate-pulse">
-                          <div className="w-6 h-4 rounded bg-white/10" />
-                          <div className="flex-1 space-y-2">
-                            <div className="h-3.5 w-1/3 rounded bg-white/10" />
-                            <div className="h-2.5 w-1/5 rounded bg-white/5" />
-                          </div>
-                        </div>
+                        <div key={i} className="h-12 rounded-lg bg-white/5 animate-pulse" />
                       ))}
                     </div>
                   ) : spotifyTracks.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center gap-3 py-16 text-center text-[#a7a7a7]">
-                      <Music2 className="h-10 w-10 text-white/20" />
-                      <p className="text-sm font-semibold">No tracks found for this playlist.</p>
-                    </div>
+                    <div className="py-12 text-center text-sm text-[#a7a7a7]">No track details loaded for this playlist.</div>
                   ) : (
-                    spotifyTracks.map((track, index) => {
-                      const isInLibrary = isSongInLibrary(track.title, track.artist, librarySongs)
-                      const isCurrent = currentSong?.title === track.title
-                      const trackSongItem: HomeSongItem = {
-                        id: `sp-${selectedSpotifyPlaylist.id}-${index}`,
-                        title: track.title,
-                        artist: track.artist,
-                        album: selectedSpotifyPlaylist.title,
-                        duration: track.duration || 0,
-                        artworkUrl: spotifyArtwork[selectedSpotifyPlaylist.id]
-                      }
+                    <div className="space-y-1">
+                      {spotifyTracks.map((track, i) => {
+                        const isInLibrary = isSongInLibrary(track.title, track.artist, librarySongs)
+                        const trackSongItem: HomeSongItem = {
+                          id: `spotify-${selectedSpotifyPlaylist.id}-${i}`,
+                          title: track.title,
+                          artist: track.artist,
+                          duration: track.duration || 0
+                        }
 
-                      return (
-                        <div
-                          key={`${track.title}-${index}`}
-                          onClick={() => void handlePlaySong(trackSongItem)}
-                          className="group flex cursor-pointer items-center justify-between gap-3 rounded-xl px-3 py-2.5 transition-colors hover:bg-white/10"
-                        >
-                          <div className="flex min-w-0 flex-1 items-center gap-3">
-                            <span className="w-6 shrink-0 text-right text-xs font-bold text-[#a7a7a7] tabular-nums">
-                              {index + 1}
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <p className={`truncate text-sm font-bold ${isCurrent ? 'text-[#1ed760]' : 'text-white'}`}>
-                                {displayTitle(track.title)}
-                              </p>
-                              <p className="truncate text-xs text-[#a7a7a7]">{track.artist}</p>
+                        return (
+                          <div
+                            key={i}
+                            onClick={() => void handlePlaySong(trackSongItem)}
+                            className="group flex cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 hover:bg-white/10 transition-colors"
+                          >
+                            <div className="flex min-w-0 flex-1 items-center gap-3">
+                              <span className="w-6 text-right text-xs font-extrabold text-[#a7a7a7] tabular-nums">
+                                {i + 1}
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-bold text-white">{track.title}</p>
+                                <p className="truncate text-xs text-[#a7a7a7]">{track.artist}</p>
+                              </div>
+                            </div>
+
+                            <div className="flex shrink-0 items-center gap-2 pr-2">
+                              {track.duration && track.duration > 0 && (
+                                <span className="text-xs text-[#a7a7a7] tabular-nums">
+                                  {Math.floor(track.duration / 60)}:{String(Math.floor(track.duration % 60)).padStart(2, '0')}
+                                </span>
+                              )}
+                              {isInLibrary && (
+                                <span title="In your library">
+                                  <CheckCircle2 className="h-4 w-4 text-white" />
+                                </span>
+                              )}
                             </div>
                           </div>
-
-                          <div className="flex shrink-0 items-center gap-3">
-                            {track.duration && track.duration > 0 && (
-                              <span className="text-xs text-[#a7a7a7] tabular-nums">
-                                {Math.floor(track.duration / 60)}:{String(Math.floor(track.duration % 60)).padStart(2, '0')}
-                              </span>
-                            )}
-                            {isInLibrary && (
-                              <span title="In Library" className="pr-1">
-                                <CheckCircle2 className="h-4 w-4 text-[#1ed760]" />
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })
+                        )
+                      })}
+                    </div>
                   )}
                 </div>
               </div>
@@ -1351,8 +1576,8 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                       Explore charts, trending hits, new releases, and curated genres.
                     </p>
                   </div>
-                  <span className="self-start sm:self-auto rounded-full bg-[#1ed760]/10 px-3 py-1 text-xs font-bold text-[#1ed760]">
-                    Updated automatically
+                  <span className="self-start sm:self-auto rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-white">
+                    Spotify Curated
                   </span>
                 </div>
 
@@ -1411,82 +1636,29 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                   })}
                 </div>
 
+                {/* Spotify Playlists Grid */}
                 <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
                   {(spotifySection === 'all'
                     ? spotifyPlaylists
                     : spotifyPlaylists.filter((p) => p.section === spotifySection)
-                  ).map((playlist, index) => (
-                    <article
+                  ).map((playlist) => (
+                    <UnifiedMediaCard
                       key={playlist.id}
-                      role="button"
-                      tabIndex={0}
+                      title={playlist.title}
+                      subtitle={`${playlist.category} • ${playlist.update}`}
+                      artworkUrl={spotifyArtwork[playlist.id]}
+                      badge={'badge' in playlist ? playlist.badge : undefined}
+                      sourceTag="Spotify"
                       onClick={() => setSelectedSpotifyPlaylist(playlist)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault()
-                          setSelectedSpotifyPlaylist(playlist)
-                        }
+                      onAction={(e) => {
+                        e.stopPropagation()
+                        void handleImportSpotifyPlaylist(playlist)
                       }}
-                      className="group cursor-pointer overflow-hidden rounded-xl border border-white/10 bg-[#181818] p-3 text-left shadow-lg transition-all hover:-translate-y-0.5 hover:border-[#1ed760]/40 hover:bg-[#202020]"
-                    >
-                      <div
-                        className={`relative aspect-square w-full overflow-hidden rounded-lg bg-gradient-to-br ${
-                          index % 4 === 0
-                            ? 'from-emerald-900 via-green-700 to-lime-500'
-                            : index % 4 === 1
-                              ? 'from-indigo-950 via-blue-700 to-cyan-400'
-                              : index % 4 === 2
-                                ? 'from-fuchsia-950 via-purple-700 to-pink-400'
-                                : 'from-amber-950 via-orange-700 to-yellow-400'
-                        }`}
-                      >
-                        <div className="absolute -right-8 -top-10 h-36 w-36 rounded-full bg-white/15 blur-2xl" />
-                        <div className="absolute -bottom-14 -left-8 h-36 w-36 rounded-full bg-black/20 blur-xl" />
-                        {spotifyArtwork[playlist.id] ? (
-                          <img
-                            src={spotifyArtwork[playlist.id]}
-                            alt=""
-                            className="relative z-10 h-full w-full object-cover"
-                            onError={(event) => {
-                              event.currentTarget.style.display = 'none'
-                            }}
-                          />
-                        ) : (
-                          <Music2 className="relative h-16 w-16 text-white/90 drop-shadow-lg" />
-                        )}
-                        {'badge' in playlist && playlist.badge && (
-                          <span className="absolute top-2 right-2 z-20 rounded bg-black/75 backdrop-blur-xs px-2 py-0.5 text-[10px] font-black tracking-wide text-white border border-white/10">
-                            {playlist.badge}
-                          </span>
-                        )}
-                        <span className="absolute bottom-2 left-2 z-20 rounded bg-black/45 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-white">
-                          Spotify playlist
-                        </span>
-                      </div>
-
-                      <div className="mt-3 flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <h3 className="truncate text-base font-black text-white" title={playlist.title}>
-                            {playlist.title}
-                          </h3>
-                          <p className="mt-1 truncate text-xs text-[#a7a7a7]">
-                            {playlist.category} <span className="mx-1 text-white/30">•</span> {playlist.update}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          title={`Add ${playlist.title} to local playlists`}
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            void handleImportSpotifyPlaylist(playlist)
-                          }}
-                          disabled={Boolean(importingSpotifyId)}
-                          className="shrink-0 rounded-full bg-[#1ed760] px-2.5 py-1 text-[10px] font-black text-black transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
-                        >
-                          {importingSpotifyId === playlist.id ? '...' : 'Add'}
-                        </button>
-                      </div>
-                    </article>
+                      actionTitle={`Add ${playlist.title} to local playlists`}
+                      actionLoading={importingSpotifyId === playlist.id}
+                      actionText="Add"
+                      actionIcon={<Plus className="h-3.5 w-3.5 mr-0.5" />}
+                    />
                   ))}
                 </div>
               </>
@@ -1494,72 +1666,255 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
           </section>
         )}
 
-        {/* Section 3: Recommended Albums */}
-        {(activeTab === 'home' || activeTab === 'aoty') && (
-          <section className="space-y-4 pt-2">
-            <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-black tracking-tight text-white">
-              {activeTab === 'aoty' ? 'Albums of the Year' : 'Recommended Albums'}
-            </h2>
-
-            <button
-              type="button"
-              onClick={() => void fetchFeed()}
-              title="Refresh albums"
-              disabled={isRefreshing}
-              className="flex h-8 w-8 items-center justify-center rounded-full text-[#a7a7a7] transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
-            >
-              <RotateCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-            {displayedAlbums.map((album) => (
-              <div
-                key={album.id}
-                onClick={() => navigate(`/album/${encodeURIComponent(album.artist)}/${encodeURIComponent(album.title)}`)}
-                className="group flex flex-col rounded-xl bg-[#181818] p-3 transition-all hover:bg-[#282828] cursor-pointer"
+        {/* ─── AOTY Tab ─────────────────────────────────────────────────────────────── */}
+        {activeTab === 'aoty' && (
+          <section className="space-y-5 pt-2">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-black tracking-tight text-white">Album of the Year</h2>
+                <p className="mt-1 text-sm text-[#a7a7a7]">
+                  Curated critic lists from <span className="font-bold text-white">albumoftheyear.org</span>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsLoadingAoty(true)
+                  window.api?.fetchAotyAlbums?.(aotyCategory)
+                    .then((albums: any[]) => setAotyAlbums(Array.isArray(albums) && albums.length > 0 ? albums : []))
+                    .catch(() => {})
+                    .finally(() => setIsLoadingAoty(false))
+                }}
+                title="Refresh AOTY list"
+                className="flex h-8 w-8 items-center justify-center rounded-full text-[#a7a7a7] transition-colors hover:bg-white/10 hover:text-white"
               >
-                <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-[#222] shadow-md">
-                  <ArtworkImage
-                    src={album.artworkUrl}
+                <RotateCw className={`h-4 w-4 ${isLoadingAoty ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+
+            {/* Category pills */}
+            <div className="flex flex-wrap gap-2">
+              {([
+                { id: 'must-hear', label: 'Must Hear' },
+                { id: 'highest-rated', label: 'Highest Rated' },
+                { id: 'new-releases', label: 'New Releases' },
+                { id: 'anticipated', label: 'Anticipated' }
+              ] as const).map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setAotyCategory(cat.id)}
+                  className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition-all ${
+                    aotyCategory === cat.id
+                      ? 'bg-white text-black'
+                      : 'bg-white/10 text-[#a7a7a7] hover:bg-white/20 hover:text-white'
+                  }`}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+
+            {/* AOTY Grid */}
+            {isLoadingAoty && aotyAlbums.length === 0 ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                {Array.from({ length: 12 }).map((_, i) => (
+                  <div key={i} className="flex flex-col rounded-xl bg-[#181818] p-3 animate-pulse">
+                    <div className="aspect-square w-full rounded-lg bg-white/10" />
+                    <div className="mt-3 h-3 w-3/4 rounded bg-white/10" />
+                    <div className="mt-1.5 h-2.5 w-1/2 rounded bg-white/10" />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                {aotyAlbums.map((album: any) => (
+                  <UnifiedMediaCard
+                    key={album.id}
                     title={album.title}
-                    artist={album.artist}
-                    alt={album.title}
-                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                  />
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
+                    subtitle={`${album.artist}${album.year ? ` • ${album.year}` : ''}`}
+                    artworkUrl={album.coverUrl || album.artworkUrl}
+                    score={album.criticScore ?? null}
+                    badge={album.mustHear ? 'Must Hear' : undefined}
+                    sourceTag="AOTY"
+                    onClick={() => navigate(`/album/${encodeURIComponent(album.artist)}/${encodeURIComponent(album.title)}`)}
+                    onAction={() => {
                       onOpenDownloadPanel?.({
                         id: album.id,
                         title: album.title,
                         artist: album.artist,
                         album: album.title,
                         duration: 0,
-                        artworkPath: album.artworkUrl,
+                        artworkPath: album.coverUrl || album.artworkUrl,
                         isOnline: true
                       })
                     }}
-                    title="Download album"
-                    className="absolute right-2 bottom-2 flex h-9 w-9 items-center justify-center rounded-full bg-[#1ed760] text-black shadow-lg opacity-0 translate-y-2 transition-all group-hover:opacity-100 group-hover:translate-y-0 hover:scale-105"
-                  >
-                    <Download className="h-4 w-4" />
-                  </button>
-                </div>
-
-                <div className="mt-3">
-                  <h3 className="truncate text-sm font-bold text-white group-hover:underline">
-                    {album.title}
-                  </h3>
-                  <p className="truncate text-xs text-[#a7a7a7] mt-0.5">
-                    {album.artist}
-                    {album.year ? ` • ${album.year}` : ''}
-                  </p>
-                </div>
+                    actionTitle="Download album"
+                    actionIcon={<Download className="h-4 w-4" />}
+                  />
+                ))}
               </div>
-            ))}
+            )}
+          </section>
+        )}
+
+        {/* ─── Last.fm Tab ───────────────────────────────────────────────────────── */}
+        {activeTab === 'lastfm' && (
+          <section className="space-y-5 pt-2">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-black tracking-tight text-white">Last.fm Scrobbles & Charts</h2>
+                <p className="mt-1 text-sm text-[#a7a7a7]">
+                  Global listener charts, top played tracks, and curated tag trends from <span className="font-bold text-white">Last.fm</span>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsLoadingLastFm(true)
+                  const isTag = !['tracks', 'artists'].includes(lastFmCategory)
+                  window.api?.fetchLastFmCharts?.(isTag ? 'tag' : lastFmCategory, isTag ? lastFmCategory : undefined)
+                    .then((items: any[]) => setLastFmItems(Array.isArray(items) ? items : []))
+                    .catch(() => {})
+                    .finally(() => setIsLoadingLastFm(false))
+                }}
+                title="Refresh Last.fm charts"
+                className="flex h-8 w-8 items-center justify-center rounded-full text-[#a7a7a7] transition-colors hover:bg-white/10 hover:text-white"
+              >
+                <RotateCw className={`h-4 w-4 ${isLoadingLastFm ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+
+            {/* Category pills */}
+            <div className="flex flex-wrap gap-2">
+              {[
+                { id: 'tracks', label: 'Top Tracks' },
+                { id: 'artists', label: 'Top Artists' },
+                { id: 'indie', label: 'Indie & Alt' },
+                { id: 'rock', label: 'Rock' },
+                { id: 'electronic', label: 'Electronic' },
+                { id: 'hip-hop', label: 'Hip-Hop' },
+                { id: 'pop', label: 'Pop' },
+                { id: 'shoegaze', label: 'Shoegaze' },
+                { id: 'metal', label: 'Metal' }
+              ].map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setLastFmCategory(cat.id)}
+                  className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition-all ${
+                    lastFmCategory === cat.id
+                      ? 'bg-white text-black shadow-md'
+                      : 'bg-white/10 text-[#a7a7a7] hover:bg-white/20 hover:text-white'
+                  }`}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Grid */}
+            {isLoadingLastFm && lastFmItems.length === 0 ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                {Array.from({ length: 12 }).map((_, i) => (
+                  <div key={i} className="flex flex-col rounded-xl bg-[#181818] p-3 animate-pulse">
+                    <div className="aspect-square w-full rounded-lg bg-white/10" />
+                    <div className="mt-3 h-3 w-3/4 rounded bg-white/10" />
+                    <div className="mt-1.5 h-2.5 w-1/2 rounded bg-white/10" />
+                  </div>
+                ))}
+              </div>
+            ) : lastFmItems.length === 0 ? (
+              <div className="py-16 text-center text-sm text-[#a7a7a7]">
+                No items found for this Last.fm chart.
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                {lastFmItems.map((item: any) => {
+                  const isArtist = item.type === 'artist'
+                  const trackSongItem: HomeSongItem = {
+                    id: item.id,
+                    title: item.title,
+                    artist: isArtist ? '' : item.artist,
+                    duration: 0,
+                    artworkUrl: item.artworkUrl
+                  }
+
+                  return (
+                    <UnifiedMediaCard
+                      key={item.id}
+                      title={item.title}
+                      subtitle={isArtist ? item.listeners || 'Artist' : item.artist}
+                      artworkUrl={item.artworkUrl}
+                      badge={item.listeners || (item.playcount ? `#${item.rank}` : undefined)}
+                      sourceTag="Last.fm"
+                      onClick={() => {
+                        if (isArtist) {
+                          navigate(`/artist/${encodeURIComponent(item.title)}`)
+                        } else {
+                          void handlePlaySong(trackSongItem)
+                        }
+                      }}
+                      onAction={() => {
+                        if (isArtist) {
+                          navigate(`/artist/${encodeURIComponent(item.title)}`)
+                        } else {
+                          void handlePlaySong(trackSongItem)
+                        }
+                      }}
+                      actionTitle={isArtist ? `Open ${item.title}` : `Play ${item.title}`}
+                      actionIcon={isArtist ? <ArrowLeft className="h-4 w-4 rotate-180" /> : <Play className="h-4 w-4 fill-current" />}
+                    />
+                  )
+                })}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* ─── Section 3: Recommended / New Albums ───────────────────────────────────── */}
+        {(activeTab === 'home' || activeTab === 'hot_new') && (
+          <section className="space-y-4 pt-2">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-black tracking-tight text-white">
+                {activeTab === 'hot_new' ? 'New Albums & EPs' : 'Recommended Albums'}
+              </h2>
+
+              <button
+                type="button"
+                onClick={() => void fetchFeed()}
+                title="Refresh albums"
+                disabled={isRefreshing}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-[#a7a7a7] transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
+              >
+                <RotateCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+              {displayedAlbums.map((album) => (
+                <UnifiedMediaCard
+                  key={album.id}
+                  title={album.title}
+                  subtitle={`${album.artist}${album.year ? ` • ${album.year}` : ''}`}
+                  artworkUrl={album.artworkUrl}
+                  sourceTag="Album"
+                  onClick={() => navigate(`/album/${encodeURIComponent(album.artist)}/${encodeURIComponent(album.title)}`)}
+                  onAction={() => {
+                    onOpenDownloadPanel?.({
+                      id: album.id,
+                      title: album.title,
+                      artist: album.artist,
+                      album: album.title,
+                      duration: 0,
+                      artworkPath: album.artworkUrl,
+                      isOnline: true
+                    })
+                  }}
+                  actionTitle="Download album"
+                  actionIcon={<Download className="h-4 w-4" />}
+                />
+              ))}
             </div>
           </section>
         )}

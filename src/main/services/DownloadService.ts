@@ -486,7 +486,9 @@ function moveCompletedFile(
   downloadedPath: string,
   source: StreamingSource,
   song: any,
-  conflictMode: 'replace' | 'keep_both'
+  conflictMode: 'replace' | 'keep_both',
+  requestTitle?: string,
+  requestArtist?: string
 ): { filePath: string; replaced: boolean; oldPath?: string } {
   const sourceLabel =
     source === 'qobuz'
@@ -507,22 +509,32 @@ function moveCompletedFile(
     : customDownloadDir || libraryRoot || path.join(app.getPath('music'), 'Felo')
   fs.mkdirSync(targetDirectory, { recursive: true })
 
+  const downloadedBase = path.basename(downloadedPath, downloadedExtension)
+  const cleanBase = source === 'youtube' ? cleanYoutubeTitle(downloadedBase) : downloadedBase
+  const preferredName =
+    requestTitle && requestTitle.trim()
+      ? requestArtist && requestArtist.trim() && requestArtist.toLowerCase() !== 'unknown artist'
+        ? `${requestArtist.trim()} - ${requestTitle.trim()}`
+        : requestTitle.trim()
+      : cleanBase
+
   if (conflictMode === 'replace' && !isVirtual && song?.filePath) {
     const oldPath = path.resolve(song.filePath)
+    const safeTargetBase = preferredName.replace(/[<>:"/\\|?*]/g, '_').slice(0, 180)
     const directTargetPath = path.join(
       targetDirectory,
-      `${path.basename(oldPath, path.extname(oldPath))}${downloadedExtension}`
+      `${safeTargetBase}${downloadedExtension}`
     )
     const targetPath =
       path.normalize(oldPath).toLowerCase() === path.normalize(directTargetPath).toLowerCase() ||
-      fs.existsSync(directTargetPath)
-        ? uniquePath(
+      !fs.existsSync(directTargetPath)
+        ? directTargetPath
+        : uniquePath(
             path.join(
               targetDirectory,
-              `${path.basename(oldPath, path.extname(oldPath))} (${sourceLabel})${downloadedExtension}`
+              `${safeTargetBase} (${sourceLabel})${downloadedExtension}`
             )
           )
-        : directTargetPath
     const incomingPath = `${targetPath}.felo-incoming`
     fs.copyFileSync(downloadedPath, incomingPath)
 
@@ -530,8 +542,6 @@ function moveCompletedFile(
     return { filePath: targetPath, replaced: true, oldPath }
   }
 
-  const downloadedBase = path.basename(downloadedPath, downloadedExtension)
-  const cleanBase = source === 'youtube' ? cleanYoutubeTitle(downloadedBase) : downloadedBase
   const sourceSuffix = source === 'youtube' ? '' : ` (${sourceLabel})`
   const targetPath = uniquePath(
     path.join(targetDirectory, `${cleanBase}${sourceSuffix}${downloadedExtension}`)
@@ -550,10 +560,23 @@ async function finalizeDownloadedFile(
     return { filePath: updatedSong.filePath, updatedSong, replaced: false }
   }
 
-  const completed = moveCompletedFile(downloadedPath, request.source, song, request.conflictMode)
+  const completed = moveCompletedFile(
+    downloadedPath,
+    request.source,
+    song,
+    request.conflictMode,
+    request.title,
+    request.artist
+  )
   const updatedSong = completed.replaced
-    ? await LibraryService.replaceSongFile(request.songId, completed.filePath)
-    : await LibraryService.importDownloadedFile(completed.filePath, song?.rootId)
+    ? await LibraryService.replaceSongFile(request.songId, completed.filePath, {
+        title: request.title,
+        artist: request.artist
+      })
+    : await LibraryService.importDownloadedFile(completed.filePath, song?.rootId, {
+        title: request.title,
+        artist: request.artist
+      })
   const shouldRelinkVirtualSong =
     !completed.replaced &&
     song?.id &&

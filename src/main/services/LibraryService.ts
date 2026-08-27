@@ -95,15 +95,44 @@ export class LibraryService {
     return db.prepare('SELECT * FROM songs WHERE id = ?').get(songId)
   }
 
-  static async replaceSongFile(songId: string, filePath: string) {
+  static async replaceSongFile(
+    songId: string,
+    filePath: string,
+    metadataOverrides?: { title?: string; artist?: string; album?: string }
+  ) {
     const db = getDb()
     const existing = db.prepare('SELECT * FROM songs WHERE id = ?').get(songId) as any
     if (!existing) throw new Error('The library song being replaced no longer exists.')
     const resolvedPath = path.resolve(filePath)
     const metadata = await mm.parseFile(resolvedPath)
     const stats = fs.statSync(resolvedPath)
-    const artistName = metadata.common.artist || existing.artist || 'Unknown Artist'
-    const albumTitle = metadata.common.album || existing.album || 'Unknown Album'
+
+    const rawTitle = metadata.common.title || metadataOverrides?.title
+    const title =
+      (rawTitle && rawTitle.trim()) ||
+      path.basename(resolvedPath, path.extname(resolvedPath)) ||
+      existing.title
+
+    const rawArtist =
+      (metadata.common.artist && metadata.common.artist !== 'Unknown Artist'
+        ? metadata.common.artist
+        : undefined) ||
+      (metadataOverrides?.artist && metadataOverrides.artist !== 'Unknown Artist'
+        ? metadataOverrides.artist
+        : undefined) ||
+      metadata.common.artist ||
+      metadataOverrides?.artist ||
+      existing.artist ||
+      'Unknown Artist'
+    const artistName = rawArtist.trim()
+
+    const rawAlbum =
+      metadata.common.album ||
+      metadataOverrides?.album ||
+      existing.album ||
+      'Unknown Album'
+    const albumTitle = rawAlbum.trim()
+
     const albumArtist = metadata.common.albumartist || artistName
     const artistId = crypto.createHash('md5').update(artistName.toLowerCase()).digest('hex')
     const albumId = crypto
@@ -130,7 +159,7 @@ export class LibraryService {
         WHERE id = ?
       `
       ).run(
-        metadata.common.title || existing.title,
+        title,
         artistName,
         artistId,
         albumTitle,
@@ -178,15 +207,31 @@ export class LibraryService {
     )
 
     const songStmt = db.prepare(`
-      INSERT OR REPLACE INTO songs (
+      INSERT INTO songs (
         id, title, artist, album, trackNumber, discNumber, genre,
         duration, filePath, rootId, size, bitrate, sampleRate,
-        bitDepth, channels, codec, container, artworkPath
+        bitDepth, channels, codec, container, artworkPath, dateAdded
       ) VALUES (
         @id, @title, @artist, @album, @trackNumber, @discNumber, @genre,
         @duration, @filePath, @rootId, @size, @bitrate, @sampleRate,
-        @bitDepth, @channels, @codec, @container, @artworkPath
+        @bitDepth, @channels, @codec, @container, @artworkPath, @dateAdded
       )
+      ON CONFLICT(filePath) DO UPDATE SET
+        title = excluded.title,
+        artist = excluded.artist,
+        album = excluded.album,
+        trackNumber = excluded.trackNumber,
+        discNumber = excluded.discNumber,
+        genre = excluded.genre,
+        duration = excluded.duration,
+        size = excluded.size,
+        bitrate = excluded.bitrate,
+        sampleRate = excluded.sampleRate,
+        bitDepth = excluded.bitDepth,
+        channels = excluded.channels,
+        codec = excluded.codec,
+        container = excluded.container,
+        artworkPath = COALESCE(excluded.artworkPath, songs.artworkPath)
     `)
 
     const artistStmt = db.prepare(`
@@ -228,6 +273,7 @@ export class LibraryService {
           .update(`${albumArtist.toLowerCase()}::${albumTitle.toLowerCase()}`)
           .digest('hex')
         const artworkPath = this.extractArtwork(metadata.common.picture)
+        const dateAdded = Math.floor((stats.birthtimeMs || stats.mtimeMs || Date.now()) / 1000)
 
         parsedSongs.push({
           songId,
@@ -255,7 +301,8 @@ export class LibraryService {
             channels: metadata.format.numberOfChannels || null,
             codec: metadata.format.codec || null,
             container: metadata.format.container || null,
-            artworkPath
+            artworkPath,
+            dateAdded
           }
         })
         count++
@@ -288,7 +335,7 @@ export class LibraryService {
   static async getSongs() {
     const songs = getDb()
       .prepare(
-        "SELECT * FROM songs WHERE filePath NOT LIKE 'virtual:%' ORDER BY artist ASC, album ASC, trackNumber ASC, title ASC"
+        "SELECT * FROM songs WHERE filePath NOT LIKE 'virtual:%' ORDER BY dateAdded DESC, rowid DESC"
       )
       .all() as any[]
     await this.backfillMissingArtwork(songs)

@@ -36,6 +36,8 @@ const api = {
   searchMusicBrainz: (query: string): Promise<any> => ipcRenderer.invoke('search:musicBrainz', query),
   searchLastFm: (query: string, apiKey?: string): Promise<any> =>
     ipcRenderer.invoke('search:lastFm', query, apiKey),
+  fetchLastFmCharts: (category?: string, tag?: string): Promise<any[]> =>
+    ipcRenderer.invoke('lastfm:getCharts', category, tag),
   searchAppleMusicArtistSongs: (artistName: string): Promise<any[]> =>
     ipcRenderer.invoke('search:appleMusicArtistSongs', artistName),
 
@@ -54,6 +56,9 @@ const api = {
     playlistId: string
   ): Promise<{ title: string; tracks: Array<{ title: string; artist: string; duration?: number }> }> =>
     ipcRenderer.invoke('playlists:fetchSpotifyTracks', playlistId),
+  fetchAotyAlbums: (category?: string): Promise<any[]> =>
+    ipcRenderer.invoke('home:fetchAotyAlbums', category || 'must-hear'),
+  fetchExploreFeed: (): Promise<any> => ipcRenderer.invoke('home:fetchExploreFeed'),
   importSpotifyPlaylist: (playlistId: string, name: string): Promise<any> =>
     ipcRenderer.invoke('playlists:importSpotify', playlistId, name),
   deletePlaylist: (playlistId: string): Promise<void> =>

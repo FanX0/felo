@@ -38,6 +38,7 @@ declare global {
         Albums: any[]
         Songs: any[]
       }>
+      fetchLastFmCharts: (category?: string, tag?: string) => Promise<any[]>
 
       // Playlists
       getPlaylists: () => Promise<any[]>
@@ -59,6 +60,57 @@ declare global {
       fetchSpotifyPlaylistTracks: (
         playlistId: string
       ) => Promise<{ title: string; tracks: Array<{ title: string; artist: string; duration?: number }> }>
+      fetchAotyAlbums: (category?: 'must-hear' | 'highest-rated' | 'new-releases' | 'anticipated') => Promise<{
+        id: string
+        title: string
+        artist: string
+        coverUrl: string
+        criticScore: number | null
+        userScore: number | null
+        year: string
+        url: string
+        mustHear: boolean
+      }[]>
+      fetchExploreFeed: () => Promise<{
+        trendingSongs: Array<{
+          id: string
+          title: string
+          artist: string
+          album?: string
+          duration: number
+          artworkUrl?: string
+          quality?: 'FLAC' | 'HD FLAC' | 'Hi-Res'
+          isExplicit?: boolean
+          year?: string | number
+        }>
+        hotNewSongs: Array<{
+          id: string
+          title: string
+          artist: string
+          album?: string
+          duration: number
+          artworkUrl?: string
+          quality?: 'FLAC' | 'HD FLAC' | 'Hi-Res'
+          isExplicit?: boolean
+          year?: string | number
+        }>
+        recommendedAlbums: Array<{
+          id: string
+          title: string
+          artist: string
+          artworkUrl?: string
+          year?: string | number
+          songCount?: number
+        }>
+        hotNewAlbums: Array<{
+          id: string
+          title: string
+          artist: string
+          artworkUrl?: string
+          year?: string | number
+          songCount?: number
+        }>
+      }>
       importSpotifyPlaylist: (playlistId: string, name: string) => Promise<any>
       deletePlaylist: (playlistId: string) => Promise<void>
       renamePlaylist: (playlistId: string, name: string) => Promise<any>

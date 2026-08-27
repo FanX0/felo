@@ -57,7 +57,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [isViewMenuOpen, setIsViewMenuOpen] = useState(false)
-  const [sortKey, setSortKey] = useState<LibrarySortKey>('album')
+  const [sortKey, setSortKey] = useState<LibrarySortKey>('dateAdded')
   const [viewMode, setViewMode] = useState<LibraryViewMode>('list')
   const [activeMenu, setActiveMenu] = useState<{
     song: Song

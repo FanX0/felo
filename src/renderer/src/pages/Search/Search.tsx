@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { History, Music2, Play, User as UserIcon, X } from 'lucide-react'
+import { History, Music2, User as UserIcon, X } from 'lucide-react'
 import { usePlayerStore, RECENTLY_PLAYED_STORAGE_KEY } from '../../hooks/usePlayerStore'
 import { useAppStore } from '../../hooks/useAppStore'
 import { Song } from '../Library/Library'
@@ -485,7 +485,6 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
                   <SongList
                     songs={visibleSongs}
                     onSelect={handleOpenItem}
-                    onPlay={handlePlayItem}
                     isLocal={localMatchFor}
                   />
                 </section>
@@ -500,7 +499,6 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
                 <SongList
                   songs={visibleSongs}
                   onSelect={handleOpenItem}
-                  onPlay={handlePlayItem}
                   isLocal={localMatchFor}
                 />
               </section>
@@ -543,9 +541,8 @@ function RecentlyPlayedList({ songs, onPlay }: { songs: SearchItem[]; onPlay: (i
             onClick={() => onPlay(song)}
             className="group grid w-full grid-cols-[36px_minmax(0,2fr)_minmax(0,1.25fr)_minmax(0,1.25fr)_64px] items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-surface-elevated md:px-4"
           >
-            <span className="relative text-center text-text-muted tabular-nums">
-              <span className="group-hover:opacity-0">{index + 1}</span>
-              <Play className="absolute left-1/2 top-1/2 hidden h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 fill-current text-text group-hover:block" />
+            <span className="text-center text-text-muted tabular-nums">
+              {index + 1}
             </span>
             <span className="min-w-0 truncate font-semibold text-text">{song.title}</span>
             <span className="min-w-0 truncate text-text-muted">{song.artist}</span>
@@ -570,12 +567,10 @@ function formatSongDuration(seconds: number): string {
 function SongList({
   songs,
   onSelect,
-  onPlay,
   isLocal
 }: {
   songs: SearchItem[]
   onSelect: (item: SearchItem) => void
-  onPlay: (item: SearchItem) => void
   isLocal: (item: SearchItem) => Song | undefined
 }) {
   return (
@@ -613,19 +608,6 @@ function SongList({
               </div>
               {song.duration && (
                 <span className="text-xs text-text-muted tabular-nums">{song.duration}</span>
-              )}
-              {localSong && (
-                <button
-                  type="button"
-                  title="Play"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onPlay(song)
-                  }}
-                  className="w-8 h-8 rounded-full bg-text text-canvas flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <Play className="w-3.5 h-3.5 ml-0.5 fill-current" />
-                </button>
               )}
             </div>
           )

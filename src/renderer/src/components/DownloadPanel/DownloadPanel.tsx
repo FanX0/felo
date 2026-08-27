@@ -409,18 +409,33 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
     const key = `${panelSong.id}:${query.trim()}`
     if (automaticDownloadKey.current === key) return
 
-    // Guard: results must belong to the active song
-    if (activeResultsSongId.current !== panelSong.id) return
+    // Check sources in strict user priority order.
+    // If a higher priority source is still in-flight, wait for it before falling back.
+    let chosenSource: DownloadSourceId | null = null
+    let chosenResult: SourceResult | null = null
 
-    const preferredSource = priority.find((source) => (resultsBySource[source] || []).length > 0)
-    if (!preferredSource) return
-    const preferredResult = resultsBySource[preferredSource]?.[0]
-    if (!preferredResult) return
+    for (const source of priority) {
+      const isSearchingSource = Boolean(searchingBySource[source])
+      const sourceResults = resultsBySource[source] || []
+
+      if (sourceResults.length > 0) {
+        chosenSource = source
+        chosenResult = sourceResults[0]
+        break
+      }
+
+      if (isSearchingSource) {
+        // A higher-priority source is still searching — wait for its result!
+        return
+      }
+    }
+
+    if (!chosenSource || !chosenResult) return
 
     automaticDownloadKey.current = key
-    setActiveSource(preferredSource)
-    void handleQueueDownload(preferredResult, preferredSource)
-  }, [settingsLoaded, targetSong?.autoDownload, panelSong?.id, query, priority, resultsBySource])
+    setActiveSource(chosenSource)
+    void handleQueueDownload(chosenResult, chosenSource)
+  }, [settingsLoaded, targetSong?.autoDownload, panelSong?.id, query, priority, resultsBySource, searchingBySource])
 
   const getSourceResultCount = (sourceId: DownloadSourceId) => {
     return resultCounts[sourceId] || 0

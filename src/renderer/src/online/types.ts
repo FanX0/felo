@@ -69,8 +69,19 @@ export interface ListeningRoom {
   name: string
   is_active: boolean
   song: SharedSong | null
+  queue?: SharedSong[]
   position_seconds: number
   is_playing: boolean
   created_at: string
   updated_at: string
+}
+
+export interface RoomChatMessage {
+  id: string
+  room_id: string
+  sender_id: string
+  body: string
+  created_at: string
+  sender_display_name?: string
+  sender_avatar_url?: string | null
 }

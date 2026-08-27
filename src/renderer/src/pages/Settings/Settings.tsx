@@ -13,19 +13,14 @@ import {
   MessageSquare,
   Layers,
   Radio,
-  Download,
+
   Headphones,
   ChevronUp,
   ChevronDown,
-  ExternalLink,
   X,
   Plug,
   Eye,
-  EyeOff,
-  CheckCircle2,
-  AlertTriangle,
-  Wrench,
-  Cpu
+  EyeOff
 } from 'lucide-react'
 import {
   DEFAULT_DOWNLOAD_PRIORITY,
@@ -105,13 +100,12 @@ function SettingRow({
 // Section card wrapper
 function SettingsSection({
   icon,
-  iconColor,
   title,
   description,
   children
 }: {
   icon: React.ReactNode
-  iconColor: string
+  iconColor?: string
   title: string
   description: string
   children: React.ReactNode
@@ -119,7 +113,7 @@ function SettingsSection({
   return (
     <section className="bg-canvas/40 border border-border/10 rounded-xl p-6 space-y-4">
       <div className="flex items-center gap-3">
-        <div className={`p-2 rounded-lg ${iconColor}`}>{icon}</div>
+        <div className="text-text shrink-0 flex items-center justify-center">{icon}</div>
         <div>
           <h2 className="text-lg font-bold text-text">{title}</h2>
           <p className="text-xs text-text-muted">{description}</p>
@@ -198,56 +192,16 @@ export default function Settings() {
     soulseekPassword: ''
   })
 
-  // Dependencies management state
-  const [depStatus, setDepStatus] = useState<{
-    ytDlp: { available: boolean; command?: string }
-    ffmpeg: { available: boolean; path?: string }
-  } | null>(null)
-  const [checkingDeps, setCheckingDeps] = useState(false)
-  const [installingDeps, setInstallingDeps] = useState(false)
-  const [installLog, setInstallLog] = useState('')
-  const [installMessage, setInstallMessage] = useState('')
-  const [showLogDrawer, setShowLogDrawer] = useState(false)
-
   const checkDeps = async () => {
-    setCheckingDeps(true)
     try {
       if (window.api?.checkDownloaderDependencies) {
-        const res = await window.api.checkDownloaderDependencies()
-        setDepStatus(res)
+        await window.api.checkDownloaderDependencies()
       }
     } catch (err) {
       console.error('Failed to check dependencies:', err)
-    } finally {
-      setCheckingDeps(false)
     }
   }
 
-  const handleInstallDeps = async () => {
-    setInstallingDeps(true)
-    setInstallLog('')
-    setInstallMessage('Starting installation of yt-dlp and FFmpeg...')
-    setShowLogDrawer(true)
-
-    const unsubscribe = window.api?.onDownloaderInstallLog?.((chunk) => {
-      setInstallLog((prev) => prev + chunk)
-    })
-
-    try {
-      const res = await window.api?.installDownloaderDependencies?.()
-      if (res?.success) {
-        setInstallMessage('Dependencies installed successfully!')
-      } else {
-        setInstallMessage(res?.message || 'Installation completed with warnings.')
-      }
-      await checkDeps()
-    } catch (err: any) {
-      setInstallMessage(`Installation failed: ${err?.message || err}`)
-    } finally {
-      unsubscribe?.()
-      setInstallingDeps(false)
-    }
-  }
 
   const loadRoots = async () => {
     try {
@@ -495,581 +449,526 @@ export default function Settings() {
     }
   }
 
+  const [activeCategory, setActiveCategory] = useState<
+    'all' | 'library' | 'providers' | 'audio' | 'integrations' | 'appearance'
+  >('all')
+
   return (
     <div className="h-full overflow-y-auto select-none">
       <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-8 pt-6 pb-10">
-        <div className="mb-8">
+        <div className="mb-6">
           <h1 className="text-3xl font-bold text-text tracking-tight mb-2">Settings</h1>
           <p className="text-sm text-text-muted">
-            Configure your library sources, audio playback, appearance, and integrations.
+            Configure your music library, download paths, provider priority, audio playback, and integrations.
           </p>
         </div>
 
+        {/* Category Navigation Pills */}
+        <div className="mb-6 flex flex-wrap items-center gap-2">
+          {[
+            { id: 'all', label: 'All Settings' },
+            { id: 'library', label: 'Library & Downloads' },
+            { id: 'providers', label: 'Download Providers' },
+            { id: 'audio', label: 'Playback & Audio' },
+            { id: 'integrations', label: 'Integrations' },
+            { id: 'appearance', label: 'Appearance & System' }
+          ].map((cat) => (
+            <button
+              key={cat.id}
+              type="button"
+              onClick={() => setActiveCategory(cat.id as any)}
+              className={`rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
+                activeCategory === cat.id
+                  ? 'bg-text text-canvas shadow-md'
+                  : 'bg-surface-elevated text-text-muted hover:bg-hover hover:text-text'
+              }`}
+            >
+              {cat.label}
+            </button>
+          ))}
+        </div>
+
         <div className="space-y-6 pb-12">
-          {/* Library Sources */}
-          <SettingsSection
-            icon={<HardDrive className="w-5 h-5" />}
-            iconColor="bg-indigo-500/10 text-indigo-400"
-            title="Library Sources"
-            description="Felo only indexes and plays files from folders you explicitly authorize."
-          >
-            <div className="flex items-center justify-end mb-4">
-              <button
-                onClick={handleAddFolder}
-                disabled={isScanning}
-                className="flex items-center gap-2 px-4 py-2 bg-text text-canvas rounded-full text-xs font-bold hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+          {/* SECTION GROUP 1: LIBRARY & DOWNLOAD DIRECTORIES (Colocated for easy access) */}
+          {(activeCategory === 'all' || activeCategory === 'library') && (
+            <>
+              {/* Library Sources */}
+              <SettingsSection
+                icon={<HardDrive className="w-5 h-5" />}
+                iconColor="bg-indigo-500/10 text-indigo-400"
+                title="Library Sources"
+                description="Manage the music folders on your device that Felo indexes and plays."
               >
-                <FolderPlus className="w-4 h-4" />
-                Add Music Folder
-              </button>
-            </div>
-
-            {scanMessage && (
-              <div className="p-3 bg-primary-amber/10 border border-primary-amber/20 rounded-lg text-xs font-medium text-primary-amber flex items-center gap-2 mb-4">
-                <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
-                {scanMessage}
-              </div>
-            )}
-
-            <div className="divide-y divide-border/10">
-              {roots.length === 0 ? (
-                <div className="py-6 text-center text-xs text-text-muted">
-                  No library folders added yet. Click "Add Music Folder" above to get started.
-                </div>
-              ) : (
-                roots.map((root) => (
-                  <div key={root.id} className="py-3 flex items-center justify-between gap-4 group">
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-sm font-medium text-text truncate">{root.path}</span>
-                      <span className="text-[11px] text-text-muted">
-                        Added {new Date(root.dateAdded * 1000).toLocaleDateString()}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        onClick={() => handleRescanRoot(root.path)}
-                        title="Rescan this folder"
-                        className="p-2 hover:bg-hover rounded-lg text-text-muted hover:text-text transition-colors"
-                      >
-                        <RefreshCw className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleRemoveRoot(root.id)}
-                        title="Remove folder"
-                        className="p-2 hover:bg-red-500/20 rounded-lg text-text-muted hover:text-red-400 transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </SettingsSection>
-
-          {/* Playback & Audio */}
-          <SettingsSection
-            icon={<Volume2 className="w-5 h-5" />}
-            iconColor="bg-emerald-500/10 text-emerald-400"
-            title="Playback & Audio"
-            description="Audio engine configuration and playback behavior."
-          >
-            <SettingRow
-              label="Gapless Playback"
-              hint="Seamlessly transitions between tracks without silence gaps."
-            >
-              <Toggle enabled={gaplessEnabled} onChange={setGaplessEnabled} />
-            </SettingRow>
-            <SettingRow label="Crossfade" hint="Smoothly fade between tracks during playback.">
-              <div className="flex items-center gap-3">
-                {crossfadeEnabled && (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min={1}
-                      max={12}
-                      value={crossfadeDuration}
-                      onChange={(e) => setCrossfadeDuration(Number(e.target.value))}
-                      className="w-20 accent-primary-amber"
-                    />
-                    <span className="text-xs text-text-muted w-6">{crossfadeDuration}s</span>
-                  </div>
-                )}
-                <Toggle enabled={crossfadeEnabled} onChange={setCrossfadeEnabled} />
-              </div>
-            </SettingRow>
-            <SettingRow
-              label="Automix"
-              hint="Automatically queue similar tracks when your queue ends."
-            >
-              <Toggle enabled={automixEnabled} onChange={setAutomixEnabled} />
-            </SettingRow>
-            <SettingRow
-              label="Normalize Volume"
-              hint="Keep consistent volume levels across tracks (ReplayGain)."
-            >
-              <Toggle enabled={normalizeVolume} onChange={setNormalizeVolume} />
-            </SettingRow>
-
-            <div className="mt-4 space-y-2 text-xs">
-              <div className="flex items-center justify-between py-2 border-t border-border/10">
-                <div>
-                  <span className="font-semibold text-text">Local Media Protocol</span>
-                  <p className="text-text-muted">
-                    Streams local audio securely through custom sandboxed media pipeline.
-                  </p>
-                </div>
-                <span className="px-2.5 py-1 rounded bg-primary-amber/10 text-primary-amber font-mono text-[11px]">
-                  Active (media://)
-                </span>
-              </div>
-              <div className="flex items-center justify-between py-2">
-                <div>
-                  <span className="font-semibold text-text">Supported Formats</span>
-                  <p className="text-text-muted">MP3, FLAC, M4A, AAC, WAV, OGG, OPUS, WMA</p>
-                </div>
-                <span className="text-text-muted font-mono text-[11px]">8 Codecs</span>
-              </div>
-            </div>
-          </SettingsSection>
-
-          {/* Download Priority */}
-          <SettingsSection
-            icon={<Layers className="w-5 h-5" />}
-            iconColor="bg-success/10 text-success"
-            title="Bulk Download Priority & Fallback"
-            description="Choose the order Felo should try authorized sources when resolving queued downloads."
-          >
-            <div className="flex items-center justify-end mb-4">
-              <button
-                type="button"
-                onClick={savePriorityOrder}
-                className="rounded-md bg-success px-4 py-2 text-xs font-bold text-white hover:bg-success/90"
-              >
-                Save Priority Order
-              </button>
-            </div>
-
-            {priorityMessage && (
-              <div className="mb-4 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-xs font-bold text-success">
-                {priorityMessage}
-              </div>
-            )}
-
-            <div className="space-y-3">
-              {downloadPriority.map((sourceId, index) => {
-                const source = DOWNLOAD_SOURCES.find((item) => item.id === sourceId)
-                if (!source) return null
-                return (
-                  <div
-                    key={source.id}
-                    className="flex items-center gap-4 rounded-lg border border-border/50 bg-surface-elevated/70 p-4"
+                <div className="flex items-center justify-end mb-4">
+                  <button
+                    onClick={handleAddFolder}
+                    disabled={isScanning}
+                    className="flex items-center gap-2 px-4 py-2 bg-surface-elevated border border-border rounded-full text-xs font-bold hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
                   >
-                    <div className="w-[90px] rounded-md border border-border bg-canvas px-3 py-2 text-center">
-                      <div className="text-sm font-extrabold text-text">Tier {index + 1}</div>
-                      {index === 0 && (
-                        <div className="mt-1 text-[9px] font-bold uppercase text-success">
-                          Top Priority
-                        </div>
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-bold text-text">{source.name}</span>
-                        <span className="rounded bg-success/10 px-2 py-0.5 text-[10px] font-bold text-success">
-                          {source.quality}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-xs text-text-muted">{source.description}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => movePriority(index, 'up')}
-                        disabled={index === 0}
-                        className="h-8 w-8 rounded-md border border-border bg-hover flex items-center justify-center text-text-muted hover:text-text disabled:opacity-30"
-                      >
-                        <ChevronUp className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => movePriority(index, 'down')}
-                        disabled={index === downloadPriority.length - 1}
-                        className="h-8 w-8 rounded-md border border-border bg-hover flex items-center justify-center text-text-muted hover:text-text disabled:opacity-30"
-                      >
-                        <ChevronDown className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setDownloadPriority((current) =>
-                            current.length > 1 ? current.filter((id) => id !== source.id) : current
-                          )
-                        }
-                        className="h-8 w-8 rounded-md border border-danger/40 bg-danger/10 flex items-center justify-center text-danger hover:bg-danger/20"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+                    <FolderPlus className="w-4 h-4" />
+                    Add Music Folder
+                  </button>
+                </div>
 
-            {DOWNLOAD_SOURCES.some((source) => !downloadPriority.includes(source.id)) && (
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <span className="text-xs text-text-muted">Add source:</span>
-                {DOWNLOAD_SOURCES.filter((source) => !downloadPriority.includes(source.id)).map(
-                  (source) => (
-                    <button
-                      key={source.id}
-                      type="button"
-                      onClick={() => setDownloadPriority((current) => [...current, source.id])}
-                      className="rounded-md border border-border bg-surface-elevated px-3 py-1.5 text-xs font-bold text-text-muted hover:text-text"
-                    >
-                      + {source.name}
-                    </button>
-                  )
+                {scanMessage && (
+                  <div className="p-3 bg-primary-amber/10 border border-primary-amber/20 rounded-lg text-xs font-medium text-primary-amber flex items-center gap-2 mb-4">
+                    <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
+                    {scanMessage}
+                  </div>
                 )}
-              </div>
-            )}
-          </SettingsSection>
 
-          {/* Playback & Storage Mode */}
-          <SettingsSection
-            icon={<Radio className="w-5 h-5" />}
-            iconColor="bg-success/10 text-success"
-            title="Playback & Storage Mode"
-            description="Choose whether resolved tracks should be cached temporarily for playback or saved permanently to your library."
-          >
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <button
-                type="button"
-                onClick={() => setPlaybackStorageMode('stream')}
-                className={`rounded-lg border p-4 text-left transition-colors ${
-                  playbackStorageMode === 'stream'
-                    ? 'border-success bg-success/10'
-                    : 'border-border/60 bg-surface-elevated/50 hover:bg-hover'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 font-bold text-text">
-                    <Radio className="h-4 w-4 text-success" />
-                    Stream Mode
-                  </div>
-                  {playbackStorageMode === 'stream' && (
-                    <span className="rounded-full bg-success px-2 py-0.5 text-[10px] font-bold text-canvas">
-                      Default
-                    </span>
+                <div className="divide-y divide-border/10">
+                  {roots.length === 0 ? (
+                    <div className="py-6 text-center text-xs text-text-muted">
+                      No library folders added yet. Click "Add Music Folder" above to get started.
+                    </div>
+                  ) : (
+                    roots.map((root) => (
+                      <div key={root.id} className="py-3 flex items-center justify-between gap-4 group">
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-sm font-medium text-text truncate">{root.path}</span>
+                          <span className="text-[11px] text-text-muted">
+                            Added {new Date(root.dateAdded * 1000).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            onClick={() => handleRescanRoot(root.path)}
+                            title="Rescan this folder"
+                            className="p-2 hover:bg-hover rounded-full border border-border text-text-muted hover:text-text transition-colors"
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleRemoveRoot(root.id)}
+                            title="Remove folder"
+                            className="p-2 hover:bg-red-500/20 rounded-full border border-border text-text-muted hover:text-red-400 transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
                   )}
                 </div>
-                <p className="mt-2 text-xs leading-relaxed text-text-muted">
-                  Download resolved tracks to a temporary cache using the top-priority source, play them
-                  automatically, and remove older cached files to preserve disk space.
-                </p>
-              </button>
+              </SettingsSection>
 
-              <button
-                type="button"
-                onClick={() => setPlaybackStorageMode('download')}
-                className={`rounded-lg border p-4 text-left transition-colors ${
-                  playbackStorageMode === 'download'
-                    ? 'border-secondary-cyan bg-secondary-cyan/10'
-                    : 'border-border/60 bg-surface-elevated/50 hover:bg-hover'
-                }`}
+              {/* Download Location (Colocated with Library) */}
+              <SettingsSection
+                icon={<FolderPlus className="w-5 h-5" />}
+                iconColor="bg-primary-amber/10 text-primary-amber"
+                title="Download Location"
+                description="Choose where downloaded tracks, albums, and playlist files are saved on your device."
               >
-                <div className="flex items-center gap-2 font-bold text-text">
-                  <Download className="h-4 w-4 text-secondary-cyan" />
-                  Download Mode
-                </div>
-                <p className="mt-2 text-xs leading-relaxed text-text-muted">
-                  Save resolved tracks permanently into your authorized local library folder. Files
-                  are not auto-deleted.
-                </p>
-              </button>
-            </div>
-
-            {playbackStorageMode === 'stream' && (
-              <div className="mt-5 rounded-lg border border-border/40 bg-canvas/50 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div>
-                    <div className="font-bold text-text">Stream Cache Retention</div>
-                    <p className="mt-1 text-xs text-text-muted">
-                      Number of recent cached playback tracks to keep before older files are removed.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="range"
-                      min={1}
-                      max={10}
-                      value={streamCacheLimit}
-                      onChange={(event) => setStreamCacheLimit(Number(event.target.value))}
-                      className="w-36 accent-success"
-                    />
-                    <span className="w-16 text-sm font-bold text-success">
-                      {streamCacheLimit} songs
-                    </span>
-                  </div>
-                </div>
-                <div className="mt-4 flex items-center justify-between border-t border-border/30 pt-3 text-xs text-text-muted">
-                  <span>
-                    Currently cached: <strong className="text-text">0</strong> temporary tracks
-                  </span>
-                  <button
-                    type="button"
-                    className="rounded-md border border-danger/30 bg-danger/10 px-3 py-1.5 font-bold text-danger"
-                  >
-                    Clear Stream Cache
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <div className="mt-4 flex items-center gap-3">
-              <button
-                type="button"
-                onClick={savePlaybackStorageMode}
-                className="rounded-md bg-text px-4 py-2 text-xs font-bold text-canvas"
-              >
-                Save Mode
-              </button>
-              {modeMessage && <span className="text-xs font-bold text-success">{modeMessage}</span>}
-            </div>
-          </SettingsSection>
-
-          {/* Download Location */}
-          <SettingsSection
-            icon={<FolderPlus className="w-5 h-5" />}
-            iconColor="bg-primary-amber/10 text-primary-amber"
-            title="Download Location"
-            description="Choose where downloaded tracks, albums, and playlist files are saved on your device."
-          >
-            <div className="rounded-lg border border-border/40 bg-canvas/40 p-5">
-              <div className="flex flex-col gap-3">
-                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <span className="text-xs font-bold text-text">Target Folder</span>
-                    <div className="mt-1.5 flex items-center gap-2 rounded-md border border-border bg-surface-elevated px-3 py-2 text-sm text-text font-mono">
-                      <HardDrive className="h-4 w-4 shrink-0 text-primary-amber" />
-                      <span className="truncate">
-                        {downloadLocation || 'Default (~/Music/Felo)'}
-                      </span>
+                <div className="rounded-lg border border-border/40 bg-canvas/40 p-5">
+                  <div className="flex flex-col gap-3">
+                    <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <span className="text-xs font-bold text-text">Target Folder</span>
+                        <div className="mt-1.5 flex items-center gap-2 rounded-md border border-border bg-surface-elevated px-3 py-2 text-sm text-text font-mono">
+                          <HardDrive className="h-4 w-4 shrink-0 text-primary-amber" />
+                          <span className="truncate">
+                            {downloadLocation || 'Default (~/Music/Felo)'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 pt-0 md:pt-5">
+                        <button
+                          type="button"
+                          onClick={handleSelectDownloadLocation}
+                          className="rounded-full bg-surface-elevated border border-border px-3.5 py-2 text-xs font-bold text-text hover:border-primary-amber/50 transition-colors"
+                        >
+                          Change Folder
+                        </button>
+                        {downloadLocation && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={handleOpenDownloadLocation}
+                              className="rounded-full bg-surface-elevated border border-border px-3 py-2 text-xs font-bold text-text hover:bg-hover transition-colors"
+                              title="Open folder in File Explorer"
+                            >
+                              Open
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleResetDownloadLocation}
+                              className="rounded-full border border-danger/30 bg-surface-elevated px-3 py-2 text-xs font-bold text-danger hover:bg-danger/20 transition-colors"
+                              title="Reset to default directory"
+                            >
+                              Reset
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2 pt-0 md:pt-5">
-                    <button
-                      type="button"
-                      onClick={handleSelectDownloadLocation}
-                      className="rounded-md bg-hover border border-border px-3.5 py-2 text-xs font-bold text-text hover:border-primary-amber/50 transition-colors"
-                    >
-                      Change Folder
-                    </button>
-                    {downloadLocation && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={handleOpenDownloadLocation}
-                          className="rounded-md bg-surface-elevated border border-border px-3 py-2 text-xs font-bold text-text hover:bg-hover transition-colors"
-                          title="Open folder in File Explorer"
-                        >
-                          Open
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleResetDownloadLocation}
-                          className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs font-bold text-danger hover:bg-danger/20 transition-colors"
-                          title="Reset to default directory"
-                        >
-                          Reset
-                        </button>
-                      </>
+                    <p className="text-[11px] text-text-muted">
+                      Downloaded audio from Qobuz, Deezer, Soulseek, and YouTube will be saved into this directory and indexed into your local library.
+                    </p>
+                    {locationMessage && (
+                      <div className="mt-1 text-xs font-bold text-success">
+                        {locationMessage}
+                      </div>
                     )}
                   </div>
                 </div>
-                <p className="text-[11px] text-text-muted">
-                  Downloaded audio from Qobuz, Deezer, and other connectors will be stored in this directory.
-                </p>
-                {locationMessage && (
-                  <div className="mt-1 text-xs font-bold text-success">
-                    {locationMessage}
-                  </div>
-                )}
-              </div>
-            </div>
-          </SettingsSection>
+              </SettingsSection>
 
-          {/* Last.fm Search */}
-          <SettingsSection
-            icon={<Radio className="w-5 h-5" />}
-            iconColor="bg-pink-500/10 text-pink-400"
-            title="Last.fm Search"
-            description="Use Last.fm metadata to search artists, albums, and songs globally. A free API key is required for API search."
-          >
-            <div className="space-y-2">
-              <p className="text-xs text-text-muted">
-                Create a free key at{' '}
-                <a
-                  href="https://www.last.fm/api/account/create"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-primary-amber hover:underline"
-                >
-                  last.fm/api/account/create
-                </a>{' '}
-                and paste it below. This enables global Last.fm search; it does not provide audio downloads.
-              </p>
-              <label className="space-y-1.5 block">
-                <span className="text-xs font-bold text-text">API Key</span>
-                <div className="relative">
-                  <input
-                    type={showLastFmApiKey ? 'text' : 'password'}
-                    value={lastFmApiKey}
-                    onChange={(event) => setLastFmApiKey(event.target.value.trim())}
-                    placeholder="Paste your Last.fm API key"
-                    className="w-full rounded-md border border-border bg-surface-elevated px-3 py-2 pr-10 text-sm text-text outline-none"
-                  />
+              {/* Playback & Storage Mode */}
+              <SettingsSection
+                icon={<Radio className="w-5 h-5" />}
+                iconColor="bg-success/10 text-success"
+                title="Playback & Storage Mode"
+                description="Choose whether resolved tracks should be cached temporarily for playback or saved permanently to your library."
+              >
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <button
                     type="button"
-                    onClick={() => setShowLastFmApiKey((visible) => !visible)}
-                    title={showLastFmApiKey ? 'Hide Last.fm API key' : 'Show Last.fm API key'}
-                    aria-label={showLastFmApiKey ? 'Hide Last.fm API key' : 'Show Last.fm API key'}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-text-muted hover:bg-hover hover:text-text"
+                    onClick={() => setPlaybackStorageMode('stream')}
+                    className={`rounded-lg border p-4 text-left transition-colors ${
+                      playbackStorageMode === 'stream'
+                        ? 'border-white/30 bg-white/10'
+                        : 'border-border/60 bg-surface-elevated/50 hover:bg-hover'
+                    }`}
                   >
-                    {showLastFmApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 font-bold text-text">
+                        Stream Mode
+                      </div>
+                      {playbackStorageMode === 'stream' && (
+                        <span className="rounded-full border border-white/20 bg-white/10 px-2 py-0.5 text-[10px] font-bold text-text">
+                          Default
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-2 text-xs leading-relaxed text-text-muted">
+                      Download resolved tracks to a temporary cache using the top-priority source, play them
+                      automatically, and remove older cached files to preserve disk space.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPlaybackStorageMode('download')}
+                    className={`rounded-lg border p-4 text-left transition-colors ${
+                      playbackStorageMode === 'download'
+                        ? 'border-white/30 bg-white/10'
+                        : 'border-border/60 bg-surface-elevated/50 hover:bg-hover'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 font-bold text-text">
+                      Download Mode
+                    </div>
+                    <p className="mt-2 text-xs leading-relaxed text-text-muted">
+                      Save resolved tracks permanently into your authorized local library folder. Files
+                      are not auto-deleted.
+                    </p>
                   </button>
                 </div>
-              </label>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await window.api?.setSetting?.(LASTFM_API_KEY_SETTING, lastFmApiKey)
-                    setLastFmMessage('Last.fm API key saved locally.')
-                    setTimeout(() => setLastFmMessage(''), 3000)
-                  }}
-                  className="rounded-md bg-text px-3 py-2 text-xs font-bold text-canvas hover:opacity-90"
-                >
-                  Save Last.fm Key
-                </button>
-                <span className="text-[11px] text-text-muted">Get a free key at last.fm/api</span>
-              </div>
-              {lastFmMessage && (
-                <p className="text-xs font-bold text-success">{lastFmMessage}</p>
-              )}
-            </div>
-          </SettingsSection>
 
-          {/* Streaming Accounts */}
-          <SettingsSection
-            icon={<Headphones className="w-5 h-5" />}
-            iconColor="bg-secondary-cyan/10 text-secondary-cyan"
-            title="Streaming Accounts & Downloader Engine"
-            description="Manage background audio download engines (yt-dlp, ffmpeg) and account connectors."
-          >
-            <div className="space-y-5">
-              {/* Downloader Engine Status Card */}
-              <div className="rounded-lg border border-border/40 bg-surface-elevated/30 p-5">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-                  <div>
-                    <h3 className="flex items-center gap-2 text-base font-bold text-text">
-                      <Cpu className="h-4 w-4 text-secondary-cyan" />
-                      Optional YouTube Engine (yt-dlp & FFmpeg)
-                    </h3>
-                    <p className="text-xs text-text-muted mt-0.5">
-                      Qobuz, Deezer, and Soulseek are handled natively in pure TypeScript. yt-dlp & FFmpeg are optional for YouTube audio ripping.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={checkDeps}
-                      disabled={checkingDeps || installingDeps}
-                      className="flex items-center gap-1.5 rounded-md border border-border bg-hover px-3 py-1.5 text-xs font-semibold text-text hover:border-text-muted transition-colors disabled:opacity-50"
-                    >
-                      <RefreshCw className={`h-3.5 w-3.5 ${checkingDeps ? 'animate-spin' : ''}`} />
-                      Check
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleInstallDeps}
-                      disabled={installingDeps}
-                      className="flex items-center gap-1.5 rounded-md bg-secondary-cyan/20 border border-secondary-cyan/40 px-3.5 py-1.5 text-xs font-bold text-secondary-cyan hover:bg-secondary-cyan/30 transition-colors disabled:opacity-50"
-                    >
-                      <Wrench className={`h-3.5 w-3.5 ${installingDeps ? 'animate-spin' : ''}`} />
-                      {installingDeps ? 'Installing...' : 'Install / Repair yt-dlp & FFmpeg'}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Status Pills */}
-                <div className="grid grid-cols-2 gap-2.5">
-                  <div className="rounded-md border border-border/30 bg-canvas/60 p-2.5">
-                    <div className="text-[11px] text-text-muted font-medium">yt-dlp</div>
-                    <div className="flex items-center gap-1.5 mt-1">
-                      {depStatus?.ytDlp?.available ? (
-                        <>
-                          <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
-                          <span className="text-xs font-semibold text-success">Ready</span>
-                        </>
-                      ) : (
-                        <>
-                          <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0" />
-                          <span className="text-xs font-semibold text-warning">Optional</span>
-                        </>
-                      )}
+                {playbackStorageMode === 'stream' && (
+                  <div className="mt-5 rounded-lg border border-border/40 bg-canvas/50 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-4">
+                      <div>
+                        <div className="font-bold text-text">Stream Cache Retention</div>
+                        <p className="mt-1 text-xs text-text-muted">
+                          Number of recent cached playback tracks to keep before older files are removed.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={1}
+                          max={10}
+                          value={streamCacheLimit}
+                          onChange={(event) => setStreamCacheLimit(Number(event.target.value))}
+                          className="w-36 accent-success"
+                        />
+                        <span className="w-16 text-sm font-bold text-success">
+                          {streamCacheLimit} songs
+                        </span>
+                      </div>
                     </div>
-                  </div>
-
-                  <div className="rounded-md border border-border/30 bg-canvas/60 p-2.5">
-                    <div className="text-[11px] text-text-muted font-medium">FFmpeg</div>
-                    <div className="flex items-center gap-1.5 mt-1">
-                      {depStatus?.ffmpeg?.available ? (
-                        <>
-                          <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
-                          <span className="text-xs font-semibold text-success">Ready</span>
-                        </>
-                      ) : (
-                        <>
-                          <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0" />
-                          <span className="text-xs font-semibold text-warning">Optional</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Installation status / logs */}
-                {installMessage && (
-                  <div className="mt-3 text-xs font-semibold text-text flex items-center justify-between">
-                    <span>{installMessage}</span>
-                    {installLog && (
+                    <div className="mt-4 flex items-center justify-between border-t border-border/30 pt-3 text-xs text-text-muted">
+                      <span>
+                        Currently cached: <strong className="text-text">0</strong> temporary tracks
+                      </span>
                       <button
                         type="button"
-                        onClick={() => setShowLogDrawer((s) => !s)}
-                        className="text-[11px] text-secondary-cyan hover:underline"
+                        className="rounded-full border border-border bg-surface-elevated px-3 py-1.5 text-xs font-bold text-text hover:bg-hover transition-colors"
                       >
-                        {showLogDrawer ? 'Hide Logs' : 'View Logs'}
+                        Clear Stream Cache
                       </button>
-                    )}
+                    </div>
                   </div>
                 )}
 
-                {showLogDrawer && installLog && (
-                  <pre className="mt-2.5 max-h-44 overflow-auto rounded bg-black/60 p-3 font-mono text-[10px] text-text-muted whitespace-pre-wrap select-text border border-border/20">
-                    {installLog}
-                  </pre>
+                <div className="mt-4 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={savePlaybackStorageMode}
+                    className="rounded-full border border-border bg-surface-elevated px-4 py-2 text-xs font-bold text-text hover:bg-hover transition-colors"
+                  >
+                    Save Mode
+                  </button>
+                  {modeMessage && <span className="text-xs font-bold text-success">{modeMessage}</span>}
+                </div>
+              </SettingsSection>
+            </>
+          )}
+
+          {/* SECTION GROUP 2: DOWNLOAD PROVIDERS & PRIORITY */}
+          {(activeCategory === 'all' || activeCategory === 'providers') && (
+            <>
+              {/* Bulk Download Priority */}
+              <SettingsSection
+                icon={<Layers className="w-5 h-5" />}
+                iconColor="bg-success/10 text-success"
+                title="Bulk Download Priority & Fallback"
+                description="Choose the order Felo should try authorized sources when resolving queued downloads."
+              >
+                <div className="flex items-center justify-end mb-4">
+                  <button
+                    type="button"
+                    onClick={savePriorityOrder}
+                    className="rounded-full border border-border bg-surface-elevated px-4 py-2 text-xs font-bold text-text hover:bg-hover transition-colors"
+                  >
+                    Save Priority Order
+                  </button>
+                </div>
+
+                {priorityMessage && (
+                  <div className="mb-4 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-xs font-bold text-success">
+                    {priorityMessage}
+                  </div>
+                )}
+
+                <div className="space-y-3">
+                  {downloadPriority.map((sourceId, index) => {
+                    const source = DOWNLOAD_SOURCES.find((item) => item.id === sourceId)
+                    if (!source) return null
+                    return (
+                      <div
+                        key={source.id}
+                        className="flex items-center gap-4 rounded-lg border border-border/50 bg-surface-elevated/70 p-4"
+                      >
+                        <div className="w-[90px] rounded-md border border-border bg-canvas px-3 py-2 text-center">
+                          <div className="text-sm font-extrabold text-text">Tier {index + 1}</div>
+                          {index === 0 && (
+                            <div className="mt-1 text-[9px] font-bold uppercase text-success">
+                              Top Priority
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-bold text-text">{source.name}</span>
+                            <span className="rounded bg-success/10 px-2 py-0.5 text-[10px] font-bold text-success">
+                              {source.quality}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-text-muted">{source.description}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => movePriority(index, 'up')}
+                            disabled={index === 0}
+                            className="h-8 w-8 rounded-full border border-border bg-hover flex items-center justify-center text-text-muted hover:text-text disabled:opacity-30"
+                          >
+                            <ChevronUp className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => movePriority(index, 'down')}
+                            disabled={index === downloadPriority.length - 1}
+                            className="h-8 w-8 rounded-full border border-border bg-hover flex items-center justify-center text-text-muted hover:text-text disabled:opacity-30"
+                          >
+                            <ChevronDown className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDownloadPriority((current) =>
+                                current.length > 1 ? current.filter((id) => id !== source.id) : current
+                              )
+                            }
+                            className="h-8 w-8 rounded-full border border-danger/40 bg-danger/10 flex items-center justify-center text-danger hover:bg-danger/20"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {DOWNLOAD_SOURCES.some((source) => !downloadPriority.includes(source.id)) && (
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-text-muted">Add source:</span>
+                    {DOWNLOAD_SOURCES.filter((source) => !downloadPriority.includes(source.id)).map(
+                      (source) => (
+                        <button
+                          key={source.id}
+                          type="button"
+                          onClick={() => setDownloadPriority((current) => [...current, source.id])}
+                          className="rounded-full border border-border bg-surface-elevated px-3 py-1.5 text-xs font-bold text-text-muted hover:text-text"
+                        >
+                          + {source.name}
+                        </button>
+                      )
+                    )}
+                  </div>
+                )}
+              </SettingsSection>
+            </>
+          )}
+
+          {/* SECTION GROUP 3: PLAYBACK & AUDIO */}
+          {(activeCategory === 'all' || activeCategory === 'audio') && (
+            <SettingsSection
+              icon={<Volume2 className="w-5 h-5" />}
+              iconColor="bg-emerald-500/10 text-emerald-400"
+              title="Playback & Audio"
+              description="Audio engine configuration and playback behavior."
+            >
+              <SettingRow
+                label="Gapless Playback"
+                hint="Seamlessly transitions between tracks without silence gaps."
+              >
+                <Toggle enabled={gaplessEnabled} onChange={setGaplessEnabled} />
+              </SettingRow>
+              <SettingRow label="Crossfade" hint="Smoothly fade between tracks during playback.">
+                <div className="flex items-center gap-3">
+                  {crossfadeEnabled && (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min={1}
+                        max={12}
+                        value={crossfadeDuration}
+                        onChange={(e) => setCrossfadeDuration(Number(e.target.value))}
+                        className="w-20 accent-primary-amber"
+                      />
+                      <span className="text-xs text-text-muted w-6">{crossfadeDuration}s</span>
+                    </div>
+                  )}
+                  <Toggle enabled={crossfadeEnabled} onChange={setCrossfadeEnabled} />
+                </div>
+              </SettingRow>
+              <SettingRow
+                label="Automix"
+                hint="Automatically queue similar tracks when your queue ends."
+              >
+                <Toggle enabled={automixEnabled} onChange={setAutomixEnabled} />
+              </SettingRow>
+              <SettingRow
+                label="Normalize Volume"
+                hint="Keep consistent volume levels across tracks (ReplayGain)."
+              >
+                <Toggle enabled={normalizeVolume} onChange={setNormalizeVolume} />
+              </SettingRow>
+
+              <div className="mt-4 space-y-2 text-xs">
+                <div className="flex items-center justify-between py-2 border-t border-border/10">
+                  <div>
+                    <span className="font-semibold text-text">Local Media Protocol</span>
+                    <p className="text-text-muted">
+                      Streams local audio securely through custom sandboxed media pipeline.
+                    </p>
+                  </div>
+                  <span className="px-2.5 py-1 rounded bg-primary-amber/10 text-primary-amber font-mono text-[11px]">
+                    Active (media://)
+                  </span>
+                </div>
+                <div className="flex items-center justify-between py-2">
+                  <div>
+                    <span className="font-semibold text-text">Supported Formats</span>
+                    <p className="text-text-muted">MP3, FLAC, M4A, AAC, WAV, OGG, OPUS, WMA</p>
+                  </div>
+                  <span className="text-text-muted font-mono text-[11px]">8 Codecs</span>
+                </div>
+              </div>
+            </SettingsSection>
+          )}
+
+          {/* SECTION GROUP 4: INTEGRATIONS */}
+          {(activeCategory === 'all' || activeCategory === 'integrations') && (
+            <SettingsSection
+              icon={<Radio className="w-5 h-5" />}
+              iconColor="bg-pink-500/10 text-pink-400"
+              title="Last.fm Search"
+              description="Use Last.fm metadata to search artists, albums, and songs globally. A free API key is required for API search."
+            >
+              <div className="space-y-2">
+                <p className="text-xs text-text-muted">
+                  Create a free key at{' '}
+                  <a
+                    href="https://www.last.fm/api/account/create"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-primary-amber hover:underline"
+                  >
+                    last.fm/api/account/create
+                  </a>{' '}
+                  and paste it below. This enables global Last.fm search; it does not provide audio downloads.
+                </p>
+                <label className="space-y-1.5 block">
+                  <span className="text-xs font-bold text-text">API Key</span>
+                  <div className="relative">
+                    <input
+                      type={showLastFmApiKey ? 'text' : 'password'}
+                      value={lastFmApiKey}
+                      onChange={(event) => setLastFmApiKey(event.target.value.trim())}
+                      placeholder="Paste your Last.fm API key"
+                      className="w-full rounded-md border border-border bg-surface-elevated px-3 py-2 pr-10 text-sm text-text outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowLastFmApiKey((visible) => !visible)}
+                      title={showLastFmApiKey ? 'Hide Last.fm API key' : 'Show Last.fm API key'}
+                      aria-label={showLastFmApiKey ? 'Hide Last.fm API key' : 'Show Last.fm API key'}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-text-muted hover:bg-hover hover:text-text"
+                    >
+                      {showLastFmApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </label>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await window.api?.setSetting?.(LASTFM_API_KEY_SETTING, lastFmApiKey)
+                      setLastFmMessage('Last.fm API key saved locally.')
+                      setTimeout(() => setLastFmMessage(''), 3000)
+                    }}
+                    className="rounded-full border border-border bg-surface-elevated px-4 py-2 text-xs font-bold text-text hover:bg-hover transition-colors"
+                  >
+                    Save Last.fm Key
+                  </button>
+                  <span className="text-[11px] text-text-muted">Get a free key at last.fm/api</span>
+                </div>
+                {lastFmMessage && (
+                  <p className="text-xs font-bold text-success">{lastFmMessage}</p>
                 )}
               </div>
+            </SettingsSection>
+          )}
 
-              <div className="rounded-lg border border-border/40 bg-canvas/40 p-5">
-                <div className="mb-4 flex items-center justify-between">
-                  <h3 className="flex items-center gap-2 text-lg font-bold text-text">
-                    <span className="h-2.5 w-2.5 rounded-full bg-secondary-cyan" />
-                    Qobuz Hi-Res Configuration
-                  </h3>
-                  <span className="text-[11px] text-text-muted">Hi-Res FLAC up to 24-bit/192kHz</span>
-                </div>
+          {/* Streaming Accounts & Engine */}
+          {(activeCategory === 'all' || activeCategory === 'providers') && (
+            <SettingsSection
+              icon={<Headphones className="w-5 h-5" />}
+              iconColor="bg-secondary-cyan/10 text-secondary-cyan"
+              title="Streaming Accounts & Downloader Engine"
+              description="Manage background audio download engines (yt-dlp, ffmpeg) and account connectors."
+            >
+              <div className="space-y-5">
+                <div className="rounded-lg border border-border/40 bg-canvas/40 p-5">
+                  <div className="mb-4 flex items-center justify-between">
+                    <span className="font-bold text-text">Qobuz Hi-Res Configuration</span>
+                    <span className="text-[11px] text-text-muted">Hi-Res FLAC up to 24-bit/192kHz</span>
+                  </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <label className="space-y-1.5">
                     <span className="text-xs font-bold text-text">Authentication Method</span>
@@ -1101,7 +1000,7 @@ export default function Settings() {
                       <button
                         type="button"
                         onClick={() => setShowQobuzSecret((show) => !show)}
-                        className="text-[11px] text-secondary-cyan"
+                        className="text-[11px] text-text-muted hover:text-text"
                       >
                         {showQobuzSecret ? 'Hide' : 'Show'}
                       </button>
@@ -1163,7 +1062,7 @@ export default function Settings() {
                 </div>
 
                 <div className="mt-3 rounded-md bg-surface-elevated/40 border border-border/30 p-2.5 text-[11px] text-text-muted">
-                  <strong>How to get Qobuz Auth Token:</strong> Log in to <span className="text-secondary-cyan font-mono">play.qobuz.com</span> in your browser. Open DevTools (F12) → Application → Local Storage (or Cookies) and copy your <span className="text-text font-mono">user_auth_token</span> and <span className="text-text font-mono">user_id</span>. An active Qobuz subscription or trial is required.
+                  <strong>How to get Qobuz Auth Token:</strong> Log in to <span className="text-text font-mono">play.qobuz.com</span> in your browser. Open DevTools (F12) → Application → Local Storage (or Cookies) and copy your <span className="text-text font-mono">user_auth_token</span> and <span className="text-text font-mono">user_id</span>. An active Qobuz subscription or trial is required.
                 </div>
 
                 <div className="mt-4 flex justify-end">
@@ -1171,7 +1070,7 @@ export default function Settings() {
                     type="button"
                     onClick={handleTestQobuz}
                     disabled={qobuzTestStatus.loading}
-                    className="flex items-center gap-2 rounded-md border border-border bg-hover px-4 py-2 text-xs font-bold text-text disabled:opacity-60 hover:border-secondary-cyan/50 transition-colors"
+                    className="flex items-center gap-2 rounded-full border border-border bg-surface-elevated px-4 py-2 text-xs font-bold text-text hover:bg-hover transition-colors disabled:opacity-60"
                   >
                     <Plug className={`h-4 w-4 ${qobuzTestStatus.loading ? 'animate-pulse' : ''}`} />
                     {qobuzTestStatus.loading ? 'Testing Qobuz...' : 'Test Qobuz Account'}
@@ -1201,13 +1100,7 @@ export default function Settings() {
               </div>
 
               <div className="rounded-lg border border-border/40 bg-canvas/40 p-5">
-                <div className="mb-4 flex items-center justify-between">
-                  <h3 className="flex items-center gap-2 text-lg font-bold text-text">
-                    <Headphones className="h-5 w-5 text-purple-400" />
-                    Deezer Lossless Configuration
-                  </h3>
-                  <span className="text-[11px] text-text-muted">FLAC 16-bit / 44.1kHz & MP3</span>
-                </div>
+                <div className="mb-4 font-bold text-text">Deezer Lossless Configuration</div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <label className="space-y-1.5 md:col-span-2">
                     <span className="flex items-center justify-between text-xs font-bold text-text">
@@ -1215,7 +1108,7 @@ export default function Settings() {
                       <button
                         type="button"
                         onClick={() => setShowDeezerArl((show) => !show)}
-                        className="text-[11px] text-purple-400"
+                        className="text-[11px] text-text-muted hover:text-text"
                       >
                         {showDeezerArl ? 'Hide' : 'Show'}
                       </button>
@@ -1248,7 +1141,7 @@ export default function Settings() {
                       type="button"
                       onClick={handleTestDeezer}
                       disabled={deezerTestStatus.loading}
-                      className="flex items-center gap-2 rounded-md border border-border bg-hover px-4 py-2 text-xs font-bold text-text disabled:opacity-60 hover:border-purple-400/50 transition-colors"
+                      className="flex items-center gap-2 rounded-full border border-border bg-surface-elevated px-4 py-2 text-xs font-bold text-text hover:bg-hover transition-colors disabled:opacity-60"
                     >
                       <Plug
                         className={`h-4 w-4 ${deezerTestStatus.loading ? 'animate-pulse' : ''}`}
@@ -1259,7 +1152,7 @@ export default function Settings() {
                 </div>
 
                 <div className="mt-3 rounded-md bg-surface-elevated/40 border border-border/30 p-2.5 text-[11px] text-text-muted">
-                  <strong>How to get Deezer ARL:</strong> Open <span className="text-purple-400 font-mono">deezer.com</span> in your browser and log in. Open DevTools (F12) → Application / Storage → Cookies → <span className="text-text font-mono">https://www.deezer.com</span> → find and copy the <span className="text-text font-mono">arl</span> cookie value. (ARL tokens expire after ~3 months).
+                  <strong>How to get Deezer ARL:</strong> Open <span className="text-text font-mono">deezer.com</span> in your browser and log in. Open DevTools (F12) → Application / Storage → Cookies → <span className="text-text font-mono">https://www.deezer.com</span> → find and copy the <span className="text-text font-mono">arl</span> cookie value. (ARL tokens expire after ~3 months).
                 </div>
 
                 {deezerTestStatus.message && (
@@ -1286,48 +1179,17 @@ export default function Settings() {
               </div>
 
               {/* Soulseek P2P Card */}
-              <div className="rounded-lg border border-sky-500/30 bg-surface-elevated/40 p-4">
-                <div className="flex items-center justify-between gap-3 mb-3">
+              <div className="rounded-lg border border-border/40 bg-canvas/40 p-4">
+                <div className="flex items-center justify-between gap-3 mb-4">
                   <div>
                     <h4 className="text-sm font-bold text-text">Soulseek P2P Network</h4>
                     <p className="text-xs text-text-muted">
                       Peer-to-peer lossless and MP3 music exchange network.
                     </p>
                   </div>
-                  <span className="rounded bg-sky-500/10 px-2 py-0.5 text-[11px] font-bold text-sky-400">
+                  <span className="rounded-full bg-surface px-3 py-1 text-[11px] font-bold text-text-muted border border-border/40">
                     FLAC / MP3
                   </span>
-                </div>
-
-                <div className="mb-4 rounded-md border border-sky-500/20 bg-sky-500/5 p-3">
-                  <div className="flex items-start gap-2">
-                    <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-400" />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-semibold text-text">Need a Soulseek account?</p>
-                      <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
-                        Create an account or download the official SoulseekQt client from Soulseek.net.
-                        Then enter the same username and password above.
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => void window.api?.openExternal?.('https://www.slsknet.org/news/user')}
-                          className="inline-flex items-center gap-1.5 rounded border border-sky-400/30 bg-sky-400/10 px-2.5 py-1.5 text-[11px] font-bold text-sky-300 hover:bg-sky-400/20"
-                        >
-                          Create Soulseek account
-                          <ExternalLink className="h-3 w-3" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void window.api?.openExternal?.('https://www.slsknet.org/news/node/1')}
-                          className="inline-flex items-center gap-1.5 rounded border border-border bg-hover px-2.5 py-1.5 text-[11px] font-bold text-text-muted hover:text-text"
-                        >
-                          Download SoulseekQt
-                          <ExternalLink className="h-3 w-3" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1346,7 +1208,7 @@ export default function Settings() {
                       <button
                         type="button"
                         onClick={() => setShowSoulseekPassword((show) => !show)}
-                        className="text-[11px] text-secondary-cyan"
+                        className="text-[11px] text-text-muted hover:text-text"
                       >
                         {showSoulseekPassword ? 'Hide' : 'Show'}
                       </button>
@@ -1369,7 +1231,7 @@ export default function Settings() {
                     type="button"
                     onClick={handleTestSoulseek}
                     disabled={soulseekTestStatus.loading}
-                    className="flex items-center gap-2 rounded-md border border-border bg-hover px-4 py-2 text-xs font-bold text-text disabled:opacity-60 hover:border-sky-400/50 transition-colors shrink-0"
+                    className="flex items-center gap-2 rounded-full border border-border bg-surface-elevated px-4 py-2 text-xs font-bold text-text disabled:opacity-60 hover:bg-hover transition-colors shrink-0"
                   >
                     <Plug
                       className={`h-4 w-4 ${soulseekTestStatus.loading ? 'animate-pulse' : ''}`}
@@ -1402,7 +1264,7 @@ export default function Settings() {
               </div>
 
               {/* YouTube Music Card */}
-              <div className="rounded-lg border border-red-500/30 bg-surface-elevated/40 p-4">
+              <div className="rounded-lg border border-border/40 bg-canvas/40 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h4 className="text-sm font-bold text-text">YouTube Music</h4>
@@ -1410,7 +1272,7 @@ export default function Settings() {
                       Downloads and audio conversion powered by yt-dlp & ffmpeg. No login required.
                     </p>
                   </div>
-                  <span className="rounded bg-red-500/10 px-2 py-0.5 text-[11px] font-bold text-red-400">
+                  <span className="rounded-full border border-border/40 bg-surface px-3 py-1 text-[11px] font-bold text-text-muted">
                     256k MP3 / Opus
                   </span>
                 </div>
@@ -1420,183 +1282,191 @@ export default function Settings() {
                 <button
                   type="button"
                   onClick={saveStreamingAccounts}
-                  className="rounded-md bg-success px-4 py-2 text-xs font-bold text-white hover:bg-success/90 transition-colors"
+                  className="rounded-full border border-border bg-surface-elevated px-6 py-2 text-xs font-bold text-text hover:bg-hover transition-colors"
                 >
                   Save Streaming Settings
                 </button>
                 {accountMessage && (
-                  <span className="text-xs font-bold text-secondary-cyan">{accountMessage}</span>
+                  <span className="text-xs font-bold text-text">{accountMessage}</span>
                 )}
               </div>
             </div>
           </SettingsSection>
+        )}
 
-          {/* Discord & Media Presence */}
-          <SettingsSection
-            icon={<MessageSquare className="w-5 h-5" />}
-            iconColor="bg-[#5865F2]/10 text-[#5865F2]"
-            title="Discord & Media Presence"
-            description="Share what you're listening to with Discord Rich Presence and system media controls."
-          >
-            <SettingRow
-              label="Discord Rich Presence"
-              hint="Show currently playing track in your Discord status."
+          {/* SECTION GROUP 4: INTEGRATIONS */}
+          {(activeCategory === 'all' || activeCategory === 'integrations') && (
+            <SettingsSection
+              icon={<MessageSquare className="w-5 h-5" />}
+              iconColor="bg-[#5865F2]/10 text-[#5865F2]"
+              title="Discord & Media Presence"
+              description="Share what you're listening to with Discord Rich Presence and system media controls."
             >
-              <Toggle enabled={discordRpcEnabled} onChange={setDiscordRpcEnabled} />
-            </SettingRow>
-            {discordRpcEnabled && (
               <SettingRow
-                label="Show Song Details"
-                hint="Display title, artist, album, and elapsed time."
+                label="Discord Rich Presence"
+                hint="Show currently playing track in your Discord status."
               >
-                <Toggle enabled={showSongInDiscord} onChange={setShowSongInDiscord} />
+                <Toggle enabled={discordRpcEnabled} onChange={setDiscordRpcEnabled} />
               </SettingRow>
-            )}
-            <SettingRow
-              label="System Media Controls"
-              hint="Enable media keys and OS media transport controls."
-            >
-              <Toggle enabled={mediaSessionEnabled} onChange={setMediaSessionEnabled} />
-            </SettingRow>
-          </SettingsSection>
-
-          {/* Appearance */}
-          <SettingsSection
-            icon={<Palette className="w-5 h-5" />}
-            iconColor="bg-pink-500/10 text-pink-400"
-            title="Appearance"
-            description="Customize visual presentation and accessibility."
-          >
-            <SettingRow
-              label="Reduced Motion"
-              hint="Minimizes animations for accessibility or preference."
-            >
-              <Toggle enabled={reducedMotion} onChange={setReducedMotion} />
-            </SettingRow>
-            <SettingRow label="Compact Mode" hint="Reduce spacing and show more content on screen.">
-              <Toggle enabled={compactMode} onChange={setCompactMode} />
-            </SettingRow>
-            <SettingRow label="Theme" hint="Visual theme for the application.">
-              <span className="px-2.5 py-1 rounded bg-surface-elevated border border-border text-text text-xs font-medium">
-                Ink & Amber (Dark)
-              </span>
-            </SettingRow>
-          </SettingsSection>
-
-          {/* Notifications */}
-          <SettingsSection
-            icon={<Bell className="w-5 h-5" />}
-            iconColor="bg-primary-amber/10 text-primary-amber"
-            title="Notifications"
-            description="Control desktop notifications and alerts."
-          >
-            <SettingRow
-              label="Desktop Notifications"
-              hint="Show system notifications for events and updates."
-            >
-              <Toggle enabled={notificationsEnabled} onChange={setNotificationsEnabled} />
-            </SettingRow>
-            <SettingRow
-              label="Now Playing Notification"
-              hint="Show a notification when a new track starts playing."
-            >
-              <Toggle enabled={nowPlayingNotif} onChange={setNowPlayingNotif} />
-            </SettingRow>
-          </SettingsSection>
-
-          {/* Privacy & Security */}
-          <SettingsSection
-            icon={<ShieldCheck className="w-5 h-5" />}
-            iconColor="bg-primary-amber/10 text-primary-amber"
-            title="Privacy & Security"
-            description="Local-first privacy baseline and data controls."
-          >
-            <SettingRow
-              label="Listening History"
-              hint="Record play events locally for insights and recommendations."
-            >
-              <Toggle enabled={listenHistoryEnabled} onChange={setListenHistoryEnabled} />
-            </SettingRow>
-            <SettingRow
-              label="Analytics & Telemetry"
-              hint="Send anonymous usage data to help improve Felo."
-            >
-              <Toggle enabled={analyticsEnabled} onChange={setAnalyticsEnabled} />
-            </SettingRow>
-
-            <div className="mt-4 space-y-2 text-xs text-text-muted">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-success shrink-0" />
-                <span>100% Local-first: No songs or library metadata leave your device.</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-success shrink-0" />
-                <span>Telemetry & Analytics disabled by default.</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-success shrink-0" />
-                <span>P2P networks and background seeding disabled in v1.</span>
-              </div>
-            </div>
-          </SettingsSection>
-
-          {/* Keyboard Shortcuts */}
-          <SettingsSection
-            icon={<Keyboard className="w-5 h-5" />}
-            iconColor="bg-cyan-500/10 text-cyan-400"
-            title="Keyboard Shortcuts"
-            description="Global hotkeys and in-app shortcuts."
-          >
-            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
-              {[
-                ['Play / Pause', 'Space'],
-                ['Next Track', 'Ctrl + →'],
-                ['Previous Track', 'Ctrl + ←'],
-                ['Volume Up', 'Ctrl + ↑'],
-                ['Volume Down', 'Ctrl + ↓'],
-                ['Search', 'Ctrl + K'],
-                ['Toggle Shuffle', 'Ctrl + S'],
-                ['Toggle Repeat', 'Ctrl + R']
-              ].map(([action, key]) => (
-                <div
-                  key={action}
-                  className="flex items-center justify-between py-2 border-b border-border/10"
+              {discordRpcEnabled && (
+                <SettingRow
+                  label="Show Song Details"
+                  hint="Display title, artist, album, and elapsed time."
                 >
-                  <span className="text-text-muted">{action}</span>
-                  <kbd className="px-2 py-0.5 rounded bg-surface-elevated border border-border text-text font-mono text-[10px]">
-                    {key}
-                  </kbd>
-                </div>
-              ))}
-            </div>
-          </SettingsSection>
+                  <Toggle enabled={showSongInDiscord} onChange={setShowSongInDiscord} />
+                </SettingRow>
+              )}
+              <SettingRow
+                label="System Media Controls"
+                hint="Enable media keys and OS media transport controls."
+              >
+                <Toggle enabled={mediaSessionEnabled} onChange={setMediaSessionEnabled} />
+              </SettingRow>
+            </SettingsSection>
+          )}
 
-          {/* About */}
-          <SettingsSection
-            icon={<Info className="w-5 h-5" />}
-            iconColor="bg-blue-500/10 text-blue-400"
-            title="About Felo"
-            description={`Version ${version} — Desktop Music Workspace`}
-          >
-            <p className="text-xs text-text-muted leading-relaxed">
-              Felo is an independent desktop music player and library workspace designed for
-              audiophiles and music lovers with local collections.
-            </p>
-            <div className="flex items-center gap-3 mt-4">
-              <span className="px-3 py-1.5 rounded-full bg-surface-elevated border border-border text-xs text-text-muted">
-                Electron
-              </span>
-              <span className="px-3 py-1.5 rounded-full bg-surface-elevated border border-border text-xs text-text-muted">
-                React
-              </span>
-              <span className="px-3 py-1.5 rounded-full bg-surface-elevated border border-border text-xs text-text-muted">
-                SQLite
-              </span>
-              <span className="px-3 py-1.5 rounded-full bg-surface-elevated border border-border text-xs text-text-muted">
-                TypeScript
-              </span>
-            </div>
-          </SettingsSection>
+          {/* SECTION GROUP 5: APPEARANCE, NOTIFICATIONS & PRIVACY */}
+          {(activeCategory === 'all' || activeCategory === 'appearance') && (
+            <>
+              {/* Appearance */}
+              <SettingsSection
+                icon={<Palette className="w-5 h-5" />}
+                iconColor="bg-pink-500/10 text-pink-400"
+                title="Appearance"
+                description="Customize visual presentation and accessibility."
+              >
+                <SettingRow
+                  label="Reduced Motion"
+                  hint="Minimizes animations for accessibility or preference."
+                >
+                  <Toggle enabled={reducedMotion} onChange={setReducedMotion} />
+                </SettingRow>
+                <SettingRow label="Compact Mode" hint="Reduce spacing and show more content on screen.">
+                  <Toggle enabled={compactMode} onChange={setCompactMode} />
+                </SettingRow>
+                <SettingRow label="Theme" hint="Visual theme for the application.">
+                  <span className="px-2.5 py-1 rounded bg-surface-elevated border border-border text-text text-xs font-medium">
+                    Ink & Amber (Dark)
+                  </span>
+                </SettingRow>
+              </SettingsSection>
+
+              {/* Notifications */}
+              <SettingsSection
+                icon={<Bell className="w-5 h-5" />}
+                iconColor="bg-primary-amber/10 text-primary-amber"
+                title="Notifications"
+                description="Control desktop notifications and alerts."
+              >
+                <SettingRow
+                  label="Desktop Notifications"
+                  hint="Show system notifications for events and updates."
+                >
+                  <Toggle enabled={notificationsEnabled} onChange={setNotificationsEnabled} />
+                </SettingRow>
+                <SettingRow
+                  label="Now Playing Notification"
+                  hint="Show a notification when a new track starts playing."
+                >
+                  <Toggle enabled={nowPlayingNotif} onChange={setNowPlayingNotif} />
+                </SettingRow>
+              </SettingsSection>
+
+              {/* Privacy & Security */}
+              <SettingsSection
+                icon={<ShieldCheck className="w-5 h-5" />}
+                iconColor="bg-primary-amber/10 text-primary-amber"
+                title="Privacy & Security"
+                description="Local-first privacy baseline and data controls."
+              >
+                <SettingRow
+                  label="Listening History"
+                  hint="Record play events locally for insights and recommendations."
+                >
+                  <Toggle enabled={listenHistoryEnabled} onChange={setListenHistoryEnabled} />
+                </SettingRow>
+                <SettingRow
+                  label="Analytics & Telemetry"
+                  hint="Send anonymous usage data to help improve Felo."
+                >
+                  <Toggle enabled={analyticsEnabled} onChange={setAnalyticsEnabled} />
+                </SettingRow>
+
+                <div className="mt-4 space-y-2 text-xs text-text-muted">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-success shrink-0" />
+                    <span>100% Local-first: No songs or library metadata leave your device.</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-success shrink-0" />
+                    <span>Telemetry & Analytics disabled by default.</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-success shrink-0" />
+                    <span>P2P networks and background seeding disabled in v1.</span>
+                  </div>
+                </div>
+              </SettingsSection>
+
+              {/* Keyboard Shortcuts */}
+              <SettingsSection
+                icon={<Keyboard className="w-5 h-5" />}
+                iconColor="bg-cyan-500/10 text-cyan-400"
+                title="Keyboard Shortcuts"
+                description="Global hotkeys and in-app shortcuts."
+              >
+                <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+                  {[
+                    ['Play / Pause', 'Space'],
+                    ['Next Track', 'Ctrl + →'],
+                    ['Previous Track', 'Ctrl + ←'],
+                    ['Volume Up', 'Ctrl + ↑'],
+                    ['Volume Down', 'Ctrl + ↓'],
+                    ['Search', 'Ctrl + K'],
+                    ['Toggle Shuffle', 'Ctrl + S'],
+                    ['Toggle Repeat', 'Ctrl + R']
+                  ].map(([action, key]) => (
+                    <div
+                      key={action}
+                      className="flex items-center justify-between py-2 border-b border-border/10"
+                    >
+                      <span className="text-text-muted">{action}</span>
+                      <kbd className="px-2 py-0.5 rounded bg-surface-elevated border border-border text-text font-mono text-[10px]">
+                        {key}
+                      </kbd>
+                    </div>
+                  ))}
+                </div>
+              </SettingsSection>
+
+              {/* About */}
+              <SettingsSection
+                icon={<Info className="w-5 h-5" />}
+                iconColor="bg-blue-500/10 text-blue-400"
+                title="About Felo"
+                description={`Version ${version} — Desktop Music Workspace`}
+              >
+                <p className="text-xs text-text-muted leading-relaxed">
+                  Felo is an independent desktop music player and library workspace designed for
+                  audiophiles and music lovers with local collections.
+                </p>
+                <div className="flex items-center gap-3 mt-4">
+                  <span className="px-3 py-1.5 rounded-full bg-surface-elevated border border-border text-xs text-text-muted">
+                    Electron
+                  </span>
+                  <span className="px-3 py-1.5 rounded-full bg-surface-elevated border border-border text-xs text-text-muted">
+                    React
+                  </span>
+                  <span className="px-3 py-1.5 rounded-full bg-surface-elevated border border-border text-xs text-text-muted">
+                    SQLite
+                  </span>
+                  <span className="px-3 py-1.5 rounded-full bg-surface-elevated border border-border text-xs text-text-muted">
+                    TypeScript
+                  </span>
+                </div>
+              </SettingsSection>
+            </>
+          )}
         </div>
       </div>
     </div>

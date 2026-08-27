@@ -20,9 +20,10 @@ import { useListeningStore } from '../../hooks/useListeningStore'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toMediaUrl } from '../../lib/media'
+import type { DownloadTarget } from '../DownloadPanel/DownloadPanel'
 
 interface FooterProps {
-  onOpenDownloadPanel?: () => void
+  onOpenDownloadPanel?: (target?: DownloadTarget) => void
 }
 
 export default function Footer({ onOpenDownloadPanel }: FooterProps) {
@@ -102,7 +103,7 @@ export default function Footer({ onOpenDownloadPanel }: FooterProps) {
 
   const handleProgressPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!currentSong || duration <= 0) return
+      if (!currentSong || duration <= 0 || joinedRoom) return
       event.preventDefault()
 
       const startTime = updateSeekPreview(event.clientX)
@@ -111,7 +112,7 @@ export default function Footer({ onOpenDownloadPanel }: FooterProps) {
       event.currentTarget.setPointerCapture(event.pointerId)
       setIsSeeking(true)
     },
-    [currentSong, duration, updateSeekPreview]
+    [currentSong, duration, joinedRoom, updateSeekPreview]
   )
 
   const handleProgressPointerMove = useCallback(
@@ -170,7 +171,7 @@ export default function Footer({ onOpenDownloadPanel }: FooterProps) {
   }
 
   const handlePlayClick = async () => {
-    if (queue.length > 0) {
+    if (queue.length > 0 && currentSongIndex >= 0 && currentSongIndex < queue.length) {
       togglePlay()
       return
     }
@@ -178,10 +179,33 @@ export default function Footer({ onOpenDownloadPanel }: FooterProps) {
     try {
       const songs = await window.api?.getSongs?.()
       if (songs?.length) {
-        setQueue(songs, 0)
+        const sorted = [...songs].sort((a, b) => (b.dateAdded || 0) - (a.dateAdded || 0))
+        setQueue(sorted, 0)
+      } else if (queue.length > 0) {
+        togglePlay()
       }
     } catch (err) {
       console.error('Failed to start library playback:', err)
+    }
+  }
+
+  const handleTitleClick = () => {
+    if (!currentSong) {
+      void handlePlayClick()
+      return
+    }
+    onOpenDownloadPanel?.(currentSong)
+  }
+
+  const handleArtistClick = () => {
+    if (!currentSong) {
+      void handlePlayClick()
+      return
+    }
+    if (currentSong.artist && currentSong.artist !== 'Unknown Artist') {
+      navigate(`/artist/${encodeURIComponent(currentSong.artist)}`)
+    } else {
+      onOpenDownloadPanel?.(currentSong)
     }
   }
 
@@ -190,7 +214,11 @@ export default function Footer({ onOpenDownloadPanel }: FooterProps) {
       {/* Song Info (Left) */}
       <div className="flex items-center gap-4 w-[30%] min-w-[200px]">
         {/* Cover Art */}
-        <div className="relative h-[64px] w-[64px] bg-surface-elevated rounded-md shrink-0 flex items-center justify-center shadow-md overflow-hidden border border-border/10">
+        <div
+          onClick={currentSong ? handleTitleClick : () => void handlePlayClick()}
+          title={currentSong ? `Open download sources for "${currentSong.title}"` : 'Click play to start recently added'}
+          className="relative h-[64px] w-[64px] bg-surface-elevated rounded-md shrink-0 flex items-center justify-center shadow-md overflow-hidden border border-border/10 cursor-pointer hover:border-white/30"
+        >
           {currentSong ? (
             <div className="w-full h-full bg-gradient-to-br from-indigo-900/60 to-purple-900/60 flex items-center justify-center text-[10px] font-bold text-text-muted uppercase">
               {currentSong.album ? currentSong.album.slice(0, 3) : 'Felo'}
@@ -224,11 +252,25 @@ export default function Footer({ onOpenDownloadPanel }: FooterProps) {
 
         {/* Title & Artist */}
         <div className="flex flex-col overflow-hidden mr-2">
-          <p className="text-[14px] font-medium text-text truncate hover:underline cursor-pointer no-drag">
+          <p
+            onClick={handleTitleClick}
+            title={currentSong ? `Open download sources for "${currentSong.title}"` : 'Click play to start recently added'}
+            className="text-[14px] font-medium text-text truncate hover:underline cursor-pointer no-drag"
+          >
             {currentSong ? currentSong.title : 'No track selected'}
           </p>
-          <p className="text-[12px] text-text-muted truncate hover:underline cursor-pointer no-drag hover:text-text transition-colors">
-            {currentSong ? currentSong.artist : 'Select a track to play'}
+          <p
+            onClick={handleArtistClick}
+            title={
+              currentSong?.artist && currentSong.artist !== 'Unknown Artist'
+                ? `View artist: ${currentSong.artist}`
+                : currentSong
+                  ? `Open download sources for "${currentSong.title}"`
+                  : 'Click play to start recently added'
+            }
+            className="text-[12px] text-text-muted truncate hover:underline cursor-pointer no-drag hover:text-text transition-colors"
+          >
+            {currentSong ? currentSong.artist : 'Click play to start recently added'}
           </p>
         </div>
 
@@ -338,21 +380,32 @@ export default function Footer({ onOpenDownloadPanel }: FooterProps) {
           <span className="w-10 text-right">{formatTime(displayTime)}</span>
           <div
             ref={progressRef}
-            onPointerDown={handleProgressPointerDown}
-            onPointerMove={handleProgressPointerMove}
-            onPointerUp={handleProgressPointerUp}
-            onPointerCancel={handleProgressPointerCancel}
-            className="flex-1 h-1.5 bg-border hover:h-2 rounded-full cursor-pointer group relative no-drag flex items-center transition-all touch-none"
+            onPointerDown={joinedRoom ? undefined : handleProgressPointerDown}
+            onPointerMove={joinedRoom ? undefined : handleProgressPointerMove}
+            onPointerUp={joinedRoom ? undefined : handleProgressPointerUp}
+            onPointerCancel={joinedRoom ? undefined : handleProgressPointerCancel}
+            title={
+              joinedRoom
+                ? 'Playback position is locked to the live session host. Leave room to seek.'
+                : undefined
+            }
+            className={`flex-1 h-1.5 bg-border rounded-full relative no-drag flex items-center transition-all touch-none ${
+              joinedRoom ? 'cursor-not-allowed opacity-85' : 'cursor-pointer hover:h-2 group'
+            }`}
           >
             <div
-              className="absolute left-0 h-full bg-text group-hover:bg-primary-amber rounded-full transition-colors"
+              className={`absolute left-0 h-full rounded-full transition-colors ${
+                joinedRoom ? 'bg-success' : 'bg-text group-hover:bg-primary-amber'
+              }`}
               style={{ width: `${progressPercent}%` }}
             />
             {/* Playhead thumb shown on hover */}
-            <div
-              className="absolute h-3 w-3 bg-text rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-md -ml-1.5"
-              style={{ left: `${progressPercent}%` }}
-            />
+            {!joinedRoom && (
+              <div
+                className="absolute h-3 w-3 bg-text rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-md -ml-1.5"
+                style={{ left: `${progressPercent}%` }}
+              />
+            )}
           </div>
           <span className="w-10 text-left">{formatTime(duration)}</span>
         </div>
@@ -374,7 +427,7 @@ export default function Footer({ onOpenDownloadPanel }: FooterProps) {
         {/* Download sources */}
         <button
           title="Download sources"
-          onClick={onOpenDownloadPanel}
+          onClick={() => onOpenDownloadPanel?.(currentSong)}
           className="hover:text-text transition-colors p-1"
         >
           <ListVideo className="w-4 h-4" />

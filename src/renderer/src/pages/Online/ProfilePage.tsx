@@ -2,10 +2,10 @@ import { FormEvent, type ReactElement, useEffect, useMemo, useState } from 'reac
 import {
   Check,
   Clock3,
-
   ListMusic,
   Loader2,
   LogOut,
+  MessageCircle,
   Play,
   Radio,
   Settings,
@@ -20,6 +20,7 @@ import { NavLink, useNavigate, useParams } from 'react-router-dom'
 import OnlineGate from '../../components/Online/OnlineGate'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { useListeningStore } from '../../hooks/useListeningStore'
 import { getSupabase } from '../../lib/supabase'
 import { toMediaUrl } from '../../lib/media'
 import type {
@@ -45,11 +46,18 @@ interface ProfileSong extends Song {
   lastPlayedAt?: number
 }
 
-function readListeningHistory(): {
+interface ListeningHistoryData {
   recent: ProfileSong[]
+  allRecent: ProfileSong[]
   mostPlayed: ProfileSong[]
+  allMostPlayed: ProfileSong[]
   artists: Array<{ artist: string; playCount: number }>
-} {
+  allArtists: Array<{ artist: string; playCount: number }>
+  totalPlays: number
+  totalTracks: number
+}
+
+function readListeningHistory(): ListeningHistoryData {
   try {
     const recent = JSON.parse(
       localStorage.getItem(RECENTLY_PLAYED_STORAGE_KEY) || '[]'
@@ -66,26 +74,49 @@ function readListeningHistory(): {
       knownSongs[song.id] = song
     })
     const withStats = recent.map((song) => ({ ...song, ...(stats[song.id] || {}) }))
-    const mostPlayed = Object.entries(stats)
+    const allMostPlayed = Object.entries(stats)
       .map(([id, value]): ProfileSong | null => {
         const song = knownSongs[id]
         return song ? ({ ...song, ...value } as ProfileSong) : null
       })
       .filter((song): song is ProfileSong => song !== null)
       .sort((left, right) => (right.playCount || 0) - (left.playCount || 0))
-      .slice(0, 6)
+
     const artistTotals = new Map<string, number>()
+    let totalPlays = 0
     Object.entries(stats).forEach(([id, value]) => {
+      totalPlays += value.playCount || 0
       const song = knownSongs[id]
-      if (song) artistTotals.set(song.artist || 'Unknown Artist', (artistTotals.get(song.artist || 'Unknown Artist') || 0) + value.playCount)
+      if (song) {
+        const artist = song.artist || 'Unknown Artist'
+        artistTotals.set(artist, (artistTotals.get(artist) || 0) + (value.playCount || 1))
+      }
     })
-    const artists = [...artistTotals.entries()]
+    const allArtists = [...artistTotals.entries()]
       .map(([artist, playCount]) => ({ artist, playCount }))
       .sort((left, right) => right.playCount - left.playCount)
-      .slice(0, 5)
-    return { recent: withStats.slice(0, 6), mostPlayed, artists }
+
+    return {
+      recent: withStats.slice(0, 6),
+      allRecent: withStats,
+      mostPlayed: allMostPlayed.slice(0, 6),
+      allMostPlayed,
+      artists: allArtists.slice(0, 5),
+      allArtists,
+      totalPlays,
+      totalTracks: Object.keys(knownSongs).length
+    }
   } catch {
-    return { recent: [], mostPlayed: [], artists: [] }
+    return {
+      recent: [],
+      allRecent: [],
+      mostPlayed: [],
+      allMostPlayed: [],
+      artists: [],
+      allArtists: [],
+      totalPlays: 0,
+      totalTracks: 0
+    }
   }
 }
 
@@ -125,7 +156,7 @@ function SongArtwork({
   const artworkUrl = toMediaUrl(song.artworkPath) || fetchedArtwork
   return (
     <div
-      className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-success bg-surface-elevated text-success ${size === 'large' ? 'h-9 w-9' : 'h-8 w-8'}`}
+      className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-surface-elevated text-text-muted ${size === 'large' ? 'h-9 w-9' : 'h-8 w-8'}`}
     >
       <Radio className={size === 'large' ? 'h-5 w-5' : 'h-4 w-4'} />
       {artworkUrl && (
@@ -208,7 +239,7 @@ function ProfileEditor({
               required
               value={displayName}
               onChange={(event) => setDisplayName(event.target.value)}
-              className="mt-2 h-11 w-full rounded-md border border-border bg-canvas px-3 font-normal outline-none focus:border-success"
+              className="mt-2 h-11 w-full rounded-md border border-border bg-canvas px-3 font-normal outline-none focus:border-white/30"
             />
           </label>
           <label className="text-sm font-bold text-text">
@@ -218,7 +249,7 @@ function ProfileEditor({
               pattern="[a-zA-Z0-9_]+"
               value={username}
               onChange={(event) => setUsername(event.target.value)}
-              className="mt-2 h-11 w-full rounded-md border border-border bg-canvas px-3 font-normal outline-none focus:border-success"
+              className="mt-2 h-11 w-full rounded-md border border-border bg-canvas px-3 font-normal outline-none focus:border-white/30"
             />
           </label>
           <label className="text-sm font-bold text-text sm:col-span-2">
@@ -227,7 +258,7 @@ function ProfileEditor({
               type="url"
               value={avatarUrl}
               onChange={(event) => setAvatarUrl(event.target.value)}
-              className="mt-2 h-11 w-full rounded-md border border-border bg-canvas px-3 font-normal outline-none focus:border-success"
+              className="mt-2 h-11 w-full rounded-md border border-border bg-canvas px-3 font-normal outline-none focus:border-white/30"
             />
           </label>
           <label className="text-sm font-bold text-text sm:col-span-2">
@@ -237,7 +268,7 @@ function ProfileEditor({
               maxLength={240}
               value={bio}
               onChange={(event) => setBio(event.target.value)}
-              className="mt-2 w-full resize-none rounded-md border border-border bg-canvas px-3 py-2.5 font-normal outline-none focus:border-success"
+              className="mt-2 w-full resize-none rounded-md border border-border bg-canvas px-3 py-2.5 font-normal outline-none focus:border-white/30"
             />
           </label>
         </div>
@@ -260,7 +291,7 @@ function ProfileEditor({
             </button>
             <button
               disabled={busy}
-              className="flex items-center gap-2 rounded-full bg-text px-5 py-2.5 text-sm font-black text-canvas disabled:opacity-50"
+              className="flex items-center gap-2 rounded-full border border-border bg-surface-elevated px-5 py-2.5 text-sm font-black text-text disabled:opacity-50 hover:bg-hover"
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{' '}
               Save
@@ -268,6 +299,353 @@ function ProfileEditor({
           </div>
         </div>
       </form>
+    </div>
+  )
+}
+
+// ─── Concurrency-Controlled Artwork Cache ─────────────────────────────────────
+const artworkMemoryCache = new Map<string, string>()
+
+async function fetchArtworkBatch(
+  songs: ProfileSong[],
+  currentCache: Record<string, string>,
+  onUpdate: (updates: Record<string, string>) => void
+): Promise<void> {
+  const needed = songs.filter(
+    (s) => !toMediaUrl(s.artworkPath) && !currentCache[s.id] && !artworkMemoryCache.has(s.id)
+  )
+  if (needed.length === 0) return
+
+  const updates: Record<string, string> = {}
+  const CONCURRENCY = 3
+
+  for (let i = 0; i < needed.length; i += CONCURRENCY) {
+    const batch = needed.slice(i, i + CONCURRENCY)
+    await Promise.all(
+      batch.map(async (song) => {
+        try {
+          const results = await window.api?.searchAppleMusic?.(`${song.title} ${song.artist}`)
+          const match = results?.Songs?.find((item: { thumbnail?: string }) => item.thumbnail)
+          if (match?.thumbnail) {
+            updates[song.id] = match.thumbnail
+            artworkMemoryCache.set(song.id, match.thumbnail)
+          } else {
+            artworkMemoryCache.set(song.id, '')
+          }
+        } catch {
+          artworkMemoryCache.set(song.id, '')
+        }
+      })
+    )
+    if (Object.keys(updates).length > 0) {
+      onUpdate({ ...updates })
+    }
+  }
+}
+
+// ─── Full Listening History Modal ─────────────────────────────────────────────
+function FullListeningHistoryModal({
+  onClose,
+  initialTab = 'recent'
+}: {
+  onClose: () => void
+  initialTab?: 'recent' | 'mostPlayed' | 'artists'
+}): ReactElement {
+  const { setQueue } = usePlayerStore()
+  const [activeTab, setActiveTab] = useState<'recent' | 'mostPlayed' | 'artists'>(initialTab)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 25
+
+  const [historyData, setHistoryData] = useState<ListeningHistoryData>(() => readListeningHistory())
+  const [artworks, setArtworks] = useState<Record<string, string>>({})
+
+  // Load artworks progressively for currently visible items
+  useEffect(() => {
+    let cancelled = false
+    const songsToFetch = (activeTab === 'mostPlayed' ? historyData.allMostPlayed : historyData.allRecent).slice(
+      0,
+      page * PAGE_SIZE
+    )
+    void fetchArtworkBatch(songsToFetch, artworks, (newArtworks) => {
+      if (!cancelled) {
+        setArtworks((prev) => ({ ...prev, ...newArtworks }))
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab, page, historyData])
+
+  const filteredRecent = useMemo(() => {
+    if (!searchQuery.trim()) return historyData.allRecent
+    const q = searchQuery.toLowerCase()
+    return historyData.allRecent.filter(
+      (s) => s.title.toLowerCase().includes(q) || s.artist.toLowerCase().includes(q)
+    )
+  }, [historyData.allRecent, searchQuery])
+
+  const filteredMostPlayed = useMemo(() => {
+    if (!searchQuery.trim()) return historyData.allMostPlayed
+    const q = searchQuery.toLowerCase()
+    return historyData.allMostPlayed.filter(
+      (s) => s.title.toLowerCase().includes(q) || s.artist.toLowerCase().includes(q)
+    )
+  }, [historyData.allMostPlayed, searchQuery])
+
+  const filteredArtists = useMemo(() => {
+    if (!searchQuery.trim()) return historyData.allArtists
+    const q = searchQuery.toLowerCase()
+    return historyData.allArtists.filter((a) => a.artist.toLowerCase().includes(q))
+  }, [historyData.allArtists, searchQuery])
+
+  const handleClearHistory = () => {
+    if (window.confirm('Are you sure you want to clear all listening history and play stats?')) {
+      localStorage.removeItem(RECENTLY_PLAYED_STORAGE_KEY)
+      localStorage.removeItem(PLAYED_SONGS_STORAGE_KEY)
+      localStorage.removeItem(PLAY_STATS_STORAGE_KEY)
+      window.dispatchEvent(new CustomEvent('felo:recently-played-updated'))
+      setHistoryData(readListeningHistory())
+    }
+  }
+
+  const topArtistName = historyData.allArtists[0]?.artist || 'None yet'
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 sm:p-6 no-drag backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div className="flex h-[85vh] w-full max-w-4xl flex-col rounded-2xl border border-border bg-surface shadow-2xl overflow-hidden">
+        {/* Modal Header */}
+        <div className="flex items-center justify-between border-b border-border/70 p-5 bg-surface-elevated/30">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-elevated border border-border text-text">
+              <Clock3 className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-black text-text">Listening History</h2>
+              <p className="text-xs text-text-muted">
+                {historyData.totalPlays} total plays · {historyData.totalTracks} unique tracks
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleClearHistory}
+              className="rounded-full border border-border px-3.5 py-1.5 text-xs font-bold text-text-muted hover:text-danger hover:border-danger/40 transition-colors"
+            >
+              Clear History
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex h-9 w-9 items-center justify-center rounded-full text-text-muted hover:bg-hover hover:text-text transition-colors"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Quick Stats Banner */}
+        <div className="grid grid-cols-3 gap-3 border-b border-border/50 bg-surface-elevated/10 p-4">
+          <div className="rounded-xl border border-border/40 bg-surface-elevated/40 p-3 text-center">
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-text-muted">
+              Total Plays
+            </span>
+            <span className="text-lg font-black text-text">{historyData.totalPlays}</span>
+          </div>
+          <div className="rounded-xl border border-border/40 bg-surface-elevated/40 p-3 text-center">
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-text-muted">
+              Unique Tracks
+            </span>
+            <span className="text-lg font-black text-text">{historyData.totalTracks}</span>
+          </div>
+          <div className="rounded-xl border border-border/40 bg-surface-elevated/40 p-3 text-center">
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-text-muted">
+              Top Artist
+            </span>
+            <span className="truncate block text-lg font-black text-text" title={topArtistName}>
+              {topArtistName}
+            </span>
+          </div>
+        </div>
+
+        {/* Filter Controls & Search */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 p-4">
+          {/* Tab buttons */}
+          <div className="flex items-center gap-1.5 rounded-full border border-border bg-surface-elevated/50 p-1">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('recent')
+                setPage(1)
+              }}
+              className={`rounded-full px-3.5 py-1 text-xs font-bold transition-all ${
+                activeTab === 'recent'
+                  ? 'bg-surface-elevated text-text shadow-sm border border-border'
+                  : 'text-text-muted hover:text-text'
+              }`}
+            >
+              Recently Played ({filteredRecent.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('mostPlayed')
+                setPage(1)
+              }}
+              className={`rounded-full px-3.5 py-1 text-xs font-bold transition-all ${
+                activeTab === 'mostPlayed'
+                  ? 'bg-surface-elevated text-text shadow-sm border border-border'
+                  : 'text-text-muted hover:text-text'
+              }`}
+            >
+              Most Played ({filteredMostPlayed.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('artists')
+                setPage(1)
+              }}
+              className={`rounded-full px-3.5 py-1 text-xs font-bold transition-all ${
+                activeTab === 'artists'
+                  ? 'bg-surface-elevated text-text shadow-sm border border-border'
+                  : 'text-text-muted hover:text-text'
+              }`}
+            >
+              Top Artists ({filteredArtists.length})
+            </button>
+          </div>
+
+          {/* Search bar */}
+          <input
+            type="text"
+            placeholder="Filter history..."
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value)
+              setPage(1)
+            }}
+            className="w-full sm:w-64 rounded-full border border-border bg-canvas px-4 py-1.5 text-xs text-text placeholder-text-muted outline-none focus:border-white/30"
+          />
+        </div>
+
+        {/* Content Area */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {activeTab === 'artists' ? (
+            filteredArtists.length > 0 ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {filteredArtists.slice(0, page * PAGE_SIZE).map((item, idx) => (
+                  <div
+                    key={item.artist}
+                    className="flex items-center gap-3 rounded-xl border border-border/40 bg-surface-elevated/40 p-3"
+                  >
+                    <span className="w-6 text-center text-xs font-black text-text-muted">
+                      {idx + 1}
+                    </span>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-text">
+                      <UserCheck className="h-4 w-4" />
+                    </div>
+                    <span className="min-w-0 flex-1 truncate text-sm font-bold text-text">
+                      {item.artist}
+                    </span>
+                    <span className="rounded-full border border-border bg-surface px-2.5 py-0.5 text-xs font-bold text-text-muted">
+                      {item.playCount} {item.playCount === 1 ? 'play' : 'plays'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex h-48 flex-col items-center justify-center text-center text-text-muted">
+                <Users className="h-8 w-8 mb-2 opacity-50" />
+                <p className="text-xs">No artists found in history</p>
+              </div>
+            )
+          ) : (
+            <>
+              {(() => {
+                const list = activeTab === 'mostPlayed' ? filteredMostPlayed : filteredRecent
+                const visible = list.slice(0, page * PAGE_SIZE)
+
+                if (visible.length === 0) {
+                  return (
+                    <div className="flex h-48 flex-col items-center justify-center text-center text-text-muted">
+                      <ListMusic className="h-8 w-8 mb-2 opacity-50" />
+                      <p className="text-xs">No songs found in history</p>
+                    </div>
+                  )
+                }
+
+                return (
+                  <div className="space-y-1.5">
+                    {visible.map((song, idx) => {
+                      const artwork = artworks[song.id]
+                      return (
+                        <div
+                          key={`${song.id}-${idx}`}
+                          onClick={() => setQueue([song as Song], 0)}
+                          className="group flex items-center gap-3 rounded-xl border border-border/30 bg-surface-elevated/30 p-2.5 text-left transition-all hover:bg-hover hover:border-border cursor-pointer"
+                        >
+                          <span className="w-6 text-center text-xs font-black text-text-muted">
+                            {idx + 1}
+                          </span>
+                          <SongArtwork song={song} fetchedArtwork={artwork} size="large" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-bold text-text group-hover:underline">
+                              {song.title}
+                            </p>
+                            <p className="truncate text-xs text-text-muted">
+                              {song.artist}
+                              {song.album ? ` · ${song.album}` : ''}
+                            </p>
+                          </div>
+                          {song.lastPlayedAt && activeTab === 'recent' && (
+                            <span className="text-[11px] text-text-muted hidden sm:inline">
+                              {new Date(song.lastPlayedAt).toLocaleDateString()}
+                            </span>
+                          )}
+                          <span className="rounded-full border border-border bg-surface px-2.5 py-0.5 text-xs font-bold text-text-muted">
+                            {song.playCount || 1} {(song.playCount || 1) === 1 ? 'play' : 'plays'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setQueue([song as Song], 0)
+                            }}
+                            title="Play track"
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface-elevated text-text opacity-0 group-hover:opacity-100 transition-opacity hover:bg-hover"
+                          >
+                            <Play className="h-3.5 w-3.5 fill-current" />
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
+
+              {/* Load More Button */}
+              {(activeTab === 'mostPlayed' ? filteredMostPlayed.length : filteredRecent.length) >
+                page * PAGE_SIZE && (
+                <div className="pt-3 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => p + 1)}
+                    className="rounded-full border border-border bg-surface-elevated px-5 py-2 text-xs font-bold text-text hover:bg-hover transition-colors"
+                  >
+                    Load more songs
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -292,6 +670,8 @@ function ProfileWorkspace(): ReactElement {
   const [joining, setJoining] = useState(false)
   const [error, setError] = useState('')
   const [isEditing, setIsEditing] = useState(false)
+  const [showHistoryModal, setShowHistoryModal] = useState(false)
+  const [historyModalInitialTab, setHistoryModalInitialTab] = useState<'recent' | 'mostPlayed' | 'artists'>('recent')
   const isOwnProfile = Boolean(viewedProfile && user && viewedProfile.id === user.id)
 
   const loadFriendRoom = async (profileId: string): Promise<ListeningRoom | null> => {
@@ -517,9 +897,8 @@ function ProfileWorkspace(): ReactElement {
     setJoining(true)
     setError('')
     try {
-      const activeRoom = await loadFriendRoom(viewedProfile.id)
-      if (!activeRoom) throw new Error(`${viewedProfile.display_name} is not playing right now.`)
-      navigate(`/listen-together?room=${encodeURIComponent(activeRoom.id)}`)
+      await useListeningStore.getState().listenAlongWithFriend(viewedProfile.id)
+      navigate('/listen-together')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not join this listening session.')
     } finally {
@@ -616,24 +995,35 @@ function ProfileWorkspace(): ReactElement {
                 </button>
               )}
               {relationship?.status === 'accepted' && (
-                <button
-                  type="button"
-                  disabled={joining || !friendRoom}
-                  onClick={() => void listenTogether()}
-                  title={
-                    friendRoom
-                      ? `Join ${viewedProfile.display_name}'s session`
-                      : `${viewedProfile.display_name} is not listening now`
-                  }
-                  className="flex h-10 items-center gap-2 rounded-full bg-success px-5 text-sm font-black text-black disabled:cursor-not-allowed disabled:bg-surface-elevated disabled:text-text-muted"
-                >
-                  {joining ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Radio className="h-4 w-4" />
-                  )}
-                  {friendRoom ? 'Listen together' : 'Not listening now'}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/chat?friend=${encodeURIComponent(viewedProfile.id)}`)}
+                    className="flex h-10 items-center gap-2 rounded-full border border-border bg-surface-elevated px-5 text-sm font-black text-text hover:bg-hover hover:border-success/50 transition-colors"
+                  >
+                    <MessageCircle className="h-4 w-4 text-success" />
+                    Message
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={joining || !friendRoom}
+                    onClick={() => void listenTogether()}
+                    title={
+                      friendRoom
+                        ? `Join ${viewedProfile.display_name}'s session`
+                        : `${viewedProfile.display_name} is not listening now`
+                    }
+                    className="flex h-10 items-center gap-2 rounded-full bg-success px-5 text-sm font-black text-black disabled:cursor-not-allowed disabled:bg-surface-elevated disabled:text-text-muted"
+                  >
+                    {joining ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Radio className="h-4 w-4" />
+                    )}
+                    {friendRoom ? 'Listen together' : 'Not listening now'}
+                  </button>
+                </>
               )}
             </>
           )}
@@ -662,7 +1052,19 @@ function ProfileWorkspace(): ReactElement {
                   <h2 className="text-2xl font-black text-text">Most played</h2>
                   <p className="mt-1 text-sm text-text-muted">Your personal listening favourites</p>
                 </div>
-                <Play className="h-5 w-5 text-success" />
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHistoryModalInitialTab('mostPlayed')
+                      setShowHistoryModal(true)
+                    }}
+                    className="rounded-full border border-border bg-surface-elevated px-4 py-1.5 text-xs font-bold text-text hover:bg-hover transition-colors"
+                  >
+                    View all history
+                  </button>
+                  <Play className="h-5 w-5 text-text" />
+                </div>
               </div>
               {mostPlayed.length > 0 ? (
                 <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -695,7 +1097,19 @@ function ProfileWorkspace(): ReactElement {
                     <h2 className="text-2xl font-black text-text">Recently played</h2>
                     <p className="mt-1 text-sm text-text-muted">The latest songs in your rotation</p>
                   </div>
-                  <Clock3 className="h-5 w-5 text-text-muted" />
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHistoryModalInitialTab('recent')
+                        setShowHistoryModal(true)
+                      }}
+                      className="rounded-full border border-border bg-surface-elevated px-4 py-1.5 text-xs font-bold text-text hover:bg-hover transition-colors"
+                    >
+                      Full history
+                    </button>
+                    <Clock3 className="h-5 w-5 text-text-muted" />
+                  </div>
                 </div>
                 <div className="mt-4 space-y-1">
                   {recentSongs.length > 0 ? recentSongs.map((song) => (
@@ -716,13 +1130,22 @@ function ProfileWorkspace(): ReactElement {
                     <h2 className="text-2xl font-black text-text">Top artists</h2>
                     <p className="mt-1 text-sm text-text-muted">Artists you play most</p>
                   </div>
-                  <Users className="h-5 w-5 text-text-muted" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHistoryModalInitialTab('artists')
+                      setShowHistoryModal(true)
+                    }}
+                    className="rounded-full border border-border bg-surface-elevated px-3 py-1 text-xs font-bold text-text hover:bg-hover transition-colors"
+                  >
+                    View all
+                  </button>
                 </div>
                 <div className="mt-4 space-y-2">
                   {mostPlayedArtists.length > 0 ? mostPlayedArtists.map((item, index) => (
                     <div key={item.artist} className="flex items-center gap-3 rounded-md bg-surface px-3 py-3">
                       <span className="w-5 text-center text-sm font-black text-text-muted">{index + 1}</span>
-                      <UserCheck className="h-5 w-5 text-success" />
+                      <UserCheck className="h-5 w-5 text-text" />
                       <span className="min-w-0 flex-1 truncate text-sm font-bold text-text">{item.artist}</span>
                       <span className="text-xs font-bold text-text-muted">{item.playCount} plays</span>
                     </div>
@@ -748,7 +1171,7 @@ function ProfileWorkspace(): ReactElement {
                   className="group min-w-0 rounded-md bg-surface p-3 transition-colors hover:bg-hover"
                 >
                   <div className="flex aspect-square items-center justify-center rounded-md bg-surface-elevated">
-                    <ListMusic className="h-12 w-12 text-text-muted transition-colors group-hover:text-success" />
+                    <ListMusic className="h-12 w-12 text-text-muted transition-colors group-hover:text-text" />
                   </div>
                   <p className="mt-3 truncate text-sm font-black text-text">{playlist.name}</p>
                   <p className="mt-1 truncate text-xs text-text-muted">
@@ -772,6 +1195,12 @@ function ProfileWorkspace(): ReactElement {
           key={viewedProfile.updated_at}
           initialProfile={viewedProfile}
           onClose={() => setIsEditing(false)}
+        />
+      )}
+      {showHistoryModal && isOwnProfile && (
+        <FullListeningHistoryModal
+          initialTab={historyModalInitialTab}
+          onClose={() => setShowHistoryModal(false)}
         />
       )}
     </div>

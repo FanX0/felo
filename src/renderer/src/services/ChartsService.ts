@@ -11,31 +11,226 @@ export interface ChartTrack {
   externalUrl?: string
 }
 
+export type AppleChartSection = 'all' | 'charts' | 'pop' | 'hiphop' | 'rock' | 'alternative' | 'electronic' | 'rnb' | 'genres'
+
 export interface ChartCategory {
   id: string
   name: string
+  section: AppleChartSection
   source: 'apple' | 'deezer' | 'genre'
   countryCode?: string
   genreId?: number
   icon?: string
+  description?: string
+  badge?: string
+  coverUrl?: string
 }
 
 export const CHART_CATEGORIES: ChartCategory[] = [
-  // Top Country Charts
-  { id: 'apple-global', name: 'Global Top 50', source: 'apple', countryCode: 'us', icon: '🌎' },
-  { id: 'apple-id', name: 'Indonesia Top 50', source: 'apple', countryCode: 'id', icon: '🇮🇩' },
-  { id: 'apple-us', name: 'USA Top 50', source: 'apple', countryCode: 'us', icon: '🇺🇸' },
-  { id: 'apple-gb', name: 'UK Top 50', source: 'apple', countryCode: 'gb', icon: '🇬🇧' },
-  { id: 'apple-jp', name: 'Japan Top 50', source: 'apple', countryCode: 'jp', icon: '🇯🇵' },
-  { id: 'apple-kr', name: 'South Korea Top 50', source: 'apple', countryCode: 'kr', icon: '🇰🇷' },
+  // Top Charts
+  {
+    id: 'apple-global',
+    name: 'Top 100: Global',
+    section: 'charts',
+    source: 'apple',
+    countryCode: 'us',
+    icon: '🌎',
+    description: 'The most played songs around the world today.',
+    badge: 'Global #1',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/bf/20/46/bf204646-608b-dc54-722a-f8ae74830ba1/24UMGIM56685.rgb.jpg/600x600bb.jpg'
+  },
+  {
+    id: 'apple-us',
+    name: 'Top 100: USA',
+    section: 'charts',
+    source: 'apple',
+    countryCode: 'us',
+    icon: '🇺🇸',
+    description: 'The most popular songs across the United States.',
+    badge: 'USA Top',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/80/7e/cb/807ecb1e-efb0-2b1b-fb75-816a759ba09d/24UM1IM48911.rgb.jpg/600x600bb.jpg'
+  },
+  {
+    id: 'apple-gb',
+    name: 'Top 100: UK',
+    section: 'charts',
+    source: 'apple',
+    countryCode: 'gb',
+    icon: '🇬🇧',
+    description: 'The biggest songs right now in the United Kingdom.',
+    badge: 'UK Official',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/91/9f/c8/919fc8be-d3f3-085e-eb31-e37452d9b23b/5054197992984.jpg/600x600bb.jpg'
+  },
+  {
+    id: 'apple-id',
+    name: 'Top 100: Indonesia',
+    section: 'charts',
+    source: 'apple',
+    countryCode: 'id',
+    icon: '🇮🇩',
+    description: 'Daily updated top tracks across Indonesia.',
+    badge: 'Indonesia',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/0d/16/e0/0d16e0b7-4b72-f1df-29bb-432d6fb601ab/artwork.jpg/600x600bb.jpg'
+  },
+  {
+    id: 'apple-jp',
+    name: 'Top 100: Japan',
+    section: 'charts',
+    source: 'apple',
+    countryCode: 'jp',
+    icon: '🇯🇵',
+    description: 'Top anime, J-Pop and viral tracks in Japan.',
+    badge: 'Japan',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/df/e3/37/dfe337e7-37fb-a1e4-8025-a13cb244e83f/artwork.jpg/600x600bb.jpg'
+  },
+  {
+    id: 'apple-kr',
+    name: 'Top 100: South Korea',
+    section: 'charts',
+    source: 'apple',
+    countryCode: 'kr',
+    icon: '🇰🇷',
+    description: 'The most streamed K-Pop and local hits in South Korea.',
+    badge: 'K-Charts',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/d5/43/e7/d543e742-b062-8418-5a21-987819ea2bcf/artwork.jpg/600x600bb.jpg'
+  },
 
-  // Genre Charts
-  { id: 'deezer-pop', name: 'Pop Hits', source: 'genre', genreId: 14, icon: '🎤' },
-  { id: 'deezer-rap', name: 'Hip-Hop / Rap', source: 'genre', genreId: 18, icon: '🎧' },
-  { id: 'deezer-dance', name: 'Dance & EDM', source: 'genre', genreId: 17, icon: '⚡' },
-  { id: 'deezer-rock', name: 'Rock Classics', source: 'genre', genreId: 21, icon: '🎸' },
-  { id: 'deezer-rnb', name: 'R&B / Soul', source: 'genre', genreId: 15, icon: '💜' },
-  { id: 'deezer-latin', name: 'Latin Music', source: 'genre', genreId: 12, icon: '🌴' }
+  // Pop
+  {
+    id: 'apple-pop',
+    name: "Today's Pop Hits",
+    section: 'pop',
+    source: 'genre',
+    genreId: 14,
+    icon: '🎤',
+    description: 'The biggest pop anthems and chart toppers right now.',
+    badge: 'Pop Heavy',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/bf/20/46/bf204646-608b-dc54-722a-f8ae74830ba1/24UMGIM56685.rgb.jpg/600x600bb.jpg'
+  },
+  {
+    id: 'apple-pop-gold',
+    name: 'Pop Essentials',
+    section: 'pop',
+    source: 'genre',
+    genreId: 14,
+    countryCode: 'gb',
+    icon: '✨',
+    description: 'Essential modern pop hits from global superstars.',
+    badge: 'Essential',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/58/b7/66/58b76615-df72-ad9d-9f44-1294208a0d91/23UM1IM05322.rgb.jpg/600x600bb.jpg'
+  },
+
+  // Hip-Hop
+  {
+    id: 'apple-rap',
+    name: 'Hip-Hop / Rap Top 100',
+    section: 'hiphop',
+    source: 'genre',
+    genreId: 18,
+    icon: '🎧',
+    description: 'The definitive sound of modern hip-hop and rap culture.',
+    badge: 'Rap Life',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/80/7e/cb/807ecb1e-efb0-2b1b-fb75-816a759ba09d/24UM1IM48911.rgb.jpg/600x600bb.jpg'
+  },
+  {
+    id: 'apple-trap',
+    name: 'Heavy Trap & Beats',
+    section: 'hiphop',
+    source: 'genre',
+    genreId: 18,
+    countryCode: 'us',
+    icon: '🔥',
+    description: 'Hard-hitting 808s, street anthems and trap bangers.',
+    badge: 'Bangers',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/d5/43/d8/d543d839-a931-419b-c2e5-397cfb5ebcb0/196872583856.jpg/600x600bb.jpg'
+  },
+
+  // Rock
+  {
+    id: 'apple-rock',
+    name: 'Rock Classics & Modern',
+    section: 'rock',
+    source: 'genre',
+    genreId: 21,
+    icon: '🎸',
+    description: 'Riffs, powerhouse vocals, and landmark rock tracks.',
+    badge: 'Rock Anthem',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/08/94/a3/0894a38e-bc5d-6c1f-4d9a-c9a96e95c1c8/886445593892.jpg/600x600bb.jpg'
+  },
+
+  // Alternative
+  {
+    id: 'apple-alt',
+    name: 'Alt-Ctrl & Indie Waves',
+    section: 'alternative',
+    source: 'genre',
+    genreId: 20,
+    icon: '🌀',
+    description: 'Fresh alternative cuts, dream pop, and indie gold.',
+    badge: 'Alt Hits',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/5c/41/51/5c415174-8d48-6a3f-1d89-b5055047bca8/198391583091.jpg/600x600bb.jpg'
+  },
+
+  // Electronic / Dance
+  {
+    id: 'apple-dance',
+    name: 'Dance & Electronic Top',
+    section: 'electronic',
+    source: 'genre',
+    genreId: 17,
+    icon: '⚡',
+    description: 'Peak-time festival anthems, house, and club bangers.',
+    badge: 'Club Room',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/21/53/78/2153782b-8a8b-f4d0-c3d5-e9b46e38b34f/0724384960650.jpg/600x600bb.jpg'
+  },
+
+  // R&B / Soul
+  {
+    id: 'apple-rnb',
+    name: 'R&B / Soul Now',
+    section: 'rnb',
+    source: 'genre',
+    genreId: 15,
+    icon: '💜',
+    description: 'Smooth vocals, midnight grooves, and contemporary soul.',
+    badge: 'Smooth',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/ad/e5/2a/ade52a22-2615-5e6a-3a21-9e7ca8565ec1/859717909386_cover.jpg/600x600bb.jpg'
+  },
+
+  // Other Genres
+  {
+    id: 'apple-kpop',
+    name: 'K-Pop Today',
+    section: 'genres',
+    source: 'genre',
+    genreId: 51,
+    icon: '🌟',
+    description: 'The top chart-topping hits from Korean superstars.',
+    badge: 'K-Pop',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/58/63/12/58631248-cb58-2940-d9d8-9477eb372767/artwork.jpg/600x600bb.jpg'
+  },
+  {
+    id: 'apple-latin',
+    name: 'Latin Fire Top Hits',
+    section: 'genres',
+    source: 'genre',
+    genreId: 12,
+    icon: '🌴',
+    description: 'Reggaeton, urbano, and the biggest Latin chart hits.',
+    badge: 'Fuego',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/71/61/bd/7161bdff-6945-816b-07b9-114eb3a681c2/24UM1IM48911.rgb.jpg/600x600bb.jpg'
+  },
+  {
+    id: 'apple-country',
+    name: 'Country Hits USA',
+    section: 'genres',
+    source: 'genre',
+    genreId: 6,
+    icon: '🤠',
+    description: 'Today’s chart-topping country music stories and melodies.',
+    badge: 'Country',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/e5/22/01/e52201b1-b924-f7b5-22d7-957cefd14cfc/045778805763.jpg/600x600bb.jpg'
+  }
 ]
 
 /** Source suffixes that may appear in track titles downloaded via streaming services. */

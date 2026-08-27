@@ -1452,6 +1452,7 @@ const webApi: Window['api'] = {
   searchAppleMusicArtistSongs: searchBrowserAppleMusicArtistSongs,
   searchMusicBrainz: searchBrowserMusicBrainz,
   searchLastFm: searchBrowserLastFm,
+  fetchLastFmCharts: async () => [],
   getPlaylists: async () => {
     await initializeBrowserLibrary()
     return readBrowserPlaylists()
@@ -1540,6 +1541,13 @@ const webApi: Window['api'] = {
     window.open(url, '_blank', 'noopener,noreferrer')
   },
   onAuthCallback: () => () => undefined,
+  fetchAotyAlbums: async () => [],
+  fetchExploreFeed: async () => ({
+    trendingSongs: [],
+    hotNewSongs: [],
+    recommendedAlbums: [],
+    hotNewAlbums: []
+  }),
   revealInExplorer: async () => desktopOnly(),
   minimizeWindow: () => undefined,
   maximizeWindow: () => undefined,

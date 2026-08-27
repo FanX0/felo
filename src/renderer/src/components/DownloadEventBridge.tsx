@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useDownloadStore } from '../hooks/useDownloadStore'
 import { usePlayerStore } from '../hooks/usePlayerStore'
+import { useListeningStore } from '../hooks/useListeningStore'
 
 interface DownloadProgressEvent {
   transferId: string
@@ -39,15 +40,24 @@ export default function DownloadEventBridge(): null {
         }
         if (completedSong?.id) {
           usePlayerStore.getState().updateSong(completedSong)
-          if (transfer?.autoPlay) {
-            // autoPlay marks an explicit user selection. Switch immediately;
-            // background playlist downloads use autoPlay: false and are queued.
+          
+          // If the user is currently in a Listen Together room waiting for this song:
+          const listeningState = useListeningStore.getState()
+          const joined = listeningState.joinedRoom
+          if (joined && joined.song) {
+            if (listeningState.syncStatus === 'missing_song') {
+              void listeningState.handleHostSongChange(joined)
+            } else {
+              void listeningState.preloadNextQueueTracks(joined)
+            }
+          } else if (transfer?.autoPlay) {
             usePlayerStore.getState().setQueue([completedSong], 0)
           }
         }
         // Refresh every library view after an import or replacement. Newly
         // downloaded tracks may not have an id in the progress payload yet.
         window.dispatchEvent(new CustomEvent('felo:library-updated'))
+        window.dispatchEvent(new CustomEvent('fanxmusic:library-updated'))
       }
     })
   }, [])

@@ -139,6 +139,80 @@ function formatTtmlTime(seconds: number) {
   return `${String(minutes).padStart(2, '0')}:${remainingSeconds.toFixed(3).padStart(6, '0')}`
 }
 
+function generateWordSpansForLine(
+  lineText: string,
+  startTime: number,
+  endTime: number
+): string {
+  const cleanLine = lineText.trim()
+  if (!cleanLine) return ''
+
+  // Check if line contains enhanced LRC word timestamps: e.g. <00:12.34> word <00:13.10>
+  const hasInlineWordTimestamps = /<\d+:\d{2}/.test(cleanLine)
+
+  if (hasInlineWordTimestamps) {
+    const spans: string[] = []
+    const tokens = cleanLine.split(/(<\d+:\d{2}(?:\.\d{1,3})?>)/).filter(Boolean)
+    let currentWordStart = startTime
+
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i]
+      const timeMatch = token.match(/<(\d+):(\d{2})(?:\.(\d{1,3}))?>/)
+      if (timeMatch) {
+        const mins = Number(timeMatch[1])
+        const secs = Number(timeMatch[2])
+        const ms = Number((timeMatch[3] || '0').padEnd(3, '0'))
+        currentWordStart = mins * 60 + secs + ms / 1000
+      } else {
+        const text = token
+        if (!text.trim()) continue
+
+        let nextWordStart = endTime
+        for (let j = i + 1; j < tokens.length; j++) {
+          const nextMatch = tokens[j].match(/<(\d+):(\d{2})(?:\.(\d{1,3}))?>/)
+          if (nextMatch) {
+            const mins = Number(nextMatch[1])
+            const secs = Number(nextMatch[2])
+            const ms = Number((nextMatch[3] || '0').padEnd(3, '0'))
+            nextWordStart = mins * 60 + secs + ms / 1000
+            break
+          }
+        }
+
+        const safeEnd = Math.max(currentWordStart + 0.15, Math.min(nextWordStart, endTime))
+        spans.push(
+          `<span begin="${formatTtmlTime(currentWordStart)}" end="${formatTtmlTime(safeEnd)}">${escapeXml(text)}</span>`
+        )
+      }
+    }
+
+    if (spans.length > 0) return spans.join('')
+  }
+
+  // Standard line-synced lyrics: interpolate word timestamps smoothly across line duration
+  const words = cleanLine.split(/\s+/).filter(Boolean)
+  if (words.length === 0) return escapeXml(cleanLine)
+
+  const lineDuration = Math.max(0.4, endTime - startTime)
+  // Use 94% of line duration for word delivery, leaving 6% natural breath gap before next line
+  const activeDuration = lineDuration * 0.94
+  const totalChars = words.reduce((sum, word) => sum + Math.max(word.length, 1), 0)
+
+  let cursorTime = startTime
+  const spans = words.map((word, index) => {
+    const isLast = index === words.length - 1
+    const weight = Math.max(word.length, 1) / totalChars
+    const wordDuration = activeDuration * weight
+    const wordEnd = isLast ? startTime + activeDuration : cursorTime + wordDuration
+    const spanText = escapeXml(word + (isLast ? '' : ' '))
+    const spanTag = `<span begin="${formatTtmlTime(cursorTime)}" end="${formatTtmlTime(wordEnd)}">${spanText}</span>`
+    cursorTime = wordEnd
+    return spanTag
+  })
+
+  return spans.join('')
+}
+
 function lyricsToTtml(
   lines: ParsedLyric[],
   plainLyrics: string,
@@ -200,7 +274,8 @@ ${romanizations
       const nextTime = parsedLines[index + 1]?.time
       const finalEnd = duration && duration > line.time ? duration : line.time + 5
       const endTime = nextTime && nextTime > line.time ? nextTime : finalEnd
-      return `        <p itunes:key="line-${index}" begin="${formatTtmlTime(line.time)}" end="${formatTtmlTime(endTime)}">${escapeXml(line.text)}</p>`
+      const wordSpans = generateWordSpansForLine(line.text, line.time, endTime)
+      return `        <p itunes:key="line-${index}" begin="${formatTtmlTime(line.time)}" end="${formatTtmlTime(endTime)}">${wordSpans}</p>`
     })
     .join('\n')
 
@@ -286,9 +361,9 @@ function ClassicLyricsDisplay({
   return (
     <div
       ref={containerRef}
-      className="relative z-10 h-full overflow-y-auto px-10 [scrollbar-width:none]"
+      className="h-full w-full overflow-y-auto [scrollbar-width:none]"
     >
-      <div className="mx-auto flex min-h-full w-full max-w-[920px] flex-col gap-7 py-[36vh] text-left">
+      <div className="flex min-h-full w-full flex-col gap-8 py-[36vh] text-left">
         {lyrics.length > 0
           ? lyrics.map((line, index) => {
               const isActive = index === currentIndex
@@ -306,23 +381,23 @@ function ClassicLyricsDisplay({
                   ref={isActive ? activeRef : undefined}
                   type="button"
                   onClick={() => onSeek(line.time)}
-                  className={`block w-full origin-left text-left font-black leading-[1.25] tracking-normal transition-all duration-700 ${
+                  className={`block w-full text-left font-bold leading-[1.3] tracking-tight transition-all duration-500 cursor-pointer ${
                     isActive
-                      ? 'scale-[1.03] text-white blur-0 drop-shadow-[0_5px_28px_rgba(255,255,255,0.28)]'
+                      ? 'text-white blur-0 drop-shadow-[0_2px_16px_rgba(255,255,255,0.22)] opacity-100'
                       : isPast
-                        ? 'scale-[0.97] text-white/28 blur-[1.2px] hover:text-white/80 hover:blur-0'
-                        : 'scale-[0.98] text-white/38 blur-[0.8px] hover:text-white/80 hover:blur-0'
+                        ? 'text-white/30 blur-[1px] hover:text-white/80 hover:blur-0 opacity-80'
+                        : 'text-white/35 blur-[0.8px] hover:text-white/80 hover:blur-0 opacity-80'
                   }`}
-                  style={{ fontSize: 'clamp(2.25rem, 4vw, 3.5rem)' }}
+                  style={{ fontSize: 'clamp(2rem, 3.2vw, 42px)' }}
                 >
                   <span>{line.text}</span>
                   {showRomanization && (
-                    <span className="mt-2 block text-[0.55em] font-semibold text-white/70">
+                    <span className="mt-2 block text-[0.6em] font-normal text-white/70">
                       {romanization}
                     </span>
                   )}
                   {showTranslation && (
-                    <span className="mt-2 block text-[0.55em] font-semibold text-white/55">
+                    <span className="mt-2 block text-[0.6em] font-normal text-white/55">
                       {translation}
                     </span>
                   )}
@@ -332,17 +407,17 @@ function ClassicLyricsDisplay({
           : plainLines.map((line, index) => (
               <div
                 key={`${line}-${index}`}
-                className="text-left font-black leading-[1.35] tracking-normal text-white/70 transition-colors hover:text-white"
-                style={{ fontSize: 'clamp(2rem, 3.7vw, 3.1rem)' }}
+                className="text-left font-bold leading-[1.3] tracking-tight text-white/70 transition-colors hover:text-white"
+                style={{ fontSize: 'clamp(2rem, 3.2vw, 42px)' }}
               >
                 <div>{line}</div>
                 {romanizations[index] && romanizations[index] !== line && (
-                  <div className="mt-2 text-[0.55em] font-semibold text-white/65">
+                  <div className="mt-2 text-[0.6em] font-normal text-white/65">
                     {romanizations[index]}
                   </div>
                 )}
                 {translations[index] && translations[index] !== line && (
-                  <div className="mt-2 text-[0.55em] font-semibold text-white/50">
+                  <div className="mt-2 text-[0.6em] font-normal text-white/50">
                     {translations[index]}
                   </div>
                 )}
@@ -507,25 +582,80 @@ export default function LyricsPage() {
   ])
 
   useEffect(() => {
-    if (amLyricsRef.current) amLyricsRef.current.currentTime = currentTime * 1000
+    if (amLyricsRef.current) {
+      amLyricsRef.current.currentTime = currentTime * 1000
+    }
   }, [currentTime])
 
-  useEffect(() => {
-    const element = amLyricsRef.current
-    if (!element) return
+  const handleAmLineClick = useCallback(
+    (event: Event) => {
+      const customEvent = event as CustomEvent
+      const rawTimestamp =
+        customEvent?.detail?.timestamp ??
+        customEvent?.detail?.time ??
+        customEvent?.detail?.startTime ??
+        customEvent?.detail?.line?.timestamp
 
-    const onLineClick = (event: any) => {
-      const timestampMs = event?.detail?.timestamp
-      if (typeof timestampMs === 'number' && !isNaN(timestampMs)) {
-        handleSeek(timestampMs / 1000)
+      if (typeof rawTimestamp === 'number' && !isNaN(rawTimestamp)) {
+        const seconds = rawTimestamp > 500 ? rawTimestamp / 1000 : rawTimestamp
+        handleSeek(seconds)
       }
-    }
+    },
+    [handleSeek]
+  )
 
-    element.addEventListener('line-click', onLineClick)
-    return () => {
-      element.removeEventListener('line-click', onLineClick)
+  const injectAmLyricsStyles = (node: AmLyricsElement | null) => {
+    try {
+      const shadow = node?.shadowRoot
+      if (!shadow) return
+      const styleId = 'felo-am-lyrics-overrides'
+      let style = shadow.getElementById(styleId) as HTMLStyleElement | null
+      if (!style) {
+        style = document.createElement('style')
+        style.id = styleId
+        shadow.appendChild(style)
+      }
+      style.textContent = `
+        .lyrics-header {
+          display: none !important;
+        }
+      `
+    } catch (err) {
+      console.warn('Failed to inject custom styles into am-lyrics shadowRoot:', err)
     }
-  }, [handleSeek, currentSong?.id])
+  }
+
+  const setAmLyricsNode = useCallback(
+    (node: AmLyricsElement | null) => {
+      if (amLyricsRef.current) {
+        amLyricsRef.current.removeEventListener('line-click', handleAmLineClick)
+      }
+      amLyricsRef.current = node
+      if (node) {
+        node.addEventListener('line-click', handleAmLineClick)
+        injectAmLyricsStyles(node)
+        requestAnimationFrame(() => injectAmLyricsStyles(node))
+      }
+    },
+    [handleAmLineClick]
+  )
+
+  useEffect(() => {
+    if (amLyricsRef.current) {
+      injectAmLyricsStyles(amLyricsRef.current)
+    }
+  }, [lyricsEngine, currentSong?.id, amLyricsTtml])
+
+  useEffect(() => {
+    // Also attach to document as composed/bubbled fallback
+    const onLineClick = (event: Event) => {
+      handleAmLineClick(event)
+    }
+    document.addEventListener('line-click', onLineClick)
+    return () => {
+      document.removeEventListener('line-click', onLineClick)
+    }
+  }, [handleAmLineClick])
 
   const handleTranslate = useCallback(
     async (language: string) => {
@@ -684,15 +814,15 @@ export default function LyricsPage() {
           <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/15 border-t-white" />
         </div>
       ) : (
-        <>
+        <div className="relative z-10 mx-auto h-full max-w-[960px] px-10">
           <div
-            className={`relative z-10 mx-auto h-full max-w-[960px] items-center px-10 ${
+            className={`h-full w-full items-center ${
               lyricsEngine === 'am' ? 'flex' : 'hidden'
             }`}
           >
             <AmLyricsTag
               key={`${currentSong.id}-${amLyricsTtml ? 'local' : 'remote'}`}
-              ref={amLyricsRef}
+              ref={setAmLyricsNode}
               className="h-full w-full text-white"
               style={
                 {
@@ -702,7 +832,7 @@ export default function LyricsPage() {
               }
             />
           </div>
-          <div className={lyricsEngine === 'classic' ? 'h-full' : 'hidden'}>
+          <div className={lyricsEngine === 'classic' ? 'h-full w-full' : 'hidden'}>
             <ClassicLyricsDisplay
               lyrics={lyricsData?.syncedLyrics || []}
               plainLyrics={lyricsData?.plainLyrics || ''}
@@ -712,7 +842,7 @@ export default function LyricsPage() {
               romanizations={isRomanized ? romanizations : []}
             />
           </div>
-        </>
+        </div>
       )}
     </div>
   )

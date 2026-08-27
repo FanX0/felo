@@ -34,6 +34,7 @@ import {
   Database,
   HardDrive,
   Radio,
+  ChevronLeft,
   ChevronRight,
   Users,
   Minus,
@@ -114,7 +115,14 @@ function App() {
       {/* Top Application Bar (Draggable) */}
       <header className="absolute top-0 left-0 right-0 h-16 draggable-header flex items-center justify-between px-4 z-50 pointer-events-none">
         <div className="w-[min(20vw,450px)] flex items-center gap-2 pointer-events-auto">
-
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            title="Go back"
+            className="w-8 h-8 rounded-full no-drag flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition-colors"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
           <button
             type="button"
             onClick={() => navigate(1)}
@@ -382,7 +390,15 @@ function App() {
           }`}
         >
           <div className="relative h-full w-full overflow-visible rounded-lg bg-canvas">
-            <Sidebar isOpen={isSidebarOpen} onToggle={toggleSidebar} />
+            <Sidebar
+              isOpen={isSidebarOpen}
+              onToggle={toggleSidebar}
+              onOpenDownloadPanel={(target) => {
+                setDownloadTarget(target)
+                setIsFriendActivityOpen(false)
+                setIsDownloadPanelOpen(true)
+              }}
+            />
           </div>
         </div>
 
@@ -514,10 +530,16 @@ function App() {
 
       <div className="px-2 pb-2">
         <Footer
-          onOpenDownloadPanel={() => {
-            setDownloadTarget(null)
-            setIsFriendActivityOpen(false)
-            setIsDownloadPanelOpen((isOpen) => !isOpen)
+          onOpenDownloadPanel={(target) => {
+            if (target) {
+              setDownloadTarget(target)
+              setIsFriendActivityOpen(false)
+              setIsDownloadPanelOpen(true)
+            } else {
+              setDownloadTarget(null)
+              setIsFriendActivityOpen(false)
+              setIsDownloadPanelOpen((isOpen) => !isOpen)
+            }
           }}
         />
       </div>

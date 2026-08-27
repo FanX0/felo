@@ -12,33 +12,37 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
   const profile = useOnlineStore((state) => state.profile)
   const currentSong = usePlayerStore((state) => state.queue[state.currentSongIndex])
   const currentSongId = currentSong?.id
+  const queueKey = usePlayerStore((state) =>
+    state.queue.slice(state.currentSongIndex, state.currentSongIndex + 10).map((s) => s.id).join(',')
+  )
   const isPlaying = usePlayerStore((state) => state.isPlaying)
 
   const joinedRoom = useListeningStore((state) => state.joinedRoom)
   const isJoiningRoom = useListeningStore((state) => state.isJoiningRoom)
   const hostRoom = useListeningStore((state) => state.hostRoom)
+  const hostRoomStopped = useListeningStore((state) => state.hostRoomStopped)
   const ensureHostRoom = useListeningStore((state) => state.ensureHostRoom)
   const deactivateHostRoom = useListeningStore((state) => state.deactivateHostRoom)
 
   const prevSongIdRef = useRef<string | undefined>(undefined)
+  const prevQueueKeyRef = useRef<string | undefined>(undefined)
   const prevIsPlayingRef = useRef<boolean | undefined>(undefined)
   const isUpdatingRef = useRef(false)
 
-  // 1. Immediate Broadcast on Playback State Change (Song Change or Play/Pause)
+  // 1. Immediate Broadcast on Playback State Change (Song Change, Queue/Playlist Change, or Play/Pause)
   useEffect(() => {
-    if (!user || !enabled || isJoiningRoom) return
-
-    // If currently listening to someone else, do not broadcast as host
-    if (joinedRoom && joinedRoom.host_id !== user.id) return
+    if (!user || !enabled || isJoiningRoom || hostRoomStopped || joinedRoom !== null) return
 
     const songChanged = prevSongIdRef.current !== currentSongId
+    const queueChanged = prevQueueKeyRef.current !== queueKey
     const playStateChanged = prevIsPlayingRef.current !== isPlaying
 
     prevSongIdRef.current = currentSongId
+    prevQueueKeyRef.current = queueKey
     prevIsPlayingRef.current = isPlaying
 
-    // If this is the initial load or a meaningful change in playback
-    if (songChanged || playStateChanged || !hostRoom) {
+    // If this is the initial load or a meaningful change in playback / queue
+    if (songChanged || queueChanged || playStateChanged || !hostRoom) {
       if (isUpdatingRef.current) return
       isUpdatingRef.current = true
 
@@ -46,7 +50,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
         isUpdatingRef.current = false
       })
     }
-  }, [user?.id, profile?.display_name, enabled, isJoiningRoom, currentSongId, isPlaying, joinedRoom?.id, hostRoom?.id, ensureHostRoom])
+  }, [user?.id, profile?.display_name, enabled, isJoiningRoom, hostRoomStopped, currentSongId, queueKey, isPlaying, joinedRoom, hostRoom?.id, ensureHostRoom])
 
   // 2. Periodic Heartbeat (Every 5s) to Keep Room Timestamp & Position Fresh
   useEffect(() => {
@@ -55,12 +59,10 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
       return
     }
 
-    if (isJoiningRoom) return
-
-    if (joinedRoom && joinedRoom.host_id !== user.id) return
+    if (isJoiningRoom || hostRoomStopped || joinedRoom !== null) return
 
     const interval = window.setInterval(() => {
-      if (joinedRoom && joinedRoom.host_id !== user.id) return
+      if (joinedRoom !== null || hostRoomStopped) return
       if (isUpdatingRef.current) return
 
       isUpdatingRef.current = true
@@ -70,7 +72,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
     }, 5000)
 
     return () => window.clearInterval(interval)
-  }, [user?.id, enabled, isJoiningRoom, joinedRoom?.id, ensureHostRoom, deactivateHostRoom])
+  }, [user?.id, enabled, isJoiningRoom, hostRoomStopped, joinedRoom, ensureHostRoom, deactivateHostRoom])
 
   // 3. Deactivate room on unmount or disable
   useEffect(() => {

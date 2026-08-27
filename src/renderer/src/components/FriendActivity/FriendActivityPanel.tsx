@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
+import { useListeningStore } from '../../hooks/useListeningStore'
 import { getSupabase } from '../../lib/supabase'
 import type { FriendRequest, ListeningRoom, OnlineProfile } from '../../online/types'
 
@@ -621,10 +622,11 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
                               type="button"
                               onClick={() => {
                                 onClose()
-                                navigate(`/listen-together?room=${activity.id}`)
+                                void useListeningStore.getState().listenAlongWithFriend(person.id)
+                                navigate('/listen-together')
                               }}
                               title={`Listen together with ${person.display_name}`}
-                              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-[#2a2a2a] px-3 text-xs font-black text-white transition-colors hover:bg-[#353535]"
+                              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-success px-3 text-xs font-black text-black transition-colors hover:bg-success/90"
                             >
                               <Radio className="h-3.5 w-3.5" />
                               Listen

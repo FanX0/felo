@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   AlertCircle,
@@ -7,12 +7,15 @@ import {
   ChevronUp,
   Download,
   DownloadCloud,
+  FolderOpen,
   Loader2,
+  MoreVertical,
   Play,
   Plus,
   Music2,
   ListMusic,
   RotateCcw,
+  Trash2,
   X
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
@@ -21,20 +24,24 @@ import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { toMediaUrl } from '../../lib/media'
 import { STREAMING_ACCOUNTS_SETTING } from '../../lib/downloadConfig'
 import type { Playlist } from '../../pages/Playlists/types'
+import type { DownloadTarget } from '../DownloadPanel/DownloadPanel'
 import CreatePlaylistModal from '../../pages/Playlists/CreatePlaylistModal'
 
 interface SidebarProps {
   isOpen?: boolean
   onToggle?: () => void
+  onOpenDownloadPanel?: (target: DownloadTarget) => void
 }
 
 type UpdateStatus = Awaited<ReturnType<Window['api']['checkForUpdates']>>
 
-export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
+export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }: SidebarProps) {
   const [songCount, setSongCount] = useState<number>(0)
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [isCreatePlaylistOpen, setIsCreatePlaylistOpen] = useState(false)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
+  const [activeMenuTransferId, setActiveMenuTransferId] = useState<string | null>(null)
+  const menuContainerRef = useRef<HTMLDivElement | null>(null)
   const {
     transfers,
     isTransfersOpen,
@@ -46,6 +53,16 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
   } = useDownloadStore()
   const { setQueue } = usePlayerStore()
   const navigate = useNavigate()
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (menuContainerRef.current && !menuContainerRef.current.contains(e.target as Node)) {
+        setActiveMenuTransferId(null)
+      }
+    }
+    document.addEventListener('click', handleOutsideClick)
+    return () => document.removeEventListener('click', handleOutsideClick)
+  }, [])
 
   const loadStats = async () => {
     try {
@@ -479,7 +496,7 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
                               />
                             </div>
                           </div>
-                          <div className="flex shrink-0 items-center gap-1">
+                          <div className="relative flex shrink-0 items-center gap-1">
                             {transfer.status === 'completed' && transfer.song && (
                               <button
                                 type="button"
@@ -502,6 +519,23 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
                             )}
                             <button
                               type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setActiveMenuTransferId(
+                                  activeMenuTransferId === transfer.id ? null : transfer.id
+                                )
+                              }}
+                              title="More options"
+                              className={`rounded p-1 transition-colors ${
+                                activeMenuTransferId === transfer.id
+                                  ? 'bg-hover text-white'
+                                  : 'text-text-muted hover:bg-hover hover:text-text'
+                              }`}
+                            >
+                              <MoreVertical className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => handleCancelOrRemoveTransfer(transfer)}
                               title={
                                 transfer.status === 'downloading' ||
@@ -514,6 +548,90 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
                             >
                               <X className="h-3.5 w-3.5" />
                             </button>
+
+                            {/* 3-Dots Dropdown Menu */}
+                            {activeMenuTransferId === transfer.id && (
+                              <div
+                                ref={menuContainerRef}
+                                className="absolute right-0 top-full z-50 mt-1 w-52 rounded-lg border border-white/15 bg-[#1e1e1e] p-1 shadow-[0_8px_24px_rgba(0,0,0,0.8)] backdrop-blur-md"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveMenuTransferId(null)
+                                    onOpenDownloadPanel?.({
+                                      id: transfer.song?.id || '',
+                                      title: transfer.title,
+                                      artist: transfer.artist,
+                                      album: transfer.song?.album || '',
+                                      duration: transfer.song?.duration || 0,
+                                      artworkPath: transfer.song?.artworkPath,
+                                      isOnline: false,
+                                      autoDownload: false
+                                    })
+                                  }}
+                                  className="flex w-full items-center gap-2.5 rounded px-2.5 py-1.5 text-left text-xs font-semibold text-text hover:bg-white/10"
+                                >
+                                  <RotateCcw className="h-3.5 w-3.5 text-primary-amber" />
+                                  <span>Replace Song / Source...</span>
+                                </button>
+
+                                {transfer.status === 'completed' && (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      setActiveMenuTransferId(null)
+                                      if (transfer.song?.filePath) {
+                                        void window.api?.revealInExplorer?.(transfer.song.filePath)
+                                      } else {
+                                        const songs = await window.api?.getSongs?.()
+                                        const match = songs?.find(
+                                          (s: any) =>
+                                            s.title?.toLowerCase() === transfer.title.toLowerCase() &&
+                                            s.artist?.toLowerCase() === transfer.artist.toLowerCase()
+                                        )
+                                        if (match?.filePath) {
+                                          void window.api?.revealInExplorer?.(match.filePath)
+                                        }
+                                      }
+                                    }}
+                                    className="flex w-full items-center gap-2.5 rounded px-2.5 py-1.5 text-left text-xs font-medium text-text-muted hover:bg-white/10 hover:text-text"
+                                  >
+                                    <FolderOpen className="h-3.5 w-3.5" />
+                                    <span>Show in Explorer</span>
+                                  </button>
+                                )}
+
+                                {transfer.status === 'failed' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setActiveMenuTransferId(null)
+                                      void handleRetryTransfer(transfer)
+                                    }}
+                                    className="flex w-full items-center gap-2.5 rounded px-2.5 py-1.5 text-left text-xs font-medium text-text-muted hover:bg-white/10 hover:text-text"
+                                  >
+                                    <RotateCcw className="h-3.5 w-3.5" />
+                                    <span>Retry Download</span>
+                                  </button>
+                                )}
+
+                                <div className="my-1 h-px bg-white/10" />
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveMenuTransferId(null)
+                                    void handleCancelOrRemoveTransfer(transfer)
+                                  }}
+                                  className="flex w-full items-center gap-2.5 rounded px-2.5 py-1.5 text-left text-xs font-medium text-danger hover:bg-danger/10"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  <span>Remove from Transfers</span>
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
