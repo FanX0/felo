@@ -4,6 +4,7 @@ import type { ListeningRoom, SharedSong } from '../online/types'
 import type { Song } from '../pages/Library/Library'
 import { useOnlineStore } from './useOnlineStore'
 import { usePlayerStore } from './usePlayerStore'
+import { DEFAULT_DOWNLOAD_PRIORITY, DOWNLOAD_PRIORITY_SETTING, STREAMING_ACCOUNTS_SETTING } from '../lib/downloadConfig'
 
 function makeCode(): string {
   return Math.random().toString(36).slice(2, 8).toUpperCase()
@@ -27,6 +28,8 @@ const AUTO_DOWNLOAD_STORAGE_KEY = 'fanxmusic:listen_together:auto_download'
 interface ListeningStoreState {
   hostRoom: ListeningRoom | null
   joinedRoom: ListeningRoom | null
+  hostRoomStopped: boolean
+  isJoiningRoom: boolean
   memberCount: number
   isLoading: boolean
   error: string | null
@@ -53,6 +56,8 @@ interface ListeningStoreState {
   joinRoomByCode: (code: string) => Promise<ListeningRoom>
   leaveJoinedRoom: () => Promise<void>
   deactivateHostRoom: () => Promise<void>
+  stopHostRoom: () => Promise<void>
+  startHostRoom: () => Promise<ListeningRoom | null>
   refreshMemberCount: (roomId: string) => Promise<void>
 
   // Professional sync handlers
@@ -66,15 +71,33 @@ interface ListeningStoreState {
 }
 
 let _ensureLock = false
+const _autoDownloadRequests = new Set<string>()
+
+function normalizeSongValue(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\bunknown\s+artist\b/g, '')
+    .replace(/\s*\(\d+\)\s*$/g, '')
+    .replace(/\s*\((?:youtube|official)\)\s*$/g, '')
+    .replace(
+      /\s+(?:official\s+(?:music\s+)?video|official\s+mv|official\s+audio|lyrics?\s+video|music\s+video)\s*$/g,
+      ''
+    )
+    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
 
 function getSongKey(song?: SharedSong | null): string {
   if (!song) return ''
-  return `${song.artist} - ${song.title}`.trim().toLowerCase()
+  return `${normalizeSongValue(song.artist)} - ${normalizeSongValue(song.title)}`
 }
 
 export const useListeningStore = create<ListeningStoreState>((set, get) => ({
   hostRoom: null,
   joinedRoom: null,
+  hostRoomStopped: false,
+  isJoiningRoom: false,
   memberCount: 0,
   isLoading: false,
   error: null,
@@ -140,6 +163,11 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
     if (!user || !enabled) {
       _ensureLock = false
       await get().deactivateHostRoom()
+      return null
+    }
+
+    if (get().hostRoomStopped || get().isJoiningRoom) {
+      _ensureLock = false
       return null
     }
 
@@ -232,7 +260,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
     const user = useOnlineStore.getState().user
     if (!user) throw new Error('You must be signed in to join a room.')
 
-    set({ isLoading: true, error: null, syncStatus: 'buffering' })
+    set({ isLoading: true, isJoiningRoom: true, error: null, syncStatus: 'buffering' })
     const supabase = getSupabase()
 
     try {
@@ -270,7 +298,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       set({ syncStatus: 'idle' })
       throw err
     } finally {
-      set({ isLoading: false })
+      set({ isLoading: false, isJoiningRoom: false })
     }
   },
 
@@ -281,7 +309,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
     const user = useOnlineStore.getState().user
     if (!user) throw new Error('You must be signed in to join a room.')
 
-    set({ isLoading: true, error: null, syncStatus: 'buffering' })
+    set({ isLoading: true, isJoiningRoom: true, error: null, syncStatus: 'buffering' })
     const supabase = getSupabase()
 
     try {
@@ -318,7 +346,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       set({ syncStatus: 'idle' })
       throw err
     } finally {
-      set({ isLoading: false })
+      set({ isLoading: false, isJoiningRoom: false })
     }
   },
 
@@ -342,6 +370,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         .eq('user_id', user.id)
 
       get().cleanupOnLeave()
+      set({ hostRoomStopped: false })
       await get().ensureHostRoom(true)
     } catch (err: any) {
       console.error('Failed to leave room:', err)
@@ -361,8 +390,30 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         .eq('host_id', user.id)
       set({ hostRoom: null })
     } catch {
-      // ignore
+      // best effort cleanup during logout/unmount
     }
+  },
+
+  stopHostRoom: async () => {
+    const user = useOnlineStore.getState().user
+    const hostRoom = get().hostRoom
+    if (!user || !hostRoom || hostRoom.host_id !== user.id) {
+      throw new Error('Only the current host can end this room.')
+    }
+
+    const { error } = await getSupabase()
+      .from('listening_rooms')
+      .update({ is_active: false, is_playing: false, updated_at: new Date().toISOString() })
+      .eq('id', hostRoom.id)
+      .eq('host_id', user.id)
+
+    if (error) throw error
+    set({ hostRoom: null, hostRoomStopped: true })
+  },
+
+  startHostRoom: async () => {
+    set({ hostRoomStopped: false })
+    return get().ensureHostRoom(true)
   },
 
   // ─── PROFESSIONAL SYNC HANDLERS ───────────────────────────────────
@@ -401,10 +452,12 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       }
 
       // Step 2: Try to find exact or fuzzy match in the current queue
+      const targetTitle = normalizeSongValue(room.song.title)
+      const targetArtist = normalizeSongValue(room.song.artist)
       let targetIndex = playerState.queue.findIndex(
         (s) =>
-          s.title.toLowerCase() === room.song!.title.toLowerCase() &&
-          s.artist.toLowerCase() === room.song!.artist.toLowerCase()
+          normalizeSongValue(s.title) === targetTitle &&
+          normalizeSongValue(s.artist) === targetArtist
       )
       let targetQueue = playerState.queue
 
@@ -413,44 +466,60 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         targetQueue = ((await window.api?.getSongs?.()) || []) as Song[]
         targetIndex = targetQueue.findIndex(
           (s) =>
-            s.title.toLowerCase() === room.song!.title.toLowerCase() &&
-            s.artist.toLowerCase() === room.song!.artist.toLowerCase()
+            normalizeSongValue(s.title) === targetTitle &&
+            normalizeSongValue(s.artist) === targetArtist
         )
       }
 
       // Step 4: Song not found locally
       if (targetIndex < 0) {
-        usePlayerStore.getState().setIsPlaying(false)
+        // Keep the current song playing while the missing track downloads.
+        // The library update handler will switch to the host's song when ready.
         set({
           syncStatus: 'missing_song',
           missingSong: room.song
         })
 
-        // Step 4b: Auto-download if enabled
+        // 4b: Start the missing track immediately using the configured priority.
+        // The listener cannot know the host's next song until the host broadcasts it,
+        // so each new host update is downloaded as soon as it arrives.
         if (get().autoDownloadMissing && room.song) {
-          try {
-            const query = `${room.song.artist} ${room.song.title}`
-            const accounts = (await window.api?.getSetting?.('app_settings:streaming_accounts')) || {}
-            let results = await window.api?.searchDownloadSource?.('qobuz', query, accounts)
-            let sourceUsed: 'qobuz' | 'deezer' = 'qobuz'
-            if (!results || results.length === 0) {
-              results = await window.api?.searchDownloadSource?.('deezer', query, accounts)
-              sourceUsed = 'deezer'
-            }
-            const firstHit = results?.[0]
-            if (firstHit) {
-              await window.api?.startDownload?.({
-                transferId: `auto-${Date.now()}`,
-                source: sourceUsed,
-                resultId: firstHit.id,
-                title: firstHit.title || room.song.title,
-                artist: firstHit.artist || room.song.artist,
-                conflictMode: 'replace',
-                accounts
-              })
-            }
-          } catch (autoErr) {
-            console.warn('Auto-download background search attempt:', autoErr)
+          const requestKey = `${room.id}:${songKey}`
+          if (!_autoDownloadRequests.has(requestKey)) {
+            _autoDownloadRequests.add(requestKey)
+            void (async () => {
+              try {
+                const query = `${room.song!.artist} ${room.song!.title}`
+                const savedPriority = await window.api?.getSetting?.(DOWNLOAD_PRIORITY_SETTING)
+                const savedAccounts = await window.api?.getSetting?.(STREAMING_ACCOUNTS_SETTING)
+                const priority = Array.isArray(savedPriority) && savedPriority.length > 0
+                  ? savedPriority
+                  : DEFAULT_DOWNLOAD_PRIORITY
+                const accounts = savedAccounts && typeof savedAccounts === 'object' ? savedAccounts : {}
+
+                for (const source of priority) {
+                  const results = await window.api?.searchDownloadSource?.(source, query, accounts)
+                  const firstHit = results?.[0]
+                  if (!firstHit) continue
+
+                  await window.api?.startDownload?.({
+                    transferId: `room-${room.id}-${Date.now()}`,
+                    source,
+                    resultId: String(firstHit.id),
+                    title: firstHit.title || room.song!.title,
+                    artist: firstHit.artist || room.song!.artist,
+                    songId: '',
+                    conflictMode: 'keep_both',
+                    accounts
+                  })
+                  return
+                }
+                console.warn(`No priority provider result for room track "${room.song!.title}"`)
+              } catch (autoErr) {
+                _autoDownloadRequests.delete(requestKey)
+                console.warn('Auto-download background search attempt:', autoErr)
+              }
+            })()
           }
         }
 
@@ -530,24 +599,25 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       throw new Error('Only the current host can transfer hosting.')
     }
 
-    const supabase = getSupabase()
+    const { data: updatedRoom, error } = await getSupabase().rpc('transfer_listening_room_host', {
+      target_room_id: hostRoom.id,
+      new_host_id: newHostId
+    })
 
-    const { error } = await supabase
-      .from('listening_rooms')
-      .update({
-        host_id: newHostId,
-        song: null,
-        position_seconds: 0,
-        is_playing: false,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', hostRoom.id)
+    if (error) {
+      if (error.code === 'PGRST202') {
+        throw new Error(
+          'Host transfer is not enabled on the server yet. Apply supabase/migrations/0003_listening_room_host_transfer.sql, then try again.'
+        )
+      }
+      throw error
+    }
 
-    if (error) throw error
+    if (!updatedRoom) throw new Error('The server did not return the transferred room.')
 
     set({
       hostRoom: null,
-      joinedRoom: { ...hostRoom, host_id: newHostId },
+      joinedRoom: { ...(updatedRoom as ListeningRoom), host_id: newHostId },
       syncStatus: 'buffering'
     })
   },

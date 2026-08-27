@@ -1,5 +1,5 @@
-import { FormEvent, type ReactElement, useEffect, useMemo, useRef, useState } from 'react'
-import { MessageCircle, Music2, Play, Search, Send, UserPlus } from 'lucide-react'
+import { FormEvent, type ReactElement, useEffect, useRef, useState } from 'react'
+import { MessageCircle, Music2, Play, Send } from 'lucide-react'
 import OnlineGate from '../../components/Online/OnlineGate'
 import { useAppStore } from '../../hooks/useAppStore'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
@@ -7,7 +7,8 @@ import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { getSupabase } from '../../lib/supabase'
 import type { ChatMessage, Conversation, OnlineProfile, SharedSong } from '../../online/types'
 import type { Song } from '../Library/Library'
-import { useNavigate } from 'react-router-dom'
+import type { DownloadTarget } from '../../components/DownloadPanel/DownloadPanel'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 
 function songPayload(song: Song): SharedSong {
   return {
@@ -19,17 +20,20 @@ function songPayload(song: Song): SharedSong {
   }
 }
 
-function ChatWorkspace(): ReactElement {
+interface ChatPageProps {
+  onOpenDownloadPanel?: (target: DownloadTarget) => void
+}
+
+function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
   const { user, profile } = useOnlineStore()
   const { queue, currentSongIndex, setQueue } = usePlayerStore()
   const { setSearchQuery } = useAppStore()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const currentSong = queue[currentSongIndex]
-  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [, setConversations] = useState<Conversation[]>([])
   const [active, setActive] = useState<Conversation | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [people, setPeople] = useState<OnlineProfile[]>([])
-  const [personSearch, setPersonSearch] = useState('')
   const [body, setBody] = useState('')
   const [error, setError] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -49,12 +53,6 @@ function ChatWorkspace(): ReactElement {
     if (!user) return
     const timer = window.setTimeout(() => {
       void loadConversations().catch((cause) => setError(cause.message))
-      void getSupabase()
-        .from('profiles')
-        .select('*')
-        .neq('id', user.id)
-        .order('display_name')
-        .then(({ data }) => setPeople((data || []) as OnlineProfile[]))
     }, 0)
     return () => window.clearTimeout(timer)
   }, [user?.id])
@@ -101,16 +99,6 @@ function ChatWorkspace(): ReactElement {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const filteredPeople = useMemo(() => {
-    const query = personSearch.toLowerCase().trim()
-    return people
-      .filter(
-        (person) =>
-          !query || `${person.display_name} ${person.username}`.toLowerCase().includes(query)
-      )
-      .slice(0, 8)
-  }, [people, personSearch])
-
   const startChat = async (person: OnlineProfile): Promise<void> => {
     if (!user) return
     setError('')
@@ -130,7 +118,6 @@ function ChatWorkspace(): ReactElement {
     if (memberError) return setError(memberError.message)
     await loadConversations()
     setActive(conversation as Conversation)
-    setPersonSearch('')
   }
 
   const sendMessage = async (event?: FormEvent, song?: SharedSong): Promise<void> => {
@@ -147,6 +134,37 @@ function ChatWorkspace(): ReactElement {
     }
   }
 
+  useEffect(() => {
+    const friendId = searchParams.get('friend')
+    if (!user || !friendId || active) return
+    void getSupabase()
+      .from('profiles')
+      .select('*')
+      .eq('id', friendId)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (error) setError(error.message)
+        else if (data) void startChat(data as OnlineProfile)
+      })
+  }, [user?.id, searchParams, active?.id])
+
+  useEffect(() => {
+    if (!active) return
+    const pending = sessionStorage.getItem('felo:pending-chat-song')
+    if (!pending) return
+
+    try {
+      const song = JSON.parse(pending) as SharedSong
+      void sendMessage(undefined, song).then(() => {
+        if (sessionStorage.getItem('felo:pending-chat-song') === pending) {
+          sessionStorage.removeItem('felo:pending-chat-song')
+        }
+      })
+    } catch {
+      sessionStorage.removeItem('felo:pending-chat-song')
+    }
+  }, [active?.id])
+
   const playSharedSong = async (song: SharedSong): Promise<void> => {
     const songs = (await window.api?.getSongs?.()) as Song[] | undefined
     const match = songs?.find(
@@ -155,60 +173,27 @@ function ChatWorkspace(): ReactElement {
         candidate.artist.toLowerCase() === song.artist.toLowerCase()
     )
     if (match && songs) setQueue(songs, songs.indexOf(match))
-    else {
+    else if (onOpenDownloadPanel) {
+      onOpenDownloadPanel({
+        id: song.localId || `shared-${song.artist}-${song.title}`,
+        title: song.title,
+        artist: song.artist,
+        album: song.album || '',
+        duration: song.duration || 0,
+        artworkUrl: song.artworkUrl,
+        isOnline: true,
+        autoDownload: true,
+        autoPlay: true
+      })
+    } else {
       setSearchQuery(`${song.title} ${song.artist}`)
       navigate('/search')
     }
   }
 
   return (
-    <div className="grid h-full grid-cols-[280px_minmax(0,1fr)]">
-      <aside className="border-r border-border bg-canvas/50 p-4">
-        <h1 className="text-xl font-bold text-text">Messages</h1>
-        <div className="relative mt-4">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-text-muted" />
-          <input
-            value={personSearch}
-            onChange={(e) => setPersonSearch(e.target.value)}
-            placeholder="Find a person"
-            className="w-full rounded-full border border-border bg-surface pl-9 pr-3 py-2 text-sm outline-none focus:border-success"
-          />
-        </div>
-        {personSearch && (
-          <div className="mt-2 space-y-1">
-            {filteredPeople.map((person) => (
-              <button
-                key={person.id}
-                onClick={() => void startChat(person)}
-                className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-hover"
-              >
-                <UserPlus className="h-4 w-4 text-success" />
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-bold text-text">
-                    {person.display_name}
-                  </span>
-                  <span className="block truncate text-xs text-text-muted">@{person.username}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="mt-5 space-y-1">
-          {conversations.map((conversation) => (
-            <button
-              key={conversation.id}
-              onClick={() => setActive(conversation)}
-              className={`w-full rounded-md px-3 py-3 text-left ${active?.id === conversation.id ? 'bg-surface-elevated' : 'hover:bg-hover/60'}`}
-            >
-              <span className="block truncate text-sm font-bold text-text">
-                {conversation.title || 'Conversation'}
-              </span>
-              <span className="text-xs text-text-muted">Private chat</span>
-            </button>
-          ))}
-        </div>
-      </aside>
-      <section className="flex min-w-0 flex-col">
+    <div className="flex h-full min-w-0">
+      <section className="flex min-w-0 flex-1 flex-col">
         {active ? (
           <>
             <header className="border-b border-border px-6 py-4">
@@ -300,10 +285,10 @@ function ChatWorkspace(): ReactElement {
   )
 }
 
-export default function ChatPage(): ReactElement {
+export default function ChatPage({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
   return (
     <OnlineGate>
-      <ChatWorkspace />
+      <ChatWorkspace onOpenDownloadPanel={onOpenDownloadPanel} />
     </OnlineGate>
   )
 }

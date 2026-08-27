@@ -15,6 +15,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
   const isPlaying = usePlayerStore((state) => state.isPlaying)
 
   const joinedRoom = useListeningStore((state) => state.joinedRoom)
+  const isJoiningRoom = useListeningStore((state) => state.isJoiningRoom)
   const hostRoom = useListeningStore((state) => state.hostRoom)
   const ensureHostRoom = useListeningStore((state) => state.ensureHostRoom)
   const deactivateHostRoom = useListeningStore((state) => state.deactivateHostRoom)
@@ -25,7 +26,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
 
   // 1. Immediate Broadcast on Playback State Change (Song Change or Play/Pause)
   useEffect(() => {
-    if (!user || !enabled) return
+    if (!user || !enabled || isJoiningRoom) return
 
     // If currently listening to someone else, do not broadcast as host
     if (joinedRoom && joinedRoom.host_id !== user.id) return
@@ -45,7 +46,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
         isUpdatingRef.current = false
       })
     }
-  }, [user?.id, profile?.display_name, enabled, currentSongId, isPlaying, joinedRoom?.id, hostRoom?.id, ensureHostRoom])
+  }, [user?.id, profile?.display_name, enabled, isJoiningRoom, currentSongId, isPlaying, joinedRoom?.id, hostRoom?.id, ensureHostRoom])
 
   // 2. Periodic Heartbeat (Every 5s) to Keep Room Timestamp & Position Fresh
   useEffect(() => {
@@ -53,6 +54,8 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
       void deactivateHostRoom()
       return
     }
+
+    if (isJoiningRoom) return
 
     if (joinedRoom && joinedRoom.host_id !== user.id) return
 
@@ -67,7 +70,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
     }, 5000)
 
     return () => window.clearInterval(interval)
-  }, [user?.id, enabled, joinedRoom?.id, ensureHostRoom, deactivateHostRoom])
+  }, [user?.id, enabled, isJoiningRoom, joinedRoom?.id, ensureHostRoom, deactivateHostRoom])
 
   // 3. Deactivate room on unmount or disable
   useEffect(() => {

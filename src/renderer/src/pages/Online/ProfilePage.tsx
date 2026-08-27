@@ -2,26 +2,92 @@ import { FormEvent, type ReactElement, useEffect, useMemo, useState } from 'reac
 import {
   Check,
   Clock3,
+
   ListMusic,
   Loader2,
   LogOut,
+  Play,
   Radio,
   Settings,
+  UserCheck,
   UserMinus,
   UserPlus,
   UserRound,
+  Users,
   X
 } from 'lucide-react'
 import { NavLink, useNavigate, useParams } from 'react-router-dom'
 import OnlineGate from '../../components/Online/OnlineGate'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
+import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { getSupabase } from '../../lib/supabase'
+import { toMediaUrl } from '../../lib/media'
 import type {
   FriendRequest,
   ListeningRoom,
   OnlineProfile,
   SharedPlaylist
 } from '../../online/types'
+import type { Song } from '../Library/Library'
+import {
+  PLAYED_SONGS_STORAGE_KEY,
+  PLAY_STATS_STORAGE_KEY,
+  RECENTLY_PLAYED_STORAGE_KEY
+} from '../../hooks/usePlayerStore'
+
+interface LocalPlayStats {
+  playCount: number
+  lastPlayedAt: number
+}
+
+interface ProfileSong extends Song {
+  playCount?: number
+  lastPlayedAt?: number
+}
+
+function readListeningHistory(): {
+  recent: ProfileSong[]
+  mostPlayed: ProfileSong[]
+  artists: Array<{ artist: string; playCount: number }>
+} {
+  try {
+    const recent = JSON.parse(
+      localStorage.getItem(RECENTLY_PLAYED_STORAGE_KEY) || '[]'
+    ) as ProfileSong[]
+    const playedSongs = JSON.parse(
+      localStorage.getItem(PLAYED_SONGS_STORAGE_KEY) || '{}'
+    ) as Record<string, ProfileSong>
+    const stats = JSON.parse(localStorage.getItem(PLAY_STATS_STORAGE_KEY) || '{}') as Record<
+      string,
+      LocalPlayStats
+    >
+    const knownSongs = { ...playedSongs }
+    recent.forEach((song) => {
+      knownSongs[song.id] = song
+    })
+    const withStats = recent.map((song) => ({ ...song, ...(stats[song.id] || {}) }))
+    const mostPlayed = Object.entries(stats)
+      .map(([id, value]): ProfileSong | null => {
+        const song = knownSongs[id]
+        return song ? ({ ...song, ...value } as ProfileSong) : null
+      })
+      .filter((song): song is ProfileSong => song !== null)
+      .sort((left, right) => (right.playCount || 0) - (left.playCount || 0))
+      .slice(0, 6)
+    const artistTotals = new Map<string, number>()
+    Object.entries(stats).forEach(([id, value]) => {
+      const song = knownSongs[id]
+      if (song) artistTotals.set(song.artist || 'Unknown Artist', (artistTotals.get(song.artist || 'Unknown Artist') || 0) + value.playCount)
+    })
+    const artists = [...artistTotals.entries()]
+      .map(([artist, playCount]) => ({ artist, playCount }))
+      .sort((left, right) => right.playCount - left.playCount)
+      .slice(0, 5)
+    return { recent: withStats.slice(0, 6), mostPlayed, artists }
+  } catch {
+    return { recent: [], mostPlayed: [], artists: [] }
+  }
+}
 
 function ProfileAvatar({
   profile,
@@ -42,6 +108,36 @@ function ProfileAvatar({
         />
       ) : (
         <span aria-hidden="true">{profile.display_name.slice(0, 1).toUpperCase()}</span>
+      )}
+    </div>
+  )
+}
+
+function SongArtwork({
+  song,
+  fetchedArtwork,
+  size = 'small'
+}: {
+  song: ProfileSong
+  fetchedArtwork?: string
+  size?: 'small' | 'large'
+}): ReactElement {
+  const artworkUrl = toMediaUrl(song.artworkPath) || fetchedArtwork
+  return (
+    <div
+      className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-success bg-surface-elevated text-success ${size === 'large' ? 'h-9 w-9' : 'h-8 w-8'}`}
+    >
+      <Radio className={size === 'large' ? 'h-5 w-5' : 'h-4 w-4'} />
+      {artworkUrl && (
+        <img
+          src={artworkUrl}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+          loading="lazy"
+          onError={(event) => {
+            event.currentTarget.style.display = 'none'
+          }}
+        />
       )}
     </div>
   )
@@ -180,10 +276,16 @@ function ProfileWorkspace(): ReactElement {
   const { username } = useParams<{ username?: string }>()
   const navigate = useNavigate()
   const { user, profile: ownProfile } = useOnlineStore()
+  const { setQueue } = usePlayerStore()
   const [viewedProfile, setViewedProfile] = useState<OnlineProfile | null>(null)
   const [relationship, setRelationship] = useState<FriendRequest | null>(null)
   const [playlists, setPlaylists] = useState<SharedPlaylist[]>([])
-  const [friendCount, setFriendCount] = useState(0)
+  const [followerCount, setFollowerCount] = useState(0)
+  const [followingCount, setFollowingCount] = useState(0)
+  const [mostPlayed, setMostPlayed] = useState<ProfileSong[]>([])
+  const [recentSongs, setRecentSongs] = useState<ProfileSong[]>([])
+  const [mostPlayedArtists, setMostPlayedArtists] = useState<Array<{ artist: string; playCount: number }>>([])
+  const [artworkBySongId, setArtworkBySongId] = useState<Record<string, string>>({})
   const [friendRoom, setFriendRoom] = useState<ListeningRoom | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -236,7 +338,7 @@ function ProfileWorkspace(): ReactElement {
         getSupabase()
           .from('friend_requests')
           .select('*')
-          .or(`requester_id.eq.${user.id},addressee_id.eq.${user.id}`),
+          .or(`requester_id.eq.${nextProfile.id},addressee_id.eq.${nextProfile.id}`),
         getSupabase().from('shared_playlists').select('*').order('updated_at', { ascending: false })
       ])
       if (relationshipsResult.error) throw relationshipsResult.error
@@ -248,11 +350,19 @@ function ProfileWorkspace(): ReactElement {
       )
       setViewedProfile(nextProfile)
       setRelationship(nextProfile.id === user.id ? null : pair || null)
-      setFriendCount(
-        nextProfile.id === user.id
-          ? relationships.filter((request) => request.status === 'accepted').length
-          : 0
-      )
+      const accepted = relationships.filter((request) => request.status === 'accepted')
+      setFollowerCount(accepted.filter((request) => request.addressee_id === nextProfile.id).length)
+      setFollowingCount(accepted.filter((request) => request.requester_id === nextProfile.id).length)
+      if (nextProfile.id === user.id) {
+        const history = readListeningHistory()
+        setRecentSongs(history.recent)
+        setMostPlayed(history.mostPlayed)
+        setMostPlayedArtists(history.artists)
+      } else {
+        setRecentSongs([])
+        setMostPlayed([])
+        setMostPlayedArtists([])
+      }
       setPlaylists(
         ((playlistsResult.data || []) as SharedPlaylist[]).filter(
           (playlist) => playlist.owner_id === nextProfile.id
@@ -271,6 +381,55 @@ function ProfileWorkspace(): ReactElement {
     const timer = window.setTimeout(() => void loadProfile(), 0)
     return () => window.clearTimeout(timer)
   }, [username, user?.id, ownProfile?.updated_at])
+
+  useEffect(() => {
+    if (!isOwnProfile) return
+    const songs = [...mostPlayed, ...recentSongs]
+    const uniqueSongs = Array.from(new Map(songs.map((song) => [song.id, song])).values())
+    const songsNeedingArtwork = uniqueSongs.filter(
+      (song) => !toMediaUrl(song.artworkPath) && !artworkBySongId[song.id]
+    )
+    if (songsNeedingArtwork.length === 0) return
+
+    let cancelled = false
+    void Promise.all(
+      songsNeedingArtwork.map(async (song) => {
+        try {
+          const results = await window.api.searchAppleMusic(`${song.title} ${song.artist}`)
+          const match = results?.Songs?.find((item: { thumbnail?: string }) => item.thumbnail)
+          return match?.thumbnail ? { id: song.id, artwork: match.thumbnail } : null
+        } catch (error) {
+          console.warn(`Could not fetch artwork for ${song.title}:`, error)
+          return null
+        }
+      })
+    ).then((matches) => {
+      if (cancelled) return
+      const nextArtwork = matches.reduce<Record<string, string>>((result, match) => {
+        if (match) result[match.id] = match.artwork
+        return result
+      }, {})
+      if (Object.keys(nextArtwork).length > 0) {
+        setArtworkBySongId((current) => ({ ...current, ...nextArtwork }))
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [artworkBySongId, isOwnProfile, mostPlayed, recentSongs])
+
+  useEffect(() => {
+    if (!isOwnProfile) return
+    const refreshHistory = (): void => {
+      const history = readListeningHistory()
+      setRecentSongs(history.recent)
+      setMostPlayed(history.mostPlayed)
+      setMostPlayedArtists(history.artists)
+    }
+    window.addEventListener('felo:recently-played-updated', refreshHistory)
+    return () => window.removeEventListener('felo:recently-played-updated', refreshHistory)
+  }, [isOwnProfile])
 
   useEffect(() => {
     if (!viewedProfile || isOwnProfile) return
@@ -405,12 +564,10 @@ function ProfileWorkspace(): ReactElement {
             <p className="mt-4 text-sm font-bold text-white/80">
               @{viewedProfile.username} <span className="mx-1 text-white/40">•</span>{' '}
               {playlists.length} online {playlists.length === 1 ? 'playlist' : 'playlists'}
-              {isOwnProfile && (
-                <>
-                  <span className="mx-1 text-white/40">•</span>
-                  {friendCount} {friendCount === 1 ? 'friend' : 'friends'}
-                </>
-              )}
+              <span className="mx-1 text-white/40">•</span>
+              {followerCount} followers
+              <span className="mx-1 text-white/40">•</span>
+              {followingCount} following
             </p>
           </div>
         </div>
@@ -497,27 +654,97 @@ function ProfileWorkspace(): ReactElement {
         {error && (
           <p className="mt-4 rounded-md bg-danger/10 px-4 py-3 text-sm text-danger">{error}</p>
         )}
+        {isOwnProfile && (
+          <>
+            <section className="mt-8">
+              <div className="flex items-end justify-between">
+                <div>
+                  <h2 className="text-2xl font-black text-text">Most played</h2>
+                  <p className="mt-1 text-sm text-text-muted">Your personal listening favourites</p>
+                </div>
+                <Play className="h-5 w-5 text-success" />
+              </div>
+              {mostPlayed.length > 0 ? (
+                <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {mostPlayed.map((song, index) => (
+                    <button
+                      key={song.id}
+                      type="button"
+                      onClick={() => setQueue([song as Song], 0)}
+                      className="flex items-center gap-3 rounded-md bg-surface p-3 text-left hover:bg-hover"
+                    >
+                      <span className="w-5 text-center text-sm font-black text-text-muted">{index + 1}</span>
+                      <SongArtwork song={song} fetchedArtwork={artworkBySongId[song.id]} size="large" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-black text-text">{song.title}</span>
+                        <span className="block truncate text-xs text-text-muted">{song.artist}</span>
+                      </span>
+                      <span className="text-xs font-bold text-text-muted">{song.playCount || 0} plays</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-4 rounded-md border border-border/60 px-4 py-6 text-sm text-text-muted">Play some music to build your favourites.</p>
+              )}
+            </section>
+
+            <section className="mt-8 grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
+              <div>
+                <div className="flex items-end justify-between">
+                  <div>
+                    <h2 className="text-2xl font-black text-text">Recently played</h2>
+                    <p className="mt-1 text-sm text-text-muted">The latest songs in your rotation</p>
+                  </div>
+                  <Clock3 className="h-5 w-5 text-text-muted" />
+                </div>
+                <div className="mt-4 space-y-1">
+                  {recentSongs.length > 0 ? recentSongs.map((song) => (
+                    <div key={song.id} className="flex items-center gap-3 rounded-md px-3 py-2 hover:bg-hover">
+                      <SongArtwork song={song} fetchedArtwork={artworkBySongId[song.id]} />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-bold text-text">{song.title}</p>
+                        <p className="truncate text-xs text-text-muted">{song.artist}</p>
+                      </div>
+                      <span className="text-xs text-text-muted">{song.lastPlayedAt ? new Date(song.lastPlayedAt).toLocaleDateString() : ''}</span>
+                    </div>
+                  )) : <p className="mt-4 text-sm text-text-muted">Your recent songs will appear here.</p>}
+                </div>
+              </div>
+              <div>
+                <div className="flex items-end justify-between">
+                  <div>
+                    <h2 className="text-2xl font-black text-text">Top artists</h2>
+                    <p className="mt-1 text-sm text-text-muted">Artists you play most</p>
+                  </div>
+                  <Users className="h-5 w-5 text-text-muted" />
+                </div>
+                <div className="mt-4 space-y-2">
+                  {mostPlayedArtists.length > 0 ? mostPlayedArtists.map((item, index) => (
+                    <div key={item.artist} className="flex items-center gap-3 rounded-md bg-surface px-3 py-3">
+                      <span className="w-5 text-center text-sm font-black text-text-muted">{index + 1}</span>
+                      <UserCheck className="h-5 w-5 text-success" />
+                      <span className="min-w-0 flex-1 truncate text-sm font-bold text-text">{item.artist}</span>
+                      <span className="text-xs font-bold text-text-muted">{item.playCount} plays</span>
+                    </div>
+                  )) : <p className="mt-4 text-sm text-text-muted">Your top artists will appear here.</p>}
+                </div>
+              </div>
+            </section>
+          </>
+        )}
         <section className="mt-8">
           <div className="flex items-end justify-between">
             <div>
               <h2 className="text-2xl font-black text-text">Online playlists</h2>
               <p className="mt-1 text-sm text-text-muted">Playlists available to you</p>
             </div>
-            {playlists.length > 0 && (
-              <NavLink
-                to="/shared-playlists"
-                className="text-sm font-black text-text-muted hover:text-text"
-              >
-                Show all
-              </NavLink>
-            )}
+
           </div>
           {playlists.length > 0 ? (
             <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
               {playlists.slice(0, 5).map((playlist) => (
-                <NavLink
+                <div
                   key={playlist.id}
-                  to="/shared-playlists"
                   className="group min-w-0 rounded-md bg-surface p-3 transition-colors hover:bg-hover"
                 >
                   <div className="flex aspect-square items-center justify-center rounded-md bg-surface-elevated">
@@ -527,7 +754,7 @@ function ProfileWorkspace(): ReactElement {
                   <p className="mt-1 truncate text-xs text-text-muted">
                     {playlist.description || `By ${viewedProfile.display_name}`}
                   </p>
-                </NavLink>
+                </div>
               ))}
             </div>
           ) : (

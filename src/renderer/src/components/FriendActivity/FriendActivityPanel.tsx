@@ -28,18 +28,30 @@ function formatTime(seconds: number): string {
   return `${Math.floor(safeSeconds / 60)}:${String(safeSeconds % 60).padStart(2, '0')}`
 }
 
-function Avatar({ profile }: { profile: FriendProfile }): ReactElement {
+function Avatar({
+  profile,
+  online = false
+}: {
+  profile: FriendProfile
+  online?: boolean
+}): ReactElement {
   return (
-    <div className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-surface-elevated text-sm font-black text-text-muted">
+    <div className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-visible rounded-full border border-border bg-surface-elevated text-sm font-black text-text-muted">
       {profile.avatar_url ? (
         <img
           src={profile.avatar_url}
           alt=""
-          className="absolute inset-0 h-full w-full object-cover"
+          className="absolute inset-0 h-full w-full rounded-full object-cover"
         />
       ) : (
         profile.display_name.slice(0, 1).toUpperCase()
       )}
+      <span
+        className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-canvas ${
+          online ? 'bg-white' : 'bg-gray-500'
+        }`}
+        title={online ? 'Online' : 'Offline'}
+      />
     </div>
   )
 }
@@ -227,7 +239,6 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
         .select('*')
         .in('host_id', friendIds)
         .eq('is_active', true)
-        .eq('is_playing', true)
         .order('updated_at', { ascending: false })
       if (activityError) throw activityError
       if (cancelled) return
@@ -332,7 +343,7 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
           <div className="space-y-1">
             {[
               { to: '/chat', label: 'Chat', icon: MessageCircle },
-              { to: '/shared-playlists', label: 'Together playlists', icon: Users },
+
               { to: '/listen-together', label: 'Listen together', icon: Radio }
             ].map(({ to, label, icon: Icon }) => (
               <NavLink
@@ -563,7 +574,7 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
                             onClick={onClose}
                             className="flex min-w-0 flex-1 items-start gap-3 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-success"
                           >
-                            <Avatar profile={person} />
+                            <Avatar profile={person} online={Boolean(activity && isRecent)} />
                             <div className="min-w-0 flex-1">
                               <p className="truncate text-sm font-bold text-text">
                                 {person.display_name}
@@ -594,6 +605,17 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
                               )}
                             </div>
                           </NavLink>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigate(`/chat?friend=${encodeURIComponent(person.id)}`)
+                            }}
+                            title={`Chat with ${person.display_name}`}
+                            className="flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-[#2a2a2a] px-3 text-xs font-black text-white transition-colors hover:bg-[#353535]"
+                          >
+                            <MessageCircle className="h-3.5 w-3.5" />
+                            Chat
+                          </button>
                           {song && (
                             <button
                               type="button"
@@ -602,7 +624,7 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
                                 navigate(`/listen-together?room=${activity.id}`)
                               }}
                               title={`Listen together with ${person.display_name}`}
-                              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-success px-3 text-xs font-black text-black hover:brightness-110"
+                              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-[#2a2a2a] px-3 text-xs font-black text-white transition-colors hover:bg-[#353535]"
                             >
                               <Radio className="h-3.5 w-3.5" />
                               Listen

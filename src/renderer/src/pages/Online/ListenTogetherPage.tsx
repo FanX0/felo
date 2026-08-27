@@ -68,6 +68,10 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   const joinRoomById = useListeningStore((state) => state.joinRoomById)
   const joinRoomByCode = useListeningStore((state) => state.joinRoomByCode)
   const leaveJoinedRoom = useListeningStore((state) => state.leaveJoinedRoom)
+  const hostRoomStopped = useListeningStore((state) => state.hostRoomStopped)
+  const isJoiningRoom = useListeningStore((state) => state.isJoiningRoom)
+  const stopHostRoom = useListeningStore((state) => state.stopHostRoom)
+  const startHostRoom = useListeningStore((state) => state.startHostRoom)
   const handleHostSongChange = useListeningStore((state) => state.handleHostSongChange)
   const handleHostPauseResume = useListeningStore((state) => state.handleHostPauseResume)
   const handleHostDisconnect = useListeningStore((state) => state.handleHostDisconnect)
@@ -98,10 +102,11 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   // 1. Ensure host room exists immediately if not in someone else's room
   useEffect(() => {
     if (!user) return
-    if (!joinedRoom && !hostRoom) {
+    // A direct room link must be joined before the automatic host room is initialized.
+    if (!searchParams.get('room') && !isJoiningRoom && !joinedRoom && !hostRoom) {
       void ensureHostRoom(true)
     }
-  }, [user?.id, joinedRoom, hostRoom, ensureHostRoom])
+  }, [user?.id, isJoiningRoom, joinedRoom, hostRoom, searchParams, ensureHostRoom])
 
   // 2. Handle ?room=... direct join link
   useEffect(() => {
@@ -201,9 +206,16 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
             return
           }
 
-          if (isHost) {
+          // A host transfer changes which local room state is authoritative.
+          if (next.host_id === user?.id) {
             useListeningStore.getState().setHostRoom(next)
-          } else {
+            useListeningStore.getState().setJoinedRoom(null)
+            useListeningStore.getState().setSyncStatus('idle')
+          } else if (isHost) {
+            useListeningStore.getState().setHostRoom(null)
+            useListeningStore.getState().setJoinedRoom(next)
+            useListeningStore.getState().setSyncStatus('buffering')
+          } else { 
             useListeningStore.getState().setJoinedRoom(next)
 
             const songChanged =
@@ -305,6 +317,33 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
     }
   }
 
+  const handleEndRoom = async () => {
+    if (!confirm('End your listening room? Friends will be disconnected, and you can start a new room later.')) return
+    setBusy(true)
+    try {
+      await stopHostRoom()
+      setSearchParams({})
+      setMessage('Room ended. Start a new room whenever you are ready.')
+    } catch (err: any) {
+      setMessage(err?.message || 'Could not end the room.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleStartRoom = async () => {
+    setBusy(true)
+    try {
+      await startHostRoom()
+      setMessage('Your listening room is live again.')
+      setTimeout(() => setMessage(''), 3000)
+    } catch (err: any) {
+      setMessage(err?.message || 'Could not start a listening room.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const handleTransferHost = async (targetUserId: string, targetName: string) => {
     if (!confirm(`Make ${targetName} the host? Their local player will broadcast to everyone.`)) return
     setIsTransferring(targetUserId)
@@ -328,7 +367,9 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       album: missingSong.album || '',
       duration: missingSong.duration || 0,
       artworkPath: missingSong.artworkUrl,
-      isOnline: true
+      isOnline: true,
+      autoDownload: true,
+      autoPlay: true
     })
   }
 
@@ -363,6 +404,27 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   }
 
   if (!activeRoom) {
+    if (hostRoomStopped) {
+      return (
+        <div className="flex h-full flex-col items-center justify-center gap-4 text-text-muted">
+          <LogOut className="h-8 w-8 text-danger" />
+          <div className="text-center">
+            <p className="text-sm font-bold text-text">Your listening room is ended</p>
+            <p className="mt-1 text-xs">Start a new room when you want friends to join again.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleStartRoom()}
+            disabled={busy}
+            className="rounded-full bg-success px-5 py-2.5 text-xs font-bold text-black transition-all hover:brightness-110 disabled:opacity-50"
+          >
+            {busy ? 'Starting...' : 'Start New Room'}
+          </button>
+          {message && <p className="text-xs font-bold text-primary-amber">{message}</p>}
+        </div>
+      )
+    }
+
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-text-muted">
         <Loader2 className="h-7 w-7 animate-spin text-success" />
@@ -413,14 +475,26 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
           )}
 
           {isHost ? (
-            <button
-              type="button"
-              onClick={() => setShowJoinModal(true)}
-              className="flex items-center gap-2 rounded-full border border-border bg-surface-elevated px-4 py-2 text-xs font-bold text-text hover:bg-hover hover:border-text-muted transition-all"
-            >
-              <Users className="h-3.5 w-3.5" />
-              Join Friend's Room
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowJoinModal(true)}
+                className="flex items-center gap-2 rounded-full border border-border bg-surface-elevated px-4 py-2 text-xs font-bold text-text hover:bg-hover hover:border-text-muted transition-all"
+              >
+                <Users className="h-3.5 w-3.5" />
+                Join Friend's Room
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleEndRoom()}
+                disabled={busy}
+                title="End your listening room"
+                className="flex items-center gap-2 rounded-full border border-danger/40 bg-danger/10 px-4 py-2 text-xs font-bold text-danger transition-all hover:bg-danger hover:text-white disabled:opacity-50"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                End Room
+              </button>
+            </div>
           ) : (
             <button
               type="button"
