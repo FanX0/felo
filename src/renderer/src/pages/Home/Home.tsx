@@ -59,114 +59,225 @@ function readCachedHomeList<T>(key: string, fallback: T[]): T[] {
 const HOME_RECOMMENDED_SONGS_KEY = 'felo_home_recommended_songs'
 const HOME_RECOMMENDED_ALBUMS_KEY = 'felo_home_recommended_albums'
 
+export type SpotifySection = 'all' | 'popular' | 'charts' | 'trending' | 'new_music' | 'genres'
+
 export const spotifyPlaylists = [
+  // 🔥 Popular Now
   {
     id: '37i9dQZF1DXcBWIGoYBM5M',
     title: "Today's Top Hits",
     category: 'Biggest global mainstream hits',
-    update: 'Regularly'
+    badge: '🔥 Popular',
+    update: 'Frequent',
+    section: 'popular' as const
   },
   {
     id: '37i9dQZEVXbMDoHDwVN2tF',
     title: 'Top 50 - Global',
-    category: 'Global chart',
-    update: 'Daily'
+    category: 'Global daily chart',
+    badge: '🌎 Global',
+    update: 'Daily',
+    section: 'popular' as const
   },
   {
     id: '37i9dQZEVXbObFQZ3JLcXt',
     title: 'Top 50 - Indonesia',
-    category: 'Indonesia chart',
-    update: 'Daily'
-  },
-  {
-    id: '37i9dQZEVXbIZK8aUquyx8',
-    title: 'Top Songs - Indonesia',
-    category: 'Indonesia chart',
-    update: 'Weekly'
+    category: 'Indonesia daily chart',
+    badge: '🇮🇩 Indonesia',
+    update: 'Daily',
+    section: 'popular' as const
   },
   {
     id: '37i9dQZF1DXa2EiKmMLhFD',
     title: 'Hot Hits Indonesia',
-    category: 'Popular Indonesian + international hits',
-    update: 'Regularly'
+    category: 'Popular Indonesian & global hits',
+    badge: '🇮🇩 Popular',
+    update: 'Frequent',
+    section: 'popular' as const
   },
+
+  // 📈 Charts
+  {
+    id: '37i9dQZEVXbNG2KDcFcKOF',
+    title: 'Top Songs - Global',
+    category: 'Global weekly chart',
+    badge: '🌎 Global',
+    update: 'Weekly',
+    section: 'charts' as const
+  },
+  {
+    id: '37i9dQZEVXbIZK8aUquyx8',
+    title: 'Top Songs - Indonesia',
+    category: 'Indonesia weekly chart',
+    badge: '🇮🇩 Indonesia',
+    update: 'Weekly',
+    section: 'charts' as const
+  },
+  {
+    id: '37i9dQZEVXbLRQDuF5jeBp',
+    title: 'Top 50 - USA',
+    category: 'United States daily chart',
+    badge: '🇺🇸 USA',
+    update: 'Daily',
+    section: 'charts' as const
+  },
+  {
+    id: '37i9dQZEVXbLnolsZ8PSNw',
+    title: 'Top 50 - United Kingdom',
+    category: 'UK daily chart',
+    badge: '🇬🇧 UK',
+    update: 'Daily',
+    section: 'charts' as const
+  },
+  {
+    id: '37i9dQZEVXbKXQ4mDTEBXq',
+    title: 'Top 50 - Japan',
+    category: 'Japan daily chart',
+    badge: '🇯🇵 Japan',
+    update: 'Daily',
+    section: 'charts' as const
+  },
+  {
+    id: '37i9dQZEVXbNxXF4SkHj9F',
+    title: 'Top 50 - South Korea',
+    category: 'South Korea daily chart',
+    badge: '🇰🇷 Korea',
+    update: 'Daily',
+    section: 'charts' as const
+  },
+  {
+    id: '37i9dQZEVXbJPcfkRz0wJ0',
+    title: 'Top 50 - Australia',
+    category: 'Australia daily chart',
+    badge: '🇦🇺 Australia',
+    update: 'Daily',
+    section: 'charts' as const
+  },
+
+  // 🚀 Trending & Rising
   {
     id: '37i9dQZF1DWWhB4HOWKFQc',
     title: 'Lagi Viral',
     category: 'Viral songs in Indonesia',
-    update: 'Regularly'
-  },
-  {
-    id: '37i9dQZF1DWZxM58TRkuqg',
-    title: 'Puncak Klasemen',
-    category: 'Popular/new Indonesian music',
-    update: 'Regularly'
-  },
-  {
-    id: '37i9dQZF1DX8vAahjzdXGC',
-    title: 'New Music Friday Indonesia',
-    category: 'New Indonesian/global releases',
-    update: 'Friday / weekly'
-  },
-  {
-    id: '37i9dQZF1DX6yQB7bkflag',
-    title: 'Pop Rising Indonesia',
-    category: 'Rising pop',
-    update: 'Regularly'
-  },
-  {
-    id: '37i9dQZF1DX0XUsuxWHRQd',
-    title: 'RapCaviar',
-    category: 'Global hip-hop / rap',
-    update: 'Regularly'
-  },
-  {
-    id: '37i9dQZF1DX4JAvHpjipBk',
-    title: 'New Music Friday',
-    category: 'Major new global releases',
-    update: 'Friday / weekly'
+    badge: '🇮🇩 Viral',
+    update: 'Frequent',
+    section: 'trending' as const
   },
   {
     id: '37i9dQZF1DWUa8ZRTfalHk',
     title: 'Pop Rising',
-    category: 'New/rising global pop',
-    update: 'Regularly'
+    category: 'Global pop discovery',
+    badge: '🚀 Discovery',
+    update: 'Frequent',
+    section: 'trending' as const
   },
   {
-    id: '37i9dQZF1DX10zKzsJ2jva',
-    title: 'Viva Latino',
-    category: 'Current Latin hits',
-    update: 'Regularly'
+    id: '37i9dQZF1DX6yQB7bkflag',
+    title: 'Pop Rising Indonesia',
+    category: 'Indonesian pop discovery',
+    badge: '🇮🇩 Rising',
+    update: 'Frequent',
+    section: 'trending' as const
   },
   {
-    id: '37i9dQZF1DX4dyzvuaRJ0n',
-    title: 'mint',
-    category: 'Dance / electronic hits',
-    update: 'Regularly'
+    id: '37i9dQZF1DWZxM58TRkuqg',
+    title: 'Puncak Klasemen',
+    category: 'Popular / new Indonesian music',
+    badge: '🇮🇩 Popular',
+    update: 'Frequent',
+    section: 'trending' as const
+  },
+
+  // ✨ New Music
+  {
+    id: '37i9dQZF1DX4JAvHpjipBk',
+    title: 'New Music Friday',
+    category: 'Major new global releases',
+    badge: '🆕 Global',
+    update: 'Friday',
+    section: 'new_music' as const
   },
   {
-    id: '37i9dQZF1DX9tPFwDMOaN1',
-    title: 'K-Pop ON! (온)',
-    category: 'Current K-pop hits',
-    update: 'Regularly'
+    id: '37i9dQZF1DX8vAahjzdXGC',
+    title: 'New Music Friday Indonesia',
+    category: 'New Indonesian & global releases',
+    badge: '🇮🇩 New',
+    update: 'Friday',
+    section: 'new_music' as const
+  },
+
+  // 🎵 Genres
+  {
+    id: '37i9dQZF1DX0XUsuxWHRQd',
+    title: 'RapCaviar',
+    category: 'Global hip-hop / rap',
+    badge: '🎤 Hip-Hop',
+    genreTag: 'Hip-Hop',
+    update: 'Frequent',
+    section: 'genres' as const
   },
   {
     id: '37i9dQZF1DX4SBhb3fqCJd',
     title: 'RNB X',
     category: 'Current R&B',
-    update: 'Regularly'
+    badge: '💜 R&B',
+    genreTag: 'R&B',
+    update: 'Frequent',
+    section: 'genres' as const
+  },
+  {
+    id: '37i9dQZF1DX9tPFwDMOaN1',
+    title: 'K-Pop ON! (온)',
+    category: 'Current K-pop hits',
+    badge: '🇰🇷 K-Pop',
+    genreTag: 'K-Pop',
+    update: 'Frequent',
+    section: 'genres' as const
+  },
+  {
+    id: '37i9dQZF1DX10zKzsJ2jva',
+    title: 'Viva Latino',
+    category: 'Current Latin hits',
+    badge: '🌴 Latin',
+    genreTag: 'Latin',
+    update: 'Frequent',
+    section: 'genres' as const
+  },
+  {
+    id: '37i9dQZF1DX4dyzvuaRJ0n',
+    title: 'mint',
+    category: 'Dance / electronic hits',
+    badge: '🎧 Electronic',
+    genreTag: 'Electronic',
+    update: 'Frequent',
+    section: 'genres' as const
   },
   {
     id: '37i9dQZF1DX0kbJZpiYdZl',
     title: 'Hot Hits USA',
     category: 'Major US hits',
-    update: 'Regularly'
+    badge: '🇺🇸 Popular',
+    genreTag: 'Pop',
+    update: 'Frequent',
+    section: 'genres' as const
   },
   {
     id: '37i9dQZF1DX76Wlfdnj7AP',
     title: 'Beast Mode',
     category: 'Popular workout / rap',
-    update: 'Regularly'
+    badge: '🏋️ Workout',
+    genreTag: 'Workout',
+    update: 'Frequent',
+    section: 'genres' as const
+  },
+  {
+    id: '37i9dQZF1DX2M1RktxUUHG',
+    title: 'All Out 2020s',
+    category: '2020s hits & modern catalog',
+    badge: '🕺 2020s',
+    genreTag: 'Hits',
+    update: 'Regular',
+    section: 'genres' as const
   }
 ] as const
 
@@ -519,6 +630,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
   const [librarySongKeys, setLibrarySongKeys] = useState<Set<string>>(new Set())
   const [importingSpotifyId, setImportingSpotifyId] = useState<string | null>(null)
   const [spotifyArtwork, setSpotifyArtwork] = useState<Record<string, string>>({})
+  const [spotifySection, setSpotifySection] = useState<SpotifySection>('all')
   const [isInfiniteRadio, setIsInfiniteRadio] = useState(false)
   const radioSongsRef = useRef<Song[]>([])
   const radioRequestedRef = useRef<Set<string>>(new Set())
@@ -1125,21 +1237,79 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
 
         {/* Section 2: Spotify Editorial Playlists */}
         {activeTab === 'spotify' && (
-          <section className="space-y-4 pt-2">
-            <div className="flex items-end justify-between gap-4">
+          <section className="space-y-5 pt-2">
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-black tracking-tight text-white">Spotify Playlists</h2>
                 <p className="mt-1 text-sm text-[#a7a7a7]">
-                  Explore popular charts, moods, and editorial playlists.
+                  Explore charts, trending hits, new releases, and curated genres.
                 </p>
               </div>
-              <span className="hidden rounded-full bg-[#1ed760]/10 px-3 py-1 text-xs font-bold text-[#1ed760] sm:inline-flex">
+              <span className="self-start sm:self-auto rounded-full bg-[#1ed760]/10 px-3 py-1 text-xs font-bold text-[#1ed760]">
                 Updated automatically by Spotify
               </span>
             </div>
 
+            {/* Sub-tabs Filter Pills */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-white/5 pb-3">
+              {[
+                { id: 'all' as const, label: 'All Playlists', count: spotifyPlaylists.length },
+                {
+                  id: 'popular' as const,
+                  label: '🔥 Popular Now',
+                  count: spotifyPlaylists.filter((p) => p.section === 'popular').length
+                },
+                {
+                  id: 'charts' as const,
+                  label: '📈 Charts',
+                  count: spotifyPlaylists.filter((p) => p.section === 'charts').length
+                },
+                {
+                  id: 'trending' as const,
+                  label: '🚀 Trending & Rising',
+                  count: spotifyPlaylists.filter((p) => p.section === 'trending').length
+                },
+                {
+                  id: 'new_music' as const,
+                  label: '✨ New Music',
+                  count: spotifyPlaylists.filter((p) => p.section === 'new_music').length
+                },
+                {
+                  id: 'genres' as const,
+                  label: '🎵 Genres',
+                  count: spotifyPlaylists.filter((p) => p.section === 'genres').length
+                }
+              ].map((tab) => {
+                const isActive = spotifySection === tab.id
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setSpotifySection(tab.id)}
+                    className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
+                      isActive
+                        ? 'bg-white text-black shadow-md'
+                        : 'bg-[#242424] text-[#a7a7a7] hover:bg-[#2e2e2e] hover:text-white'
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span
+                      className={`rounded-full px-1.5 py-0.2 text-[10px] font-extrabold ${
+                        isActive ? 'bg-black/15 text-black' : 'bg-white/10 text-[#a7a7a7]'
+                      }`}
+                    >
+                      {tab.count}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-              {spotifyPlaylists.map((playlist, index) => (
+              {(spotifySection === 'all'
+                ? spotifyPlaylists
+                : spotifyPlaylists.filter((p) => p.section === spotifySection)
+              ).map((playlist, index) => (
                 <article
                   key={playlist.id}
                   role="button"
@@ -1178,7 +1348,12 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                     ) : (
                       <Music2 className="relative h-16 w-16 text-white/90 drop-shadow-lg" />
                     )}
-                    <span className="absolute bottom-2 left-2 rounded bg-black/45 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-white">
+                    {'badge' in playlist && playlist.badge && (
+                      <span className="absolute top-2 right-2 z-20 rounded bg-black/75 backdrop-blur-xs px-2 py-0.5 text-[10px] font-black tracking-wide text-white border border-white/10">
+                        {playlist.badge}
+                      </span>
+                    )}
+                    <span className="absolute bottom-2 left-2 z-20 rounded bg-black/45 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-white">
                       Spotify playlist
                     </span>
                   </div>
