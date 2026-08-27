@@ -6,7 +6,9 @@ import {
   Heart,
   Play,
   Download,
-  Music2
+  Music2,
+  ArrowLeft,
+  Plus
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
@@ -28,6 +30,11 @@ import {
   stripSourceSuffix
 } from '../../services/ChartsService'
 import { findMatchingLibrarySong, isSongInLibrary } from '../../lib/songMatching'
+import {
+  spotifyPlaylists,
+  SpotifyPlaylistItem,
+  SpotifySection
+} from '../../data/spotifyPlaylists'
 
 export interface HomeSongItem {
   id: string
@@ -67,228 +74,6 @@ function readCachedHomeList<T>(key: string, fallback: T[]): T[] {
 
 const HOME_RECOMMENDED_SONGS_KEY = 'felo_home_recommended_songs'
 const HOME_RECOMMENDED_ALBUMS_KEY = 'felo_home_recommended_albums'
-
-export type SpotifySection = 'all' | 'popular' | 'charts' | 'trending' | 'new_music' | 'genres'
-
-export const spotifyPlaylists = [
-  // 🔥 Popular Now
-  {
-    id: '37i9dQZF1DXcBWIGoYBM5M',
-    title: "Today's Top Hits",
-    category: 'Biggest global mainstream hits',
-    badge: '🔥 Popular',
-    update: 'Frequent',
-    section: 'popular' as const
-  },
-  {
-    id: '37i9dQZEVXbMDoHDwVN2tF',
-    title: 'Top 50 - Global',
-    category: 'Global daily chart',
-    badge: '🌎 Global',
-    update: 'Daily',
-    section: 'popular' as const
-  },
-  {
-    id: '37i9dQZEVXbObFQZ3JLcXt',
-    title: 'Top 50 - Indonesia',
-    category: 'Indonesia daily chart',
-    badge: '🇮🇩 Indonesia',
-    update: 'Daily',
-    section: 'popular' as const
-  },
-  {
-    id: '37i9dQZF1DXa2EiKmMLhFD',
-    title: 'Hot Hits Indonesia',
-    category: 'Popular Indonesian & global hits',
-    badge: '🇮🇩 Popular',
-    update: 'Frequent',
-    section: 'popular' as const
-  },
-
-  // 📈 Charts
-  {
-    id: '37i9dQZEVXbNG2KDcFcKOF',
-    title: 'Top Songs - Global',
-    category: 'Global weekly chart',
-    badge: '🌎 Global',
-    update: 'Weekly',
-    section: 'charts' as const
-  },
-  {
-    id: '37i9dQZEVXbIZK8aUquyx8',
-    title: 'Top Songs - Indonesia',
-    category: 'Indonesia weekly chart',
-    badge: '🇮🇩 Indonesia',
-    update: 'Weekly',
-    section: 'charts' as const
-  },
-  {
-    id: '37i9dQZEVXbLRQDuF5jeBp',
-    title: 'Top 50 - USA',
-    category: 'United States daily chart',
-    badge: '🇺🇸 USA',
-    update: 'Daily',
-    section: 'charts' as const
-  },
-  {
-    id: '37i9dQZEVXbLnolsZ8PSNw',
-    title: 'Top 50 - United Kingdom',
-    category: 'UK daily chart',
-    badge: '🇬🇧 UK',
-    update: 'Daily',
-    section: 'charts' as const
-  },
-  {
-    id: '37i9dQZEVXbKXQ4mDTEBXq',
-    title: 'Top 50 - Japan',
-    category: 'Japan daily chart',
-    badge: '🇯🇵 Japan',
-    update: 'Daily',
-    section: 'charts' as const
-  },
-  {
-    id: '37i9dQZEVXbNxXF4SkHj9F',
-    title: 'Top 50 - South Korea',
-    category: 'South Korea daily chart',
-    badge: '🇰🇷 Korea',
-    update: 'Daily',
-    section: 'charts' as const
-  },
-  {
-    id: '37i9dQZEVXbJPcfkRz0wJ0',
-    title: 'Top 50 - Australia',
-    category: 'Australia daily chart',
-    badge: '🇦🇺 Australia',
-    update: 'Daily',
-    section: 'charts' as const
-  },
-
-  // 🚀 Trending & Rising
-  {
-    id: '37i9dQZF1DWWhB4HOWKFQc',
-    title: 'Lagi Viral',
-    category: 'Viral songs in Indonesia',
-    badge: '🇮🇩 Viral',
-    update: 'Frequent',
-    section: 'trending' as const
-  },
-  {
-    id: '37i9dQZF1DWUa8ZRTfalHk',
-    title: 'Pop Rising',
-    category: 'Global pop discovery',
-    badge: '🚀 Discovery',
-    update: 'Frequent',
-    section: 'trending' as const
-  },
-  {
-    id: '37i9dQZF1DX6yQB7bkflag',
-    title: 'Pop Rising Indonesia',
-    category: 'Indonesian pop discovery',
-    badge: '🇮🇩 Rising',
-    update: 'Frequent',
-    section: 'trending' as const
-  },
-  {
-    id: '37i9dQZF1DWZxM58TRkuqg',
-    title: 'Puncak Klasemen',
-    category: 'Popular / new Indonesian music',
-    badge: '🇮🇩 Popular',
-    update: 'Frequent',
-    section: 'trending' as const
-  },
-
-  // ✨ New Music
-  {
-    id: '37i9dQZF1DX4JAvHpjipBk',
-    title: 'New Music Friday',
-    category: 'Major new global releases',
-    badge: '🆕 Global',
-    update: 'Friday',
-    section: 'new_music' as const
-  },
-  {
-    id: '37i9dQZF1DX8vAahjzdXGC',
-    title: 'New Music Friday Indonesia',
-    category: 'New Indonesian & global releases',
-    badge: '🇮🇩 New',
-    update: 'Friday',
-    section: 'new_music' as const
-  },
-
-  // 🎵 Genres
-  {
-    id: '37i9dQZF1DX0XUsuxWHRQd',
-    title: 'RapCaviar',
-    category: 'Global hip-hop / rap',
-    badge: '🎤 Hip-Hop',
-    genreTag: 'Hip-Hop',
-    update: 'Frequent',
-    section: 'genres' as const
-  },
-  {
-    id: '37i9dQZF1DX4SBhb3fqCJd',
-    title: 'RNB X',
-    category: 'Current R&B',
-    badge: '💜 R&B',
-    genreTag: 'R&B',
-    update: 'Frequent',
-    section: 'genres' as const
-  },
-  {
-    id: '37i9dQZF1DX9tPFwDMOaN1',
-    title: 'K-Pop ON! (온)',
-    category: 'Current K-pop hits',
-    badge: '🇰🇷 K-Pop',
-    genreTag: 'K-Pop',
-    update: 'Frequent',
-    section: 'genres' as const
-  },
-  {
-    id: '37i9dQZF1DX10zKzsJ2jva',
-    title: 'Viva Latino',
-    category: 'Current Latin hits',
-    badge: '🌴 Latin',
-    genreTag: 'Latin',
-    update: 'Frequent',
-    section: 'genres' as const
-  },
-  {
-    id: '37i9dQZF1DX4dyzvuaRJ0n',
-    title: 'mint',
-    category: 'Dance / electronic hits',
-    badge: '🎧 Electronic',
-    genreTag: 'Electronic',
-    update: 'Frequent',
-    section: 'genres' as const
-  },
-  {
-    id: '37i9dQZF1DX0kbJZpiYdZl',
-    title: 'Hot Hits USA',
-    category: 'Major US hits',
-    badge: '🇺🇸 Popular',
-    genreTag: 'Pop',
-    update: 'Frequent',
-    section: 'genres' as const
-  },
-  {
-    id: '37i9dQZF1DX76Wlfdnj7AP',
-    title: 'Beast Mode',
-    category: 'Popular workout / rap',
-    badge: '🏋️ Workout',
-    genreTag: 'Workout',
-    update: 'Frequent',
-    section: 'genres' as const
-  },
-  {
-    id: '37i9dQZF1DX2M1RktxUUHG',
-    title: 'All Out 2020s',
-    category: '2020s hits & modern catalog',
-    badge: '🕺 2020s',
-    genreTag: 'Hits',
-    update: 'Regular',
-    section: 'genres' as const
-  }
-] as const
 
 type TabType = 'home' | 'hot_new' | 'charts' | 'spotify' | 'aoty'
 
@@ -626,6 +411,9 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
   const [likedSongIds, setLikedSongIds] = useState<Set<string>>(new Set())
   const [librarySongs, setLibrarySongs] = useState<Song[]>([])
   const [importingSpotifyId, setImportingSpotifyId] = useState<string | null>(null)
+  const [selectedSpotifyPlaylist, setSelectedSpotifyPlaylist] = useState<SpotifyPlaylistItem | null>(null)
+  const [spotifyTracks, setSpotifyTracks] = useState<Array<{ title: string; artist: string; duration?: number }>>([])
+  const [isLoadingSpotifyTracks, setIsLoadingSpotifyTracks] = useState(false)
   const [spotifyArtwork, setSpotifyArtwork] = useState<Record<string, string>>({})
   const [spotifySection, setSpotifySection] = useState<SpotifySection>('all')
   const [selectedChartCategory, setSelectedChartCategory] = useState<ChartCategory>(CHART_CATEGORIES[0])
@@ -770,6 +558,29 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
   }, [activeTab])
 
   useEffect(() => {
+    if (!selectedSpotifyPlaylist) {
+      setSpotifyTracks([])
+      return
+    }
+    let cancelled = false
+    setIsLoadingSpotifyTracks(true)
+    window.api?.fetchSpotifyPlaylistTracks?.(selectedSpotifyPlaylist.id)
+      .then((res: any) => {
+        if (!cancelled) setSpotifyTracks(res?.tracks || [])
+      })
+      .catch((err: any) => {
+        console.warn('Could not load spotify tracks:', err)
+        if (!cancelled) setSpotifyTracks([])
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingSpotifyTracks(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedSpotifyPlaylist])
+
+  useEffect(() => {
     if (activeTab !== 'charts') return
     let cancelled = false
     setIsLoadingCharts(true)
@@ -795,7 +606,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
     })
   }
 
-  const handleOpenSpotifyPlaylist = async (playlist: (typeof spotifyPlaylists)[number]) => {
+  const handleImportSpotifyPlaylist = async (playlist: SpotifyPlaylistItem) => {
     if (importingSpotifyId) return
     setImportingSpotifyId(playlist.id)
     try {
@@ -804,7 +615,6 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
       else throw new Error('Spotify playlist import returned no local playlist.')
     } catch (error) {
       console.error('Failed to import Spotify playlist:', error)
-      void window.api?.openExternal?.(`https://open.spotify.com/playlist/${playlist.id}`)
     } finally {
       setImportingSpotifyId(null)
     }
@@ -1413,153 +1223,274 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
         {/* Section 2: Spotify Editorial Playlists */}
         {activeTab === 'spotify' && (
           <section className="space-y-5 pt-2">
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-              <div>
-                <h2 className="text-2xl font-black tracking-tight text-white">Spotify Playlists</h2>
-                <p className="mt-1 text-sm text-[#a7a7a7]">
-                  Explore charts, trending hits, new releases, and curated genres.
-                </p>
-              </div>
-              <span className="self-start sm:self-auto rounded-full bg-[#1ed760]/10 px-3 py-1 text-xs font-bold text-[#1ed760]">
-                Updated automatically by Spotify
-              </span>
-            </div>
-
-            {/* Sub-tabs Filter Pills */}
-            <div className="flex flex-wrap items-center gap-2 border-b border-white/5 pb-3">
-              {[
-                { id: 'all' as const, label: 'All Playlists', count: spotifyPlaylists.length },
-                {
-                  id: 'popular' as const,
-                  label: 'Popular Now',
-                  count: spotifyPlaylists.filter((p) => p.section === 'popular').length
-                },
-                {
-                  id: 'charts' as const,
-                  label: 'Charts',
-                  count: spotifyPlaylists.filter((p) => p.section === 'charts').length
-                },
-                {
-                  id: 'trending' as const,
-                  label: 'Trending & Rising',
-                  count: spotifyPlaylists.filter((p) => p.section === 'trending').length
-                },
-                {
-                  id: 'new_music' as const,
-                  label: 'New Music',
-                  count: spotifyPlaylists.filter((p) => p.section === 'new_music').length
-                },
-                {
-                  id: 'genres' as const,
-                  label: 'Genres',
-                  count: spotifyPlaylists.filter((p) => p.section === 'genres').length
-                }
-              ].map((tab) => {
-                const isActive = spotifySection === tab.id
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setSpotifySection(tab.id)}
-                    className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
-                      isActive
-                        ? 'bg-white text-black shadow-md'
-                        : 'bg-[#242424] text-[#a7a7a7] hover:bg-[#2e2e2e] hover:text-white'
-                    }`}
-                  >
-                    <span>{tab.label}</span>
-                    <span
-                      className={`rounded-full px-1.5 py-0.2 text-[10px] font-extrabold ${
-                        isActive ? 'bg-black/15 text-black' : 'bg-white/10 text-[#a7a7a7]'
-                      }`}
-                    >
-                      {tab.count}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-              {(spotifySection === 'all'
-                ? spotifyPlaylists
-                : spotifyPlaylists.filter((p) => p.section === spotifySection)
-              ).map((playlist, index) => (
-                <article
-                  key={playlist.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => void handleOpenSpotifyPlaylist(playlist)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault()
-                      void handleOpenSpotifyPlaylist(playlist)
-                    }
-                  }}
-                  className="group cursor-pointer overflow-hidden rounded-xl border border-white/10 bg-[#181818] p-3 text-left shadow-lg transition-all hover:-translate-y-0.5 hover:border-[#1ed760]/40 hover:bg-[#202020]"
+            {selectedSpotifyPlaylist ? (
+              <div className="space-y-6">
+                {/* Back button */}
+                <button
+                  type="button"
+                  onClick={() => setSelectedSpotifyPlaylist(null)}
+                  className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-white/20"
                 >
-                  <div
-                    className={`relative aspect-square w-full overflow-hidden rounded-lg bg-gradient-to-br ${
-                      index % 4 === 0
-                        ? 'from-emerald-900 via-green-700 to-lime-500'
-                        : index % 4 === 1
-                          ? 'from-indigo-950 via-blue-700 to-cyan-400'
-                          : index % 4 === 2
-                            ? 'from-fuchsia-950 via-purple-700 to-pink-400'
-                            : 'from-amber-950 via-orange-700 to-yellow-400'
-                    }`}
-                  >
-                    <div className="absolute -right-8 -top-10 h-36 w-36 rounded-full bg-white/15 blur-2xl" />
-                    <div className="absolute -bottom-14 -left-8 h-36 w-36 rounded-full bg-black/20 blur-xl" />
-                    {spotifyArtwork[playlist.id] ? (
+                  <ArrowLeft className="h-4 w-4" />
+                  <span>Back to Spotify Playlists</span>
+                </button>
+
+                {/* Playlist Banner Header */}
+                <div className="flex flex-col sm:flex-row items-start sm:items-end gap-5 rounded-2xl bg-gradient-to-b from-white/10 to-white/5 p-6 border border-white/10">
+                  <div className="relative h-36 w-36 sm:h-44 sm:w-44 shrink-0 overflow-hidden rounded-xl bg-[#282828] shadow-2xl">
+                    {spotifyArtwork[selectedSpotifyPlaylist.id] ? (
                       <img
-                        src={spotifyArtwork[playlist.id]}
+                        src={spotifyArtwork[selectedSpotifyPlaylist.id]}
                         alt=""
-                        className="relative z-10 h-full w-full object-cover"
-                        onError={(event) => {
-                          event.currentTarget.style.display = 'none'
-                        }}
+                        className="h-full w-full object-cover"
                       />
                     ) : (
-                      <Music2 className="relative h-16 w-16 text-white/90 drop-shadow-lg" />
+                      <div className="flex h-full w-full items-center justify-center">
+                        <Music2 className="h-16 w-16 text-white/30" />
+                      </div>
                     )}
-                    {'badge' in playlist && playlist.badge && (
-                      <span className="absolute top-2 right-2 z-20 rounded bg-black/75 backdrop-blur-xs px-2 py-0.5 text-[10px] font-black tracking-wide text-white border border-white/10">
-                        {playlist.badge}
-                      </span>
-                    )}
-                    <span className="absolute bottom-2 left-2 z-20 rounded bg-black/45 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-white">
-                      Spotify playlist
-                    </span>
                   </div>
 
-                  <div className="mt-3 flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <h3 className="truncate text-base font-black text-white" title={playlist.title}>
-                        {playlist.title}
-                      </h3>
-                      <p className="mt-1 truncate text-xs text-[#a7a7a7]">
-                        {playlist.category} <span className="mx-1 text-white/30">•</span> {playlist.update}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <span className="rounded bg-[#1ed760]/20 px-2.5 py-0.5 text-[11px] font-black text-[#1ed760] uppercase tracking-wider">
+                      {selectedSpotifyPlaylist.badge}
+                    </span>
+                    <h2 className="text-3xl font-black text-white tracking-tight">{selectedSpotifyPlaylist.title}</h2>
+                    <p className="text-sm text-[#a7a7a7]">
+                      {selectedSpotifyPlaylist.category} • {selectedSpotifyPlaylist.update} update
+                    </p>
+
+                    <div className="pt-2 flex items-center gap-3">
                       <button
                         type="button"
-                        title={`Add ${playlist.title} to local playlists`}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          void handleOpenSpotifyPlaylist(playlist)
-                        }}
+                        onClick={() => void handleImportSpotifyPlaylist(selectedSpotifyPlaylist)}
                         disabled={Boolean(importingSpotifyId)}
-                        className="rounded-full bg-[#1ed760] px-3 py-1.5 text-[10px] font-black text-black transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
+                        className="inline-flex items-center gap-2 rounded-full bg-[#1ed760] px-5 py-2.5 text-xs font-black text-black transition-transform hover:scale-105 active:scale-95 disabled:opacity-60"
                       >
-                        {importingSpotifyId === playlist.id ? 'Adding...' : 'Add to Playlist'}
+                        <Plus className="h-4 w-4" />
+                        <span>{importingSpotifyId === selectedSpotifyPlaylist.id ? 'Adding to local...' : 'Add to Local Playlists'}</span>
                       </button>
                     </div>
                   </div>
-                </article>
-              ))}
-            </div>
+                </div>
+
+                {/* Playlist Tracks Table */}
+                <div className="space-y-1">
+                  {isLoadingSpotifyTracks ? (
+                    <div className="space-y-2">
+                      {Array.from({ length: 8 }).map((_, i) => (
+                        <div key={i} className="flex items-center gap-3 rounded-xl bg-white/5 px-4 py-3 animate-pulse">
+                          <div className="w-6 h-4 rounded bg-white/10" />
+                          <div className="flex-1 space-y-2">
+                            <div className="h-3.5 w-1/3 rounded bg-white/10" />
+                            <div className="h-2.5 w-1/5 rounded bg-white/5" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : spotifyTracks.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center gap-3 py-16 text-center text-[#a7a7a7]">
+                      <Music2 className="h-10 w-10 text-white/20" />
+                      <p className="text-sm font-semibold">No tracks found for this playlist.</p>
+                    </div>
+                  ) : (
+                    spotifyTracks.map((track, index) => {
+                      const isInLibrary = isSongInLibrary(track.title, track.artist, librarySongs)
+                      const isCurrent = currentSong?.title === track.title
+                      const trackSongItem: HomeSongItem = {
+                        id: `sp-${selectedSpotifyPlaylist.id}-${index}`,
+                        title: track.title,
+                        artist: track.artist,
+                        album: selectedSpotifyPlaylist.title,
+                        duration: track.duration || 0,
+                        artworkUrl: spotifyArtwork[selectedSpotifyPlaylist.id]
+                      }
+
+                      return (
+                        <div
+                          key={`${track.title}-${index}`}
+                          onClick={() => void handlePlaySong(trackSongItem)}
+                          className="group flex cursor-pointer items-center justify-between gap-3 rounded-xl px-3 py-2.5 transition-colors hover:bg-white/10"
+                        >
+                          <div className="flex min-w-0 flex-1 items-center gap-3">
+                            <span className="w-6 shrink-0 text-right text-xs font-bold text-[#a7a7a7] tabular-nums">
+                              {index + 1}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className={`truncate text-sm font-bold ${isCurrent ? 'text-[#1ed760]' : 'text-white'}`}>
+                                {displayTitle(track.title)}
+                              </p>
+                              <p className="truncate text-xs text-[#a7a7a7]">{track.artist}</p>
+                            </div>
+                          </div>
+
+                          <div className="flex shrink-0 items-center gap-3">
+                            {track.duration && track.duration > 0 && (
+                              <span className="text-xs text-[#a7a7a7] tabular-nums">
+                                {Math.floor(track.duration / 60)}:{String(Math.floor(track.duration % 60)).padStart(2, '0')}
+                              </span>
+                            )}
+                            {isInLibrary && (
+                              <span title="In Library" className="pr-1">
+                                <CheckCircle2 className="h-4 w-4 text-[#1ed760]" />
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+                  <div>
+                    <h2 className="text-2xl font-black tracking-tight text-white">Spotify Playlists</h2>
+                    <p className="mt-1 text-sm text-[#a7a7a7]">
+                      Explore charts, trending hits, new releases, and curated genres.
+                    </p>
+                  </div>
+                  <span className="self-start sm:self-auto rounded-full bg-[#1ed760]/10 px-3 py-1 text-xs font-bold text-[#1ed760]">
+                    Updated automatically
+                  </span>
+                </div>
+
+                {/* Sub-tabs Filter Pills */}
+                <div className="flex flex-wrap items-center gap-2 border-b border-white/5 pb-3">
+                  {[
+                    { id: 'all' as const, label: 'All Playlists', count: spotifyPlaylists.length },
+                    {
+                      id: 'popular' as const,
+                      label: 'Popular Now',
+                      count: spotifyPlaylists.filter((p) => p.section === 'popular').length
+                    },
+                    {
+                      id: 'charts' as const,
+                      label: 'Charts',
+                      count: spotifyPlaylists.filter((p) => p.section === 'charts').length
+                    },
+                    {
+                      id: 'trending' as const,
+                      label: 'Trending & Rising',
+                      count: spotifyPlaylists.filter((p) => p.section === 'trending').length
+                    },
+                    {
+                      id: 'new_music' as const,
+                      label: 'New Music',
+                      count: spotifyPlaylists.filter((p) => p.section === 'new_music').length
+                    },
+                    {
+                      id: 'genres' as const,
+                      label: 'Genres',
+                      count: spotifyPlaylists.filter((p) => p.section === 'genres').length
+                    }
+                  ].map((tab) => {
+                    const isActive = spotifySection === tab.id
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setSpotifySection(tab.id)}
+                        className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
+                          isActive
+                            ? 'bg-white text-black shadow-md'
+                            : 'bg-[#242424] text-[#a7a7a7] hover:bg-[#2e2e2e] hover:text-white'
+                        }`}
+                      >
+                        <span>{tab.label}</span>
+                        <span
+                          className={`rounded-full px-1.5 py-0.2 text-[10px] font-extrabold ${
+                            isActive ? 'bg-black/15 text-black' : 'bg-white/10 text-[#a7a7a7]'
+                          }`}
+                        >
+                          {tab.count}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+                  {(spotifySection === 'all'
+                    ? spotifyPlaylists
+                    : spotifyPlaylists.filter((p) => p.section === spotifySection)
+                  ).map((playlist, index) => (
+                    <article
+                      key={playlist.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelectedSpotifyPlaylist(playlist)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          setSelectedSpotifyPlaylist(playlist)
+                        }
+                      }}
+                      className="group cursor-pointer overflow-hidden rounded-xl border border-white/10 bg-[#181818] p-3 text-left shadow-lg transition-all hover:-translate-y-0.5 hover:border-[#1ed760]/40 hover:bg-[#202020]"
+                    >
+                      <div
+                        className={`relative aspect-square w-full overflow-hidden rounded-lg bg-gradient-to-br ${
+                          index % 4 === 0
+                            ? 'from-emerald-900 via-green-700 to-lime-500'
+                            : index % 4 === 1
+                              ? 'from-indigo-950 via-blue-700 to-cyan-400'
+                              : index % 4 === 2
+                                ? 'from-fuchsia-950 via-purple-700 to-pink-400'
+                                : 'from-amber-950 via-orange-700 to-yellow-400'
+                        }`}
+                      >
+                        <div className="absolute -right-8 -top-10 h-36 w-36 rounded-full bg-white/15 blur-2xl" />
+                        <div className="absolute -bottom-14 -left-8 h-36 w-36 rounded-full bg-black/20 blur-xl" />
+                        {spotifyArtwork[playlist.id] ? (
+                          <img
+                            src={spotifyArtwork[playlist.id]}
+                            alt=""
+                            className="relative z-10 h-full w-full object-cover"
+                            onError={(event) => {
+                              event.currentTarget.style.display = 'none'
+                            }}
+                          />
+                        ) : (
+                          <Music2 className="relative h-16 w-16 text-white/90 drop-shadow-lg" />
+                        )}
+                        {'badge' in playlist && playlist.badge && (
+                          <span className="absolute top-2 right-2 z-20 rounded bg-black/75 backdrop-blur-xs px-2 py-0.5 text-[10px] font-black tracking-wide text-white border border-white/10">
+                            {playlist.badge}
+                          </span>
+                        )}
+                        <span className="absolute bottom-2 left-2 z-20 rounded bg-black/45 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-white">
+                          Spotify playlist
+                        </span>
+                      </div>
+
+                      <div className="mt-3 flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <h3 className="truncate text-base font-black text-white" title={playlist.title}>
+                            {playlist.title}
+                          </h3>
+                          <p className="mt-1 truncate text-xs text-[#a7a7a7]">
+                            {playlist.category} <span className="mx-1 text-white/30">•</span> {playlist.update}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          title={`Add ${playlist.title} to local playlists`}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            void handleImportSpotifyPlaylist(playlist)
+                          }}
+                          disabled={Boolean(importingSpotifyId)}
+                          className="shrink-0 rounded-full bg-[#1ed760] px-2.5 py-1 text-[10px] font-black text-black transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {importingSpotifyId === playlist.id ? '...' : 'Add'}
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </>
+            )}
           </section>
         )}
 

@@ -1639,6 +1639,12 @@ app.whenReady().then(() => {
     fetchPlaylistImportMetadata(url)
   )
   ipcMain.handle(
+    'playlists:fetchSpotifyTracks',
+    async (_, playlistId: string) => {
+      return fetchSpotifyPlaylistTracks(playlistId)
+    }
+  )
+  ipcMain.handle(
     'playlists:importSpotify',
     async (_, playlistId: string, requestedName: string) => {
       const description = `Spotify playlist:${playlistId}`

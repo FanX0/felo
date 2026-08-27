@@ -1467,6 +1467,7 @@ const webApi: Window['api'] = {
     return createBrowserPlaylist(input)
   },
   fetchPlaylistImportMetadata: async () => desktopOnly(),
+  fetchSpotifyPlaylistTracks: async () => desktopOnly(),
   importSpotifyPlaylist: async () => desktopOnly(),
   deletePlaylist: async (playlistId) => {
     writeBrowserPlaylists(readBrowserPlaylists().filter((playlist) => playlist.id !== playlistId))

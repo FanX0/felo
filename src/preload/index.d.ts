@@ -56,6 +56,9 @@ declare global {
         }>
       }) => Promise<any>
       fetchPlaylistImportMetadata: (url: string) => Promise<any>
+      fetchSpotifyPlaylistTracks: (
+        playlistId: string
+      ) => Promise<{ title: string; tracks: Array<{ title: string; artist: string; duration?: number }> }>
       importSpotifyPlaylist: (playlistId: string, name: string) => Promise<any>
       deletePlaylist: (playlistId: string) => Promise<void>
       renamePlaylist: (playlistId: string, name: string) => Promise<any>

@@ -50,6 +50,10 @@ const api = {
   }): Promise<any> => ipcRenderer.invoke('playlists:create', input),
   fetchPlaylistImportMetadata: (url: string): Promise<any> =>
     ipcRenderer.invoke('playlists:fetchImportMetadata', url),
+  fetchSpotifyPlaylistTracks: (
+    playlistId: string
+  ): Promise<{ title: string; tracks: Array<{ title: string; artist: string; duration?: number }> }> =>
+    ipcRenderer.invoke('playlists:fetchSpotifyTracks', playlistId),
   importSpotifyPlaylist: (playlistId: string, name: string): Promise<any> =>
     ipcRenderer.invoke('playlists:importSpotify', playlistId, name),
   deletePlaylist: (playlistId: string): Promise<void> =>
