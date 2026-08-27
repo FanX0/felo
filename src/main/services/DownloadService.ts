@@ -5,6 +5,8 @@ import fs from 'fs'
 import path from 'path'
 import { getDb } from '../database'
 import { LibraryService } from './LibraryService'
+import { QobuzClient } from './QobuzClient'
+import { DeezerClient } from './DeezerClient'
 
 // soulseek-ts is loaded as CommonJS because the Electron main process uses require.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -283,109 +285,6 @@ function existingFile(...candidates: string[]): string | undefined {
   return candidates.find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile())
 }
 
-function findStreamrip(): CommandResolution {
-  const homeDir = app.getPath('home')
-
-  // Static bundled locations
-  const bundled = existingFile(
-    resourcePath('downloader', 'bin', 'rip.exe'),
-    resourcePath('downloader', 'rip.exe'),
-    resourcePath('downloader', 'python', 'Scripts', 'rip.exe')
-  )
-  if (bundled) return { command: bundled, prefixArgs: [] }
-
-  // Dynamically discover all installed Python versions under the standard
-  // Windows install path instead of hardcoding specific versions.
-  const pythonRoot = path.join(homeDir, 'AppData', 'Local', 'Programs', 'Python')
-  const dynamicCandidates: string[] = []
-  try {
-    for (const entry of fs.readdirSync(pythonRoot, { withFileTypes: true })) {
-      if (entry.isDirectory() && /^Python\d/i.test(entry.name)) {
-        dynamicCandidates.push(path.join(pythonRoot, entry.name, 'Scripts', 'rip.exe'))
-      }
-    }
-    // Sort descending so the newest Python version is preferred
-    dynamicCandidates.sort().reverse()
-  } catch {
-    // pythonRoot may not exist on this machine
-  }
-
-  // pip --user installs go to AppData\Roaming\Python\PythonXYZ\Scripts
-  const userPythonRoot = path.join(homeDir, 'AppData', 'Roaming', 'Python')
-  try {
-    for (const entry of fs.readdirSync(userPythonRoot, { withFileTypes: true })) {
-      if (entry.isDirectory() && /^Python\d/i.test(entry.name)) {
-        dynamicCandidates.push(path.join(userPythonRoot, entry.name, 'Scripts', 'rip.exe'))
-      }
-    }
-  } catch {
-    // userPythonRoot may not exist
-  }
-
-  // WinGet shim link
-  dynamicCandidates.push(
-    path.join(homeDir, 'AppData', 'Local', 'Microsoft', 'WinGet', 'Links', 'rip.exe')
-  )
-
-  const found = existingFile(...dynamicCandidates)
-  if (found) return { command: found, prefixArgs: [] }
-
-  // Fallback: invoke streamrip as a Python module (mirrors findYtDlp behaviour)
-  const pythonCandidates = [
-    resourcePath('downloader', 'python', 'python.exe'),
-    ...discoverPythonExecutables(homeDir),
-    'python.exe',
-    'python'
-  ]
-  for (const py of pythonCandidates) {
-    if (fs.existsSync(py)) {
-      return { command: py, prefixArgs: ['-m', 'streamrip'] }
-    }
-  }
-
-  return { command: 'rip', prefixArgs: [] }
-}
-
-/** Discover python.exe across all installed Python versions (user + system + store). */
-function discoverPythonExecutables(homeDir: string): string[] {
-  const results: string[] = []
-  const roots = [
-    path.join(homeDir, 'AppData', 'Local', 'Programs', 'Python'),
-    path.join(homeDir, 'AppData', 'Roaming', 'Python'),
-    'C:\\Program Files\\Python',
-    'C:\\Program Files',
-    'C:\\Program Files (x86)',
-    'C:\\'
-  ]
-
-  for (const root of roots) {
-    try {
-      if (fs.existsSync(root)) {
-        const directPy = path.join(root, 'python.exe')
-        if (fs.existsSync(directPy)) results.push(directPy)
-
-        for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-          if (entry.isDirectory() && /^Python\d/i.test(entry.name)) {
-            const pyExe = path.join(root, entry.name, 'python.exe')
-            if (fs.existsSync(pyExe)) results.push(pyExe)
-          }
-        }
-      }
-    } catch {
-      // ignore inaccessible folders
-    }
-  }
-
-  // Also check WindowsApps shim
-  const windowsApps = path.join(homeDir, 'AppData', 'Local', 'Microsoft', 'WindowsApps')
-  const storePy = path.join(windowsApps, 'python.exe')
-  if (fs.existsSync(storePy)) results.push(storePy)
-
-  // Deduplicate results
-  return Array.from(new Set(results))
-}
-
-
 function findYtDlp(): CommandResolution {
   const homeDir = app.getPath('home')
 
@@ -397,44 +296,20 @@ function findYtDlp(): CommandResolution {
   )
   if (bundled) return { command: bundled, prefixArgs: [] }
 
-  // Dynamically discover yt-dlp across all installed Python versions
-  const pythonRoot = path.join(homeDir, 'AppData', 'Local', 'Programs', 'Python')
-  const dynamicCandidates: string[] = []
-  try {
-    for (const entry of fs.readdirSync(pythonRoot, { withFileTypes: true })) {
-      if (entry.isDirectory() && /^Python\d/i.test(entry.name)) {
-        dynamicCandidates.push(path.join(pythonRoot, entry.name, 'Scripts', 'yt-dlp.exe'))
-      }
-    }
-    dynamicCandidates.sort().reverse()
-  } catch {
-    // pythonRoot may not exist
-  }
+  const candidates = [
+    path.join(homeDir, 'AppData', 'Local', 'Microsoft', 'WinGet', 'Links', 'yt-dlp.exe'),
+    'yt-dlp.exe',
+    'yt-dlp'
+  ]
 
-  dynamicCandidates.push('yt-dlp.exe', 'yt-dlp')
-
-  for (const candidate of dynamicCandidates) {
+  for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
       return { command: candidate, prefixArgs: [] }
     }
   }
 
-  // Fallback: invoke via python -m yt_dlp
-  const pythonCandidates = [
-    resourcePath('downloader', 'python', 'python.exe'),
-    ...discoverPythonExecutables(homeDir),
-    'python.exe',
-    'python'
-  ]
-  for (const py of pythonCandidates) {
-    if (fs.existsSync(py)) {
-      return { command: py, prefixArgs: ['-m', 'yt_dlp'] }
-    }
-  }
-
   return { command: 'yt-dlp', prefixArgs: [] }
 }
-
 
 function findFfmpegLocation(): string | undefined {
   const homeDir = app.getPath('home')
@@ -453,94 +328,6 @@ function findFfmpegLocation(): string | undefined {
   }
   return undefined
 }
-
-function tomlString(value: string): string {
-  return JSON.stringify(value)
-}
-
-function patchTomlSection(
-  input: string,
-  section: string,
-  values: Record<string, string | number | boolean | string[]>
-): string {
-  const newline = input.includes('\r\n') ? '\r\n' : '\n'
-  const escapedSection = section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const headerPattern = new RegExp(`^\\[${escapedSection}\\]\\s*$`, 'm')
-  const headerMatch = headerPattern.exec(input)
-  const encodedValues = Object.entries(values).map(([key, value]) => {
-    const encoded = Array.isArray(value)
-      ? `[${value.map((item) => tomlString(item)).join(', ')}]`
-      : typeof value === 'string'
-        ? tomlString(value)
-        : String(value)
-    return { key, line: `${key} = ${encoded}` }
-  })
-
-  if (!headerMatch) {
-    const lines = encodedValues.map(({ line }) => line).join(newline)
-    return `${input.trimEnd()}${newline}${newline}[${section}]${newline}${lines}${newline}`
-  }
-
-  const bodyStart = headerMatch.index + headerMatch[0].length
-  const nextHeaderPattern = /^\[[^\]]+\]\s*$/gm
-  nextHeaderPattern.lastIndex = bodyStart
-  const nextHeader = nextHeaderPattern.exec(input)
-  const bodyEnd = nextHeader?.index ?? input.length
-  let body = input.slice(bodyStart, bodyEnd)
-
-  for (const { key } of encodedValues) {
-    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    body = body.replace(new RegExp(`^\\s*${escapedKey}\\s*=.*(?:\\r?\\n|$)`, 'gm'), '')
-  }
-
-  const replacementBody = `${body.trimEnd()}${newline}${encodedValues
-    .map(({ line }) => line)
-    .join(newline)}${newline}${newline}`
-  return `${input.slice(0, bodyStart)}${replacementBody}${input.slice(bodyEnd)}`
-}
-
-function sanitizeToken(value?: string): string {
-  return (value || '').replace(/\s+/g, '')
-}
-
-function sanitizeText(value?: string): string {
-  return (value || '').trim()
-}
-
-const DEFAULT_STREAMRIP_TOML = `[downloads]
-source_subdirectories = false
-disc_subdirectories = true
-concurrency = true
-max_connections = 6
-requests_per_minute = 60
-verify_ssl = true
-
-[qobuz]
-quality = 4
-download_booklets = true
-use_auth_token = true
-email_or_userid = ""
-password_or_token = ""
-app_id = ""
-secrets = []
-
-[deezer]
-quality = 2
-arl = ""
-use_deezloader = true
-deezloader_warnings = true
-
-[artwork]
-embed = true
-embed_size = "large"
-save_artwork = true
-
-[filepaths]
-add_singles_to_folder = false
-folder_format = "{albumartist} - {title} ({year})"
-track_format = "{tracknumber:02}. {artist} - {title}"
-restrict_characters = false
-`
 
 function getCustomDownloadDirectory(): string {
   try {
@@ -564,73 +351,6 @@ function getCustomDownloadDirectory(): string {
   return path.join(app.getPath('music'), 'Felo')
 }
 
-function ensureStreamripConfig(accounts: StreamingAccounts): string {
-  const configPath = path.join(app.getPath('userData'), 'streamrip-config.toml')
-  const standardConfig = path.join(app.getPath('appData'), 'streamrip', 'config.toml')
-
-  if (!fs.existsSync(configPath)) {
-    if (fs.existsSync(standardConfig)) {
-      fs.copyFileSync(standardConfig, configPath)
-    } else {
-      fs.writeFileSync(configPath, DEFAULT_STREAMRIP_TOML, 'utf8')
-    }
-  }
-
-  let config = fs.readFileSync(configPath, 'utf8')
-  const customFolder = getCustomDownloadDirectory()
-  config = patchTomlSection(config, 'downloads', {
-    folder: customFolder
-  })
-
-  if (accounts.qobuzUser || accounts.qobuzSecret) {
-    const quality =
-      accounts.qobuzQuality === 'hires-max'
-        ? 4
-        : accounts.qobuzQuality === 'hires'
-          ? 3
-          : accounts.qobuzQuality === 'cd'
-            ? 2
-            : 1
-    const cleanUser = sanitizeText(accounts.qobuzUser)
-    const cleanSecret =
-      accounts.qobuzAuthMethod === 'password'
-        ? sanitizeText(accounts.qobuzSecret)
-        : sanitizeToken(accounts.qobuzSecret)
-    const cleanAppId = sanitizeText(accounts.qobuzAppId)
-    const cleanAppSecret = sanitizeText(accounts.qobuzAppSecret)
-
-    config = patchTomlSection(config, 'qobuz', {
-      quality,
-      use_auth_token: accounts.qobuzAuthMethod !== 'password',
-      email_or_userid: cleanUser,
-      password_or_token: cleanSecret,
-      app_id: cleanAppId,
-      secrets: cleanAppSecret ? [cleanAppSecret] : []
-    })
-  }
-  if (accounts.deezerArl) {
-    const cleanArl = sanitizeToken(accounts.deezerArl)
-    const quality =
-      accounts.deezerQuality === 'lossless' ? 2 : accounts.deezerQuality === 'mp3-320' ? 1 : 0
-    config = patchTomlSection(config, 'deezer', {
-      quality,
-      arl: cleanArl,
-      use_deezloader: true
-    })
-  }
-  fs.writeFileSync(configPath, config, 'utf8')
-  return configPath
-}
-
-function splitDescription(description: string): { title: string; artist: string } {
-  const separator = description.lastIndexOf(' by ')
-  if (separator < 0) return { title: description, artist: '' }
-  return {
-    title: description.slice(0, separator).trim(),
-    artist: description.slice(separator + 4).trim()
-  }
-}
-
 function getAudioFiles(root: string): string[] {
   if (!fs.existsSync(root)) return []
   const files: string[] = []
@@ -640,16 +360,6 @@ function getAudioFiles(root: string): string[] {
     else if (AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) files.push(fullPath)
   }
   return files
-}
-
-function getDirectorySize(root: string): number {
-  return getAudioFiles(root).reduce((total, filePath) => {
-    try {
-      return total + fs.statSync(filePath).size
-    } catch {
-      return total
-    }
-  }, 0)
 }
 
 function cleanYoutubeTitle(value: string): string {
@@ -710,7 +420,9 @@ function getStreamCacheDirectory(): string {
 
 function getStreamCacheLimit(): number {
   try {
-    const row = getDb().prepare('SELECT value FROM app_settings WHERE key = ?').get('download.streamCacheLimit') as { value?: string } | undefined
+    const row = getDb()
+      .prepare('SELECT value FROM app_settings WHERE key = ?')
+      .get('download.streamCacheLimit') as { value?: string } | undefined
     const value = Number(row?.value)
     return Number.isFinite(value) ? Math.max(1, Math.min(50, value)) : 3
   } catch {
@@ -724,9 +436,13 @@ function cacheDownloadedFile(downloadedPath: string, request: StartDownloadReque
   const targetPath = uniquePath(path.join(getStreamCacheDirectory(), `${safeName}${extension}`))
   fs.copyFileSync(downloadedPath, targetPath)
 
-  const files = getAudioFiles(getStreamCacheDirectory()).sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs)
+  const files = getAudioFiles(getStreamCacheDirectory()).sort(
+    (left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs
+  )
   files.slice(getStreamCacheLimit()).forEach((file) => {
-    try { fs.unlinkSync(file) } catch {}
+    try {
+      fs.unlinkSync(file)
+    } catch {}
   })
 
   return {
@@ -845,7 +561,15 @@ export class DownloadService {
       return this.searchSoulseek(query, accounts)
     }
 
-    return this.searchStreamrip(source, query, accounts)
+    if (source === 'qobuz') {
+      return this.searchQobuz(query, accounts)
+    }
+
+    if (source === 'deezer') {
+      return this.searchDeezer(query, accounts)
+    }
+
+    return []
   }
 
   private static normalizeYoutubeQuery(query: string): string {
@@ -1135,46 +859,54 @@ export class DownloadService {
     })
   }
 
-  private static async searchStreamrip(
-    source: 'qobuz' | 'deezer',
+  private static async searchQobuz(
     query: string,
     accounts: StreamingAccounts
   ): Promise<ProviderSearchResult[]> {
-    const configPath = ensureStreamripConfig(accounts)
-    const outputPath = path.join(app.getPath('temp'), `felo-${source}-${crypto.randomUUID()}.json`)
+    const client = new QobuzClient({
+      authMethod: accounts.qobuzAuthMethod,
+      user: accounts.qobuzUser,
+      secret: accounts.qobuzSecret,
+      appId: accounts.qobuzAppId,
+      appSecret: accounts.qobuzAppSecret,
+      quality: accounts.qobuzQuality
+    })
 
-    try {
-      const { command, prefixArgs } = findStreamrip()
-      await runCommand(command, [
-        ...prefixArgs,
-        '--config-path',
-        configPath,
-        'search',
-        source,
-        'track',
-        query.trim(),
-        '-n',
-        '8',
-        '-o',
-        outputPath
-      ])
-      const raw = JSON.parse(fs.readFileSync(outputPath, 'utf8')) as any[]
-      return raw.map((item) => {
-        const description = String(item.desc || '')
-        const parsed = splitDescription(description)
-        return {
-          id: String(item.id),
-          source,
-          mediaType: 'track' as const,
-          title: parsed.title,
-          artist: parsed.artist,
-          description,
-          quality: source === 'qobuz' ? 'FLAC up to 24-bit/192kHz' : 'FLAC up to 16-bit/44.1kHz'
-        }
-      })
-    } finally {
-      if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath)
-    }
+    const results = await client.searchTracks(query, 12)
+    return results.map((item) => ({
+      id: item.id,
+      source: 'qobuz',
+      mediaType: 'track',
+      title: item.title,
+      artist: item.artist,
+      album: item.album || 'Qobuz Hi-Res',
+      description: `${item.artist} · ${item.album || 'Qobuz'}`,
+      quality: item.quality,
+      meta: item.hires ? 'Hi-Res Lossless' : 'CD Lossless'
+    }))
+  }
+
+  private static async searchDeezer(
+    query: string,
+    accounts: StreamingAccounts
+  ): Promise<ProviderSearchResult[]> {
+    const client = new DeezerClient({
+      arl: accounts.deezerArl,
+      quality: (accounts.deezerQuality as any) || 'lossless'
+    })
+
+    const results = await client.searchTracks(query, 12)
+    return results.map((item) => ({
+      id: item.id,
+      source: 'deezer',
+      mediaType: 'track',
+      title: item.title,
+      artist: item.artist,
+      album: item.album || 'Deezer',
+      description: `${item.artist} · ${item.album || 'Deezer'}`,
+      quality: item.quality,
+      meta: 'FLAC / 320k Lossless'
+    }))
   }
 
   static start(request: StartDownloadRequest): StartDownloadResult {
@@ -1221,7 +953,15 @@ export class DownloadService {
         return
       }
 
-      await this.executeStreamrip(request, stagingDirectory, song)
+      if (request.source === 'qobuz') {
+        await this.executeQobuz(request, stagingDirectory, song)
+        return
+      }
+
+      if (request.source === 'deezer') {
+        await this.executeDeezer(request, stagingDirectory, song)
+        return
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       emitProgress({
@@ -1229,7 +969,7 @@ export class DownloadService {
         status: 'failed',
         progress: 0,
         message: message.includes('ENOENT')
-          ? `${request.source === 'youtube' ? 'yt-dlp/ffmpeg' : 'Streamrip'} was not found in bundled resources or system PATH.`
+          ? `${request.source === 'youtube' ? 'yt-dlp/ffmpeg' : request.source} was not found.`
           : message
       })
     }
@@ -1466,72 +1206,56 @@ export class DownloadService {
     })
   }
 
-  private static async executeStreamrip(
+  private static async executeQobuz(
     request: StartDownloadRequest,
     stagingDirectory: string,
     song: any
   ): Promise<void> {
-    const configPath = ensureStreamripConfig(request.accounts)
     emitProgress({
       transferId: request.transferId,
       status: 'downloading',
-      progress: 8,
-      message: `Connecting to ${request.source === 'qobuz' ? 'Qobuz' : 'Deezer'}...`
+      progress: 10,
+      message: 'Connecting to Qobuz Hi-Res lossless stream...'
     })
 
-    const startedAt = Date.now()
-    const progressTimer = setInterval(() => {
-      const bytes = getDirectorySize(stagingDirectory)
-      const elapsed = Math.floor((Date.now() - startedAt) / 1000)
-      emitProgress({
-        transferId: request.transferId,
-        status: 'downloading',
-        progress:
-          bytes > 0
-            ? Math.min(92, 28 + Math.floor(bytes / 1024 / 1024))
-            : Math.min(24, 8 + elapsed),
-        message:
-          bytes > 0
-            ? `Downloading audio (${(bytes / 1024 / 1024).toFixed(1)} MB)`
-            : 'Resolving track...'
-      })
-    }, 600)
+    const client = new QobuzClient({
+      authMethod: request.accounts.qobuzAuthMethod,
+      user: request.accounts.qobuzUser,
+      secret: request.accounts.qobuzSecret,
+      appId: request.accounts.qobuzAppId,
+      appSecret: request.accounts.qobuzAppSecret,
+      quality: request.accounts.qobuzQuality
+    })
 
-    try {
-      const { command, prefixArgs } = findStreamrip()
-      await runCommand(command, [
-        ...prefixArgs,
-        '--config-path',
-        configPath,
-        '--folder',
-        stagingDirectory,
-        '-ndb',
-        '--no-progress',
-        'id',
-        request.source,
-        'track',
-        request.resultId
-      ])
-    } finally {
-      clearInterval(progressTimer)
-    }
+    const safeBaseName = `${request.artist} - ${request.title}`.replace(/[<>:"/\\|?*]/g, '_').slice(0, 160)
+    const targetExt = request.accounts.qobuzQuality === 'mp3-320' ? '.mp3' : '.flac'
+    const stagingFilePath = path.join(stagingDirectory, `${safeBaseName}${targetExt}`)
 
-    const downloadedFiles = getAudioFiles(stagingDirectory).sort(
-      (left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs
+    await client.downloadTrack(
+      request.resultId,
+      stagingFilePath,
+      request.accounts.qobuzQuality,
+      (pct, downloadedBytes, totalBytes) => {
+        const sizeMb = (downloadedBytes / 1024 / 1024).toFixed(1)
+        const totalMb = totalBytes > 0 ? (totalBytes / 1024 / 1024).toFixed(1) : ''
+        emitProgress({
+          transferId: request.transferId,
+          status: 'downloading',
+          progress: Math.min(95, 10 + Math.floor(pct * 0.85)),
+          message: totalMb
+            ? `Downloading Qobuz FLAC (${sizeMb} MB / ${totalMb} MB)...`
+            : `Downloading Qobuz FLAC (${sizeMb} MB)...`
+        })
+      }
     )
-    if (downloadedFiles.length === 0)
-      throw new Error('Streamrip completed without an audio file.')
 
-    const completed = await finalizeDownloadedFile(downloadedFiles[0], request, song)
+    const completed = await finalizeDownloadedFile(stagingFilePath, request, song)
 
     if (completed.oldPath && fs.existsSync(completed.oldPath)) {
       try {
         fs.unlinkSync(completed.oldPath)
       } catch (error) {
-        console.warn(
-          `Downloaded replacement is active, but the old file could not be removed: ${completed.oldPath}`,
-          error
-        )
+        console.warn('Could not delete old file:', error)
       }
     }
 
@@ -1542,32 +1266,102 @@ export class DownloadService {
       message: request.storageMode === 'stream'
         ? 'Audio cached for streaming'
         : completed.replaced
-          ? 'Audio replaced successfully'
-          : 'Download added to library',
+          ? 'Audio replaced with Qobuz FLAC successfully'
+          : 'Qobuz Hi-Res FLAC added to library',
       filePath: completed.filePath,
       song: completed.updatedSong
     })
   }
 
+  private static async executeDeezer(
+    request: StartDownloadRequest,
+    stagingDirectory: string,
+    song: any
+  ): Promise<void> {
+    emitProgress({
+      transferId: request.transferId,
+      status: 'downloading',
+      progress: 10,
+      message: 'Connecting to Deezer lossless stream...'
+    })
+
+    const client = new DeezerClient({
+      arl: request.accounts.deezerArl,
+      quality: (request.accounts.deezerQuality as any) || 'lossless'
+    })
+
+    const safeBaseName = `${request.artist} - ${request.title}`.replace(/[<>:"/\\|?*]/g, '_').slice(0, 160)
+    const isFlac = request.accounts.deezerQuality !== 'mp3-320' && request.accounts.deezerQuality !== 'mp3-128'
+    const targetExt = isFlac ? '.flac' : '.mp3'
+    const stagingFilePath = path.join(stagingDirectory, `${safeBaseName}${targetExt}`)
+
+    const result = await client.downloadTrack(
+      request.resultId,
+      stagingFilePath,
+      (request.accounts.deezerQuality as any) || 'lossless',
+      (pct, downloadedBytes, totalBytes) => {
+        const sizeMb = (downloadedBytes / 1024 / 1024).toFixed(1)
+        const totalMb = totalBytes > 0 ? (totalBytes / 1024 / 1024).toFixed(1) : ''
+        emitProgress({
+          transferId: request.transferId,
+          status: 'downloading',
+          progress: Math.min(95, 10 + Math.floor(pct * 0.85)),
+          message: totalMb
+            ? `Downloading & decrypting Deezer stream (${sizeMb} MB / ${totalMb} MB)...`
+            : `Downloading & decrypting Deezer stream (${sizeMb} MB)...`
+        })
+      }
+    )
+
+    const finalPath = result.filePath
+    const completed = await finalizeDownloadedFile(finalPath, request, song)
+
+    if (completed.oldPath && fs.existsSync(completed.oldPath)) {
+      try {
+        fs.unlinkSync(completed.oldPath)
+      } catch (error) {
+        console.warn('Could not delete old file:', error)
+      }
+    }
+
+    emitProgress({
+      transferId: request.transferId,
+      status: 'completed',
+      progress: 100,
+      message: request.storageMode === 'stream'
+        ? 'Audio cached for streaming'
+        : completed.replaced
+          ? 'Audio replaced with Deezer track successfully'
+          : `Deezer ${result.format} added to library`,
+      filePath: completed.filePath,
+      song: completed.updatedSong
+    })
+  }
+
+  static async testQobuzConnection(accounts: StreamingAccounts): Promise<{ success: boolean; message: string }> {
+    return QobuzClient.testConnection({
+      authMethod: accounts.qobuzAuthMethod,
+      user: accounts.qobuzUser,
+      secret: accounts.qobuzSecret,
+      appId: accounts.qobuzAppId,
+      appSecret: accounts.qobuzAppSecret,
+      quality: accounts.qobuzQuality
+    })
+  }
+
+  static async testDeezerConnection(accounts: StreamingAccounts): Promise<{ success: boolean; message: string }> {
+    return DeezerClient.testConnection({
+      arl: accounts.deezerArl,
+      quality: (accounts.deezerQuality as any) || 'lossless'
+    })
+  }
+
   static async checkDependencies(): Promise<{
-    python: { available: boolean; path?: string }
-    streamrip: { available: boolean; command?: string }
     ytDlp: { available: boolean; command?: string }
     ffmpeg: { available: boolean; path?: string }
   }> {
-    const homeDir = app.getPath('home')
-    const pyExes = discoverPythonExecutables(homeDir)
-    const ripRes = findStreamrip()
     const ytdlRes = findYtDlp()
     const ffmpegPath = findFfmpegLocation()
-
-    let streamripWorking = false
-    try {
-      await runCommand(ripRes.command, [...ripRes.prefixArgs, '--version'], undefined, 4000)
-      streamripWorking = true
-    } catch {
-      streamripWorking = false
-    }
 
     let ytdlWorking = false
     try {
@@ -1578,8 +1372,6 @@ export class DownloadService {
     }
 
     return {
-      python: { available: pyExes.length > 0, path: pyExes[0] },
-      streamrip: { available: streamripWorking, command: ripRes.command },
       ytDlp: { available: ytdlWorking, command: ytdlRes.command },
       ffmpeg: { available: Boolean(ffmpegPath), path: ffmpegPath }
     }
@@ -1604,4 +1396,3 @@ export class DownloadService {
     }
   }
 }
-

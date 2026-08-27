@@ -200,8 +200,6 @@ export default function Settings() {
 
   // Dependencies management state
   const [depStatus, setDepStatus] = useState<{
-    python: { available: boolean; path?: string }
-    streamrip: { available: boolean; command?: string }
     ytDlp: { available: boolean; command?: string }
     ffmpeg: { available: boolean; path?: string }
   } | null>(null)
@@ -228,7 +226,7 @@ export default function Settings() {
   const handleInstallDeps = async () => {
     setInstallingDeps(true)
     setInstallLog('')
-    setInstallMessage('Starting installation of Python, Streamrip, and dependencies...')
+    setInstallMessage('Starting installation of yt-dlp and FFmpeg...')
     setShowLogDrawer(true)
 
     const unsubscribe = window.api?.onDownloaderInstallLog?.((chunk) => {
@@ -967,7 +965,7 @@ export default function Settings() {
             icon={<Headphones className="w-5 h-5" />}
             iconColor="bg-secondary-cyan/10 text-secondary-cyan"
             title="Streaming Accounts & Downloader Engine"
-            description="Manage background audio download engines (Streamrip, yt-dlp, ffmpeg) and account connectors."
+            description="Manage background audio download engines (yt-dlp, ffmpeg) and account connectors."
           >
             <div className="space-y-5">
               {/* Downloader Engine Status Card */}
@@ -976,10 +974,10 @@ export default function Settings() {
                   <div>
                     <h3 className="flex items-center gap-2 text-base font-bold text-text">
                       <Cpu className="h-4 w-4 text-secondary-cyan" />
-                      Downloader Engine & Dependencies
+                      Optional YouTube Engine (yt-dlp & FFmpeg)
                     </h3>
                     <p className="text-xs text-text-muted mt-0.5">
-                      Streamrip and Python power Qobuz and Deezer hi-res downloads and account tests.
+                      Qobuz, Deezer, and Soulseek are handled natively in pure TypeScript. yt-dlp & FFmpeg are optional for YouTube audio ripping.
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -999,47 +997,13 @@ export default function Settings() {
                       className="flex items-center gap-1.5 rounded-md bg-secondary-cyan/20 border border-secondary-cyan/40 px-3.5 py-1.5 text-xs font-bold text-secondary-cyan hover:bg-secondary-cyan/30 transition-colors disabled:opacity-50"
                     >
                       <Wrench className={`h-3.5 w-3.5 ${installingDeps ? 'animate-spin' : ''}`} />
-                      {installingDeps ? 'Installing...' : 'Install / Repair Dependencies'}
+                      {installingDeps ? 'Installing...' : 'Install / Repair yt-dlp & FFmpeg'}
                     </button>
                   </div>
                 </div>
 
                 {/* Status Pills */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                  <div className="rounded-md border border-border/30 bg-canvas/60 p-2.5">
-                    <div className="text-[11px] text-text-muted font-medium">Python 3.10+</div>
-                    <div className="flex items-center gap-1.5 mt-1">
-                      {depStatus?.python?.available ? (
-                        <>
-                          <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
-                          <span className="text-xs font-semibold text-success">Installed</span>
-                        </>
-                      ) : (
-                        <>
-                          <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0" />
-                          <span className="text-xs font-semibold text-warning">Not Found</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="rounded-md border border-border/30 bg-canvas/60 p-2.5">
-                    <div className="text-[11px] text-text-muted font-medium">Streamrip (rip)</div>
-                    <div className="flex items-center gap-1.5 mt-1">
-                      {depStatus?.streamrip?.available ? (
-                        <>
-                          <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
-                          <span className="text-xs font-semibold text-success">Ready</span>
-                        </>
-                      ) : (
-                        <>
-                          <AlertTriangle className="h-3.5 w-3.5 text-danger shrink-0" />
-                          <span className="text-xs font-semibold text-danger">Missing</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
+                <div className="grid grid-cols-2 gap-2.5">
                   <div className="rounded-md border border-border/30 bg-canvas/60 p-2.5">
                     <div className="text-[11px] text-text-muted font-medium">yt-dlp</div>
                     <div className="flex items-center gap-1.5 mt-1">
@@ -1074,22 +1038,6 @@ export default function Settings() {
                     </div>
                   </div>
                 </div>
-
-                {/* Warning notice if Streamrip is missing */}
-                {depStatus && !depStatus.streamrip?.available && !installingDeps && (
-                  <div className="mt-3.5 rounded-md border border-danger/30 bg-danger/10 p-3 text-xs text-danger flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                    <div>
-                      <strong>Streamrip is missing:</strong> Qobuz and Deezer lossless connections require Streamrip. Click <strong>Install / Repair Dependencies</strong> to set it up automatically.
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleInstallDeps}
-                      className="shrink-0 rounded bg-danger px-3 py-1.5 text-xs font-bold text-white hover:bg-danger/80 transition-colors"
-                    >
-                      Install Now
-                    </button>
-                  </div>
-                )}
 
                 {/* Installation status / logs */}
                 {installMessage && (
@@ -1238,17 +1186,6 @@ export default function Settings() {
                     }`}
                   >
                     <div>{qobuzTestStatus.message}</div>
-                    {!qobuzTestStatus.success && qobuzTestStatus.message.includes('Streamrip') && (
-                      <button
-                        type="button"
-                        onClick={handleInstallDeps}
-                        disabled={installingDeps}
-                        className="mt-2.5 flex items-center gap-1.5 rounded bg-danger px-3 py-1 text-xs font-bold text-white hover:bg-danger/80 transition-colors disabled:opacity-50"
-                      >
-                        <Wrench className="h-3 w-3" />
-                        {installingDeps ? 'Installing...' : 'Install Streamrip & Dependencies'}
-                      </button>
-                    )}
                     {qobuzTestStatus.rawError && !qobuzTestStatus.success && (
                       <details className="mt-2 text-[11px] text-text-muted">
                         <summary className="cursor-pointer hover:underline text-text-muted">
@@ -1334,17 +1271,6 @@ export default function Settings() {
                     }`}
                   >
                     <div>{deezerTestStatus.message}</div>
-                    {!deezerTestStatus.success && deezerTestStatus.message.includes('Streamrip') && (
-                      <button
-                        type="button"
-                        onClick={handleInstallDeps}
-                        disabled={installingDeps}
-                        className="mt-2.5 flex items-center gap-1.5 rounded bg-danger px-3 py-1 text-xs font-bold text-white hover:bg-danger/80 transition-colors disabled:opacity-50"
-                      >
-                        <Wrench className="h-3 w-3" />
-                        {installingDeps ? 'Installing...' : 'Install Streamrip & Dependencies'}
-                      </button>
-                    )}
                     {deezerTestStatus.rawError && !deezerTestStatus.success && (
                       <details className="mt-2 text-[11px] text-text-muted">
                         <summary className="cursor-pointer hover:underline text-text-muted">

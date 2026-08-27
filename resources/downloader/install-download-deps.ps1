@@ -1,7 +1,3 @@
-param(
-  [string]$PythonVersion = "3.12"
-)
-
 $ErrorActionPreference = "Continue"
 $logFile = "$env:TEMP\felo-downloader-deps.log"
 
@@ -13,7 +9,7 @@ function Write-Log {
   Add-Content -Path $logFile -Value $entry -ErrorAction SilentlyContinue
 }
 
-Write-Log "=== Starting Felo Downloader Dependencies Installation ==="
+Write-Log "=== Starting Felo Downloader Tools Installation (yt-dlp & FFmpeg) ==="
 
 function Get-CommandPath {
   param([string]$Name)
@@ -37,158 +33,42 @@ function Find-WingetExe {
   return $null
 }
 
-$script:PythonExe = $null
-$script:PythonPrefixArgs = @()
+$winget = Find-WingetExe
 
-function Test-PythonWorking {
-  param([string]$ExePath, [string[]]$Prefix = @())
-  if (-not $ExePath -or -not (Test-Path $ExePath)) { return $false }
-  try {
-    $item = Get-Item $ExePath -ErrorAction SilentlyContinue
-    if ($item.Length -eq 0) { return $false } # WindowsApps 0-byte shim
-
-    $testOutput = & $ExePath @Prefix "--version" 2>&1
-    if ($LASTEXITCODE -eq 0 -and "$testOutput" -match "Python\s+3\.") {
-      return $true
-    }
-  } catch {
-    return $false
-  }
-  return $false
-}
-
-function Find-PythonExe {
-  # 1. Check py launcher
-  $py = Get-CommandPath "py.exe"
-  if ($py -and (Test-PythonWorking $py @("-$PythonVersion"))) {
-    $script:PythonExe = $py
-    $script:PythonPrefixArgs = @("-$PythonVersion")
-    return $true
-  }
-
-  $pyLauncher = "$env:LOCALAPPDATA\Programs\Python\Launcher\py.exe"
-  if ((Test-Path $pyLauncher) -and (Test-PythonWorking $pyLauncher @("-$PythonVersion"))) {
-    $script:PythonExe = $pyLauncher
-    $script:PythonPrefixArgs = @("-$PythonVersion")
-    return $true
-  }
-
-  # 2. Check python.exe in PATH
-  $python = Get-CommandPath "python.exe"
-  if ($python -and (Test-PythonWorking $python)) {
-    $script:PythonExe = $python
-    $script:PythonPrefixArgs = @()
-    return $true
-  }
-
-  # 3. Check standard Python installation directories
-  $searchDirs = @(
-    "$env:LOCALAPPDATA\Programs\Python",
-    "$env:ProgramFiles\Python",
-    "$env:ProgramFiles\Python313",
-    "$env:ProgramFiles\Python312",
-    "$env:ProgramFiles\Python311",
-    "$env:ProgramFiles\Python310",
-    "C:\Python313",
-    "C:\Python312",
-    "C:\Python311",
-    "C:\Python310"
-  )
-
-  foreach ($dir in $searchDirs) {
-    if (Test-Path $dir) {
-      $pyCandidate = Join-Path $dir "python.exe"
-      if (Test-PythonWorking $pyCandidate) {
-        $script:PythonExe = $pyCandidate
-        $script:PythonPrefixArgs = @()
-        return $true
-      }
-
-      $subCandidates = Get-ChildItem -Path $dir -Directory -Filter "Python3*" -ErrorAction SilentlyContinue
-      foreach ($sub in $subCandidates) {
-        $subPy = Join-Path $sub.FullName "python.exe"
-        if (Test-PythonWorking $subPy) {
-          $script:PythonExe = $subPy
-          $script:PythonPrefixArgs = @()
-          return $true
-        }
-      }
-    }
-  }
-
-  return $false
-}
-
-# Ensure Python is installed
-$found = Find-PythonExe
-if (-not $found) {
-  Write-Log "Python 3.10+ not found. Attempting automatic installation..."
-  $winget = Find-WingetExe
-
+# 1. Check / Install yt-dlp
+$ytdlp = Get-CommandPath "yt-dlp.exe"
+if (-not $ytdlp) {
+  Write-Log "yt-dlp not found in PATH."
   if ($winget) {
-    Write-Log "Installing Python via winget ($winget)..."
-    & $winget install --id "Python.Python.$PythonVersion" --exact --silent --accept-package-agreements --accept-source-agreements
-  }
-
-  $found = Find-PythonExe
-
-  # If winget failed or was unavailable, download official Python installer directly
-  if (-not $found) {
-    Write-Log "Winget unavailable or failed. Downloading official Python installer from python.org..."
-    $installerUrl = "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe"
-    $installerPath = "$env:TEMP\python-3.12.8-amd64.exe"
+    Write-Log "Installing yt-dlp via winget..."
+    & $winget install --id "yt-dlp.yt-dlp" --exact --silent --accept-package-agreements --accept-source-agreements
+  } else {
+    Write-Log "Downloading standalone yt-dlp.exe directly..."
+    $ytdlpDir = "$env:LOCALAPPDATA\Programs\yt-dlp"
+    New-Item -ItemType Directory -Force -Path $ytdlpDir | Out-Null
+    $ytdlpDest = Join-Path $ytdlpDir "yt-dlp.exe"
     try {
       [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-      Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
-      Write-Log "Running silent Python installation..."
-      Start-Process -FilePath $installerPath -ArgumentList "/quiet InstallAllUsers=0 PrependPath=1 Include_pip=1" -Wait
-      Remove-Item -Path $installerPath -Force -ErrorAction SilentlyContinue
+      Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile $ytdlpDest -UseBasicParsing
+      Write-Log "Downloaded yt-dlp.exe successfully."
     } catch {
-      Write-Log "Direct Python download failed: $_"
+      Write-Log "Failed to download yt-dlp: $_"
     }
   }
-
-  # Refresh environment PATH from registry
-  $machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
-  $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
-  $env:Path = "$machinePath;$userPath;$env:LOCALAPPDATA\Programs\Python\Python312;$env:LOCALAPPDATA\Programs\Python\Python312\Scripts"
-
-  $found = Find-PythonExe
+} else {
+  Write-Log "yt-dlp already installed at: $ytdlp"
 }
 
-if (-not $found -or -not $script:PythonExe) {
-  Write-Log "ERROR: Python could not be located or installed."
-  throw "Python was not found and could not be installed automatically. Please install Python 3.10+ manually from python.org."
-}
-
-Write-Log "Using Python: $script:PythonExe $($script:PythonPrefixArgs -join ' ')"
-
-function Run-Py {
-  param(
-    [Parameter(Mandatory = $true, Position = 0, ValueFromRemainingArguments = $true)]
-    [string[]]$Arguments
-  )
-  $allArgs = @($script:PythonPrefixArgs) + @($Arguments)
-  Write-Log "Running: $script:PythonExe $($allArgs -join ' ')"
-  & "$script:PythonExe" $allArgs
-}
-
-# Upgrade pip and install streamrip & yt-dlp
-Write-Log "Upgrading pip..."
-Run-Py -Arguments @("-m", "pip", "install", "--upgrade", "pip")
-
-Write-Log "Installing streamrip and yt-dlp..."
-Run-Py -Arguments @("-m", "pip", "install", "--upgrade", "streamrip", "yt-dlp")
-
-# Install ffmpeg if missing
+# 2. Check / Install ffmpeg
 $ffmpeg = Get-CommandPath "ffmpeg.exe"
 if (-not $ffmpeg) {
-  $winget = Find-WingetExe
+  Write-Log "FFmpeg not found in PATH."
   if ($winget) {
-    Write-Log "Installing ffmpeg via winget..."
+    Write-Log "Installing FFmpeg via winget..."
     & $winget install --id "Gyan.FFmpeg" --exact --silent --accept-package-agreements --accept-source-agreements
   }
+} else {
+  Write-Log "FFmpeg already installed at: $ffmpeg"
 }
 
-Write-Log "=== Downloader Dependencies Installation Complete ==="
-
+Write-Log "=== Downloader Tools Installation Complete ==="

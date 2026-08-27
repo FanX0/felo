@@ -101,8 +101,6 @@ declare global {
             }>
       onDownloadProgress: (listener: (event: any) => void) => () => void
       checkDownloaderDependencies: () => Promise<{
-        python: { available: boolean; path?: string }
-        streamrip: { available: boolean; command?: string }
         ytDlp: { available: boolean; command?: string }
         ffmpeg: { available: boolean; path?: string }
       }>

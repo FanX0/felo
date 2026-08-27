@@ -1524,8 +1524,6 @@ const webApi: Window['api'] = {
   startDownload: async () => desktopOnly(),
   onDownloadProgress: () => () => undefined,
   checkDownloaderDependencies: async () => ({
-    python: { available: false },
-    streamrip: { available: false },
     ytDlp: { available: false },
     ffmpeg: { available: false }
   }),

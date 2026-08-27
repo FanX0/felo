@@ -1368,10 +1368,9 @@ function formatProviderError(source: 'qobuz' | 'deezer', raw: string): string {
 
   if (
     normalized.includes('enoent') ||
-    normalized.includes('was not found') ||
-    normalized.includes('streamrip')
+    normalized.includes('was not found')
   ) {
-    return 'Streamrip CLI (`rip`) was not found in your system PATH. Please ensure Python and streamrip are installed.'
+    return `${source === 'qobuz' ? 'Qobuz' : 'Deezer'} service is currently unreachable.`
   }
 
   return raw
