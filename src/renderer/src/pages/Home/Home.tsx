@@ -290,7 +290,7 @@ export const spotifyPlaylists = [
   }
 ] as const
 
-type TabType = 'home' | 'hot_new' | 'charts' | 'spotify' | 'editors_picks' | 'aoty'
+type TabType = 'home' | 'hot_new' | 'charts' | 'spotify' | 'aoty'
 
 function librarySongKey(title: string, artist: string): string {
   return `${title}::${artist}`
@@ -636,7 +636,6 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
     readCachedHomeList(HOME_RECOMMENDED_ALBUMS_KEY, CURATED_DEFAULT_ALBUMS)
   )
   const [hotSongs, setHotSongs] = useState<HomeSongItem[]>([])
-  const [editorPicks, setEditorPicks] = useState<HomeSongItem[]>([])
   const [aotyAlbums, setAotyAlbums] = useState<HomeAlbumItem[]>([])
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [likedSongIds, setLikedSongIds] = useState<Set<string>>(new Set())
@@ -753,9 +752,6 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
           setRecommendedAlbums([...CURATED_DEFAULT_ALBUMS, ...mappedAlbums.slice(0, 6)])
         }
       }
-
-      // 3. Curate Editor Picks
-      setEditorPicks(CURATED_DEFAULT_SONGS.slice(0, 15))
     } catch (err) {
       console.warn('Using curated home defaults due to network:', err)
     } finally {
@@ -1054,9 +1050,8 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
 
   const displayedSongs = useMemo(() => {
     if (activeTab === 'hot_new') return hotSongs.length ? hotSongs : recommendedSongs
-    if (activeTab === 'editors_picks') return editorPicks.length ? editorPicks : recommendedSongs
     return recommendedSongs
-  }, [activeTab, hotSongs, editorPicks, recommendedSongs])
+  }, [activeTab, hotSongs, recommendedSongs])
 
   const displayedAlbums = useMemo(() => {
     if (activeTab === 'aoty') return aotyAlbums.length ? aotyAlbums : recommendedAlbums
@@ -1115,21 +1110,6 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
         >
           <span>Spotify</span>
           {activeTab === 'spotify' && (
-            <span className="absolute -bottom-3 left-0 right-0 h-0.5 rounded-full bg-[#1ed760]" />
-          )}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('editors_picks')}
-          className={`relative text-sm font-bold tracking-tight transition-colors ${
-            activeTab === 'editors_picks'
-              ? 'text-white font-extrabold'
-              : 'text-[#a7a7a7] hover:text-white'
-          }`}
-        >
-          <span>Editor's Picks</span>
-          {activeTab === 'editors_picks' && (
             <span className="absolute -bottom-3 left-0 right-0 h-0.5 rounded-full bg-[#1ed760]" />
           )}
         </button>
@@ -1375,16 +1355,12 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
         )}
 
         {/* Section 1: Recommended Songs */}
-        {(activeTab === 'home' || activeTab === 'hot_new' || activeTab === 'editors_picks') && (
+        {(activeTab === 'home' || activeTab === 'hot_new') && (
           <section className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex min-w-0 flex-wrap items-center gap-3">
                 <h2 className="text-xl font-black tracking-tight text-white sm:text-2xl">
-                  {activeTab === 'hot_new'
-                    ? 'Trending Now'
-                    : activeTab === 'editors_picks'
-                      ? "Editor's Selection"
-                      : 'Recommended Songs'}
+                  {activeTab === 'hot_new' ? 'Trending Now' : 'Recommended Songs'}
                 </h2>
                 {activeTab === 'home' && (
                   <button
