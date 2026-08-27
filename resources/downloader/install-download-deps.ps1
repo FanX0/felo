@@ -130,22 +130,26 @@ if (-not $pythonCmd) {
 Write-Log "Using Python: $($pythonCmd -join ' ')"
 
 function Run-Py {
-  param([string[]]$Args)
+  param(
+    [Parameter(Mandatory = $true, Position = 0, ValueFromRemainingArguments = $true)]
+    [string[]]$Arguments
+  )
   $exe = $pythonCmd[0]
   $baseArgs = @()
   if ($pythonCmd.Length -gt 1) {
     $baseArgs = $pythonCmd[1..($pythonCmd.Length - 1)]
   }
-  Write-Log "Running: $exe $($baseArgs + $Args -join ' ')"
-  & $exe @baseArgs @Args
+  $allArgs = @($baseArgs) + @($Arguments)
+  Write-Log "Running: $exe $($allArgs -join ' ')"
+  & $exe $allArgs
 }
 
 # Upgrade pip and install streamrip & yt-dlp
 Write-Log "Upgrading pip..."
-Run-Py @("-m", "pip", "install", "--upgrade", "pip")
+Run-Py -Arguments @("-m", "pip", "install", "--upgrade", "pip")
 
 Write-Log "Installing streamrip and yt-dlp..."
-Run-Py @("-m", "pip", "install", "--upgrade", "streamrip", "yt-dlp")
+Run-Py -Arguments @("-m", "pip", "install", "--upgrade", "streamrip", "yt-dlp")
 
 # Install ffmpeg if missing
 $ffmpeg = Get-CommandPath "ffmpeg.exe"
