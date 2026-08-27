@@ -6,8 +6,7 @@ import {
   Heart,
   Play,
   Download,
-  Music2,
-  ExternalLink
+  Music2
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
@@ -1098,21 +1097,11 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
         {activeTab === 'charts' && (
           <section className="space-y-5 pt-2">
             {/* Header */}
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-              <div>
-                <h2 className="text-2xl font-black tracking-tight text-white">Live Music Charts</h2>
-                <p className="mt-1 text-sm text-[#a7a7a7]">
-                  Real-time top charts from Apple Music and Deezer — 100% free, no login required.
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <span className="self-start sm:self-auto rounded-full bg-white/5 border border-white/10 px-3 py-1 text-[11px] font-bold text-[#a7a7a7]">
-                  Apple Music RSS
-                </span>
-                <span className="self-start sm:self-auto rounded-full bg-white/5 border border-white/10 px-3 py-1 text-[11px] font-bold text-[#a7a7a7]">
-                  Deezer API
-                </span>
-              </div>
+            <div>
+              <h2 className="text-2xl font-black tracking-tight text-white">Live Music Charts</h2>
+              <p className="mt-1 text-sm text-[#a7a7a7]">
+                Real-time top charts updated daily.
+              </p>
             </div>
 
             <div className="flex gap-5">
@@ -1168,10 +1157,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                   <span className="text-2xl leading-none">{selectedChartCategory.icon}</span>
                   <div>
                     <h3 className="text-lg font-black text-white">{selectedChartCategory.name}</h3>
-                    <p className="text-xs text-[#a7a7a7] capitalize">
-                      {selectedChartCategory.source === 'apple' ? 'Apple Music' : 'Deezer'} •{' '}
-                      {selectedChartCategory.source === 'apple' ? 'Updated daily' : 'Live chart'}
-                    </p>
+                    <p className="text-xs text-[#a7a7a7]">Live top chart</p>
                   </div>
                   {isLoadingCharts && (
                     <div className="ml-auto h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white" />
@@ -1208,106 +1194,79 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                   <div className="space-y-1">
                     {chartTracks.map((track) => {
                       const isInLibrary = isSongInLibrary(track.title, track.artist, librarySongs)
+                      const isCurrent = currentSong?.title === track.title
+                      const trackSongItem: HomeSongItem = {
+                        id: track.id,
+                        title: track.title,
+                        artist: track.artist,
+                        album: track.album || '',
+                        duration: track.duration || 0,
+                        artworkUrl: track.artworkUrl
+                      }
+
                       return (
                         <div
                           key={track.id}
-                          className="group flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover:bg-white/5"
+                          onClick={() => void handlePlaySong(trackSongItem)}
+                          className="group flex cursor-pointer items-center justify-between gap-3 rounded-xl px-3 py-2 transition-colors hover:bg-white/10"
                         >
-                          {/* Rank */}
-                          <span className="w-7 shrink-0 text-right text-sm font-extrabold text-[#a7a7a7] tabular-nums">
-                            {track.rank}
-                          </span>
+                          <div className="flex min-w-0 flex-1 items-center gap-3">
+                            {/* Rank */}
+                            <span className="w-7 shrink-0 text-right text-sm font-extrabold text-[#a7a7a7] tabular-nums">
+                              {track.rank}
+                            </span>
 
-                          {/* Artwork */}
-                          <div className="h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-[#282828]">
-                            {track.artworkUrl ? (
-                              <img
-                                src={track.artworkUrl}
-                                alt=""
-                                loading="lazy"
-                                className="h-full w-full object-cover"
-                                onError={(e) => {
-                                  e.currentTarget.style.display = 'none'
-                                }}
-                              />
-                            ) : (
-                              <div className="flex h-full w-full items-center justify-center">
-                                <Music2 className="h-5 w-5 text-white/30" />
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Track info */}
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-bold text-white">{displayTitle(track.title)}</p>
-                            <p className="truncate text-xs text-[#a7a7a7]">
-                              {track.artist}
-                              {track.album && (
-                                <> <span className="text-white/20">•</span> {displayTitle(track.album)}</>
+                            {/* Artwork & Play button */}
+                            <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-[#282828] shadow-sm">
+                              {track.artworkUrl ? (
+                                <img
+                                  src={track.artworkUrl}
+                                  alt=""
+                                  loading="lazy"
+                                  className="h-full w-full object-cover"
+                                  onError={(e) => {
+                                    e.currentTarget.style.display = 'none'
+                                  }}
+                                />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center">
+                                  <Music2 className="h-5 w-5 text-white/30" />
+                                </div>
                               )}
-                            </p>
-                          </div>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  void handlePlaySong(trackSongItem)
+                                }}
+                                className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100"
+                              >
+                                <Play className="h-5 w-5 fill-white text-white" />
+                              </button>
+                            </div>
 
-                          {/* Source badge */}
-                          <span className="hidden shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#a7a7a7] sm:inline-flex">
-                            {track.source === 'apple' ? 'Apple' : 'Deezer'}
-                          </span>
+                            {/* Track info */}
+                            <div className="min-w-0 flex-1">
+                              <p className={`truncate text-sm font-bold ${isCurrent ? 'text-[#1ed760]' : 'text-white'}`}>
+                                {displayTitle(track.title)}
+                              </p>
+                              <p className="truncate text-xs text-[#a7a7a7]">
+                                {track.artist}
+                                {track.album && (
+                                  <> <span className="text-white/20">•</span> {displayTitle(track.album)}</>
+                                )}
+                              </p>
+                            </div>
+                          </div>
 
                           {/* Actions */}
-                          <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                            {track.previewUrl && (
-                              <a
-                                href={track.previewUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                title="Preview"
-                                onClick={(e) => e.stopPropagation()}
-                                className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-[#1ed760] hover:text-black"
-                              >
-                                <Play className="h-3.5 w-3.5" />
-                              </a>
-                            )}
-                            <button
-                              type="button"
-                              title="Download"
-                              onClick={() => {
-                                onOpenDownloadPanel?.({
-                                  id: track.id,
-                                  title: track.title,
-                                  artist: track.artist,
-                                  album: track.album || '',
-                                  duration: 0,
-                                  artworkPath: track.artworkUrl,
-                                  isOnline: true,
-                                  autoDownload: true,
-                                  autoPlay: false
-                                })
-                              }}
-                              className={`flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
-                                isInLibrary
-                                  ? 'text-[#1ed760]'
-                                  : 'bg-white/10 text-white hover:bg-[#1ed760] hover:text-black'
-                              }`}
-                            >
-                              {isInLibrary ? (
-                                <CheckCircle2 className="h-4 w-4" />
-                              ) : (
-                                <Download className="h-3.5 w-3.5" />
-                              )}
-                            </button>
-                            {track.externalUrl && (
-                              <a
-                                href={track.externalUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                title="Open source"
-                                onClick={(e) => e.stopPropagation()}
-                                className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20"
-                              >
-                                <ExternalLink className="h-3.5 w-3.5" />
-                              </a>
-                            )}
-                          </div>
+                          {isInLibrary && (
+                            <div className="flex shrink-0 items-center pr-2">
+                              <span title="In Library">
+                                <CheckCircle2 className="h-4 w-4 text-[#1ed760]" />
+                              </span>
+                            </div>
+                          )}
                         </div>
                       )
                     })}
@@ -1595,19 +1554,6 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                         className="rounded-full bg-[#1ed760] px-3 py-1.5 text-[10px] font-black text-black transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
                       >
                         {importingSpotifyId === playlist.id ? 'Adding...' : 'Add to Playlist'}
-                      </button>
-                      <button
-                        type="button"
-                        title={`Open ${playlist.title} in Spotify`}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          void window.api?.openExternal?.(
-                            `https://open.spotify.com/playlist/${playlist.id}`
-                          )
-                        }}
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-[#1ed760] hover:text-black"
-                      >
-                        <ExternalLink className="h-4 w-4" />
                       </button>
                     </div>
                   </div>
