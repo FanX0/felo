@@ -19,6 +19,12 @@ import {
   STREAMING_ACCOUNTS_SETTING
 } from '../../lib/downloadConfig'
 import type { Song } from '../Library/Library'
+import {
+  CHART_CATEGORIES,
+  ChartCategory,
+  ChartTrack,
+  ChartsService
+} from '../../services/ChartsService'
 
 export interface HomeSongItem {
   id: string
@@ -281,7 +287,7 @@ export const spotifyPlaylists = [
   }
 ] as const
 
-type TabType = 'home' | 'hot_new' | 'editors_picks' | 'aoty' | 'spotify'
+type TabType = 'home' | 'hot_new' | 'charts' | 'spotify' | 'editors_picks' | 'aoty'
 
 function librarySongKey(title: string, artist: string): string {
   return `${title}::${artist}`
@@ -631,6 +637,9 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
   const [importingSpotifyId, setImportingSpotifyId] = useState<string | null>(null)
   const [spotifyArtwork, setSpotifyArtwork] = useState<Record<string, string>>({})
   const [spotifySection, setSpotifySection] = useState<SpotifySection>('all')
+  const [selectedChartCategory, setSelectedChartCategory] = useState<ChartCategory>(CHART_CATEGORIES[0])
+  const [chartTracks, setChartTracks] = useState<ChartTrack[]>([])
+  const [isLoadingCharts, setIsLoadingCharts] = useState(false)
   const [isInfiniteRadio, setIsInfiniteRadio] = useState(false)
   const radioSongsRef = useRef<Song[]>([])
   const radioRequestedRef = useRef<Set<string>>(new Set())
@@ -768,6 +777,23 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
       cancelled = true
     }
   }, [activeTab])
+
+  useEffect(() => {
+    if (activeTab !== 'charts') return
+    let cancelled = false
+    setIsLoadingCharts(true)
+    ChartsService.fetchCategoryTracks(selectedChartCategory, 50)
+      .then((tracks) => {
+        if (!cancelled) setChartTracks(tracks)
+      })
+      .catch((err) => console.warn('Charts load failed:', err))
+      .finally(() => {
+        if (!cancelled) setIsLoadingCharts(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab, selectedChartCategory])
 
   const toggleLike = (songId: string) => {
     setLikedSongIds((prev) => {
@@ -1057,6 +1083,32 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
 
         <button
           type="button"
+          onClick={() => setActiveTab('charts')}
+          className={`relative text-sm font-bold tracking-tight transition-colors ${
+            activeTab === 'charts' ? 'text-white font-extrabold' : 'text-[#a7a7a7] hover:text-white'
+          }`}
+        >
+          <span>Charts</span>
+          {activeTab === 'charts' && (
+            <span className="absolute -bottom-3 left-0 right-0 h-0.5 rounded-full bg-[#1ed760]" />
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('spotify')}
+          className={`relative text-sm font-bold tracking-tight transition-colors ${
+            activeTab === 'spotify' ? 'text-white font-extrabold' : 'text-[#a7a7a7] hover:text-white'
+          }`}
+        >
+          <span>Spotify</span>
+          {activeTab === 'spotify' && (
+            <span className="absolute -bottom-3 left-0 right-0 h-0.5 rounded-full bg-[#1ed760]" />
+          )}
+        </button>
+
+        <button
+          type="button"
           onClick={() => setActiveTab('editors_picks')}
           className={`relative text-sm font-bold tracking-tight transition-colors ${
             activeTab === 'editors_picks'
@@ -1082,22 +1134,234 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
             <span className="absolute -bottom-3 left-0 right-0 h-0.5 rounded-full bg-[#1ed760]" />
           )}
         </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('spotify')}
-          className={`relative text-sm font-bold tracking-tight transition-colors ${
-            activeTab === 'spotify' ? 'text-white font-extrabold' : 'text-[#a7a7a7] hover:text-white'
-          }`}
-        >
-          <span>Spotify</span>
-          {activeTab === 'spotify' && (
-            <span className="absolute -bottom-3 left-0 right-0 h-0.5 rounded-full bg-[#1ed760]" />
-          )}
-        </button>
       </div>
 
       <div className="space-y-10 px-4 pt-5 sm:px-8 sm:pt-6">
+        {/* Charts Tab */}
+        {activeTab === 'charts' && (
+          <section className="space-y-5 pt-2">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-black tracking-tight text-white">Live Music Charts</h2>
+                <p className="mt-1 text-sm text-[#a7a7a7]">
+                  Real-time top charts from Apple Music and Deezer — 100% free, no login required.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <span className="self-start sm:self-auto rounded-full bg-white/5 border border-white/10 px-3 py-1 text-[11px] font-bold text-[#a7a7a7]">
+                  Apple Music RSS
+                </span>
+                <span className="self-start sm:self-auto rounded-full bg-white/5 border border-white/10 px-3 py-1 text-[11px] font-bold text-[#a7a7a7]">
+                  Deezer API
+                </span>
+              </div>
+            </div>
+
+            <div className="flex gap-5">
+              {/* Sidebar: Category Picker */}
+              <aside className="hidden sm:flex w-52 shrink-0 flex-col gap-1">
+                <p className="mb-2 text-[10px] font-extrabold uppercase tracking-widest text-[#a7a7a7]">Sources</p>
+                {CHART_CATEGORIES.map((cat) => {
+                  const isActive = selectedChartCategory.id === cat.id
+                  return (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setSelectedChartCategory(cat)}
+                      className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-semibold transition-all ${
+                        isActive
+                          ? 'bg-white text-black'
+                          : 'text-[#a7a7a7] hover:bg-white/5 hover:text-white'
+                      }`}
+                    >
+                      <span className="text-base leading-none">{cat.icon}</span>
+                      <span className="truncate leading-snug">{cat.name.replace(/^.+? /, '')}</span>
+                    </button>
+                  )
+                })}
+              </aside>
+
+              {/* Mobile: Horizontal pills */}
+              <div className="flex sm:hidden flex-wrap gap-2 w-full">
+                {CHART_CATEGORIES.map((cat) => {
+                  const isActive = selectedChartCategory.id === cat.id
+                  return (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setSelectedChartCategory(cat)}
+                      className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${
+                        isActive
+                          ? 'bg-white text-black'
+                          : 'bg-[#242424] text-[#a7a7a7] hover:bg-[#2e2e2e] hover:text-white'
+                      }`}
+                    >
+                      <span>{cat.icon}</span>
+                      <span>{cat.name.split(' ').slice(-2).join(' ')}</span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Chart Track List */}
+              <div className="flex-1 min-w-0">
+                {/* Active chart title */}
+                <div className="mb-4 flex items-center gap-3">
+                  <span className="text-2xl leading-none">{selectedChartCategory.icon}</span>
+                  <div>
+                    <h3 className="text-lg font-black text-white">{selectedChartCategory.name}</h3>
+                    <p className="text-xs text-[#a7a7a7] capitalize">
+                      {selectedChartCategory.source === 'apple' ? 'Apple Music' : 'Deezer'} •{' '}
+                      {selectedChartCategory.source === 'apple' ? 'Updated daily' : 'Live chart'}
+                    </p>
+                  </div>
+                  {isLoadingCharts && (
+                    <div className="ml-auto h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+                  )}
+                </div>
+
+                {isLoadingCharts ? (
+                  <div className="space-y-2">
+                    {Array.from({ length: 10 }).map((_, i) => (
+                      <div key={i} className="flex items-center gap-3 rounded-xl bg-white/5 px-4 py-3 animate-pulse">
+                        <div className="w-7 h-4 rounded bg-white/10" />
+                        <div className="h-10 w-10 shrink-0 rounded-lg bg-white/10" />
+                        <div className="flex-1 space-y-2">
+                          <div className="h-3 w-2/3 rounded bg-white/10" />
+                          <div className="h-2.5 w-1/3 rounded bg-white/5" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : chartTracks.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center gap-3 py-20 text-center">
+                    <Music2 className="h-12 w-12 text-white/20" />
+                    <p className="text-sm font-semibold text-[#a7a7a7]">Could not load chart data.</p>
+                    <p className="text-xs text-white/30">Check your internet connection and try again.</p>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedChartCategory({ ...selectedChartCategory })}
+                      className="mt-2 rounded-full bg-white/10 px-5 py-2 text-xs font-bold text-white hover:bg-white/20"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {chartTracks.map((track) => {
+                      const songKey = librarySongKey(track.title, track.artist)
+                      const isInLibrary = librarySongKeys.has(songKey)
+                      return (
+                        <div
+                          key={track.id}
+                          className="group flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover:bg-white/5"
+                        >
+                          {/* Rank */}
+                          <span className="w-7 shrink-0 text-right text-sm font-extrabold text-[#a7a7a7] tabular-nums">
+                            {track.rank}
+                          </span>
+
+                          {/* Artwork */}
+                          <div className="h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-[#282828]">
+                            {track.artworkUrl ? (
+                              <img
+                                src={track.artworkUrl}
+                                alt=""
+                                loading="lazy"
+                                className="h-full w-full object-cover"
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none'
+                                }}
+                              />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center">
+                                <Music2 className="h-5 w-5 text-white/30" />
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Track info */}
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-bold text-white">{track.title}</p>
+                            <p className="truncate text-xs text-[#a7a7a7]">
+                              {track.artist}
+                              {track.album && (
+                                <> <span className="text-white/20">•</span> {track.album}</>
+                              )}
+                            </p>
+                          </div>
+
+                          {/* Source badge */}
+                          <span className="hidden shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#a7a7a7] sm:inline-flex">
+                            {track.source === 'apple' ? 'Apple' : 'Deezer'}
+                          </span>
+
+                          {/* Actions */}
+                          <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                            {track.previewUrl && (
+                              <a
+                                href={track.previewUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                title="Preview"
+                                onClick={(e) => e.stopPropagation()}
+                                className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-[#1ed760] hover:text-black"
+                              >
+                                <Play className="h-3.5 w-3.5" />
+                              </a>
+                            )}
+                            <button
+                              type="button"
+                              title="Download"
+                              onClick={() => {
+                                onOpenDownloadPanel?.({
+                                  id: track.id,
+                                  title: track.title,
+                                  artist: track.artist,
+                                  album: track.album || '',
+                                  duration: 0,
+                                  artworkPath: track.artworkUrl,
+                                  isOnline: true,
+                                  autoDownload: true,
+                                  autoPlay: false
+                                })
+                              }}
+                              className={`flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
+                                isInLibrary
+                                  ? 'text-[#1ed760]'
+                                  : 'bg-white/10 text-white hover:bg-[#1ed760] hover:text-black'
+                              }`}
+                            >
+                              {isInLibrary ? (
+                                <CheckCircle2 className="h-4 w-4" />
+                              ) : (
+                                <Download className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                            {track.externalUrl && (
+                              <a
+                                href={track.externalUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                title="Open source"
+                                onClick={(e) => e.stopPropagation()}
+                                className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* Section 1: Recommended Songs */}
         {(activeTab === 'home' || activeTab === 'hot_new' || activeTab === 'editors_picks') && (
           <section className="space-y-4">
@@ -1256,27 +1520,27 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                 { id: 'all' as const, label: 'All Playlists', count: spotifyPlaylists.length },
                 {
                   id: 'popular' as const,
-                  label: '🔥 Popular Now',
+                  label: 'Popular Now',
                   count: spotifyPlaylists.filter((p) => p.section === 'popular').length
                 },
                 {
                   id: 'charts' as const,
-                  label: '📈 Charts',
+                  label: 'Charts',
                   count: spotifyPlaylists.filter((p) => p.section === 'charts').length
                 },
                 {
                   id: 'trending' as const,
-                  label: '🚀 Trending & Rising',
+                  label: 'Trending & Rising',
                   count: spotifyPlaylists.filter((p) => p.section === 'trending').length
                 },
                 {
                   id: 'new_music' as const,
-                  label: '✨ New Music',
+                  label: 'New Music',
                   count: spotifyPlaylists.filter((p) => p.section === 'new_music').length
                 },
                 {
                   id: 'genres' as const,
-                  label: '🎵 Genres',
+                  label: 'Genres',
                   count: spotifyPlaylists.filter((p) => p.section === 'genres').length
                 }
               ].map((tab) => {
