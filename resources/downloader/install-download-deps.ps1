@@ -37,20 +37,49 @@ function Find-WingetExe {
   return $null
 }
 
+$script:PythonExe = $null
+$script:PythonPrefixArgs = @()
+
+function Test-PythonWorking {
+  param([string]$ExePath, [string[]]$Prefix = @())
+  if (-not $ExePath -or -not (Test-Path $ExePath)) { return $false }
+  try {
+    $item = Get-Item $ExePath -ErrorAction SilentlyContinue
+    if ($item.Length -eq 0) { return $false } # WindowsApps 0-byte shim
+
+    $testOutput = & $ExePath @Prefix "--version" 2>&1
+    if ($LASTEXITCODE -eq 0 -and "$testOutput" -match "Python\s+3\.") {
+      return $true
+    }
+  } catch {
+    return $false
+  }
+  return $false
+}
+
 function Find-PythonExe {
   # 1. Check py launcher
   $py = Get-CommandPath "py.exe"
-  if ($py) { return @($py, "-$PythonVersion") }
-  if (Test-Path "$env:LOCALAPPDATA\Programs\Python\Launcher\py.exe") {
-    return @("$env:LOCALAPPDATA\Programs\Python\Launcher\py.exe", "-$PythonVersion")
+  if ($py -and (Test-PythonWorking $py @("-$PythonVersion"))) {
+    $script:PythonExe = $py
+    $script:PythonPrefixArgs = @("-$PythonVersion")
+    return $true
   }
-  if (Test-Path "$env:WINDIR\py.exe") {
-    return @("$env:WINDIR\py.exe", "-$PythonVersion")
+
+  $pyLauncher = "$env:LOCALAPPDATA\Programs\Python\Launcher\py.exe"
+  if ((Test-Path $pyLauncher) -and (Test-PythonWorking $pyLauncher @("-$PythonVersion"))) {
+    $script:PythonExe = $pyLauncher
+    $script:PythonPrefixArgs = @("-$PythonVersion")
+    return $true
   }
 
   # 2. Check python.exe in PATH
   $python = Get-CommandPath "python.exe"
-  if ($python) { return @($python) }
+  if ($python -and (Test-PythonWorking $python)) {
+    $script:PythonExe = $python
+    $script:PythonPrefixArgs = @()
+    return $true
+  }
 
   # 3. Check standard Python installation directories
   $searchDirs = @(
@@ -63,31 +92,37 @@ function Find-PythonExe {
     "C:\Python313",
     "C:\Python312",
     "C:\Python311",
-    "C:\Python310",
-    "$env:LOCALAPPDATA\Microsoft\WindowsApps"
+    "C:\Python310"
   )
 
   foreach ($dir in $searchDirs) {
     if (Test-Path $dir) {
       $pyCandidate = Join-Path $dir "python.exe"
-      if (Test-Path $pyCandidate) { return @($pyCandidate) }
+      if (Test-PythonWorking $pyCandidate) {
+        $script:PythonExe = $pyCandidate
+        $script:PythonPrefixArgs = @()
+        return $true
+      }
 
-      # Subfolders like Python312
       $subCandidates = Get-ChildItem -Path $dir -Directory -Filter "Python3*" -ErrorAction SilentlyContinue
       foreach ($sub in $subCandidates) {
         $subPy = Join-Path $sub.FullName "python.exe"
-        if (Test-Path $subPy) { return @($subPy) }
+        if (Test-PythonWorking $subPy) {
+          $script:PythonExe = $subPy
+          $script:PythonPrefixArgs = @()
+          return $true
+        }
       }
     }
   }
 
-  return $null
+  return $false
 }
 
 # Ensure Python is installed
-$pythonCmd = Find-PythonExe
-if (-not $pythonCmd) {
-  Write-Log "Python not found. Attempting automatic installation..."
+$found = Find-PythonExe
+if (-not $found) {
+  Write-Log "Python 3.10+ not found. Attempting automatic installation..."
   $winget = Find-WingetExe
 
   if ($winget) {
@@ -95,11 +130,10 @@ if (-not $pythonCmd) {
     & $winget install --id "Python.Python.$PythonVersion" --exact --silent --accept-package-agreements --accept-source-agreements
   }
 
-  # Re-check if winget succeeded
-  $pythonCmd = Find-PythonExe
+  $found = Find-PythonExe
 
   # If winget failed or was unavailable, download official Python installer directly
-  if (-not $pythonCmd) {
+  if (-not $found) {
     Write-Log "Winget unavailable or failed. Downloading official Python installer from python.org..."
     $installerUrl = "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe"
     $installerPath = "$env:TEMP\python-3.12.8-amd64.exe"
@@ -119,29 +153,24 @@ if (-not $pythonCmd) {
   $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
   $env:Path = "$machinePath;$userPath;$env:LOCALAPPDATA\Programs\Python\Python312;$env:LOCALAPPDATA\Programs\Python\Python312\Scripts"
 
-  $pythonCmd = Find-PythonExe
+  $found = Find-PythonExe
 }
 
-if (-not $pythonCmd) {
+if (-not $found -or -not $script:PythonExe) {
   Write-Log "ERROR: Python could not be located or installed."
   throw "Python was not found and could not be installed automatically. Please install Python 3.10+ manually from python.org."
 }
 
-Write-Log "Using Python: $($pythonCmd -join ' ')"
+Write-Log "Using Python: $script:PythonExe $($script:PythonPrefixArgs -join ' ')"
 
 function Run-Py {
   param(
     [Parameter(Mandatory = $true, Position = 0, ValueFromRemainingArguments = $true)]
     [string[]]$Arguments
   )
-  $exe = $pythonCmd[0]
-  $baseArgs = @()
-  if ($pythonCmd.Length -gt 1) {
-    $baseArgs = $pythonCmd[1..($pythonCmd.Length - 1)]
-  }
-  $allArgs = @($baseArgs) + @($Arguments)
-  Write-Log "Running: $exe $($allArgs -join ' ')"
-  & $exe $allArgs
+  $allArgs = @($script:PythonPrefixArgs) + @($Arguments)
+  Write-Log "Running: $script:PythonExe $($allArgs -join ' ')"
+  & "$script:PythonExe" $allArgs
 }
 
 # Upgrade pip and install streamrip & yt-dlp
