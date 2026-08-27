@@ -17,6 +17,8 @@ export interface TransferItem {
   progress: number
   createdAt: number
   message?: string
+  autoPlay?: boolean
+  resultId?: string
   song?: Song
 }
 

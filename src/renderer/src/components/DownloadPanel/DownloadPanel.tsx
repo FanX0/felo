@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  AlertCircle,
   CheckCircle2,
   Download,
   Headphones,
@@ -10,10 +11,12 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Settings as SettingsIcon,
   ShieldAlert,
   Video,
   X
 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
 import { toMediaUrl } from '../../lib/media'
@@ -45,6 +48,8 @@ export type DownloadTarget = {
   size?: number
   sampleRate?: number
   isOnline?: boolean
+  autoDownload?: boolean
+  autoPlay?: boolean
 }
 
 interface StreamingAccounts {
@@ -56,6 +61,8 @@ interface StreamingAccounts {
   qobuzQuality?: string
   deezerArl?: string
   deezerQuality?: string
+  soulseekUser?: string
+  soulseekPassword?: string
 }
 
 interface SourceResult {
@@ -73,32 +80,94 @@ interface SourceResult {
 export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProps) {
   const { queue, currentSongIndex, isPlaying, togglePlay, setQueue } = usePlayerStore()
   const { transfers, queueTransfer, updateTransfer } = useDownloadStore()
+  const navigate = useNavigate()
   const currentSong = queue[currentSongIndex]
   const panelSong = targetSong || currentSong
   const artworkUrl = targetSong?.artworkUrl || toMediaUrl(panelSong?.artworkPath)
   const isLibraryTrack = Boolean(panelSong?.filePath && !targetSong?.isOnline)
+  const [existingLibrarySong, setExistingLibrarySong] = useState<any | null>(null)
+  const replaceTargetSong = isLibraryTrack ? panelSong : existingLibrarySong
+  const hasLibraryCopy = Boolean(replaceTargetSong?.filePath)
   const [query, setQuery] = useState('')
   const [activeSource, setActiveSource] = useState<DownloadSourceId>('qobuz')
-  const [isSearching, setIsSearching] = useState(false)
-  const [statusMessage, setStatusMessage] = useState('')
   const [conflictMode, setConflictMode] = useState<DownloadConflictMode>('replace')
   const [priority, setPriority] = useState<DownloadSourceId[]>(DEFAULT_DOWNLOAD_PRIORITY)
   const [playbackMode, setPlaybackMode] = useState<PlaybackStorageMode>('stream')
   const [accounts, setAccounts] = useState<StreamingAccounts>({})
-  const [sourceResults, setSourceResults] = useState<SourceResult[]>([])
+  const [resultsBySource, setResultsBySource] = useState<Partial<Record<DownloadSourceId, SourceResult[]>>>({})
+  const [searchingBySource, setSearchingBySource] = useState<Partial<Record<DownloadSourceId, boolean>>>({})
+  const [statusBySource, setStatusBySource] = useState<Partial<Record<DownloadSourceId, string>>>({})
+  const [statusToneBySource, setStatusToneBySource] = useState<Partial<Record<DownloadSourceId, 'success' | 'error'>>>({})
   const [resultCounts, setResultCounts] = useState<Partial<Record<DownloadSourceId, number>>>({})
   const [settingsLoaded, setSettingsLoaded] = useState(false)
   const automaticSearchKey = useRef('')
+  const automaticDownloadKey = useRef('')
 
   useEffect(() => {
     if (panelSong) {
       setQuery(`${panelSong.artist} ${panelSong.title}`)
-      setStatusMessage('')
-      setSourceResults([])
+      setResultsBySource({})
+      setSearchingBySource({})
+      setStatusBySource({})
+      setStatusToneBySource({})
       setResultCounts({})
-      setConflictMode(isLibraryTrack ? 'replace' : 'keep_both')
+      setExistingLibrarySong(null)
     }
   }, [panelSong?.id, isLibraryTrack])
+
+  useEffect(() => {
+    let cancelled = false
+    const normalized = (value?: string) =>
+      String(value || '')
+        .toLowerCase()
+        .replace(/\bunknown\s+artist\b/g, '')
+        .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+
+    const findExistingLibrarySong = async () => {
+      if (!panelSong || isLibraryTrack) {
+        setExistingLibrarySong(null)
+        setConflictMode(isLibraryTrack ? 'replace' : 'keep_both')
+        return
+      }
+
+      try {
+        const songs = await window.api?.getSongs?.()
+        if (cancelled) return
+        const targetTitle = normalized(panelSong.title)
+        const targetArtist = normalized(panelSong.artist)
+        const match = (songs || []).find((song: any) => {
+          if (!song?.filePath || String(song.filePath).startsWith('virtual:')) return false
+          const songTitle = normalized(song.title)
+          const songArtist = normalized(song.artist)
+          const titleMatches =
+            songTitle === targetTitle ||
+            (songTitle && targetTitle && (songTitle.includes(targetTitle) || targetTitle.includes(songTitle)))
+          const artistMatches =
+            !targetArtist ||
+            !songArtist ||
+            targetArtist === songArtist ||
+            targetArtist === 'unknown' ||
+            songArtist === 'unknown'
+          return titleMatches && artistMatches
+        })
+        setExistingLibrarySong(match || null)
+        setConflictMode(match ? 'replace' : 'keep_both')
+      } catch (error) {
+        if (!cancelled) {
+          setExistingLibrarySong(null)
+          setConflictMode('keep_both')
+        }
+        console.warn('Could not check existing library song:', error)
+      }
+    }
+
+    void findExistingLibrarySong()
+    return () => {
+      cancelled = true
+    }
+  }, [panelSong?.id, panelSong?.title, panelSong?.artist, isLibraryTrack])
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -142,59 +211,106 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
       : activeSource === 'deezer'
         ? isDeezerConfigured
         : true
+
   const handlePlayExisting = () => {
-    if (!panelSong || !isLibraryTrack) return
-    if (queue[currentSongIndex]?.id === panelSong.id) {
+    if (!replaceTargetSong?.filePath) return
+    if (queue[currentSongIndex]?.id === replaceTargetSong.id) {
       togglePlay()
       return
     }
-    setQueue([panelSong as any], 0)
+    setQueue([replaceTargetSong as any], 0)
   }
 
-  const handleSearch = async (event?: React.FormEvent) => {
+  const handleSearch = async (sourceToSearch: DownloadSourceId = activeSource, event?: React.FormEvent) => {
     event?.preventDefault()
     if (!query.trim()) return
 
-    setIsSearching(true)
-    setStatusMessage('')
-    setSourceResults([])
+    const targetSourceInfo = DOWNLOAD_SOURCES.find((s) => s.id === sourceToSearch)
+    const isTargetConfigured =
+      sourceToSearch === 'qobuz'
+        ? isQobuzConfigured
+        : sourceToSearch === 'deezer'
+          ? isDeezerConfigured
+          : true
+
+    setSearchingBySource((prev) => ({ ...prev, [sourceToSearch]: true }))
+    setStatusBySource((prev) => ({ ...prev, [sourceToSearch]: '' }))
+    setStatusToneBySource((prev) => ({ ...prev, [sourceToSearch]: undefined }))
+
     try {
-      if (activeSource !== 'qobuz' && activeSource !== 'deezer') {
-        throw new Error(`${activeSourceInfo?.name || 'Source'} connector is not installed yet.`)
-      }
-      if (!isActiveSourceConfigured) {
+      if (!isTargetConfigured) {
         throw new Error(
-          `${activeSourceInfo?.name || 'Source'} account is not configured completely.`
+          `${targetSourceInfo?.name || 'Source'} account is not configured completely.`
         )
       }
-      const results = await window.api.searchDownloadSource(activeSource, query.trim(), accounts)
-      const mappedResults: SourceResult[] = results.map((result: any, index: number) => ({
+      const results = await window.api.searchDownloadSource(sourceToSearch, query.trim(), accounts)
+      const mappedResults: SourceResult[] = (results || []).map((result: any, index: number) => ({
         id: String(result.id),
         title: result.title || panelSong?.title || query.trim(),
         artist: result.artist || panelSong?.artist || '',
-        album: panelSong?.album || 'Track result',
-        quality: result.quality || activeSourceInfo?.quality || 'Provider quality',
-        sourceName: activeSourceInfo?.name || activeSource,
-        size: 'Size calculated during download',
+        album: result.album || panelSong?.album || 'Track result',
+        quality: result.quality || targetSourceInfo?.quality || 'Provider quality',
+        sourceName: targetSourceInfo?.name || sourceToSearch,
+        size: result.size || (sourceToSearch === 'youtube' ? 'Standard Audio' : 'Size calculated during download'),
         confidence: index === 0 ? 'Best match' : 'Provider match',
-        meta: `Track ID ${result.id}`
+        meta: result.meta || (sourceToSearch === 'soulseek' ? (result.slots ? 'Instant Slot' : 'Queued Slot') : `Track ID ${result.id}`)
       }))
-      setSourceResults(mappedResults)
-      setResultCounts((counts) => ({ ...counts, [activeSource]: mappedResults.length }))
-      setStatusMessage(
-        `${activeSourceInfo?.name || 'Source'} returned ${mappedResults.length} real provider matches.`
-      )
+
+      setResultsBySource((prev) => ({ ...prev, [sourceToSearch]: mappedResults }))
+      setResultCounts((prev) => ({ ...prev, [sourceToSearch]: mappedResults.length }))
+      setStatusBySource((prev) => ({
+        ...prev,
+        [sourceToSearch]: `${targetSourceInfo?.name || 'Source'} returned ${mappedResults.length} matches.`
+      }))
+      setStatusToneBySource((prev) => ({ ...prev, [sourceToSearch]: 'success' }))
     } catch (error) {
-      setResultCounts((counts) => ({ ...counts, [activeSource]: 0 }))
-      setStatusMessage(error instanceof Error ? error.message : String(error))
+      const message = error instanceof Error ? error.message : String(error)
+      const isConfigurationError =
+        message.toLowerCase().includes('credential') ||
+        message.toLowerCase().includes('account') ||
+        message.toLowerCase().includes('login') ||
+        message.toLowerCase().includes('password') ||
+        message.toLowerCase().includes('authentication')
+      const friendlyMessage = isConfigurationError
+        ? `${targetSourceInfo?.name || 'This provider'} could not log in. Check the account details in Settings, save them, and try again.`
+        : `${targetSourceInfo?.name || 'This provider'} search failed. Check your connection and try again.`
+      setStatusBySource((prev) => ({ ...prev, [sourceToSearch]: friendlyMessage }))
+      setStatusToneBySource((prev) => ({ ...prev, [sourceToSearch]: 'error' }))
+      setResultsBySource((prev) => ({ ...prev, [sourceToSearch]: [] }))
+      setResultCounts((prev) => ({ ...prev, [sourceToSearch]: 0 }))
     } finally {
-      setIsSearching(false)
+      setSearchingBySource((prev) => ({ ...prev, [sourceToSearch]: false }))
     }
   }
 
-  const handleQueueDownload = async (result: SourceResult) => {
+  const handleQueueDownload = async (result: SourceResult, source: DownloadSourceId = activeSource) => {
+    const normalized = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/\bunknown\s+artist\b/g, '')
+        .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    const resultTitle = normalized(result.title)
+    const activeTransferStatuses = new Set(['queued', 'waiting_connector', 'downloading'])
+    const duplicateTransfer = useDownloadStore.getState().transfers.find(
+      (transfer) =>
+        transfer.source === source &&
+        activeTransferStatuses.has(transfer.status) &&
+        ((transfer.resultId && transfer.resultId === result.id) ||
+          normalized(transfer.title) === resultTitle)
+    )
+
+    if (duplicateTransfer) {
+      setStatusBySource((prev) => ({
+        ...prev,
+        [source]: 'This track is already in Transfers — duplicate download skipped.'
+      }))
+      return
+    }
+
     const transferId = queueTransfer({
-      source: activeSource,
+      source,
       sourceName: result.sourceName,
       title: result.title,
       artist: panelSong?.artist || result.artist,
@@ -203,39 +319,90 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
       conflictMode,
       status: 'queued',
       progress: 2,
-      message: `Starting ${result.sourceName} download...`
+      message: `Starting ${result.sourceName} download...`,
+      autoPlay: targetSong?.autoPlay,
+      resultId: result.id
     })
     try {
-      if (activeSource !== 'qobuz' && activeSource !== 'deezer') {
-        throw new Error(`${result.sourceName} connector is not installed yet.`)
-      }
-      await window.api.startDownload({
+      const response = await window.api.startDownload({
         transferId,
-        source: activeSource,
+        source,
         resultId: result.id,
         title: result.title,
         artist: result.artist,
-        songId: panelSong?.id || '',
+        songId: replaceTargetSong?.id || panelSong?.id || '',
         conflictMode,
-        accounts
+        accounts,
+        storageMode: playbackMode,
+        autoPlay: targetSong?.autoPlay,
+        skipIfExists: targetSong?.autoDownload
       })
-      setStatusMessage(
-        `${result.sourceName} download started for "${result.title}". Open Transfers to track it.`
-      )
+      if (response.alreadyExists || response.duplicateRequest) {
+        const message = response.alreadyExists
+          ? 'Already downloaded — skipped duplicate download.'
+          : 'This track is already being downloaded — skipped duplicate request.'
+        let existingSong
+        if (response.alreadyExists) {
+          try {
+            const songs = await window.api.getSongs()
+            existingSong = songs.find(
+              (song) =>
+                normalized(song.title || '') === normalized(result.title) &&
+                normalized(song.artist || '') === normalized(result.artist)
+            )
+          } catch (error) {
+            console.warn('Could not find already downloaded song:', error)
+          }
+        }
+        updateTransfer(transferId, {
+          status: 'completed',
+          progress: 100,
+          message,
+          song: existingSong
+        })
+        setStatusBySource((prev) => ({ ...prev, [source]: message }))
+        return
+      }
+      setStatusBySource((prev) => ({
+        ...prev,
+        [source]: `${result.sourceName} download started for "${result.title}". Open Transfers to track it.`
+      }))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       updateTransfer(transferId, { status: 'failed', progress: 0, message })
-      setStatusMessage(message)
+      setStatusBySource((prev) => ({ ...prev, [source]: message }))
     }
   }
 
   useEffect(() => {
     if (!settingsLoaded || !panelSong || !query.trim()) return
-    const key = `${panelSong.id}:${activeSource}`
+    const key = `${panelSong.id}:${query.trim()}`
     if (automaticSearchKey.current === key) return
     automaticSearchKey.current = key
-    void handleSearch()
-  }, [settingsLoaded, panelSong?.id, activeSource])
+
+    // Search every provider when the panel opens so each tab is ready immediately.
+    void Promise.all(
+      DOWNLOAD_SOURCES.map((source) => {
+        if (resultsBySource[source.id]) return Promise.resolve()
+        return handleSearch(source.id)
+      })
+    )
+  }, [settingsLoaded, panelSong?.id, query])
+
+  useEffect(() => {
+    if (!settingsLoaded || !targetSong?.autoDownload || !panelSong || !query.trim()) return
+    const key = `${panelSong.id}:${query.trim()}`
+    if (automaticDownloadKey.current === key) return
+
+    const preferredSource = priority.find((source) => (resultsBySource[source] || []).length > 0)
+    if (!preferredSource) return
+    const preferredResult = resultsBySource[preferredSource]?.[0]
+    if (!preferredResult) return
+
+    automaticDownloadKey.current = key
+    setActiveSource(preferredSource)
+    void handleQueueDownload(preferredResult, preferredSource)
+  }, [settingsLoaded, targetSong?.autoDownload, panelSong?.id, query, priority, resultsBySource])
 
   const getSourceResultCount = (sourceId: DownloadSourceId) => {
     return resultCounts[sourceId] || 0
@@ -249,6 +416,12 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
   }
 
   const isYoutube = activeSource === 'youtube'
+  const isSearching = Boolean(searchingBySource[activeSource])
+  const sourceResults = resultsBySource[activeSource] || []
+  const statusMessage = statusBySource[activeSource] || ''
+  const statusTone = statusToneBySource[activeSource]
+  const canConfigureSource = activeSource !== 'youtube'
+  const openProviderSettings = () => navigate('/settings')
   const searchButtonLabel = isSearching
     ? `Searching ${activeSourceInfo?.name || 'Source'}...`
     : `Search ${activeSourceInfo?.name || 'Source'}`
@@ -312,39 +485,25 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
           <p className="text-xs italic text-text-muted/70">{panelSong.album}</p>
         </div>
 
-        <div
-          className={`mt-5 rounded-lg border p-3 ${
-            isLibraryTrack
-              ? 'border-success/30 bg-success/10'
-              : 'border-secondary-cyan/30 bg-secondary-cyan/10'
-          }`}
-        >
+        <div className="mt-5 rounded-lg border border-white/15 bg-[#2a2a2a] p-3">
           <div className="flex items-center justify-between gap-3">
             <div
-              className={`flex items-center gap-2 text-xs font-bold ${
-                isLibraryTrack ? 'text-success' : 'text-secondary-cyan'
-              }`}
+              className="flex items-center gap-2 text-xs font-bold text-white"
             >
               <CheckCircle2 className="h-4 w-4" />
-              {isLibraryTrack ? 'Already in Library' : 'Online Track'}
+              {hasLibraryCopy ? 'Already in Library' : 'Online Track'}
             </div>
-            <span
-              className={`rounded border px-2 py-1 text-[10px] font-bold uppercase ${
-                isLibraryTrack
-                  ? 'border-success/30 bg-success/15 text-success'
-                  : 'border-secondary-cyan/30 bg-secondary-cyan/15 text-secondary-cyan'
-              }`}
-            >
-              {isLibraryTrack ? 'Replace Mode' : 'Download Mode'}
+            <span className="rounded-full border border-white/15 bg-[#2a2a2a] px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-[#b3b3b3]">
+              {hasLibraryCopy ? 'Replace Mode' : 'Download Mode'}
             </span>
           </div>
 
-          {isLibraryTrack && (
+          {hasLibraryCopy && (
             <div className="mt-3 flex items-center gap-3 rounded-md bg-white/[0.04] p-2">
             <button
               type="button"
               onClick={handlePlayExisting}
-              className="h-9 w-9 rounded-full bg-success text-white flex items-center justify-center shadow-[0_0_14px_rgba(16,185,129,0.35)]"
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-[#2a2a2a] text-white shadow-md transition-colors hover:bg-[#353535]"
             >
               {isPlaying ? (
                 <Pause className="h-4 w-4 fill-current" />
@@ -353,17 +512,17 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
               )}
             </button>
             <div className="min-w-0 flex-1 text-left">
-              <div className="truncate text-sm font-bold text-text">{panelSong.title}</div>
+              <div className="truncate text-sm font-bold text-text">{replaceTargetSong.title}</div>
               <div className="mt-1 flex items-center gap-2 text-[10px] text-text-muted">
                 <span className="rounded bg-black/30 px-1.5 py-0.5 font-bold text-text">
-                  {(panelSong.sampleRate ? panelSong.sampleRate / 1000 : 44.1).toFixed(1)}kHz
+                  {(replaceTargetSong.sampleRate ? replaceTargetSong.sampleRate / 1000 : 44.1).toFixed(1)}kHz
                 </span>
                 <span>
-                  {panelSong.size ? (panelSong.size / 1024 / 1024).toFixed(2) : '0'} MB
+                  {replaceTargetSong.size ? (replaceTargetSong.size / 1024 / 1024).toFixed(2) : '0'} MB
                 </span>
                 <span>
-                  {panelSong.duration
-                    ? `${Math.floor(panelSong.duration / 60)}:${String(panelSong.duration % 60).padStart(2, '0')}`
+                  {replaceTargetSong.duration
+                    ? `${Math.floor(replaceTargetSong.duration / 60)}:${String(replaceTargetSong.duration % 60).padStart(2, '0')}`
                     : '0:00'}
                 </span>
               </div>
@@ -371,15 +530,15 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
           </div>
           )}
 
-          {isLibraryTrack && (
+          {hasLibraryCopy && (
             <div className="mt-3 grid grid-cols-2 gap-1 rounded-md border border-white/10 bg-black/30 p-1">
               <button
                 type="button"
                 onClick={() => setConflictMode('replace')}
                 className={`flex items-center justify-center gap-1.5 rounded-[4px] px-2 py-1.5 text-[11px] font-bold ${
                   conflictMode === 'replace'
-                    ? 'bg-success/20 text-success'
-                    : 'text-text-muted hover:text-text hover:bg-hover'
+                    ? 'bg-white/10 text-white'
+                    : 'text-text-muted hover:bg-hover hover:text-text'
                 }`}
               >
                 <RefreshCw className="h-3.5 w-3.5" />
@@ -390,8 +549,8 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
                 onClick={() => setConflictMode('keep_both')}
                 className={`flex items-center justify-center gap-1.5 rounded-[4px] px-2 py-1.5 text-[11px] font-bold ${
                   conflictMode === 'keep_both'
-                    ? 'bg-secondary-cyan/20 text-secondary-cyan'
-                    : 'text-text-muted hover:text-text hover:bg-hover'
+                    ? 'bg-white/10 text-white'
+                    : 'text-text-muted hover:bg-hover hover:text-text'
                 }`}
               >
                 <Plus className="h-3.5 w-3.5" />
@@ -402,10 +561,10 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
         </div>
 
         <div className="mt-4 text-sm text-text-muted">
-          Search results for <span className="font-bold text-success">"{query}"</span>
+          Search results for <span className="font-bold text-white">"{query}"</span>
         </div>
 
-        <form onSubmit={handleSearch} className="mt-3 flex gap-2">
+        <form onSubmit={(e) => handleSearch(activeSource, e)} className="mt-3 flex gap-2">
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -421,15 +580,7 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
           <button
             type="submit"
             disabled={isSearching}
-            className={`flex min-w-[116px] items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-bold text-white disabled:opacity-60 ${
-              activeSource === 'youtube'
-                ? 'bg-danger'
-                : activeSource === 'qobuz'
-                  ? 'bg-secondary-cyan'
-                  : activeSource === 'deezer'
-                    ? 'bg-purple-600'
-                    : 'bg-success'
-            }`}
+            className="flex min-w-[116px] items-center justify-center gap-2 rounded-full bg-[#2a2a2a] px-4 py-2 text-sm font-bold text-white shadow-md transition-colors hover:bg-[#353535] disabled:opacity-60"
           >
             {isSearching ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -448,13 +599,12 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
                 key={source.id}
                 type="button"
                 onClick={() => {
-                  if (source.id !== activeSource) setSourceResults([])
                   setActiveSource(source.id)
                 }}
                 className={`relative h-14 rounded-md border px-1 text-[11px] font-bold transition-colors ${
                   activeSource === source.id
-                    ? 'border-secondary-cyan bg-secondary-cyan/10 text-secondary-cyan'
-                    : 'border-border bg-surface-elevated text-text-muted hover:text-text'
+                    ? 'border-white/30 bg-white/10 text-white'
+                    : 'border-border bg-surface-elevated text-text-muted hover:text-white'
                 }`}
               >
                 <div className="flex flex-col items-center justify-center gap-1">
@@ -462,7 +612,7 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
                   <span className="leading-tight">{source.name}</span>
                 </div>
                 {getSourceResultCount(source.id) > 0 && (
-                  <span className="absolute right-1.5 top-1 rounded-full bg-success px-1.5 text-[9px] font-extrabold text-canvas">
+                  <span className="absolute right-1.5 top-1 rounded-full bg-white/10 px-1.5 text-[9px] font-extrabold text-white">
                     {getSourceResultCount(source.id)}
                   </span>
                 )}
@@ -513,7 +663,7 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
                             {result.artist} · {result.album}
                           </div>
                         </div>
-                        <span className="shrink-0 rounded bg-success/10 px-2 py-0.5 text-[10px] font-bold text-success">
+                        <span className="shrink-0 rounded-full border border-white/15 bg-[#2a2a2a] px-2 py-0.5 text-[10px] font-bold text-[#b3b3b3]">
                           {result.confidence}
                         </span>
                       </div>
@@ -529,9 +679,9 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
                         </span>
                       </div>
                       {queuedTransfer ? (
-                        <div className="mt-3 rounded-md border border-success/30 bg-success/10 p-2.5">
+                        <div className="mt-3 rounded-md border border-white/15 bg-[#2a2a2a] p-2.5">
                           <div className="flex items-center justify-between gap-3">
-                            <div className="flex min-w-0 items-center gap-2 text-xs font-bold text-success">
+                            <div className="flex min-w-0 items-center gap-2 text-xs font-bold text-white">
                               {isQueuedComplete ? (
                                 <CheckCircle2 className="h-4 w-4 shrink-0" />
                               ) : (
@@ -541,13 +691,13 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
                                 {isQueuedComplete ? 'Download complete' : 'Download in transfers'}
                               </span>
                             </div>
-                            <span className="shrink-0 rounded-full bg-black/25 px-2 py-0.5 text-[11px] font-black tabular-nums text-success">
+                            <span className="shrink-0 rounded-full bg-black/30 px-2 py-0.5 text-[11px] font-black tabular-nums text-white">
                               {queuedProgress}%
                             </span>
                           </div>
                           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-black/35">
                             <div
-                              className="h-full rounded-full bg-success transition-[width]"
+                              className="h-full rounded-full bg-white transition-[width]"
                               style={{ width: `${queuedProgress}%` }}
                             />
                           </div>
@@ -559,10 +709,10 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
                         <button
                           type="button"
                           onClick={() => handleQueueDownload(result)}
-                          className="mt-3 flex w-full items-center justify-center gap-2 rounded-md bg-success px-3 py-2 text-xs font-bold text-white hover:bg-success/90"
+                          className="mt-3 flex w-full items-center justify-center gap-2 rounded-full bg-[#2a2a2a] px-4 py-2 text-xs font-bold text-white shadow-md transition-colors hover:bg-[#353535]"
                         >
                           <Download className="h-4 w-4" />
-                          {conflictMode === 'replace' && isLibraryTrack
+                          {conflictMode === 'replace' && hasLibraryCopy
                             ? 'Replace With This Version'
                             : 'Download New Copy'}
                         </button>
@@ -573,20 +723,40 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center gap-3 py-5 text-center text-text-muted">
-                <ShieldAlert className="h-6 w-6 text-warning" />
-                <p className="text-xs leading-relaxed">
-                  {activeSource === 'qobuz' || activeSource === 'deezer'
-                    ? isActiveSourceConfigured
-                      ? `No ${activeSourceInfo?.name || 'provider'} matches were found. Refine the search and try again.`
-                      : `${activeSourceInfo?.name || 'Source'} is not configured completely. Check the account fields in Settings and save them.`
-                    : `${activeSourceInfo?.name || 'Source'} results require a dedicated connector before download matches can be listed.`}
+                {statusTone === 'error' ? (
+                  <AlertCircle className="h-6 w-6 text-danger" />
+                ) : (
+                  <ShieldAlert className="h-6 w-6 text-warning" />
+                )}
+                <p className="max-w-[290px] text-xs leading-relaxed">
+                  {statusTone === 'error' || statusMessage
+                    ? statusMessage
+                    : !isActiveSourceConfigured
+                      ? `${activeSourceInfo?.name || 'Source'} account details are incomplete.`
+                      : `No ${activeSourceInfo?.name || 'provider'} matches were found. Refine the search and try again.`}
                 </p>
+                {(statusTone === 'error' || !isActiveSourceConfigured) && canConfigureSource && (
+                  <button
+                    type="button"
+                    onClick={openProviderSettings}
+                    className="flex items-center gap-2 rounded-full border border-white/15 bg-[#2a2a2a] px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-[#353535]"
+                  >
+                    <SettingsIcon className="h-3.5 w-3.5" />
+                    Configure {activeSourceInfo?.name || 'provider'} account
+                  </button>
+                )}
               </div>
             )}
           </div>
 
-          {statusMessage && (
-            <div className="rounded-md border border-secondary-cyan/30 bg-secondary-cyan/10 px-3 py-2 text-xs text-secondary-cyan">
+          {statusMessage && sourceResults.length > 0 && (
+            <div
+              className={`mt-3 rounded-md border px-3 py-2 text-xs ${
+                statusTone === 'error'
+                  ? 'border-danger/30 bg-danger/10 text-danger'
+                  : 'border-white/15 bg-[#2a2a2a] text-white'
+              }`}
+            >
               {statusMessage}
             </div>
           )}
