@@ -17,6 +17,69 @@ export interface CreatePlaylistInput {
   tracks?: CreatePlaylistTrackInput[]
 }
 
+function normalizeMatching(value?: string): string {
+  if (!value) return ''
+  return value
+    .toLowerCase()
+    .replace(/\b(?:unknown\s+artist|various\s+artists|unknown)\b/gi, '')
+    .replace(/\s*\([^)]*\)\s*/g, ' ')
+    .replace(/\s*\[[^\]]*\]\s*/g, ' ')
+    .replace(/\s*\(\d+\)\s*$/g, '')
+    .replace(
+      /\s+(?:official\s+(?:music\s+)?video|official\s+mv|official\s+audio|lyrics?\s+video|music\s+video|audio|lyrics|hd|4k|remastered|remaster)\s*$/gi,
+      ''
+    )
+    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function findMatchingLocalSong(title: string, artist: string, localSongs: any[]): any | undefined {
+  const normTargetTitle = normalizeMatching(title)
+  const normTargetArtist = normalizeMatching(artist)
+  if (!normTargetTitle) return undefined
+
+  const targetFull = normalizeMatching(`${artist} ${title}`)
+  const targetFullRev = normalizeMatching(`${title} ${artist}`)
+
+  return localSongs.find((song) => {
+    if (!song?.filePath || String(song.filePath).startsWith('virtual:')) return false
+    const normLocalTitle = normalizeMatching(song.title || '')
+    const normLocalArtist = normalizeMatching(song.artist || '')
+    if (!normLocalTitle) return false
+
+    if (normLocalTitle === normTargetTitle) {
+      if (!normTargetArtist || !normLocalArtist || normLocalArtist === normTargetArtist) return true
+      if (normTargetArtist.includes(normLocalArtist) || normLocalArtist.includes(normTargetArtist)) return true
+    }
+
+    const localFull = normalizeMatching(`${song.artist || ''} ${song.title || ''}`)
+    const localFullRev = normalizeMatching(`${song.title || ''} ${song.artist || ''}`)
+    if (
+      localFull === targetFull ||
+      localFull === targetFullRev ||
+      localFullRev === targetFull ||
+      localFullRev === targetFullRev
+    ) {
+      return true
+    }
+
+    if (normTargetTitle.length >= 3 && normLocalTitle.includes(normTargetTitle)) {
+      if (
+        !normTargetArtist ||
+        !normLocalArtist ||
+        normLocalArtist === normTargetArtist ||
+        normLocalTitle.includes(normTargetArtist) ||
+        normTargetArtist.includes(normLocalArtist) ||
+        normLocalArtist.includes(normTargetArtist)
+      ) {
+        return true
+      }
+    }
+    return false
+  })
+}
+
 export class PlaylistService {
   static getPlaylists() {
     return getDb()
@@ -73,7 +136,7 @@ export class PlaylistService {
 
     if (!playlist) return null
 
-    playlist.songs = getDb()
+    const playlistSongs = getDb()
       .prepare(
         `
         SELECT s.*, pi.dateAdded AS playlistDateAdded, pi.sortOrder AS playlistSortOrder
@@ -83,7 +146,35 @@ export class PlaylistService {
         ORDER BY pi.sortOrder ASC, pi.dateAdded ASC
       `
       )
-      .all(playlistId)
+      .all(playlistId) as any[]
+
+    const db = getDb()
+    const allLocalSongs = db
+      .prepare("SELECT * FROM songs WHERE filePath IS NOT NULL AND filePath NOT LIKE 'virtual:%'")
+      .all() as any[]
+
+    for (let i = 0; i < playlistSongs.length; i++) {
+      const s = playlistSongs[i]
+      if (s.filePath && String(s.filePath).startsWith('virtual:')) {
+        const match = findMatchingLocalSong(s.title, s.artist, allLocalSongs)
+        if (match) {
+          try {
+            db.prepare('UPDATE OR IGNORE playlist_items SET songId = ? WHERE playlistId = ? AND songId = ?').run(
+              match.id,
+              playlistId,
+              s.id
+            )
+          } catch {}
+          playlistSongs[i] = {
+            ...match,
+            playlistDateAdded: s.playlistDateAdded,
+            playlistSortOrder: s.playlistSortOrder
+          }
+        }
+      }
+    }
+
+    playlist.songs = playlistSongs
 
     return playlist
   }

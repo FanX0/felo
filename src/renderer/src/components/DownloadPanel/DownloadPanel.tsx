@@ -20,6 +20,7 @@ import { useNavigate } from 'react-router-dom'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
 import { toMediaUrl } from '../../lib/media'
+import { findMatchingLibrarySong } from '../../lib/songMatching'
 import {
   DEFAULT_DOWNLOAD_PRIORITY,
   DOWNLOAD_PRIORITY_SETTING,
@@ -364,11 +365,7 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
         if (response.alreadyExists) {
           try {
             const songs = await window.api.getSongs()
-            existingSong = songs.find(
-              (song) =>
-                normalized(song.title || '') === normalized(result.title) &&
-                normalized(song.artist || '') === normalized(result.artist)
-            )
+            existingSong = findMatchingLibrarySong(result.title, result.artist, songs)
           } catch (error) {
             console.warn('Could not find already downloaded song:', error)
           }
@@ -379,6 +376,7 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
           message,
           song: existingSong
         })
+        window.dispatchEvent(new CustomEvent('felo:library-updated'))
         setStatusBySource((prev) => ({ ...prev, [source]: message }))
         return
       }

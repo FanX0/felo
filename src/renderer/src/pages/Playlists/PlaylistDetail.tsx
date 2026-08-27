@@ -46,41 +46,7 @@ function formatRelativeDate(timestamp: number): string {
   return new Date(timestamp * 1000).toLocaleDateString()
 }
 
-function songMatchKey(title: string, artist = ''): string {
-  return `${title}::${artist}`
-    .toLowerCase()
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-}
-
-function findMatchingLibrarySong(playlistSong: Song, librarySongs: Song[]): Song | undefined {
-  const normalize = (value: string) => songMatchKey(value)
-  const playlistTitle = normalize(playlistSong.title || '')
-  const playlistArtist = normalize(playlistSong.artist || '')
-  const titleCandidates = [playlistTitle]
-  const displayTitle = playlistSong.title || ''
-  const dashIndex = displayTitle.indexOf(' - ')
-  if (dashIndex >= 0) titleCandidates.push(normalize(displayTitle.slice(dashIndex + 3)))
-
-  return librarySongs.find((local) => {
-    if (!local?.filePath || local.filePath.startsWith('virtual:')) return false
-    const localTitle = normalize(local.title || '')
-    const localArtist = normalize(local.artist || '')
-    const titleMatches = titleCandidates.some(
-      (candidate) =>
-        candidate === localTitle || candidate.includes(localTitle) || localTitle.includes(candidate)
-    )
-    if (!titleMatches) return false
-    return (
-      !playlistArtist ||
-      playlistArtist === 'unknown artist' ||
-      localArtist === playlistArtist ||
-      localArtist.includes(playlistArtist) ||
-      playlistArtist.includes(localArtist)
-    )
-  })
-}
+import { findMatchingLibrarySong } from '../../lib/songMatching'
 
 function qualityLabel(song: Song): string {
   const rawFormat = String(song.codec || song.container || '').toLowerCase()
@@ -175,11 +141,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
 
         const completedLocalSong = event.song?.id
           ? nextSongs.find((song) => song.id === event.song.id)
-          : nextSongs.find(
-              (song) =>
-                songMatchKey(song.title || '') === songMatchKey(event.song?.title || '') &&
-                songMatchKey(song.artist || '') === songMatchKey(event.song?.artist || '')
-            )
+          : findMatchingLibrarySong(event.song?.title || '', event.song?.artist || '', nextSongs)
         if (completedLocalSong) enqueueSong(completedLocalSong)
 
         // Stop after the selected track. The next missing track is downloaded
@@ -210,7 +172,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     () =>
       playlistSongs.map((song) => {
         if (song.filePath && !song.filePath.startsWith('virtual:')) return song
-        const localMatch = findMatchingLibrarySong(song, librarySongs)
+        const localMatch = findMatchingLibrarySong(song.title || '', song.artist || '', librarySongs)
         return localMatch ? { ...song, ...localMatch, id: localMatch.id } : song
       }),
     [librarySongs, playlistSongs]

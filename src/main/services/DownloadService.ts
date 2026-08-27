@@ -419,19 +419,51 @@ function normalizeDuplicateValue(value: string): string {
 }
 
 function findExistingLibrarySong(title: string, artist: string): any | undefined {
-  const songs = getDb().prepare('SELECT * FROM songs').all() as any[]
-  const normalizedTitle = normalizeDuplicateValue(title)
-  const normalizedArtist = normalizeDuplicateValue(artist)
+  const songs = getDb()
+    .prepare("SELECT * FROM songs WHERE filePath IS NOT NULL AND filePath NOT LIKE 'virtual:%'")
+    .all() as any[]
+  const normTargetTitle = normalizeDuplicateValue(title)
+  const normTargetArtist = normalizeDuplicateValue(artist)
+  if (!normTargetTitle) return undefined
+
+  const targetFull = normalizeDuplicateValue(`${artist} ${title}`)
+  const targetFullRev = normalizeDuplicateValue(`${title} ${artist}`)
+
   return songs.find((song) => {
     if (!song?.filePath || String(song.filePath).startsWith('virtual:')) return false
-    const songTitle = normalizeDuplicateValue(String(song.title || ''))
-    const songArtist = normalizeDuplicateValue(String(song.artist || ''))
-    const artistMatches =
-      songArtist === normalizedArtist ||
-      !normalizedArtist ||
-      normalizedArtist === 'unknown artist' ||
-      songArtist === 'unknown artist'
-    return songTitle === normalizedTitle && artistMatches
+    const normLocalTitle = normalizeDuplicateValue(song.title || '')
+    const normLocalArtist = normalizeDuplicateValue(song.artist || '')
+    if (!normLocalTitle) return false
+
+    if (normLocalTitle === normTargetTitle) {
+      if (!normTargetArtist || !normLocalArtist || normLocalArtist === normTargetArtist) return true
+      if (normTargetArtist.includes(normLocalArtist) || normLocalArtist.includes(normTargetArtist)) return true
+    }
+
+    const localFull = normalizeDuplicateValue(`${song.artist || ''} ${song.title || ''}`)
+    const localFullRev = normalizeDuplicateValue(`${song.title || ''} ${song.artist || ''}`)
+    if (
+      localFull === targetFull ||
+      localFull === targetFullRev ||
+      localFullRev === targetFull ||
+      localFullRev === targetFullRev
+    ) {
+      return true
+    }
+
+    if (normTargetTitle.length >= 3 && normLocalTitle.includes(normTargetTitle)) {
+      if (
+        !normTargetArtist ||
+        !normLocalArtist ||
+        normLocalArtist === normTargetArtist ||
+        normLocalTitle.includes(normTargetArtist) ||
+        normTargetArtist.includes(normLocalArtist) ||
+        normLocalArtist.includes(normTargetArtist)
+      ) {
+        return true
+      }
+    }
+    return false
   })
 }
 
@@ -1032,6 +1064,9 @@ export class DownloadService {
     if (request.skipIfExists) {
       const existingSong = findExistingLibrarySong(request.title, request.artist)
       if (existingSong) {
+        if (request.songId && request.songId !== existingSong.id) {
+          LibraryService.relinkVirtualSong(request.songId, existingSong.id)
+        }
         emitProgress({
           transferId: request.transferId,
           status: 'completed',
