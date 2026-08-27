@@ -28,6 +28,7 @@ import {
   resolveTitle,
   stripSourceSuffix
 } from '../../services/ChartsService'
+import { findMatchingLibrarySong, isSongInLibrary } from '../../lib/songMatching'
 
 export interface HomeSongItem {
   id: string
@@ -291,21 +292,6 @@ export const spotifyPlaylists = [
 ] as const
 
 type TabType = 'home' | 'hot_new' | 'charts' | 'spotify' | 'aoty'
-
-function librarySongKey(title: string, artist: string): string {
-  return `${title}::${artist}`
-    .toLowerCase()
-    .replace(/\bunknown\s+artist\b/g, '')
-    .replace(/\s*\(\d+\)\s*$/g, '')
-    .replace(/\s*\((?:youtube|official)\)\s*$/g, '')
-    .replace(
-      /\s+(?:official\s+(?:music\s+)?video|official\s+mv|official\s+audio|lyrics?\s+video|music\s+video)\s*$/g,
-      ''
-    )
-    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
 
 interface ArtworkImageProps {
   src?: string
@@ -640,7 +626,6 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [likedSongIds, setLikedSongIds] = useState<Set<string>>(new Set())
   const [librarySongs, setLibrarySongs] = useState<Song[]>([])
-  const [librarySongKeys, setLibrarySongKeys] = useState<Set<string>>(new Set())
   const [importingSpotifyId, setImportingSpotifyId] = useState<string | null>(null)
   const [spotifyArtwork, setSpotifyArtwork] = useState<Record<string, string>>({})
   const [spotifySection, setSpotifySection] = useState<SpotifySection>('all')
@@ -663,9 +648,6 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
         if (!mounted) return
         const localSongs = (songs || []) as Song[]
         setLibrarySongs(localSongs)
-        setLibrarySongKeys(
-          new Set(localSongs.map((song) => librarySongKey(song.title || '', song.artist || '')))
-        )
       } catch (error) {
         console.warn('Unable to load homepage library status:', error)
       }
@@ -674,9 +656,11 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
     void loadLibraryStatus()
     const handleLibraryUpdate = () => void loadLibraryStatus()
     window.addEventListener('felo:library-updated', handleLibraryUpdate)
+    window.addEventListener('fanxmusic:library-updated', handleLibraryUpdate)
     return () => {
       mounted = false
       window.removeEventListener('felo:library-updated', handleLibraryUpdate)
+      window.removeEventListener('fanxmusic:library-updated', handleLibraryUpdate)
     }
   }, [])
 
@@ -842,10 +826,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
   }
 
   const handlePlaySong = async (song: HomeSongItem) => {
-    const songKey = librarySongKey(song.title, song.artist)
-    let localSong = librarySongs.find(
-      (candidate) => librarySongKey(candidate.title, candidate.artist) === songKey
-    )
+    let localSong = findMatchingLibrarySong(song.title, song.artist, librarySongs)
 
     // Refresh once on demand so a newly completed download is playable without
     // requiring a hard refresh or waiting for the library event listener.
@@ -854,12 +835,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
         const latestSongs = (await window.api?.getSongs?.()) as Song[] | undefined
         if (latestSongs) {
           setLibrarySongs(latestSongs)
-          setLibrarySongKeys(
-            new Set(latestSongs.map((candidate) => librarySongKey(candidate.title || '', candidate.artist || '')))
-          )
-          localSong = latestSongs.find(
-            (candidate) => librarySongKey(candidate.title, candidate.artist) === songKey
-          )
+          localSong = findMatchingLibrarySong(song.title, song.artist, latestSongs)
         }
       } catch (error) {
         console.warn('Unable to refresh library before playback:', error)
@@ -976,9 +952,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
 
   const handleStartInfiniteRadio = () => {
     const list: Song[] = recommendedSongs.map((song) => {
-      const localSong = librarySongs.find(
-        (candidate) => librarySongKey(candidate.title, candidate.artist) === librarySongKey(song.title, song.artist)
-      )
+      const localSong = findMatchingLibrarySong(song.title, song.artist, librarySongs)
 
       return localSong || {
         id: song.id,
@@ -1016,12 +990,9 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
       const downloadedSong = { ...song, filePath: event.filePath }
       radioSongsRef.current[songIndex] = downloadedSong
       setLibrarySongs((previous) => [
-        ...previous.filter(
-          (candidate) => librarySongKey(candidate.title, candidate.artist) !== librarySongKey(downloadedSong.title, downloadedSong.artist)
-        ),
+        ...previous.filter((candidate) => candidate.id !== downloadedSong.id),
         downloadedSong
       ])
-      setLibrarySongKeys((previous) => new Set(previous).add(librarySongKey(downloadedSong.title, downloadedSong.artist)))
       updateSong(downloadedSong)
       // The virtual URL may have failed before the download completed.
       if (songIndex === usePlayerStore.getState().currentSongIndex) setIsPlaying(true)
@@ -1037,15 +1008,9 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
 
   useEffect(() => {
     if (!isInfiniteRadio) return
-    const activeSong = radioSongsRef.current[currentSongIndex]
-    const nextSong = radioSongsRef.current[currentSongIndex + 1]
-    if (activeSong) void startRadioDownload(activeSong)
 
-    // Only preload the next song when the current song is already local.
-    // Otherwise the completion handler starts it after the current download ends.
-    if (nextSong && activeSong?.filePath && !activeSong.filePath.startsWith('virtual:')) {
-      void startRadioDownload(nextSong)
-    }
+    const nextSong = radioSongsRef.current[currentSongIndex + 1]
+    if (nextSong) void startRadioDownload(nextSong)
   }, [currentSongIndex, isInfiniteRadio])
 
   const displayedSongs = useMemo(() => {
@@ -1242,8 +1207,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                 ) : (
                   <div className="space-y-1">
                     {chartTracks.map((track) => {
-                      const songKey = librarySongKey(track.title, track.artist)
-                      const isInLibrary = librarySongKeys.has(songKey)
+                      const isInLibrary = isSongInLibrary(track.title, track.artist, librarySongs)
                       return (
                         <div
                           key={track.id}
@@ -1390,7 +1354,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
               {displayedSongs.map((song) => {
                 const isCurrent = currentSong?.title === song.title
                 const isLiked = likedSongIds.has(song.id)
-                const isInLibrary = librarySongKeys.has(librarySongKey(song.title, song.artist))
+                const isInLibrary = isSongInLibrary(song.title, song.artist, librarySongs)
 
                 return (
                   <div

@@ -51,7 +51,7 @@ interface ListeningStoreState {
   setSubstituteSong: (hostSong: SharedSong, localSong: Song | null) => void
 
   // Room lifecycle
-  ensureHostRoom: (enabled: boolean) => Promise<ListeningRoom | null>
+  ensureHostRoom: (enabled: boolean, forceNew?: boolean) => Promise<ListeningRoom | null>
   joinRoomById: (roomId: string) => Promise<ListeningRoom>
   joinRoomByCode: (code: string) => Promise<ListeningRoom>
   leaveJoinedRoom: () => Promise<void>
@@ -153,7 +153,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
 
   // ─── HOST ROOM LIFECYCLE ──────────────────────────────────────────
 
-  ensureHostRoom: async (enabled: boolean): Promise<ListeningRoom | null> => {
+  ensureHostRoom: async (enabled: boolean, forceNew = false): Promise<ListeningRoom | null> => {
     if (_ensureLock) return get().hostRoom
     _ensureLock = true
 
@@ -166,7 +166,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       return null
     }
 
-    if (get().hostRoomStopped || get().isJoiningRoom) {
+    if (!forceNew && (get().hostRoomStopped || get().isJoiningRoom)) {
       _ensureLock = false
       return null
     }
@@ -181,16 +181,6 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
     const supabase = getSupabase()
 
     try {
-      const { data: existing, error: findError } = await supabase
-        .from('listening_rooms')
-        .select('*')
-        .eq('host_id', user.id)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-
-      if (findError) throw findError
-
       const roomPayload = {
         name: `${profile?.display_name || user.email?.split('@')[0] || 'Friend'}'s room`,
         song: currentSong ? toSharedSong(currentSong) : null,
@@ -200,19 +190,40 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         updated_at: new Date().toISOString()
       }
 
-      let activeRoom: ListeningRoom
+      let activeRoom: ListeningRoom | null = null
 
-      if (existing) {
-        const { data: updated, error: updateError } = await supabase
+      if (!forceNew) {
+        const { data: existing, error: findError } = await supabase
           .from('listening_rooms')
-          .update(roomPayload)
-          .eq('id', existing.id)
           .select('*')
-          .single()
+          .eq('host_id', user.id)
+          .eq('is_active', true)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
 
-        if (updateError) throw updateError
-        activeRoom = updated as ListeningRoom
-      } else {
+        if (findError) throw findError
+
+        if (existing) {
+          const { data: updated, error: updateError } = await supabase
+            .from('listening_rooms')
+            .update(roomPayload)
+            .eq('id', existing.id)
+            .select('*')
+            .single()
+
+          if (updateError) throw updateError
+          activeRoom = updated as ListeningRoom
+        }
+      }
+
+      if (!activeRoom) {
+        // Ensure all previous host rooms are deactivated first
+        await supabase
+          .from('listening_rooms')
+          .update({ is_active: false, is_playing: false, updated_at: new Date().toISOString() })
+          .eq('host_id', user.id)
+
         let code = makeCode()
         let createdRoom: any = null
 
@@ -242,7 +253,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         .from('listening_room_members')
         .upsert({ room_id: activeRoom.id, user_id: user.id })
 
-      set({ hostRoom: activeRoom, error: null })
+      set({ hostRoom: activeRoom, hostRoomStopped: false, error: null })
       void get().refreshMemberCount(activeRoom.id)
       return activeRoom
     } catch (err: any) {
@@ -401,11 +412,19 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       throw new Error('Only the current host can end this room.')
     }
 
-    const { error } = await getSupabase()
+    const supabase = getSupabase()
+
+    const { error } = await supabase
       .from('listening_rooms')
       .update({ is_active: false, is_playing: false, updated_at: new Date().toISOString() })
       .eq('id', hostRoom.id)
       .eq('host_id', user.id)
+
+    // Remove members from ended room
+    await supabase
+      .from('listening_room_members')
+      .delete()
+      .eq('room_id', hostRoom.id)
 
     if (error) throw error
     set({ hostRoom: null, hostRoomStopped: true })
@@ -413,7 +432,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
 
   startHostRoom: async () => {
     set({ hostRoomStopped: false })
-    return get().ensureHostRoom(true)
+    return get().ensureHostRoom(true, true)
   },
 
   // ─── PROFESSIONAL SYNC HANDLERS ───────────────────────────────────

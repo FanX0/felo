@@ -354,7 +354,7 @@ function ClassicLyricsDisplay({
 }
 
 export default function LyricsPage() {
-  const { queue, currentSongIndex, currentTime, duration, seek } = usePlayerStore()
+  const { queue, currentSongIndex, currentTime, duration, seek, setIsPlaying } = usePlayerStore()
   const currentSong = queue[currentSongIndex]
   const [lyricsEngine, setLyricsEngine] = useState<'am' | 'classic'>(getStoredMode)
   const [lyricsData, setLyricsData] = useState<LyricsData | null>(null)
@@ -370,6 +370,14 @@ export default function LyricsPage() {
   const translationMenuRef = useRef<HTMLDivElement>(null)
   const activeSongIdRef = useRef(currentSong?.id)
   activeSongIdRef.current = currentSong?.id
+
+  const handleSeek = useCallback(
+    (seconds: number) => {
+      seek(Math.max(0, seconds))
+      setIsPlaying(true)
+    },
+    [seek, setIsPlaying]
+  )
 
   const resolvedMetadata = useMemo(
     () => resolveSongMetadata(currentSong),
@@ -501,6 +509,23 @@ export default function LyricsPage() {
   useEffect(() => {
     if (amLyricsRef.current) amLyricsRef.current.currentTime = currentTime * 1000
   }, [currentTime])
+
+  useEffect(() => {
+    const element = amLyricsRef.current
+    if (!element) return
+
+    const onLineClick = (event: any) => {
+      const timestampMs = event?.detail?.timestamp
+      if (typeof timestampMs === 'number' && !isNaN(timestampMs)) {
+        handleSeek(timestampMs / 1000)
+      }
+    }
+
+    element.addEventListener('line-click', onLineClick)
+    return () => {
+      element.removeEventListener('line-click', onLineClick)
+    }
+  }, [handleSeek, currentSong?.id])
 
   const handleTranslate = useCallback(
     async (language: string) => {
@@ -682,7 +707,7 @@ export default function LyricsPage() {
               lyrics={lyricsData?.syncedLyrics || []}
               plainLyrics={lyricsData?.plainLyrics || ''}
               currentTime={currentTime}
-              onSeek={seek}
+              onSeek={handleSeek}
               translations={translations}
               romanizations={isRomanized ? romanizations : []}
             />

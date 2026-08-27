@@ -14,32 +14,31 @@ export interface ChartTrack {
 export interface ChartCategory {
   id: string
   name: string
-  source: 'apple' | 'deezer' | 'shazam'
+  source: 'apple' | 'deezer' | 'genre'
   countryCode?: string
   genreId?: number
   icon?: string
 }
 
 export const CHART_CATEGORIES: ChartCategory[] = [
-  // Apple Music Country Charts
-  { id: 'apple-global', name: 'Apple Music Global Top 50', source: 'apple', countryCode: 'us', icon: '🌎' },
-  { id: 'apple-id', name: 'Apple Music Indonesia Top 50', source: 'apple', countryCode: 'id', icon: '🇮🇩' },
-  { id: 'apple-us', name: 'Apple Music USA Top 50', source: 'apple', countryCode: 'us', icon: '🇺🇸' },
-  { id: 'apple-gb', name: 'Apple Music UK Top 50', source: 'apple', countryCode: 'gb', icon: '🇬🇧' },
-  { id: 'apple-jp', name: 'Apple Music Japan Top 50', source: 'apple', countryCode: 'jp', icon: '🇯🇵' },
-  { id: 'apple-kr', name: 'Apple Music South Korea Top 50', source: 'apple', countryCode: 'kr', icon: '🇰🇷' },
+  // Top Country Charts
+  { id: 'apple-global', name: 'Global Top 50', source: 'apple', countryCode: 'us', icon: '🌎' },
+  { id: 'apple-id', name: 'Indonesia Top 50', source: 'apple', countryCode: 'id', icon: '🇮🇩' },
+  { id: 'apple-us', name: 'USA Top 50', source: 'apple', countryCode: 'us', icon: '🇺🇸' },
+  { id: 'apple-gb', name: 'UK Top 50', source: 'apple', countryCode: 'gb', icon: '🇬🇧' },
+  { id: 'apple-jp', name: 'Japan Top 50', source: 'apple', countryCode: 'jp', icon: '🇯🇵' },
+  { id: 'apple-kr', name: 'South Korea Top 50', source: 'apple', countryCode: 'kr', icon: '🇰🇷' },
 
-  // Deezer Live Charts & Genres
-  { id: 'deezer-global', name: 'Deezer Top 50 Global', source: 'deezer', icon: '🔥' },
-  { id: 'deezer-pop', name: 'Deezer Pop Hits', source: 'deezer', genreId: 132, icon: '🎤' },
-  { id: 'deezer-rap', name: 'Deezer Hip-Hop / Rap', source: 'deezer', genreId: 116, icon: '🎧' },
-  { id: 'deezer-dance', name: 'Deezer Dance & EDM', source: 'deezer', genreId: 113, icon: '⚡' },
-  { id: 'deezer-rock', name: 'Deezer Rock Classics', source: 'deezer', genreId: 152, icon: '🎸' },
-  { id: 'deezer-rnb', name: 'Deezer R&B / Soul', source: 'deezer', genreId: 165, icon: '💜' },
-  { id: 'deezer-latin', name: 'Deezer Latin Music', source: 'deezer', genreId: 197, icon: '🌴' }
+  // Genre Charts
+  { id: 'deezer-pop', name: 'Pop Hits', source: 'genre', genreId: 14, icon: '🎤' },
+  { id: 'deezer-rap', name: 'Hip-Hop / Rap', source: 'genre', genreId: 18, icon: '🎧' },
+  { id: 'deezer-dance', name: 'Dance & EDM', source: 'genre', genreId: 17, icon: '⚡' },
+  { id: 'deezer-rock', name: 'Rock Classics', source: 'genre', genreId: 21, icon: '🎸' },
+  { id: 'deezer-rnb', name: 'R&B / Soul', source: 'genre', genreId: 15, icon: '💜' },
+  { id: 'deezer-latin', name: 'Latin Music', source: 'genre', genreId: 12, icon: '🌴' }
 ]
 
-/** Source suffixes that may appear in track titles downloaded via Felo or streaming services. */
+/** Source suffixes that may appear in track titles downloaded via streaming services. */
 const SOURCE_SUFFIX_RE = /\s*\(\s*(?:qobuz|deezer|tidal|youtube|youtube music|soundcloud|spotify|apple music)\s*\)\s*$/i
 
 /**
@@ -99,47 +98,98 @@ export function resolveTitle(rawTitle: string, resolvedArtist: string): string {
   return clean
 }
 
+function upgradeArtwork(url?: string): string | undefined {
+  if (!url) return undefined
+  return url
+    .replace(/\/\d+x\d+bb\./, '/600x600bb.')
+    .replace(/\/\d+x\d+-\d+\./, '/600x600-000000-80-0-0.')
+    .replace(/100x100bb/, '600x600bb')
+}
+
 export class ChartsService {
   /**
-   * Fetch Apple Music country top songs via official 100% free RSS feed.
+   * Fetch Apple Music country top songs via official fast iTunes RSS feed with fallbacks.
    */
-  static async fetchAppleMusicTopSongs(countryCode = 'us', limit = 50): Promise<ChartTrack[]> {
-    try {
-      const code = countryCode.toLowerCase()
-      const url = `https://rss.applemarketingtools.com/api/v2/${code}/music/most-played/${limit}/songs.json`
-      const res = await fetch(url)
-      if (!res.ok) throw new Error(`Apple Music RSS error: ${res.statusText}`)
+  static async fetchAppleMusicTopSongs(countryCode = 'us', limit = 50, genreId?: number): Promise<ChartTrack[]> {
+    const code = (countryCode || 'us').toLowerCase()
+    const urls = genreId
+      ? [
+          `https://itunes.apple.com/${code}/rss/topsongs/limit=${limit}/genre=${genreId}/json`,
+          `https://itunes.apple.com/us/rss/topsongs/limit=${limit}/genre=${genreId}/json`
+        ]
+      : [
+          `https://itunes.apple.com/${code}/rss/topsongs/limit=${limit}/json`,
+          `https://rss.applemarketingtools.com/api/v2/${code}/music/most-played/${limit}/songs.json`,
+          `https://itunes.apple.com/us/rss/topsongs/limit=${limit}/json`
+        ]
 
-      const data = await res.json()
-      const items: any[] = data.feed?.results || []
+    for (const url of urls) {
+      try {
+        const res = await fetch(url, { headers: { Accept: 'application/json' } })
+        if (!res.ok) continue
 
-      return items.map((item, index) => {
-        const rawTitle = (item.name as string) || ''
-        const artist = resolveArtist(item.artistName, rawTitle)
-        const title = resolveTitle(rawTitle, artist)
-        const artworkRaw: string = item.artworkUrl100 || ''
+        const data = await res.json()
 
-        return {
-          id: `apple-${(item.id as string | number) || index}`,
-          title: title || 'Unknown Track',
-          artist,
-          album: (item.collectionName as string) || '',
-          artworkUrl: artworkRaw.replace(/\/\d+x\d+bb\./, '/600x600bb.'),
-          rank: index + 1,
-          source: 'apple' as const,
-          externalUrl: item.url as string | undefined
+        // Handle itunes.apple.com feed
+        if (data?.feed?.entry) {
+          const entries: any[] = Array.isArray(data.feed.entry) ? data.feed.entry : [data.feed.entry]
+          if (entries.length > 0) {
+            return entries.slice(0, limit).map((entry, index) => {
+              const rawTitle = (entry?.['im:name']?.label || entry?.title?.label || '') as string
+              const rawArtist = (entry?.['im:artist']?.label || '') as string
+              const artist = resolveArtist(rawArtist, rawTitle)
+              const title = resolveTitle(rawTitle, artist)
+              const rawImages = entry?.['im:image'] || []
+              const rawArtwork = rawImages[rawImages.length - 1]?.label
+              const albumName = entry?.['im:collection']?.['im:name']?.label || ''
+
+              return {
+                id: entry?.id?.attributes?.['im:id'] ? `apple-${entry.id.attributes['im:id']}` : `apple-${code}-${index}`,
+                title: title || 'Unknown Track',
+                artist,
+                album: stripSourceSuffix(albumName),
+                artworkUrl: upgradeArtwork(rawArtwork),
+                rank: index + 1,
+                source: 'apple' as const,
+                externalUrl: entry?.link?.[0]?.attributes?.href
+              }
+            })
+          }
         }
-      })
-    } catch (err) {
-      console.warn(`Failed to fetch Apple Music charts for ${countryCode}:`, err)
-      return []
+
+        // Handle applemarketingtools feed
+        if (data?.feed?.results && Array.isArray(data.feed.results)) {
+          const items: any[] = data.feed.results
+          if (items.length > 0) {
+            return items.slice(0, limit).map((item, index) => {
+              const rawTitle = (item.name as string) || ''
+              const artist = resolveArtist(item.artistName, rawTitle)
+              const title = resolveTitle(rawTitle, artist)
+              const artworkRaw: string = item.artworkUrl100 || ''
+
+              return {
+                id: `apple-${(item.id as string | number) || index}`,
+                title: title || 'Unknown Track',
+                artist,
+                album: stripSourceSuffix((item.collectionName as string) || ''),
+                artworkUrl: upgradeArtwork(artworkRaw),
+                rank: index + 1,
+                source: 'apple' as const,
+                externalUrl: item.url as string | undefined
+              }
+            })
+          }
+        }
+      } catch (err) {
+        console.warn(`Chart fetch attempt failed for ${url}:`, err)
+      }
     }
+
+    return []
   }
 
   /**
-   * Fetch Deezer Top tracks or Genre Top tracks via 100% free Deezer Public API.
-   * Deezer always returns a proper artist object, so Unknown Artist here means
-   * the API truly has no artist — we fall back to title parsing as a last resort.
+   * Fetch Deezer Top tracks or Genre Top tracks.
    */
   static async fetchDeezerChart(genreId?: number, limit = 50): Promise<ChartTrack[]> {
     try {
@@ -148,45 +198,53 @@ export class ChartsService {
         : `https://api.deezer.com/chart/0/tracks?limit=${limit}`
 
       const res = await fetch(url)
-      if (!res.ok) throw new Error(`Deezer API error: ${res.statusText}`)
+      if (res.ok) {
+        const data = await res.json()
+        const items: any[] = data.tracks?.data || data.data || []
 
-      const data = await res.json()
-      const items: any[] = data.tracks?.data || data.data || []
+        if (items.length > 0) {
+          return items.slice(0, limit).map((item, index) => {
+            const rawTitle = (item.title || item.title_short || '') as string
+            const artist = resolveArtist(item.artist?.name, rawTitle)
+            const title = resolveTitle(rawTitle, artist)
 
-      return items.slice(0, limit).map((item, index) => {
-        const rawTitle = (item.title || item.title_short || '') as string
-        const artist = resolveArtist(item.artist?.name, rawTitle)
-        const title = resolveTitle(rawTitle, artist)
-
-        return {
-          id: `deezer-${item.id as number}`,
-          title: title || 'Unknown Track',
-          artist,
-          album: (item.album?.title as string) || '',
-          artworkUrl: (item.album?.cover_xl || item.album?.cover_big || item.album?.cover_medium || '') as string,
-          rank: index + 1,
-          source: 'deezer' as const,
-          duration: item.duration as number | undefined,
-          previewUrl: item.preview as string | undefined,
-          externalUrl: item.link as string | undefined
+            return {
+              id: `deezer-${item.id as number}`,
+              title: title || 'Unknown Track',
+              artist,
+              album: (item.album?.title as string) || '',
+              artworkUrl: (item.album?.cover_xl || item.album?.cover_big || item.album?.cover_medium || '') as string,
+              rank: index + 1,
+              source: 'deezer' as const,
+              duration: item.duration as number | undefined,
+              previewUrl: item.preview as string | undefined,
+              externalUrl: item.link as string | undefined
+            }
+          })
         }
-      })
-    } catch (err) {
-      console.warn('Failed to fetch Deezer charts:', err)
-      return []
+      }
+    } catch {
+      // Deezer API might be restricted by CORS in browser, fall back to iTunes
     }
+
+    // Fallback to genre on iTunes if Deezer is unreachable
+    if (genreId) {
+      return this.fetchAppleMusicTopSongs('us', limit, genreId)
+    }
+
+    return this.fetchAppleMusicTopSongs('us', limit)
   }
 
   /**
    * Fetch charts based on selected Category.
    */
   static async fetchCategoryTracks(category: ChartCategory, limit = 50): Promise<ChartTrack[]> {
-    if (category.source === 'apple') {
-      return this.fetchAppleMusicTopSongs(category.countryCode || 'us', limit)
+    if (category.source === 'genre' && category.genreId) {
+      return this.fetchAppleMusicTopSongs(category.countryCode || 'us', limit, category.genreId)
     }
     if (category.source === 'deezer') {
       return this.fetchDeezerChart(category.genreId, limit)
     }
-    return []
+    return this.fetchAppleMusicTopSongs(category.countryCode || 'us', limit)
   }
 }
