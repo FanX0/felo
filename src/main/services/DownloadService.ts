@@ -346,22 +346,45 @@ function findStreamrip(): CommandResolution {
   return { command: 'rip', prefixArgs: [] }
 }
 
-/** Discover python.exe across all installed Python versions. */
+/** Discover python.exe across all installed Python versions (user + system + store). */
 function discoverPythonExecutables(homeDir: string): string[] {
-  const pythonRoot = path.join(homeDir, 'AppData', 'Local', 'Programs', 'Python')
   const results: string[] = []
-  try {
-    for (const entry of fs.readdirSync(pythonRoot, { withFileTypes: true })) {
-      if (entry.isDirectory() && /^Python\d/i.test(entry.name)) {
-        results.push(path.join(pythonRoot, entry.name, 'python.exe'))
+  const roots = [
+    path.join(homeDir, 'AppData', 'Local', 'Programs', 'Python'),
+    path.join(homeDir, 'AppData', 'Roaming', 'Python'),
+    'C:\\Program Files\\Python',
+    'C:\\Program Files',
+    'C:\\Program Files (x86)',
+    'C:\\'
+  ]
+
+  for (const root of roots) {
+    try {
+      if (fs.existsSync(root)) {
+        const directPy = path.join(root, 'python.exe')
+        if (fs.existsSync(directPy)) results.push(directPy)
+
+        for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+          if (entry.isDirectory() && /^Python\d/i.test(entry.name)) {
+            const pyExe = path.join(root, entry.name, 'python.exe')
+            if (fs.existsSync(pyExe)) results.push(pyExe)
+          }
+        }
       }
+    } catch {
+      // ignore inaccessible folders
     }
-    results.sort().reverse()
-  } catch {
-    // pythonRoot may not exist
   }
-  return results
+
+  // Also check WindowsApps shim
+  const windowsApps = path.join(homeDir, 'AppData', 'Local', 'Microsoft', 'WindowsApps')
+  const storePy = path.join(windowsApps, 'python.exe')
+  if (fs.existsSync(storePy)) results.push(storePy)
+
+  // Deduplicate results
+  return Array.from(new Set(results))
 }
+
 
 function findYtDlp(): CommandResolution {
   const homeDir = app.getPath('home')
@@ -1525,4 +1548,60 @@ export class DownloadService {
       song: completed.updatedSong
     })
   }
+
+  static async checkDependencies(): Promise<{
+    python: { available: boolean; path?: string }
+    streamrip: { available: boolean; command?: string }
+    ytDlp: { available: boolean; command?: string }
+    ffmpeg: { available: boolean; path?: string }
+  }> {
+    const homeDir = app.getPath('home')
+    const pyExes = discoverPythonExecutables(homeDir)
+    const ripRes = findStreamrip()
+    const ytdlRes = findYtDlp()
+    const ffmpegPath = findFfmpegLocation()
+
+    let streamripWorking = false
+    try {
+      await runCommand(ripRes.command, [...ripRes.prefixArgs, '--version'], undefined, 4000)
+      streamripWorking = true
+    } catch {
+      streamripWorking = false
+    }
+
+    let ytdlWorking = false
+    try {
+      await runCommand(ytdlRes.command, [...ytdlRes.prefixArgs, '--version'], undefined, 4000)
+      ytdlWorking = true
+    } catch {
+      ytdlWorking = false
+    }
+
+    return {
+      python: { available: pyExes.length > 0, path: pyExes[0] },
+      streamrip: { available: streamripWorking, command: ripRes.command },
+      ytDlp: { available: ytdlWorking, command: ytdlRes.command },
+      ffmpeg: { available: Boolean(ffmpegPath), path: ffmpegPath }
+    }
+  }
+
+  static async installDependencies(onOutput?: (chunk: string) => void): Promise<{ success: boolean; message: string }> {
+    const scriptPath = resourcePath('downloader', 'install-download-deps.ps1')
+    if (!fs.existsSync(scriptPath)) {
+      throw new Error(`Installer script not found at ${scriptPath}`)
+    }
+
+    try {
+      const { stdout } = await runCommand(
+        'powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+        onOutput,
+        300000
+      )
+      return { success: true, message: 'Dependencies installed successfully!\n' + stdout }
+    } catch (err: any) {
+      return { success: false, message: err?.message || 'Installation failed' }
+    }
+  }
 }
+

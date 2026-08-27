@@ -1826,6 +1826,16 @@ app.whenReady().then(() => {
     return DownloadService.start(request)
   })
 
+  ipcMain.handle('downloads:checkDependencies', async () => {
+    return DownloadService.checkDependencies()
+  })
+
+  ipcMain.handle('downloads:installDependencies', async (event) => {
+    return DownloadService.installDependencies((chunk) => {
+      event.sender.send('downloads:installLog', chunk)
+    })
+  })
+
   // System: Get app version
   ipcMain.handle('system:getVersion', () => {
     return app.getVersion()

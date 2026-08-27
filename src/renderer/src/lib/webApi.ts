@@ -1523,6 +1523,17 @@ const webApi: Window['api'] = {
   searchDownloadSource: async () => [],
   startDownload: async () => desktopOnly(),
   onDownloadProgress: () => () => undefined,
+  checkDownloaderDependencies: async () => ({
+    python: { available: false },
+    streamrip: { available: false },
+    ytDlp: { available: false },
+    ffmpeg: { available: false }
+  }),
+  installDownloaderDependencies: async () => ({
+    success: false,
+    message: 'Installing dependencies is only available in the desktop app.'
+  }),
+  onDownloaderInstallLog: () => () => undefined,
   getAppVersion: async () => 'web',
   checkForUpdates: async () => ({ status: 'unavailable', currentVersion: 'web' }),
   openExternal: async (url) => {

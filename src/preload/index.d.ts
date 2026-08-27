@@ -100,6 +100,14 @@ declare global {
               duplicateRequest?: boolean
             }>
       onDownloadProgress: (listener: (event: any) => void) => () => void
+      checkDownloaderDependencies: () => Promise<{
+        python: { available: boolean; path?: string }
+        streamrip: { available: boolean; command?: string }
+        ytDlp: { available: boolean; command?: string }
+        ffmpeg: { available: boolean; path?: string }
+      }>
+      installDownloaderDependencies: () => Promise<{ success: boolean; message: string }>
+      onDownloaderInstallLog: (listener: (chunk: string) => void) => () => void
 
       // System
       getAppVersion: () => Promise<string>

@@ -98,6 +98,13 @@ const api = {
     ipcRenderer.on('downloads:progress', handler)
     return () => ipcRenderer.removeListener('downloads:progress', handler)
   },
+  checkDownloaderDependencies: () => ipcRenderer.invoke('downloads:checkDependencies'),
+  installDownloaderDependencies: () => ipcRenderer.invoke('downloads:installDependencies'),
+  onDownloaderInstallLog: (listener: (chunk: string) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, chunk: string) => listener(chunk)
+    ipcRenderer.on('downloads:installLog', handler)
+    return () => ipcRenderer.removeListener('downloads:installLog', handler)
+  },
 
   // System
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('system:getVersion'),
