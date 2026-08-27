@@ -263,11 +263,12 @@ export class DeezerClient {
     trackId: string,
     destinationPath: string,
     quality: 'lossless' | 'mp3-320' | 'mp3-128' = 'lossless',
-    onProgress?: (progress: number, downloadedBytes: number, totalBytes: number) => void
+    onProgress?: (progress: number, downloadedBytes: number, totalBytes: number) => void,
+    signal?: AbortSignal
   ): Promise<{ filePath: string; format: string }> {
     const { url, format } = await this.getTrackStreamUrl(trackId, quality)
 
-    const response = await fetch(url)
+    const response = await fetch(url, { signal })
     if (!response.ok || !response.body) {
       throw new Error(`Failed to download audio from Deezer CDN: ${response.statusText}`)
     }
@@ -290,7 +291,7 @@ export class DeezerClient {
       }
     })
 
-    await pipeline(readable, decryptor, fileStream)
+    await pipeline(readable, decryptor, fileStream, { signal })
     return { filePath: destinationPath, format }
   }
 

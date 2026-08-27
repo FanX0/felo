@@ -1825,6 +1825,11 @@ app.whenReady().then(() => {
     return DownloadService.start(request)
   })
 
+  ipcMain.handle('downloads:cancel', (_, transferId: string) => {
+    if (typeof transferId !== 'string') return false
+    return DownloadService.cancel(transferId)
+  })
+
   ipcMain.handle('downloads:checkDependencies', async () => {
     return DownloadService.checkDependencies()
   })

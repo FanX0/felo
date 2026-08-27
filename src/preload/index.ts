@@ -93,6 +93,7 @@ const api = {
     accounts: any
   ) => ipcRenderer.invoke('downloads:search', source, query, accounts),
   startDownload: (request: any) => ipcRenderer.invoke('downloads:start', request),
+  cancelDownload: (transferId: string) => ipcRenderer.invoke('downloads:cancel', transferId),
   onDownloadProgress: (listener: (event: any) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, payload: any) => listener(payload)
     ipcRenderer.on('downloads:progress', handler)

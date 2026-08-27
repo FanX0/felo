@@ -99,6 +99,7 @@ declare global {
               alreadyExists?: boolean
               duplicateRequest?: boolean
             }>
+      cancelDownload: (transferId: string) => Promise<boolean>
       onDownloadProgress: (listener: (event: any) => void) => () => void
       checkDownloaderDependencies: () => Promise<{
         ytDlp: { available: boolean; command?: string }

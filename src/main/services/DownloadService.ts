@@ -224,9 +224,15 @@ function runCommand(
   command: string,
   args: string[],
   onProgress?: (data: string) => void,
-  timeoutMs = 0
+  timeoutMs = 0,
+  signal?: AbortSignal
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('Download cancelled'))
+      return
+    }
+
     const child = spawn(command, args, { windowsHide: true })
     const timeout = timeoutMs
       ? setTimeout(() => {
@@ -237,6 +243,17 @@ function runCommand(
     const clearProcessTimeout = () => {
       if (timeout) clearTimeout(timeout)
     }
+
+    const onAbort = () => {
+      clearProcessTimeout()
+      try {
+        child.kill('SIGTERM')
+      } catch {}
+      reject(new Error('Download cancelled'))
+    }
+
+    signal?.addEventListener('abort', onAbort, { once: true })
+
     let stdout = ''
     let stderr = ''
 
@@ -252,10 +269,16 @@ function runCommand(
     })
     child.on('error', (error) => {
       clearProcessTimeout()
+      signal?.removeEventListener('abort', onAbort)
       reject(error)
     })
     child.on('close', (code) => {
       clearProcessTimeout()
+      signal?.removeEventListener('abort', onAbort)
+      if (signal?.aborted) {
+        reject(new Error('Download cancelled'))
+        return
+      }
       if (code === 0) {
         resolve({ stdout, stderr })
         return
@@ -543,8 +566,38 @@ async function finalizeDownloadedFile(
   return { ...completed, updatedSong }
 }
 
+interface ActiveTask {
+  controller: AbortController
+  downloadKey: string
+  stagingDirectory: string
+}
+
 export class DownloadService {
   private static readonly activeDownloadKeys = new Set<string>()
+  private static readonly activeTasks = new Map<string, ActiveTask>()
+
+  static cancel(transferId: string): boolean {
+    const task = this.activeTasks.get(transferId)
+    if (!task) return false
+
+    task.controller.abort()
+    this.activeDownloadKeys.delete(task.downloadKey)
+    this.activeTasks.delete(transferId)
+
+    try {
+      if (fs.existsSync(task.stagingDirectory)) {
+        fs.rmSync(task.stagingDirectory, { recursive: true, force: true })
+      }
+    } catch {}
+
+    emitProgress({
+      transferId,
+      status: 'failed',
+      progress: 0,
+      message: 'Download cancelled'
+    })
+    return true
+  }
 
   static async search(
     source: StreamingSource,
@@ -915,12 +968,44 @@ export class DownloadService {
       return { started: false, transferId: request.transferId, duplicateRequest: true }
     }
 
+    const controller = new AbortController()
+    const stagingRoot = path.join(app.getPath('userData'), 'download-staging')
+    const stagingDirectory = path.join(stagingRoot, request.transferId)
+
     this.activeDownloadKeys.add(downloadKey)
-    void this.execute(request).finally(() => this.activeDownloadKeys.delete(downloadKey))
+    this.activeTasks.set(request.transferId, {
+      controller,
+      downloadKey,
+      stagingDirectory
+    })
+
+    void this.execute(request, controller.signal, stagingDirectory).finally(() => {
+      this.activeDownloadKeys.delete(downloadKey)
+      this.activeTasks.delete(request.transferId)
+      try {
+        if (fs.existsSync(stagingDirectory)) {
+          fs.rmSync(stagingDirectory, { recursive: true, force: true })
+        }
+      } catch {}
+    })
     return { started: true, transferId: request.transferId }
   }
 
-  private static async execute(request: StartDownloadRequest): Promise<void> {
+  private static async execute(
+    request: StartDownloadRequest,
+    signal: AbortSignal,
+    stagingDirectory: string
+  ): Promise<void> {
+    if (signal.aborted) {
+      emitProgress({
+        transferId: request.transferId,
+        status: 'failed',
+        progress: 0,
+        message: 'Download cancelled'
+      })
+      return
+    }
+
     if (request.skipIfExists) {
       const existingSong = findExistingLibrarySong(request.title, request.artist)
       if (existingSong) {
@@ -936,33 +1021,40 @@ export class DownloadService {
       }
     }
 
-    const stagingRoot = path.join(app.getPath('userData'), 'download-staging')
-    const stagingDirectory = path.join(stagingRoot, request.transferId)
     const song = getDb().prepare('SELECT * FROM songs WHERE id = ?').get(request.songId) as any
 
     try {
       fs.mkdirSync(stagingDirectory, { recursive: true })
 
       if (request.source === 'youtube') {
-        await this.executeYoutube(request, stagingDirectory, song)
+        await this.executeYoutube(request, stagingDirectory, song, signal)
         return
       }
 
       if (request.source === 'soulseek') {
-        await this.executeSoulseek(request, stagingDirectory, song)
+        await this.executeSoulseek(request, stagingDirectory, song, signal)
         return
       }
 
       if (request.source === 'qobuz') {
-        await this.executeQobuz(request, stagingDirectory, song)
+        await this.executeQobuz(request, stagingDirectory, song, signal)
         return
       }
 
       if (request.source === 'deezer') {
-        await this.executeDeezer(request, stagingDirectory, song)
+        await this.executeDeezer(request, stagingDirectory, song, signal)
         return
       }
     } catch (error) {
+      if (signal.aborted) {
+        emitProgress({
+          transferId: request.transferId,
+          status: 'failed',
+          progress: 0,
+          message: 'Download cancelled'
+        })
+        return
+      }
       const message = error instanceof Error ? error.message : String(error)
       emitProgress({
         transferId: request.transferId,
@@ -978,7 +1070,8 @@ export class DownloadService {
   private static async executeYoutube(
     request: StartDownloadRequest,
     stagingDirectory: string,
-    song: any
+    song: any,
+    signal: AbortSignal
   ): Promise<void> {
     emitProgress({
       transferId: request.transferId,
@@ -1022,26 +1115,34 @@ export class DownloadService {
 
     args.push(videoUrl)
 
-    await runCommand(command, args, (chunk) => {
-      const percentMatch = /\[download\]\s+(\d+(?:\.\d+)?)%/i.exec(chunk)
-      if (percentMatch) {
-        const pct = parseFloat(percentMatch[1])
-        const scaled = Math.min(90, 10 + Math.floor(pct * 0.8))
-        emitProgress({
-          transferId: request.transferId,
-          status: 'downloading',
-          progress: scaled,
-          message: `Downloading YouTube audio (${pct.toFixed(0)}%)...`
-        })
-      } else if (chunk.includes('[ExtractAudio]')) {
-        emitProgress({
-          transferId: request.transferId,
-          status: 'downloading',
-          progress: 92,
-          message: 'Converting audio with ffmpeg...'
-        })
-      }
-    }, 180000)
+    await runCommand(
+      command,
+      args,
+      (chunk) => {
+        const percentMatch = /\[download\]\s+(\d+(?:\.\d+)?)%/i.exec(chunk)
+        if (percentMatch) {
+          const pct = parseFloat(percentMatch[1])
+          const scaled = Math.min(90, 10 + Math.floor(pct * 0.8))
+          emitProgress({
+            transferId: request.transferId,
+            status: 'downloading',
+            progress: scaled,
+            message: `Downloading YouTube audio (${pct.toFixed(0)}%)...`
+          })
+        } else if (chunk.includes('[ExtractAudio]')) {
+          emitProgress({
+            transferId: request.transferId,
+            status: 'downloading',
+            progress: 92,
+            message: 'Converting audio with ffmpeg...'
+          })
+        }
+      },
+      180000,
+      signal
+    )
+
+    if (signal.aborted) throw new Error('Download cancelled')
 
     const downloadedFiles = getAudioFiles(stagingDirectory).sort(
       (left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs
@@ -1079,8 +1180,10 @@ export class DownloadService {
   private static async executeSoulseek(
     request: StartDownloadRequest,
     stagingDirectory: string,
-    song: any
+    song: any,
+    signal: AbortSignal
   ): Promise<void> {
+    if (signal.aborted) throw new Error('Download cancelled')
     emitProgress({
       transferId: request.transferId,
       status: 'downloading',
@@ -1099,81 +1202,34 @@ export class DownloadService {
     const baseName = path
       .basename(rawFile)
       .replace(/[<>:"/\\|?*]/g, '_')
-    const stagingFilePath = path.join(stagingDirectory, baseName)
+      .slice(0, 160)
+    const targetFile = path.join(stagingDirectory, baseName)
 
-    const credentials = getSoulseekCredentials(request.accounts)
+    const client = new SlskClient()
+    await client.login({
+      user: request.accounts.soulseekUser || '',
+      pass: request.accounts.soulseekPassword || ''
+    })
 
-    await new Promise<void>((resolve, reject) => {
-      let clientInstance: any = null
-      const downloadTimeout = setTimeout(() => {
-        try {
-          clientInstance?.destroy?.()
-        } catch {}
-        reject(new Error('Soulseek peer did not send file within timeout.'))
-      }, 90000)
+    if (signal.aborted) throw new Error('Download cancelled')
 
-      slsk.connect({ ...credentials, timeout: 30000 }, (err: any, client: any) => {
-        if (err || !client) {
-          clearTimeout(downloadTimeout)
-          reject(new Error(formatSoulseekError(err)))
-          return
-        }
-        clientInstance = client
-
+    await client.download({
+      file: targetFileObj,
+      path: targetFile,
+      progress: (state: any) => {
+        if (signal.aborted) return
+        const progress = Math.max(0, Math.min(100, Math.round(Number(state?.progress || 0) * 100)))
+        const speed = state?.speed ? `${Math.round(Number(state.speed) / 1024)} KB/s` : 'connecting...'
         emitProgress({
           transferId: request.transferId,
           status: 'downloading',
-          progress: 20,
-          message: `Requesting "${baseName}" from peer ${targetFileObj.user}...`
+          progress: Math.min(95, Math.max(8, progress)),
+          message: `Downloading from Soulseek peer (${speed})...`
         })
-
-        client.download(
-          {
-            file: targetFileObj,
-            path: stagingFilePath,
-            onProgress: (status: string, data: any) => {
-              const progress = Number(data?.progress || 0)
-              const scaledProgress = status === 'downloading'
-                ? 20 + Math.min(70, Math.max(0, progress * 70))
-                : status === 'complete'
-                  ? 90
-                  : 20
-              const message =
-                status === 'requested'
-                  ? `Requesting "${baseName}" from peer ${targetFileObj.user}...`
-                  : status === 'queued'
-                    ? `Queued by peer ${targetFileObj.user}; waiting for a slot...`
-                    : status === 'connected'
-                      ? `Connected to peer ${targetFileObj.user}; starting transfer...`
-                      : `Downloading "${baseName}" from peer ${targetFileObj.user}...`
-              emitProgress({
-                transferId: request.transferId,
-                status: 'downloading',
-                progress: scaledProgress,
-                message
-              })
-            }
-          },
-          (downloadErr: any, data: any) => {
-            clearTimeout(downloadTimeout)
-            try {
-              client.destroy?.()
-            } catch {}
-
-            if (downloadErr) {
-              reject(new Error(downloadErr.message || 'Soulseek peer transfer failed.'))
-              return
-            }
-
-            // If file was not written to disk yet, write data buffer
-            if (!fs.existsSync(stagingFilePath) && data?.buffer) {
-              fs.writeFileSync(stagingFilePath, data.buffer)
-            }
-            resolve()
-          }
-        )
-      })
+      }
     })
+
+    if (signal.aborted) throw new Error('Download cancelled')
 
     const downloadedFiles = getAudioFiles(stagingDirectory).sort(
       (left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs
@@ -1209,8 +1265,10 @@ export class DownloadService {
   private static async executeQobuz(
     request: StartDownloadRequest,
     stagingDirectory: string,
-    song: any
+    song: any,
+    signal: AbortSignal
   ): Promise<void> {
+    if (signal.aborted) throw new Error('Download cancelled')
     emitProgress({
       transferId: request.transferId,
       status: 'downloading',
@@ -1236,6 +1294,7 @@ export class DownloadService {
       stagingFilePath,
       request.accounts.qobuzQuality,
       (pct, downloadedBytes, totalBytes) => {
+        if (signal.aborted) return
         const sizeMb = (downloadedBytes / 1024 / 1024).toFixed(1)
         const totalMb = totalBytes > 0 ? (totalBytes / 1024 / 1024).toFixed(1) : ''
         emitProgress({
@@ -1246,8 +1305,11 @@ export class DownloadService {
             ? `Downloading Qobuz FLAC (${sizeMb} MB / ${totalMb} MB)...`
             : `Downloading Qobuz FLAC (${sizeMb} MB)...`
         })
-      }
+      },
+      signal
     )
+
+    if (signal.aborted) throw new Error('Download cancelled')
 
     const completed = await finalizeDownloadedFile(stagingFilePath, request, song)
 
@@ -1276,8 +1338,10 @@ export class DownloadService {
   private static async executeDeezer(
     request: StartDownloadRequest,
     stagingDirectory: string,
-    song: any
+    song: any,
+    signal: AbortSignal
   ): Promise<void> {
+    if (signal.aborted) throw new Error('Download cancelled')
     emitProgress({
       transferId: request.transferId,
       status: 'downloading',
@@ -1300,6 +1364,7 @@ export class DownloadService {
       stagingFilePath,
       (request.accounts.deezerQuality as any) || 'lossless',
       (pct, downloadedBytes, totalBytes) => {
+        if (signal.aborted) return
         const sizeMb = (downloadedBytes / 1024 / 1024).toFixed(1)
         const totalMb = totalBytes > 0 ? (totalBytes / 1024 / 1024).toFixed(1) : ''
         emitProgress({
@@ -1310,8 +1375,11 @@ export class DownloadService {
             ? `Downloading & decrypting Deezer stream (${sizeMb} MB / ${totalMb} MB)...`
             : `Downloading & decrypting Deezer stream (${sizeMb} MB)...`
         })
-      }
+      },
+      signal
     )
+
+    if (signal.aborted) throw new Error('Download cancelled')
 
     const finalPath = result.filePath
     const completed = await finalizeDownloadedFile(finalPath, request, song)

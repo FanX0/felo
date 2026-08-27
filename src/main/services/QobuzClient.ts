@@ -218,12 +218,13 @@ export class QobuzClient {
     trackId: string,
     destinationPath: string,
     quality?: string,
-    onProgress?: (progress: number, downloadedBytes: number, totalBytes: number) => void
+    onProgress?: (progress: number, downloadedBytes: number, totalBytes: number) => void,
+    signal?: AbortSignal
   ): Promise<string> {
     const formatId = this.mapQualityToFormatId(quality)
     const { url } = await this.getDownloadUrl(trackId, formatId)
 
-    const response = await fetch(url)
+    const response = await fetch(url, { signal })
     if (!response.ok || !response.body) {
       throw new Error(`Failed to download audio from Qobuz CDN: ${response.statusText}`)
     }
@@ -245,7 +246,7 @@ export class QobuzClient {
       }
     })
 
-    await pipeline(readable, fileStream)
+    await pipeline(readable, fileStream, { signal })
     return destinationPath
   }
 

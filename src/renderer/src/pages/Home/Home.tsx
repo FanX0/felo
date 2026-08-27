@@ -837,7 +837,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
       artworkPath: song.artworkUrl,
       isOnline: true,
       autoDownload: true,
-      autoPlay: true
+      autoPlay: false
     })
   }
 

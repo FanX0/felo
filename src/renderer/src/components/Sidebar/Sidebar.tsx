@@ -12,12 +12,14 @@ import {
   Plus,
   Music2,
   ListMusic,
+  RotateCcw,
   X
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
-import { useDownloadStore } from '../../hooks/useDownloadStore'
+import { useDownloadStore, type TransferItem } from '../../hooks/useDownloadStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { toMediaUrl } from '../../lib/media'
+import { STREAMING_ACCOUNTS_SETTING } from '../../lib/downloadConfig'
 import type { Playlist } from '../../pages/Playlists/types'
 import CreatePlaylistModal from '../../pages/Playlists/CreatePlaylistModal'
 
@@ -38,6 +40,7 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
     isTransfersOpen,
     setTransfersOpen,
     toggleTransfers,
+    updateTransfer,
     removeTransfer,
     clearTransfers
   } = useDownloadStore()
@@ -89,6 +92,63 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
       window.clearInterval(interval)
     }
   }, [])
+
+  const handleCancelOrRemoveTransfer = async (transfer: TransferItem) => {
+    const isActive =
+      transfer.status === 'downloading' ||
+      transfer.status === 'queued' ||
+      transfer.status === 'waiting_connector'
+
+    if (isActive) {
+      try {
+        await window.api?.cancelDownload?.(transfer.id)
+      } catch (err) {
+        console.warn('Failed to cancel download:', err)
+      }
+      updateTransfer(transfer.id, {
+        status: 'failed',
+        progress: 0,
+        message: 'Cancelled'
+      })
+    } else {
+      removeTransfer(transfer.id)
+    }
+  }
+
+  const handleRetryTransfer = async (transfer: TransferItem) => {
+    updateTransfer(transfer.id, {
+      status: 'queued',
+      progress: 2,
+      message: `Retrying ${transfer.sourceName} download...`
+    })
+    try {
+      const savedAccounts = await window.api?.getSetting?.(STREAMING_ACCOUNTS_SETTING)
+      const accounts = savedAccounts && typeof savedAccounts === 'object' ? savedAccounts : {}
+      const res = await window.api?.startDownload?.({
+        transferId: transfer.id,
+        source: transfer.source,
+        resultId: transfer.resultId || '',
+        title: transfer.title,
+        artist: transfer.artist,
+        songId: transfer.song?.id || '',
+        conflictMode: transfer.conflictMode,
+        accounts
+      })
+      if (res?.alreadyExists) {
+        updateTransfer(transfer.id, {
+          status: 'completed',
+          progress: 100,
+          message: 'Already downloaded'
+        })
+      }
+    } catch (error) {
+      updateTransfer(transfer.id, {
+        status: 'failed',
+        progress: 0,
+        message: error instanceof Error ? error.message : 'Retry failed'
+      })
+    }
+  }
 
   if (!isOpen) {
     return (
@@ -430,10 +490,26 @@ export default function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
                                 <Play className="ml-0.5 h-3.5 w-3.5 fill-current" />
                               </button>
                             )}
+                            {transfer.status === 'failed' && (
+                              <button
+                                type="button"
+                                onClick={() => handleRetryTransfer(transfer)}
+                                title="Retry download"
+                                className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white transition-all hover:scale-105 hover:bg-white/20"
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                              </button>
+                            )}
                             <button
                               type="button"
-                              onClick={() => removeTransfer(transfer.id)}
-                              title="Remove transfer"
+                              onClick={() => handleCancelOrRemoveTransfer(transfer)}
+                              title={
+                                transfer.status === 'downloading' ||
+                                transfer.status === 'queued' ||
+                                transfer.status === 'waiting_connector'
+                                  ? 'Cancel download'
+                                  : 'Remove transfer'
+                              }
                               className="rounded p-1 text-text-muted hover:bg-hover hover:text-text"
                             >
                               <X className="h-3.5 w-3.5" />

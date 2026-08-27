@@ -102,16 +102,19 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
   const [settingsLoaded, setSettingsLoaded] = useState(false)
   const automaticSearchKey = useRef('')
   const automaticDownloadKey = useRef('')
+  const activeResultsSongId = useRef('')
 
   useEffect(() => {
     if (panelSong) {
-      setQuery(`${panelSong.artist} ${panelSong.title}`)
+      const newQuery = `${panelSong.artist} ${panelSong.title}`.trim()
+      setQuery(newQuery)
       setResultsBySource({})
       setSearchingBySource({})
       setStatusBySource({})
       setStatusToneBySource({})
       setResultCounts({})
       setExistingLibrarySong(null)
+      activeResultsSongId.current = ''
     }
   }, [panelSong?.id, isLibraryTrack])
 
@@ -215,15 +218,21 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
   const handlePlayExisting = () => {
     if (!replaceTargetSong?.filePath) return
     if (queue[currentSongIndex]?.id === replaceTargetSong.id) {
-      togglePlay()
+      if (!isPlaying) togglePlay()
       return
     }
     setQueue([replaceTargetSong as any], 0)
   }
 
-  const handleSearch = async (sourceToSearch: DownloadSourceId = activeSource, event?: React.FormEvent) => {
+  const handleSearch = async (
+    sourceToSearch: DownloadSourceId = activeSource,
+    searchQuery: string = query,
+    songId: string = panelSong?.id || '',
+    event?: React.FormEvent
+  ) => {
     event?.preventDefault()
-    if (!query.trim()) return
+    const trimmedQuery = searchQuery.trim()
+    if (!trimmedQuery) return
 
     const targetSourceInfo = DOWNLOAD_SOURCES.find((s) => s.id === sourceToSearch)
     const isTargetConfigured =
@@ -243,10 +252,16 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
           `${targetSourceInfo?.name || 'Source'} account is not configured completely.`
         )
       }
-      const results = await window.api.searchDownloadSource(sourceToSearch, query.trim(), accounts)
+      const results = await window.api.searchDownloadSource(sourceToSearch, trimmedQuery, accounts)
+      
+      // Discard results if user switched songs while search was in flight
+      if (panelSong?.id && songId && panelSong.id !== songId) {
+        return
+      }
+
       const mappedResults: SourceResult[] = (results || []).map((result: any, index: number) => ({
         id: String(result.id),
-        title: result.title || panelSong?.title || query.trim(),
+        title: result.title || panelSong?.title || trimmedQuery,
         artist: result.artist || panelSong?.artist || '',
         album: result.album || panelSong?.album || 'Track result',
         quality: result.quality || targetSourceInfo?.quality || 'Provider quality',
@@ -256,6 +271,7 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
         meta: result.meta || (sourceToSearch === 'soulseek' ? (result.slots ? 'Instant Slot' : 'Queued Slot') : `Track ID ${result.id}`)
       }))
 
+      activeResultsSongId.current = songId
       setResultsBySource((prev) => ({ ...prev, [sourceToSearch]: mappedResults }))
       setResultCounts((prev) => ({ ...prev, [sourceToSearch]: mappedResults.length }))
       setStatusBySource((prev) => ({
@@ -264,6 +280,7 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
       }))
       setStatusToneBySource((prev) => ({ ...prev, [sourceToSearch]: 'success' }))
     } catch (error) {
+      if (panelSong?.id && songId && panelSong.id !== songId) return
       const message = error instanceof Error ? error.message : String(error)
       const isConfigurationError =
         message.toLowerCase().includes('credential') ||
@@ -279,7 +296,9 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
       setResultsBySource((prev) => ({ ...prev, [sourceToSearch]: [] }))
       setResultCounts((prev) => ({ ...prev, [sourceToSearch]: 0 }))
     } finally {
-      setSearchingBySource((prev) => ({ ...prev, [sourceToSearch]: false }))
+      if (!panelSong?.id || !songId || panelSong.id === songId) {
+        setSearchingBySource((prev) => ({ ...prev, [sourceToSearch]: false }))
+      }
     }
   }
 
@@ -380,12 +399,8 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
     if (automaticSearchKey.current === key) return
     automaticSearchKey.current = key
 
-    // Search every provider when the panel opens so each tab is ready immediately.
     void Promise.all(
-      DOWNLOAD_SOURCES.map((source) => {
-        if (resultsBySource[source.id]) return Promise.resolve()
-        return handleSearch(source.id)
-      })
+      DOWNLOAD_SOURCES.map((source) => handleSearch(source.id, query.trim(), panelSong.id))
     )
   }, [settingsLoaded, panelSong?.id, query])
 
@@ -393,6 +408,9 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
     if (!settingsLoaded || !targetSong?.autoDownload || !panelSong || !query.trim()) return
     const key = `${panelSong.id}:${query.trim()}`
     if (automaticDownloadKey.current === key) return
+
+    // Guard: results must belong to the active song
+    if (activeResultsSongId.current !== panelSong.id) return
 
     const preferredSource = priority.find((source) => (resultsBySource[source] || []).length > 0)
     if (!preferredSource) return
@@ -564,7 +582,7 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
           Search results for <span className="font-bold text-white">"{query}"</span>
         </div>
 
-        <form onSubmit={(e) => handleSearch(activeSource, e)} className="mt-3 flex gap-2">
+        <form onSubmit={(e) => handleSearch(activeSource, query, panelSong?.id || '', e)} className="mt-3 flex gap-2">
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}

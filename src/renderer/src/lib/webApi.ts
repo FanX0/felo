@@ -1522,6 +1522,7 @@ const webApi: Window['api'] = {
   }),
   searchDownloadSource: async () => [],
   startDownload: async () => desktopOnly(),
+  cancelDownload: async () => false,
   onDownloadProgress: () => () => undefined,
   checkDownloaderDependencies: async () => ({
     ytDlp: { available: false },
