@@ -221,9 +221,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set((state) => {
       if (state.queue.some((item) => item.id === song.id)) return state
       const queue = [...state.queue, song]
+      const currentSongIndex = state.currentSongIndex === -1 ? 0 : state.currentSongIndex
       return {
         queue,
-        originalQueue: [...state.originalQueue, song]
+        originalQueue: [...state.originalQueue, song],
+        currentSongIndex
       }
     })
   },
@@ -232,10 +234,19 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set((state) => {
       const existingIndex = state.queue.findIndex((item) => item.id === song.id)
       const newQueue = [...state.queue]
+      let adjustedCurrentIndex = state.currentSongIndex
+
       if (existingIndex >= 0) {
         newQueue.splice(existingIndex, 1)
+        if (existingIndex < state.currentSongIndex) {
+          adjustedCurrentIndex = Math.max(0, adjustedCurrentIndex - 1)
+        }
       }
-      const insertIndex = Math.min(newQueue.length, state.currentSongIndex + 1)
+
+      const insertIndex =
+        adjustedCurrentIndex === -1
+          ? 0
+          : Math.min(newQueue.length, adjustedCurrentIndex + 1)
       newQueue.splice(insertIndex, 0, song)
 
       // Safely insert into originalQueue without destroying original sequence
@@ -256,7 +267,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
       return {
         queue: newQueue,
-        originalQueue: newOriginalQueue
+        originalQueue: newOriginalQueue,
+        currentSongIndex: adjustedCurrentIndex === -1 ? 0 : adjustedCurrentIndex
       }
     })
   },

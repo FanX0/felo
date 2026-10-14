@@ -349,7 +349,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
 
     try {
       const upcomingQueue = playerState.queue
-        .slice(playerState.currentSongIndex, playerState.currentSongIndex + 40)
+        .slice(playerState.currentSongIndex, playerState.currentSongIndex + 100)
         .map(toSharedSong)
 
       const isDeviceSharing = get().isDeviceAudioSharing

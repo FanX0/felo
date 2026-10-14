@@ -117,9 +117,10 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
         switch (command) {
           case 'play': {
             const query = (cmdPayload?.query || '').trim()
-            const action = cmdPayload?.action || 'play_now'
+            const action = cmdPayload?.action || 'play_next'
             if (!query) {
               player.setIsPlaying(true)
+              void ensureHostRoom(true)
               break
             }
 
@@ -133,12 +134,19 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             )
 
             if (queueMatchIndex >= 0) {
+              const matchedSong = player.queue[queueMatchIndex]
               if (action === 'play_now') {
                 player.playSong(queueMatchIndex)
-              } else if (action === 'play_next') {
-                const song = player.queue[queueMatchIndex]
-                player.enqueueSongNext(song)
+              } else if (action === 'enqueue') {
+                player.enqueueSong(matchedSong)
+              } else {
+                // Default: play_next (Queue as next up in session)
+                player.enqueueSongNext(matchedSong)
+                if (!player.isPlaying || player.currentSongIndex === -1) {
+                  player.playNext(true)
+                }
               }
+              void ensureHostRoom(true)
               break
             }
 
@@ -156,34 +164,44 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             if (libraryMatch) {
               if (action === 'enqueue') {
                 player.enqueueSong(libraryMatch)
-              } else if (action === 'play_next') {
-                player.enqueueSongNext(libraryMatch)
-              } else {
+              } else if (action === 'play_now') {
                 player.enqueueSongNext(libraryMatch)
                 player.playNext(true)
+              } else {
+                // Default: play_next (Queue as next up in session)
+                player.enqueueSongNext(libraryMatch)
+                if (!player.isPlaying || player.currentSongIndex === -1) {
+                  player.playNext(true)
+                }
               }
+              void ensureHostRoom(true)
               break
             }
 
             // 3. Fallback: Create instant virtual track so UI & audio switch in 0ms
             const virtualSong: Song = {
               id: `discord-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-              title: query,
+              title: cmdPayload?.title || query,
               artist: cmdPayload?.artist || 'Discord Request',
               album: '',
-              duration: 0,
+              duration: cmdPayload?.duration || 0,
               artworkPath: '',
               filePath: `virtual:${query}`
             }
 
             if (action === 'enqueue') {
               player.enqueueSong(virtualSong)
-            } else if (action === 'play_next') {
-              player.enqueueSongNext(virtualSong)
-            } else {
+            } else if (action === 'play_now') {
               player.enqueueSongNext(virtualSong)
               player.playNext(true)
+            } else {
+              // Default: play_next
+              player.enqueueSongNext(virtualSong)
+              if (!player.isPlaying || player.currentSongIndex === -1) {
+                player.playNext(true)
+              }
             }
+            void ensureHostRoom(true)
 
             // Also trigger desktop background downloader if capabilities allow
             void downloadTrackInBackground(
@@ -200,20 +218,25 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
           case 'skip':
           case 'next':
             player.playNext(true)
+            void ensureHostRoom(true)
             break
           case 'prev':
           case 'previous':
             player.playPrevious()
+            void ensureHostRoom(true)
             break
           case 'stop':
             player.setIsPlaying(false)
             player.seek(0)
+            void ensureHostRoom(true)
             break
           case 'pause':
             player.setIsPlaying(false)
+            void ensureHostRoom(true)
             break
           case 'resume':
             player.setIsPlaying(true)
+            void ensureHostRoom(true)
             break
           case 'seek': {
             const seconds = Number(cmdPayload?.seconds)

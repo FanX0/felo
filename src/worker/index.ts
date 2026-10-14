@@ -222,6 +222,19 @@ export const SLASH_COMMANDS = [
     description: 'Show currently playing track with progress bar and room code'
   },
   {
+    name: 'queue',
+    description: 'View the live session music queue and upcoming tracks',
+    options: [
+      {
+        name: 'page',
+        description: 'Queue page number (10 tracks per page)',
+        type: 4,
+        required: false,
+        min_value: 1
+      }
+    ]
+  },
+  {
     name: 'invite',
     description: 'Show room code and 1-click join links for friends'
   },
@@ -460,6 +473,7 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 `• \`/skip\` — Skip to next track\n` +
                 `• \`/pause\` & \`/resume\` — Toggle playback\n` +
                 `• \`/nowplaying\` — Show currently playing song & live progress\n` +
+                `• \`/queue [page]\` — View active session queue & upcoming tracks\n` +
                 `• \`/volume <0-100>\` — Adjust room volume\n` +
                 `• \`/invite\` — Get 1-click web join link for friends\n` +
                 `• \`/disconnect\` — Unlink this channel`,
@@ -556,27 +570,82 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
     // 5. /play <QUERY>
     if (name === 'play') {
       const query = (options.find((o: any) => o.name === 'query')?.value || '').trim()
-      const action = options.find((o: any) => o.name === 'action')?.value || 'play_now'
+      const explicitAction = options.find((o: any) => o.name === 'action')?.value
 
-      await supabase.insertRoomCommand(roomCode, 'play', { query, action }, username)
+      const room = await supabase.getRoom(roomCode)
+      const isCurrentlyPlaying = Boolean(room?.is_playing && room?.song)
+      // Industry standard: if already playing, queue as next up ('play_next'). If idle, 'play_now'.
+      const action = explicitAction || (isCurrentlyPlaying ? 'play_next' : 'play_now')
 
-      const actionText =
-        action === 'enqueue'
-          ? 'Added to Queue'
-          : action === 'play_next'
-            ? 'Queued to Play Next'
-            : 'Now Playing'
+      const fullQueue: any[] = Array.isArray(room?.queue) ? room.queue : []
+      const cleanQ = query.toLowerCase()
+
+      // Search if track exists in room's published queue
+      const matchInQueue = fullQueue.find(
+        (t: any) =>
+          t.title?.toLowerCase().includes(cleanQ) ||
+          (t.artist && t.artist.toLowerCase().includes(cleanQ))
+      )
+
+      await supabase.insertRoomCommand(
+        roomCode,
+        'play',
+        {
+          query,
+          action,
+          title: matchInQueue?.title || query,
+          artist: matchInQueue?.artist || '',
+          duration: matchInQueue?.duration || 0
+        },
+        username
+      )
+
+      const displayTitle = matchInQueue?.title || query
+      const displayArtist = matchInQueue?.artist ? `by **${matchInQueue.artist}**` : ''
+      const trackDur = matchInQueue?.duration
+        ? ` \`[${Math.floor(matchInQueue.duration / 60)}:${(matchInQueue.duration % 60).toString().padStart(2, '0')}]\``
+        : ''
+
+      if (action === 'play_now') {
+        return jsonResponse({
+          type: 4,
+          data: {
+            embeds: [
+              {
+                title: '🎶 Playing Now',
+                description:
+                  `**Track:** **${displayTitle}** ${displayArtist}${trackDur}\n` +
+                  `**Room:** \`${roomCode}\`\n\n` +
+                  `⚡ *Instant playback initiated!*`,
+                color: 0x10b981,
+                footer: { text: `Requested by @${username} • Felo Music` }
+              }
+            ]
+          }
+        })
+      }
+
+      // Next up / Enqueued
+      const curRemaining = Math.max(0, (room?.song?.duration || 0) - (room?.position_seconds || 0))
+      const waitMin = Math.floor(curRemaining / 60)
+      const waitSec = (curRemaining % 60).toString().padStart(2, '0')
+      const waitStr = curRemaining > 0 ? `~${waitMin}m ${waitSec}s` : 'Moments'
+      const positionText = action === 'play_next' ? '#1 (Next Up)' : `#${Math.max(1, fullQueue.length)}`
 
       return jsonResponse({
         type: 4,
         data: {
           embeds: [
             {
-              title: `🎶 ${actionText}`,
+              title: '➕ Added to Queue',
               description:
-                `**Track:** "${query}"\n` +
-                `**Target Room:** \`${roomCode}\`\n\n` +
-                `⚡ *Dispatched to host player. If missing from local library, auto-downloading online via priority providers!*`,
+                `**Track:** **${displayTitle}** ${displayArtist}${trackDur}\n` +
+                `**Position in Queue:** \`${positionText}\`\n` +
+                (isCurrentlyPlaying ? `**Estimated Wait:** \`${waitStr}\`\n` : '') +
+                `**Room:** \`${roomCode}\`\n\n` +
+                (matchInQueue
+                  ? `✨ *Found in host library queue • Positioned as next up!*`
+                  : `⚡ *Dispatched to host player. Online providers searching lossless audio...*`),
               color: 0x10b981,
               footer: { text: `Requested by @${username} • Lossless Synchronized Audio` }
             }
@@ -587,14 +656,28 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
 
     // 6. /skip
     if (name === 'skip') {
+      const room = await supabase.getRoom(roomCode)
       await supabase.insertRoomCommand(roomCode, 'skip', {}, username)
+
+      const fullQueue: any[] = Array.isArray(room?.queue) ? room.queue : []
+      const isFirstCurrent =
+        fullQueue.length > 0 &&
+        room?.song &&
+        fullQueue[0].title === room.song.title &&
+        fullQueue[0].artist === room.song.artist
+
+      const nextSong = isFirstCurrent ? fullQueue[1] : fullQueue[0]
+
       return jsonResponse({
         type: 4,
         data: {
           embeds: [
             {
               title: '⏭️ Skipped Track',
-              description: `Skipped to the next track in Room **\`${roomCode}\`**.`,
+              description: nextSong
+                ? `Skipped track in Room **\`${roomCode}\`**.\n` +
+                  `🎶 **Now Playing:** **${nextSong.title}** by **${nextSong.artist || 'Unknown'}**`
+                : `Skipped to the next track in Room **\`${roomCode}\`**.`,
               color: 0x10b981,
               footer: { text: `Requested by @${username}` }
             }
@@ -776,7 +859,105 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
       })
     }
 
-    // 11. /invite
+    // 11. /queue
+    if (name === 'queue') {
+      const room = await supabase.getRoom(roomCode)
+      if (!room) {
+        return jsonResponse({
+          type: 4,
+          data: {
+            embeds: [
+              {
+                title: '❌ Room Not Active',
+                description: `Could not find an active session with code **\`${roomCode}\`**.`,
+                color: 0xef4444
+              }
+            ]
+          }
+        })
+      }
+
+      const song = room.song
+      const fullQueue: any[] = Array.isArray(room.queue) ? room.queue : []
+      const isFirstCurrent =
+        fullQueue.length > 0 &&
+        song &&
+        fullQueue[0].title === song.title &&
+        fullQueue[0].artist === song.artist
+
+      const upcomingQueue = isFirstCurrent ? fullQueue.slice(1) : fullQueue
+
+      const page = Math.max(1, Number(options.find((o: any) => o.name === 'page')?.value) || 1)
+      const pageSize = 10
+      const totalPages = Math.max(1, Math.ceil(upcomingQueue.length / pageSize))
+      const safePage = Math.min(page, totalPages)
+      const startIdx = (safePage - 1) * pageSize
+      const pageTracks = upcomingQueue.slice(startIdx, startIdx + pageSize)
+
+      const pos = room.position_seconds || 0
+      const dur = song?.duration || 0
+      const progressPercent = dur > 0 ? Math.min(100, Math.max(0, Math.floor((pos / dur) * 100))) : 0
+      const totalBars = 12
+      const activeBars = Math.max(0, Math.min(totalBars, Math.round((progressPercent / 100) * totalBars)))
+      const progressBar =
+        '▬'.repeat(Math.max(0, activeBars - 1)) +
+        '🔘' +
+        '▬'.repeat(Math.max(0, totalBars - activeBars))
+
+      const posStr = `${Math.floor(pos / 60)}:${(pos % 60).toString().padStart(2, '0')}`
+      const durStr = dur > 0 ? `${Math.floor(dur / 60)}:${(dur % 60).toString().padStart(2, '0')}` : '0:00'
+
+      let totalRemainingSec = Math.max(0, dur - pos)
+      for (const track of upcomingQueue) {
+        totalRemainingSec += Number(track.duration) || 0
+      }
+      const totalHours = Math.floor(totalRemainingSec / 3600)
+      const totalMins = Math.floor((totalRemainingSec % 3600) / 60)
+      const totalTimeStr = totalHours > 0 ? `${totalHours}h ${totalMins}m` : `${totalMins}m`
+
+      let queueDescription = ''
+
+      if (song) {
+        queueDescription +=
+          `**🎶 Now Playing:**\n` +
+          `**${song.title}** — *${song.artist || 'Unknown'}*\n` +
+          `\`${progressBar}\` \`${posStr} / ${durStr}\`\n\n`
+      } else {
+        queueDescription += `**🎶 Now Playing:** *Nothing is playing right now*\n\n`
+      }
+
+      queueDescription += `**⏭️ Up Next (${upcomingQueue.length} tracks):**\n`
+
+      if (upcomingQueue.length === 0) {
+        queueDescription += `*No upcoming tracks in queue. Use \`/play <song>\` to add songs!*`
+      } else {
+        const lines = pageTracks.map((t, idx) => {
+          const globalIdx = startIdx + idx + 1
+          const tDur = t.duration || 0
+          const tDurStr = `${Math.floor(tDur / 60)}:${(tDur % 60).toString().padStart(2, '0')}`
+          return `\`${globalIdx.toString().padStart(2, ' ')}.\` **${t.title}** — ${t.artist || 'Unknown'} \`[${tDurStr}]\``
+        })
+        queueDescription += lines.join('\n')
+      }
+
+      return jsonResponse({
+        type: 4,
+        data: {
+          embeds: [
+            {
+              title: `📜 Live Session Queue • Room \`${roomCode}\``,
+              description: queueDescription,
+              color: 0x10b981,
+              footer: {
+                text: `Page ${safePage}/${totalPages} • ${upcomingQueue.length} tracks queued • Est. queue time: ${totalTimeStr}`
+              }
+            }
+          ]
+        }
+      })
+    }
+
+    // 12. /invite
     if (name === 'invite') {
       return jsonResponse({
         type: 4,
