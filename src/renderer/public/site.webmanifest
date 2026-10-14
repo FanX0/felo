@@ -1,18 +1,44 @@
 {
   "name": "Felo - Local-First Music Player",
   "short_name": "Felo",
-  "description": "Organize, search, and play your personal music library.",
+  "id": "/",
+  "description": "Organize, search, and play your personal music library completely offline and online.",
   "start_url": "/#/library",
   "scope": "/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#000000",
   "theme_color": "#111111",
+  "categories": ["music", "audio", "entertainment"],
   "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
     {
       "src": "/icon.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Library",
+      "url": "/#/library",
+      "description": "Your local and offline music collection"
+    },
+    {
+      "name": "Search",
+      "url": "/#/search",
+      "description": "Search songs, albums, and artists"
+    },
+    {
+      "name": "Playlists",
+      "url": "/#/playlists",
+      "description": "Your music playlists"
     }
   ]
 }

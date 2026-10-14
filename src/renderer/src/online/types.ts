@@ -52,6 +52,8 @@ export interface SharedSong {
   album?: string
   duration?: number
   artworkUrl?: string
+  isDeviceStream?: boolean
+  streamType?: 'device_audio' | 'library'
 }
 
 export interface Conversation {
@@ -100,6 +102,7 @@ export interface ListeningRoom {
   queue?: SharedSong[]
   position_seconds: number
   is_playing: boolean
+  is_device_stream?: boolean
   created_at: string
   updated_at: string
 }

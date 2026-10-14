@@ -7,6 +7,10 @@ import { usePlayerStore } from './usePlayerStore'
 import { useDownloadStore } from './useDownloadStore'
 import { DEFAULT_DOWNLOAD_PRIORITY, DOWNLOAD_PRIORITY_SETTING, STREAMING_ACCOUNTS_SETTING } from '../lib/downloadConfig'
 import { scoreProviderMatch } from '../lib/songMatching'
+import { WebRTCAudioHost, WebRTCAudioClient } from '../lib/webrtcAudioStream'
+
+let _activeAudioHost: WebRTCAudioHost | null = null
+let _activeAudioClient: WebRTCAudioClient | null = null
 
 function makeCode(): string {
   return Math.random().toString(36).slice(2, 8).toUpperCase()
@@ -91,6 +95,17 @@ interface ListeningStoreState {
   handleHostDisconnect: () => Promise<void>
   transferHost: (newHostId: string) => Promise<void>
   preloadNextQueueTracks: (room: ListeningRoom) => Promise<void>
+
+  // Device audio streaming state
+  isDeviceAudioSharing: boolean
+  isReceivingDeviceStream: boolean
+  deviceAudioLevel: number
+  deviceAudioPeerCount: number
+  deviceAudioClientState: 'idle' | 'connecting' | 'connected' | 'disconnected' | 'stopped'
+  startDeviceAudioSharing: () => Promise<void>
+  stopDeviceAudioSharing: () => Promise<void>
+  connectToDeviceStream: (room: ListeningRoom) => Promise<void>
+  disconnectFromDeviceStream: () => void
 
   // Cleanup
   cleanupOnLeave: () => void

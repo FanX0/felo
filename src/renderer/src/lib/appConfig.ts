@@ -5,21 +5,18 @@
 // True when running inside Electron desktop container
 export const isElectron = typeof window !== 'undefined' && Boolean(window.electron)
 
-// Public local-first mode is active if:
-// 1. Built with VITE_PUBLIC_MODE=true
-// 2. Running as a web deployment (Cloudflare / browser)
-// 3. Explicitly configured as public build via API
-export const isPublicMode =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_PUBLIC_MODE === 'true') ||
-  !isElectron ||
-  (typeof window !== 'undefined' && Boolean((window.api as { isPublicBuild?: boolean } | undefined)?.isPublicBuild))
+// Public local-first mode is always active on open-source releases & web deployments
+export const isPublicMode = true
 
 export const AppCapabilities = {
   // Online music discovery tabs (Apple charts, Spotify playlists, AOTY, Last.fm)
-  onlineDiscovery: !isPublicMode,
+  onlineDiscovery: false,
+
+  // Online external catalog search (Apple Music, MusicBrainz, Last.fm)
+  onlineSearch: false,
 
   // Direct file downloads & provider scrapers
-  downloads: isElectron && !isPublicMode,
+  downloads: false,
 
   // Local audio playback and library management
   localLibrary: true,

@@ -1,13 +1,16 @@
-import { app, shell, BrowserWindow, ipcMain, protocol, net, dialog } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, protocol, net, dialog, session, desktopCapturer } from 'electron'
 import path, { join, normalize, resolve } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { getDb, recordPlayEvent, getListeningHistory } from './database'
 import { LibraryService } from './services/LibraryService'
 import { PlaylistService } from './services/PlaylistService'
-import { DownloadService } from './services/DownloadService'
-import { startMusicPresenceIntegrationWatcher } from './services/MusicPresenceService'
-import { PlaybackControlService } from './services/PlaybackControlService'
+import {
+  startMusicPresenceIntegrationWatcher,
+  runMusicPresenceSetupScript,
+  getMusicPresenceStatus,
+  launchMusicPresence
+} from './services/MusicPresenceService'
 import { RemoteControlService } from './services/RemoteControlService'
 import { DiscordBotService } from './services/DiscordBotService'
 import fs from 'fs'
@@ -2775,6 +2778,23 @@ app.whenReady().then(() => {
     app.setAsDefaultProtocolClient('felo')
   }
 
+  // Register display media request handler for system audio loopback capture
+  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+    desktopCapturer
+      .getSources({ types: ['screen'] })
+      .then((sources) => {
+        if (sources.length > 0) {
+          callback({ video: sources[0], audio: 'loopback' })
+        } else {
+          callback({})
+        }
+      })
+      .catch((err) => {
+        console.error('[DesktopAudio] Failed to get desktop sources for display media:', err)
+        callback({})
+      })
+  })
+
   // Register the media:// protocol handler for streaming local audio
   protocol.handle('media', (request) => {
     const filePath = resolveMediaPath(request.url)
@@ -2876,6 +2896,26 @@ app.whenReady().then(() => {
       return filePaths[0]
     }
     return null
+  })
+
+  // Desktop Audio Loopback: enumerate capture sources
+  ipcMain.handle('desktopAudio:getSources', async () => {
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ['screen', 'window'],
+        fetchWindowIcons: true,
+        thumbnailSize: { width: 200, height: 120 }
+      })
+      return sources.map((s) => ({
+        id: s.id,
+        name: s.name,
+        thumbnail: s.thumbnail ? s.thumbnail.toDataURL() : null,
+        appIcon: s.appIcon ? s.appIcon.toDataURL() : null
+      }))
+    } catch (err) {
+      console.error('[DesktopAudio] Failed to enumerate desktop sources:', err)
+      return []
+    }
   })
 
   let currentScanAbortController: AbortController | null = null

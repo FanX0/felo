@@ -396,6 +396,9 @@ async function searchBrowserAppleMusic(query: string): Promise<CatalogSearchResu
     Songs: []
   }
   if (!cleanQuery) return results
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return results
+  }
 
   const searchEntity = (entity: 'song' | 'musicArtist' | 'album', limit: number) => {
     const params = new URLSearchParams({
@@ -608,6 +611,9 @@ async function searchBrowserMusicBrainz(query: string): Promise<CatalogSearchRes
     Songs: []
   }
   if (!cleanQuery) return results
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return results
+  }
 
   const recordings = await fetchMusicBrainzEntity('recording', cleanQuery, 25)
   const songs = recordings.map(formatMusicBrainzRecording)
@@ -708,6 +714,14 @@ function lastFmImageUrl(images: unknown): string {
 }
 
 async function searchBrowserLastFm(query: string): Promise<CatalogSearchResults> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return {
+      'Top Results': [],
+      Artists: [],
+      Albums: [],
+      Songs: []
+    }
+  }
   const apiKey = await webApi.getSetting('search.lastFmApiKey')
   if (typeof apiKey !== 'string' || !apiKey.trim()) {
     throw new Error('Last.fm API key is not configured. Add one in Settings.')
@@ -979,6 +993,24 @@ async function fetchBrowserLyrics(songInfo: {
 
   if (!cleanTrack) return null
 
+  const lyricsCacheKey = `felo-lyrics:${cleanTrack.toLowerCase()}:::${cleanArtist.toLowerCase()}`
+  try {
+    const cached = localStorage.getItem(lyricsCacheKey)
+    if (cached) {
+      const parsed = JSON.parse(cached)
+      if (parsed && (parsed.plainLyrics || parsed.syncedLyrics)) {
+        return parsed
+      }
+    }
+  } catch {
+    // Ignore localStorage parse error
+  }
+
+  // If offline, do not attempt failing network calls
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return null
+  }
+
   const attempts: Array<{
     endpoint: '/get' | '/search'
     params: URLSearchParams
@@ -1071,7 +1103,14 @@ async function fetchBrowserLyrics(songInfo: {
       attempt.album,
       attempt.duration
     )
-    if (best) return best
+    if (best) {
+      try {
+        localStorage.setItem(lyricsCacheKey, JSON.stringify(best))
+      } catch {
+        // Ignore storage quota
+      }
+      return best
+    }
   }
 
   return null
@@ -1674,8 +1713,51 @@ const webApi: Window['api'] = {
     }
     return [...counts].map(([name, songCount]) => ({ id: stableId(name), name, songCount }))
   },
-  getAlbums: async () => [],
-  searchAlbums: async (_query?: string) => [],
+  getAlbums: async () => {
+    await initializeBrowserLibrary()
+    const albumMap = new Map<
+      string,
+      {
+        id: string
+        title: string
+        artistName: string
+        songCount: number
+        artworkPath?: string
+      }
+    >()
+
+    for (const song of browserSongs.values()) {
+      const albumTitle = song.album?.trim() || 'Unknown Album'
+      const artistName = song.artist?.trim() || 'Unknown Artist'
+      const key = `${albumTitle.toLowerCase()}:::${artistName.toLowerCase()}`
+      const existing = albumMap.get(key)
+      if (existing) {
+        existing.songCount++
+        if (!existing.artworkPath && song.artworkPath) {
+          existing.artworkPath = song.artworkPath
+        }
+      } else {
+        albumMap.set(key, {
+          id: stableId(`album:${key}`),
+          title: albumTitle,
+          artistName,
+          songCount: 1,
+          artworkPath: song.artworkPath
+        })
+      }
+    }
+    return [...albumMap.values()].sort((a, b) => a.title.localeCompare(b.title))
+  },
+  searchAlbums: async (query?: string) => {
+    const albums = await (webApi.getAlbums ? webApi.getAlbums() : [])
+    if (!query || !query.trim()) return albums
+    const q = query.toLowerCase().trim()
+    return albums.filter(
+      (album) =>
+        album.title.toLowerCase().includes(q) ||
+        (album.artistName && album.artistName.toLowerCase().includes(q))
+    )
+  },
   searchSongs: async (query) => {
     const normalized = query.toLowerCase()
     return [...browserSongs.values()].filter((song) =>
@@ -1824,12 +1906,16 @@ const webApi: Window['api'] = {
     totalTracks: 0
   }),
   fetchDeezerChart: async () => ({}),
-  fetchDeezerRecommendations: async () => []
+  fetchDeezerRecommendations: async () => [],
+  getDesktopSources: async () => []
 }
 
 export function installWebApi(): void {
   if (!window.api) {
     window.api = webApi
+    if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
+      void navigator.storage.persist().catch(() => false)
+    }
     void initializeBrowserLibrary().then(() => {
       window.dispatchEvent(new CustomEvent('felo:library-updated'))
     })

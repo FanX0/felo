@@ -202,7 +202,7 @@ export default function MobileQueueSheet({ state, isOpen, onClose }: MobileQueue
                     <div className="flex-1 min-w-0 pr-2">
                       <h4
                         className={`text-sm font-semibold truncate ${
-                          isCurrent ? 'text-primary-amber' : 'text-white'
+                          isCurrent ? 'text-white font-bold' : 'text-white'
                         }`}
                       >
                         {track.title}

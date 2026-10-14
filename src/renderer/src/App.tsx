@@ -299,7 +299,11 @@ function App() {
                   }
                 }
               }}
-              placeholder="What do you want to search for? (Ctrl+K)"
+              placeholder={
+                AppCapabilities.onlineSearch
+                  ? 'What do you want to search for? (Ctrl+K)'
+                  : 'Search local library (songs, artists, albums)... (Ctrl+K)'
+              }
               className="bg-transparent border-none outline-none text-[14px] font-medium text-text placeholder:text-text-muted w-full px-3"
             />
             {searchQuery && (
@@ -318,7 +322,7 @@ function App() {
             )}
 
             {/* Search Mode Selector */}
-            {AppCapabilities.onlineDiscovery && (
+            {AppCapabilities.onlineSearch && (
               <div ref={searchModeRef} className="relative shrink-0">
                 <button
                   type="button"

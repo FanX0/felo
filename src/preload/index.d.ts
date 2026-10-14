@@ -328,6 +328,11 @@ declare global {
       cancelLibraryScan: () => Promise<boolean>
       onLibraryScanProgress: (listener: (progress: any) => void) => () => void
 
+      // Desktop Audio Loopback
+      getDesktopSources: () => Promise<
+        Array<{ id: string; name: string; thumbnail: string | null; appIcon: string | null }>
+      >
+
       // Window
       minimizeWindow: () => void
       maximizeWindow: () => void

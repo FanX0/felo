@@ -78,11 +78,14 @@ interface ProviderTestStatus {
 function Toggle({ enabled, onChange }: { enabled: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
       onClick={() => onChange(!enabled)}
-      className={`w-11 h-6 rounded-full transition-colors relative shrink-0 ${enabled ? 'bg-primary-amber' : 'bg-border'}`}
+      className={`w-11 h-6 rounded-full transition-colors relative shrink-0 cursor-pointer ${enabled ? 'bg-white' : 'bg-border'}`}
     >
       <div
-        className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-5.5' : 'translate-x-1'}`}
+        className={`absolute top-1 w-4 h-4 rounded-full shadow transition-transform ${enabled ? 'translate-x-5.5 bg-black' : 'translate-x-1 bg-white'}`}
       />
     </button>
   )
@@ -765,7 +768,7 @@ export default function Settings() {
                   >
                     {isScanning ? (
                       <>
-                        <Loader2 className="w-4 h-4 animate-spin text-primary-amber" />
+                        <Loader2 className="w-4 h-4 animate-spin text-white" />
                         <span>Scanning {scanProgress?.percent !== undefined ? `${scanProgress.percent}%` : ''}</span>
                       </>
                     ) : (
@@ -778,10 +781,10 @@ export default function Settings() {
                 </div>
 
                 {isScanning && scanProgress && (
-                  <div className="mb-4 rounded-xl bg-surface border border-primary-amber/30 p-4 shadow-lg backdrop-blur-md">
+                  <div className="mb-4 rounded-xl bg-surface border border-white/20 p-4 shadow-lg backdrop-blur-md">
                     <div className="flex items-center justify-between pb-2 border-b border-border/20">
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="p-2 rounded-lg bg-primary-amber/15 text-primary-amber border border-primary-amber/25">
+                        <div className="p-2 rounded-lg bg-white/10 text-white border border-white/20">
                           <RefreshCw className="h-4 w-4 animate-spin" />
                         </div>
                         <div className="min-w-0">
@@ -793,7 +796,7 @@ export default function Settings() {
                                   ? 'Saving to Database...'
                                   : 'Indexing Music Folder'}
                             </h4>
-                            <span className="text-xs font-mono font-bold text-primary-amber px-2 py-0.5 rounded-full bg-primary-amber/10 border border-primary-amber/20 tabular-nums">
+                            <span className="text-xs font-mono font-bold text-white px-2 py-0.5 rounded-full bg-white/10 border border-white/20 tabular-nums">
                               {scanProgress.percent}%
                             </span>
                           </div>
@@ -819,13 +822,13 @@ export default function Settings() {
                     <div className="mt-3 space-y-1.5">
                       <div className="h-2 w-full overflow-hidden rounded-full bg-[#242424]">
                         <div
-                          className="h-full bg-primary-amber transition-all duration-200"
+                          className="h-full bg-white transition-all duration-200"
                           style={{ width: `${Math.max(2, scanProgress.percent)}%` }}
                         />
                       </div>
                       {(scanProgress.currentTrack || scanProgress.currentFile) && (
                         <div className="flex items-center gap-1.5 text-[11px] text-text-muted truncate">
-                          <Music className="w-3 h-3 text-primary-amber shrink-0 animate-pulse" />
+                          <Music className="w-3 h-3 text-white shrink-0 animate-pulse" />
                           <span className="truncate">
                             {scanProgress.currentTrack
                               ? `${scanProgress.currentTrack.artist} - ${scanProgress.currentTrack.title}`
@@ -862,7 +865,7 @@ export default function Settings() {
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
                             {isThisRootScanning ? (
-                              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-primary-amber/30 bg-primary-amber/10 text-primary-amber text-xs font-semibold tabular-nums">
+                              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-white/20 bg-white/10 text-white text-xs font-semibold tabular-nums">
                                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                                 <span>{scanProgress?.percent}%</span>
                               </div>
@@ -904,7 +907,7 @@ export default function Settings() {
                       <div className="min-w-0 flex-1">
                         <span className="text-xs font-bold text-text">Target Folder</span>
                         <div className="mt-1.5 flex items-center gap-2 rounded-md border border-border bg-surface-elevated px-3 py-2 text-sm text-text font-mono">
-                          <HardDrive className="h-4 w-4 shrink-0 text-primary-amber" />
+                          <HardDrive className="h-4 w-4 shrink-0 text-text-muted" />
                           <span className="truncate">
                             {downloadLocation || 'Default (~/Music/Felo)'}
                           </span>
@@ -914,7 +917,7 @@ export default function Settings() {
                         <button
                           type="button"
                           onClick={handleSelectDownloadLocation}
-                          className="rounded-full bg-surface-elevated border border-border px-3.5 py-2 text-xs font-bold text-text hover:border-primary-amber/50 transition-colors"
+                          className="rounded-full bg-surface-elevated border border-border px-3.5 py-2 text-xs font-bold text-text hover:border-white/40 transition-colors"
                         >
                           Change Folder
                         </button>
@@ -1184,7 +1187,7 @@ export default function Settings() {
                         max={12}
                         value={crossfadeDuration}
                         onChange={(e) => setCrossfadeDuration(Number(e.target.value))}
-                        className="w-20 accent-primary-amber"
+                        className="w-20 accent-white"
                       />
                       <span className="text-xs text-text-muted w-6">{crossfadeDuration}s</span>
                     </div>
@@ -1211,7 +1214,7 @@ export default function Settings() {
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <Bot className="w-4 h-4 text-primary-amber" />
+                        <Bot className="w-4 h-4 text-white" />
                         <span className="text-sm font-bold text-text">AI & External Playback Control (MCP)</span>
                         <span
                           className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
@@ -1243,7 +1246,7 @@ export default function Settings() {
                       <div className="rounded-lg border border-border/30 bg-canvas/60 p-3.5">
                         <div className="flex items-center justify-between gap-2 mb-1.5">
                           <div className="flex items-center gap-1.5 text-xs font-semibold text-text">
-                            <Key className="w-3.5 h-3.5 text-primary-amber" />
+                            <Key className="w-3.5 h-3.5 text-white" />
                             <span>Personal API Key</span>
                           </div>
                           <span className="text-[10px] text-text-muted font-mono">
@@ -1325,7 +1328,7 @@ export default function Settings() {
                           <button
                             type="button"
                             onClick={() => void handleCopyClientConfig(selectedMcpTab)}
-                            className="absolute top-2.5 right-2.5 flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-elevated/90 backdrop-blur-sm border border-border/50 text-[11px] font-medium text-text hover:border-primary-amber/50 transition-colors shadow-sm"
+                            className="absolute top-2.5 right-2.5 flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-elevated/90 backdrop-blur-sm border border-border/50 text-[11px] font-medium text-text hover:border-white/40 transition-colors shadow-sm"
                           >
                             {copiedConfig ? (
                               <>
@@ -1345,7 +1348,7 @@ export default function Settings() {
                   )}
 
                   {externalPlayerMessage && (
-                    <p className="mt-3 text-xs text-primary-amber flex items-center gap-1.5">
+                    <p className="mt-3 text-xs text-text-muted flex items-center gap-1.5">
                       <span>•</span> {externalPlayerMessage}
                     </p>
                   )}
@@ -1363,7 +1366,7 @@ export default function Settings() {
                       Streams local audio securely through custom sandboxed media pipeline.
                     </p>
                   </div>
-                  <span className="px-2.5 py-1 rounded bg-primary-amber/10 text-primary-amber font-mono text-[11px]">
+                  <span className="px-2.5 py-1 rounded bg-white/10 text-white font-mono text-[11px]">
                     Active (media://)
                   </span>
                 </div>
@@ -1392,7 +1395,7 @@ export default function Settings() {
                     href="https://www.last.fm/api/account/create"
                     target="_blank"
                     rel="noreferrer"
-                    className="text-primary-amber hover:underline"
+                    className="text-text-muted hover:text-white hover:underline"
                   >
                     last.fm/api/account/create
                   </a>{' '}

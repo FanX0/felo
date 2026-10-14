@@ -30,7 +30,11 @@ export interface DiscordBotStatus {
   error: string | null
 }
 
-type PendingCommand = { resolve: (value: unknown) => void; timer: NodeJS.Timeout }
+type PendingCommand = {
+  resolve: (value: unknown) => void
+  reject: (reason?: any) => void
+  timer: NodeJS.Timeout
+}
 
 export class DiscordBotService {
   private ws: WebSocket | null = null
@@ -330,6 +334,13 @@ export class DiscordBotService {
     }
     this.connected = false
     this.botUser = null
+
+    // Reject all pending commands and clear timeouts
+    for (const [, pending] of this.pending) {
+      clearTimeout(pending.timer)
+      pending.reject(new Error('Discord Bot disconnected.'))
+    }
+    this.pending.clear()
   }
 
   private handleGatewayPayload(payload: { op: number; d: any; s: number | null; t: string | null }): void {
@@ -2159,7 +2170,7 @@ export class DiscordBotService {
         reject(new Error('Player command timed out.'))
       }, Math.max(1, deadline - Date.now()))
 
-      this.pending.set(requestId, { resolve, timer })
+      this.pending.set(requestId, { resolve, reject, timer })
       win.webContents.send(COMMAND_CHANNEL, { requestId, command, deadline })
     })
   }

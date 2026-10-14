@@ -230,6 +230,10 @@ const api = {
   revealInExplorer: (filePath: string): Promise<void> =>
     ipcRenderer.invoke('system:revealFile', filePath),
 
+  // Desktop Audio Loopback
+  getDesktopSources: (): Promise<Array<{ id: string; name: string; thumbnail: string | null; appIcon: string | null }>> =>
+    ipcRenderer.invoke('desktopAudio:getSources'),
+
   // Window
   minimizeWindow: (): void => ipcRenderer.send('window:minimize'),
   maximizeWindow: (): void => ipcRenderer.send('window:maximize'),

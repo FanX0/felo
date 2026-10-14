@@ -245,7 +245,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
   }, [searchQuery, searchParams, setSearchParams])
 
   useEffect(() => {
-    if (!AppCapabilities.onlineDiscovery && searchMode !== 'local') {
+    if (!AppCapabilities.onlineSearch && searchMode !== 'local') {
       setSearchMode('local')
     }
   }, [searchMode, setSearchMode])
@@ -316,7 +316,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
       setError('')
 
       try {
-        if (searchMode === 'apple_music') {
+        if (AppCapabilities.onlineSearch && searchMode === 'apple_music') {
           const appleResults = await window.api.searchAppleMusic(query)
           if (!cancelled) {
             const raw = appleResults as SearchSections
@@ -342,7 +342,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
           return
         }
 
-        if (searchMode === 'musicbrainz') {
+        if (AppCapabilities.onlineSearch && searchMode === 'musicbrainz') {
           const musicBrainzResults = await window.api.searchMusicBrainz(query)
           if (!cancelled) {
             const raw = musicBrainzResults as SearchSections
@@ -368,7 +368,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
           return
         }
 
-        if (searchMode === 'lastfm') {
+        if (AppCapabilities.onlineSearch && searchMode === 'lastfm') {
           const lastFmResults = await window.api.searchLastFm(query)
           if (!cancelled) {
             const raw = lastFmResults as SearchSections
@@ -394,7 +394,12 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
           return
         }
 
-        if (searchMode === 'local') {
+        const isOffline = typeof navigator !== 'undefined' && !navigator.onLine
+
+        if (!AppCapabilities.onlineSearch || searchMode === 'local' || isOffline) {
+          if (isOffline && searchMode !== 'local') {
+            setError('You are offline. Showing results from your local library.')
+          }
           const [songs, artists, albums, playlists] = await Promise.all([
             window.api.searchSongs(query),
             window.api.searchArtists(query),
@@ -764,7 +769,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
         <div>
           <h1 className="text-3xl font-extrabold text-text tracking-tight">Search & Browse</h1>
           <p className="text-sm text-text-muted mt-1">
-            {AppCapabilities.onlineDiscovery
+            {AppCapabilities.onlineSearch
               ? 'Explore your library or search across global catalog streaming sources.'
               : 'Search and explore your local music library.'}
           </p>
@@ -865,7 +870,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
               <Disc3 className="absolute bottom-2 right-2 w-10 h-10 text-white/20 group-hover:rotate-12 transition-transform" />
             </button>
 
-            {AppCapabilities.onlineDiscovery && (
+            {AppCapabilities.onlineSearch && (
               <>
                 <button
                   type="button"
@@ -961,7 +966,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
         </div>
 
         {/* Source Switcher Pills */}
-        {AppCapabilities.onlineDiscovery && (
+        {AppCapabilities.onlineSearch && (
           <div className="flex items-center gap-1 bg-surface-elevated p-1 rounded-full border border-border/50 text-xs shrink-0 self-start sm:self-auto">
             <button
               type="button"
@@ -1264,11 +1269,11 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
             No results found for &quot;{searchQuery}&quot;
           </h3>
           <p className="text-xs text-text-muted max-w-md">
-            {AppCapabilities.onlineDiscovery
+            {AppCapabilities.onlineSearch
               ? 'Please check your spelling, try fewer keywords, or switch your search source to explore external streaming catalogs.'
               : 'Please check your spelling, try fewer keywords, or ensure the songs are imported into your local library.'}
           </p>
-          {AppCapabilities.onlineDiscovery && (
+          {AppCapabilities.onlineSearch && (
             <div className="flex flex-wrap items-center justify-center gap-2 mt-2">
               {searchMode !== 'local' && (
                 <button

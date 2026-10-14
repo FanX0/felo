@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import '@uimaxbai/am-lyrics/am-lyrics.js'
-import { Languages, ListMusic, Music2, Sparkles } from 'lucide-react'
+import { Check, Languages, ListMusic, Music2, Sparkles } from 'lucide-react'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { getActiveAudioTime } from '../../lib/audioBridge'
 
@@ -527,7 +527,12 @@ function ClassicLyricsDisplay({
 }
 
 export default function LyricsPage() {
-  const { queue, currentSongIndex, currentTime, duration, isPlaying, seek, setIsPlaying } = usePlayerStore()
+  const queue = usePlayerStore((s) => s.queue)
+  const currentSongIndex = usePlayerStore((s) => s.currentSongIndex)
+  const duration = usePlayerStore((s) => s.duration)
+  const isPlaying = usePlayerStore((s) => s.isPlaying)
+  const seek = usePlayerStore((s) => s.seek)
+  const setIsPlaying = usePlayerStore((s) => s.setIsPlaying)
   const currentSong = queue[currentSongIndex]
   const [lyricsEngine, setLyricsEngine] = useState<'am' | 'classic'>(getStoredMode)
   const [lyricsData, setLyricsData] = useState<LyricsData | null>(null)
@@ -673,7 +678,7 @@ export default function LyricsPage() {
     element.showTranslation = translations.length > 0
     element.showRomanization = isRomanized && romanizations.length > 0
     element.ttml = amLyricsTtml || undefined
-    element.currentTime = currentTime * 1000
+    element.currentTime = usePlayerStore.getState().currentTime * 1000
     element.requestUpdate?.()
   }, [
     lyricsEngine,
@@ -726,11 +731,14 @@ export default function LyricsPage() {
 
   useEffect(() => {
     if (isPlaying || lyricsEngine !== 'am') return
-    const element = amLyricsRef.current
-    if (element) {
-      element.currentTime = currentTime * 1000
-    }
-  }, [currentTime, isPlaying, lyricsEngine])
+    const unsubscribe = usePlayerStore.subscribe((state) => {
+      const element = amLyricsRef.current
+      if (element) {
+        element.currentTime = state.currentTime * 1000
+      }
+    })
+    return unsubscribe
+  }, [isPlaying, lyricsEngine])
 
   const handleAmLineClick = useCallback(
     (event: Event) => {
@@ -920,7 +928,7 @@ export default function LyricsPage() {
                 }`}
               >
                 Original
-                {translations.length === 0 && <span className="text-primary-amber">OK</span>}
+                {translations.length === 0 && <Check className="h-4 w-4 text-white" />}
               </button>
               {TRANSLATION_LANGUAGES.map((language) => (
                 <button
@@ -933,7 +941,7 @@ export default function LyricsPage() {
                 >
                   {language.label}
                   {translations.length > 0 && translationLang === language.code && (
-                    <span className="text-primary-amber">OK</span>
+                    <Check className="h-4 w-4 text-white" />
                   )}
                 </button>
               ))}
