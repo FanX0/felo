@@ -852,7 +852,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
             className={cn(
               'flex items-center gap-1.5 px-3 py-1 rounded-full font-medium transition-colors',
               searchMode === 'local'
-                ? 'bg-primary-amber text-canvas font-bold shadow-sm'
+                ? 'bg-white text-black font-bold shadow-sm'
                 : 'text-text-muted hover:text-text hover:bg-hover'
             )}
           >
@@ -864,7 +864,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
             className={cn(
               'flex items-center gap-1.5 px-3 py-1 rounded-full font-medium transition-colors',
               searchMode === 'apple_music'
-                ? 'bg-primary-amber text-canvas font-bold shadow-sm'
+                ? 'bg-white text-black font-bold shadow-sm'
                 : 'text-text-muted hover:text-text hover:bg-hover'
             )}
           >
@@ -876,7 +876,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
             className={cn(
               'flex items-center gap-1.5 px-3 py-1 rounded-full font-medium transition-colors',
               searchMode === 'musicbrainz'
-                ? 'bg-primary-amber text-canvas font-bold shadow-sm'
+                ? 'bg-white text-black font-bold shadow-sm'
                 : 'text-text-muted hover:text-text hover:bg-hover'
             )}
           >
@@ -888,7 +888,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
             className={cn(
               'flex items-center gap-1.5 px-3 py-1 rounded-full font-medium transition-colors',
               searchMode === 'lastfm'
-                ? 'bg-primary-amber text-canvas font-bold shadow-sm'
+                ? 'bg-white text-black font-bold shadow-sm'
                 : 'text-text-muted hover:text-text hover:bg-hover'
             )}
           >
@@ -1040,7 +1040,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
                         void handlePlayItem(topResult)
                       }}
                       title={`Play ${topResult.type}: ${topResult.title}`}
-                      className="h-12 w-12 rounded-full bg-primary-amber text-canvas flex items-center justify-center shadow-lg hover:scale-105 transition-all opacity-0 group-hover:opacity-100"
+                      className="h-12 w-12 rounded-full bg-white text-black flex items-center justify-center shadow-lg hover:scale-105 hover:bg-white/90 active:scale-95 transition-all opacity-0 group-hover:opacity-100"
                     >
                       <Play className="w-6 h-6 fill-current ml-0.5" />
                     </button>
@@ -1471,7 +1471,7 @@ function ResultGrid({
                     void onPlay(item)
                   }}
                   title={`Play ${item.title}`}
-                  className="absolute right-2 bottom-2 h-10 w-10 rounded-full bg-primary-amber text-canvas flex items-center justify-center shadow-lg hover:scale-110 transition-all opacity-0 group-hover:opacity-100 translate-y-1 group-hover:translate-y-0"
+                  className="absolute right-2 bottom-2 h-10 w-10 rounded-full bg-white text-black flex items-center justify-center shadow-lg hover:scale-110 hover:bg-white/90 active:scale-95 transition-all opacity-0 group-hover:opacity-100 translate-y-1 group-hover:translate-y-0"
                 >
                   <Play className="w-5 h-5 fill-current ml-0.5" />
                 </button>

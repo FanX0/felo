@@ -73,14 +73,32 @@ export default function PlaybackStreamBridge(): null {
     activeInFlightRef.current = true
     usePlayerStore.getState().setIsBuffering(true)
 
-    // Preemption: cancel any ongoing background prefetch so 100% bandwidth goes to active song
+    // Continuity & Preemption: if the active track is already being prefetched, promote it!
     if (prefetchTransferIdRef.current) {
-      try {
-        void window.api?.cancelDownload?.(prefetchTransferIdRef.current)
-      } catch {}
-      prefetchTransferIdRef.current = null
-      prefetchInFlightRef.current = false
-      prefetchingKeyRef.current = null
+      if (prefetchingKeyRef.current === trackKey) {
+        // Continuity promotion: The active song is already being prefetched!
+        // Promote the existing transfer to autoPlay: true without discarding download progress
+        useDownloadStore.getState().updateTransfer(prefetchTransferIdRef.current, {
+          autoPlay: true,
+          message: `Streaming "${currentSong.title}"...`
+        })
+        prefetchTransferIdRef.current = null
+        prefetchInFlightRef.current = false
+        prefetchingKeyRef.current = null
+        activeStreamingKeyRef.current = trackKey
+        activeInFlightRef.current = false
+        return () => {
+          isCancelled = true
+        }
+      } else {
+        // Preemption: prefetch was downloading a DIFFERENT song, cancel it to give 100% bandwidth to active song
+        try {
+          void window.api?.cancelDownload?.(prefetchTransferIdRef.current)
+        } catch {}
+        prefetchTransferIdRef.current = null
+        prefetchInFlightRef.current = false
+        prefetchingKeyRef.current = null
+      }
     }
 
     // Demote any previously active transfers so they do not hijack playback when completed

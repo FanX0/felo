@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { Song } from '../pages/Library/Library'
 import { markSongAsStarted } from '../lib/playbackEvents'
+import { findMatchingLibrarySong } from '../lib/songMatching'
 
 export type RepeatMode = 'off' | 'all' | 'one'
 
@@ -190,9 +191,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   playSong: (index) => {
     const song = get().queue[index]
     rememberPlayedSong(song)
+    const isVirtual = !song?.filePath || song.filePath.startsWith('virtual:')
     set({
       currentSongIndex: index,
       isPlaying: true,
+      isBuffering: isVirtual,
       currentTime: 0,
       seekRequest: 0
     })
@@ -226,27 +229,46 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
 
     if (currentSongIndex < queue.length - 1) {
-      rememberPlayedSong(queue[currentSongIndex + 1])
-      set({ currentSongIndex: currentSongIndex + 1, isPlaying: true, currentTime: 0, seekRequest: 0 })
+      const nextSong = queue[currentSongIndex + 1]
+      const isVirtual = !nextSong?.filePath || nextSong.filePath.startsWith('virtual:')
+      rememberPlayedSong(nextSong)
+      set({
+        currentSongIndex: currentSongIndex + 1,
+        isPlaying: true,
+        isBuffering: isVirtual,
+        currentTime: 0,
+        seekRequest: 0
+      })
     } else if (repeatMode === 'all') {
       if (isShuffle && originalQueue.length > 1) {
         // Generate a fresh shuffle order on queue loop so the playlist stays fresh
         const freshShuffled = shuffleArray(originalQueue)
-        rememberPlayedSong(freshShuffled[0])
+        const firstSong = freshShuffled[0]
+        const isVirtual = !firstSong?.filePath || firstSong.filePath.startsWith('virtual:')
+        rememberPlayedSong(firstSong)
         set({
           queue: freshShuffled,
           currentSongIndex: 0,
           isPlaying: true,
+          isBuffering: isVirtual,
           currentTime: 0,
           seekRequest: 0
         })
       } else {
-        rememberPlayedSong(queue[0])
-        set({ currentSongIndex: 0, isPlaying: true, currentTime: 0, seekRequest: 0 })
+        const firstSong = queue[0]
+        const isVirtual = !firstSong?.filePath || firstSong.filePath.startsWith('virtual:')
+        rememberPlayedSong(firstSong)
+        set({
+          currentSongIndex: 0,
+          isPlaying: true,
+          isBuffering: isVirtual,
+          currentTime: 0,
+          seekRequest: 0
+        })
       }
     } else {
       // End of playlist
-      set({ isPlaying: false, currentTime: 0 })
+      set({ isPlaying: false, isBuffering: false, currentTime: 0 })
     }
   },
 
@@ -259,13 +281,29 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
 
     if (queue.length > 0 && currentSongIndex > 0) {
-      set({ currentSongIndex: currentSongIndex - 1, isPlaying: true, currentTime: 0, seekRequest: 0 })
+      const prevSong = queue[currentSongIndex - 1]
+      const isVirtual = !prevSong?.filePath || prevSong.filePath.startsWith('virtual:')
+      set({
+        currentSongIndex: currentSongIndex - 1,
+        isPlaying: true,
+        isBuffering: isVirtual,
+        currentTime: 0,
+        seekRequest: 0
+      })
     } else if (queue.length > 0) {
       if (repeatMode === 'all' && queue.length > 1) {
         // Wrap around to the last song in the queue
         const lastIndex = queue.length - 1
-        rememberPlayedSong(queue[lastIndex])
-        set({ currentSongIndex: lastIndex, isPlaying: true, currentTime: 0, seekRequest: 0 })
+        const lastSong = queue[lastIndex]
+        const isVirtual = !lastSong?.filePath || lastSong.filePath.startsWith('virtual:')
+        rememberPlayedSong(lastSong)
+        set({
+          currentSongIndex: lastIndex,
+          isPlaying: true,
+          isBuffering: isVirtual,
+          currentTime: 0,
+          seekRequest: 0
+        })
       } else {
         set({ seekRequest: 0, currentTime: 0 })
       }
@@ -478,6 +516,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
       const isMatch = (item: Song) => {
         if (item.id === song.id) return true
+        if (findMatchingLibrarySong(item.title, item.artist, [song])) return true
         if (!targetTitleNorm) return false
         const itemTitleNorm = normalize(item.title)
         const itemArtistNorm = normalize(item.artist)
