@@ -391,18 +391,17 @@ function containsNonLatinLetters(lines: string[]) {
 function ClassicLyricsDisplay({
   lyrics,
   plainLyrics,
-  currentTime,
   onSeek,
   translations,
   romanizations
 }: {
   lyrics: ParsedLyric[]
   plainLyrics: string
-  currentTime: number
   onSeek: (time: number) => void
   translations: string[]
   romanizations: string[]
 }) {
+  const currentTime = usePlayerStore((s) => s.currentTime)
   const containerRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef<HTMLButtonElement>(null)
   const isUserScrollingRef = useRef(false)
