@@ -6,6 +6,7 @@ import { useOnlineStore } from './useOnlineStore'
 import { usePlayerStore } from './usePlayerStore'
 import { useDownloadStore } from './useDownloadStore'
 import { DEFAULT_DOWNLOAD_PRIORITY, DOWNLOAD_PRIORITY_SETTING, STREAMING_ACCOUNTS_SETTING } from '../lib/downloadConfig'
+import { scoreProviderMatch } from '../lib/songMatching'
 
 function makeCode(): string {
   return Math.random().toString(36).slice(2, 8).toUpperCase()
@@ -139,6 +140,7 @@ function findSongMatchIndex(songs: Song[], targetTitle: string, targetArtist: st
 
 /**
  * Validates and ranks provider search candidates so wrong songs/covers/karaoke are never auto-downloaded.
+ * Uses the unified scoreProviderMatch engine.
  */
 function findBestDownloadMatch(
   results: any[],
@@ -148,81 +150,23 @@ function findBestDownloadMatch(
 ): any | null {
   if (!Array.isArray(results) || results.length === 0) return null
 
-  const nTargetTitle = normalizeSongValue(targetTitle)
-  const nTargetArtist = normalizeSongValue(targetArtist)
-  if (!nTargetTitle) return null
-
-  const isTargetRemix = nTargetTitle.includes('remix') || nTargetTitle.includes('mix')
-
   let bestHit: any = null
   let highestScore = -1
 
   for (const item of results) {
-    const itemTitle = normalizeSongValue(item.title || '')
-    const itemArtist = normalizeSongValue(item.artist || '')
-    const rawTitle = (item.title || '').toLowerCase()
-
-    // 1. Hard filters: Reject low quality / parody / karaoke / instrumental unless target asked for it
-    const isBadVariation = /\b(karaoke|instrumental|tribute|cover|8d audio|sped up|slowed|nightcore|parody|backing track|ringtone)\b/i.test(rawTitle)
-    if (isBadVariation) continue
-
-    const isItemRemix = itemTitle.includes('remix') || itemTitle.includes('mix')
-    if (!isTargetRemix && isItemRemix && !rawTitle.includes('radio edit')) continue
-
-    // 2. Title matching score
-    let titleScore = 0
-    if (itemTitle === nTargetTitle) {
-      titleScore = 1.0
-    } else if (itemTitle.startsWith(nTargetTitle) || nTargetTitle.startsWith(itemTitle)) {
-      titleScore = 0.9
-    } else if (itemTitle.includes(nTargetTitle) || nTargetTitle.includes(itemTitle)) {
-      titleScore = 0.8
-    } else {
-      const targetWords = nTargetTitle.split(' ').filter((w) => w.length > 1)
-      const itemWords = new Set(itemTitle.split(' ').filter((w) => w.length > 1))
-      if (targetWords.length > 0) {
-        const matchingWords = targetWords.filter((w) => itemWords.has(w)).length
-        titleScore = (matchingWords / targetWords.length) * 0.75
+    const match = scoreProviderMatch(
+      { title: targetTitle, artist: targetArtist, duration: targetDuration },
+      {
+        title: item.title || '',
+        artist: item.artist || '',
+        meta: item.meta || item.album || '',
+        description: item.description || '',
+        duration: item.duration
       }
-    }
+    )
 
-    if (titleScore < 0.5) continue
-
-    // 3. Artist matching score
-    let artistScore = 0.6
-    if (nTargetArtist && itemArtist) {
-      if (itemArtist === nTargetArtist) {
-        artistScore = 1.0
-      } else if (itemArtist.includes(nTargetArtist) || nTargetArtist.includes(itemArtist)) {
-        artistScore = 0.85
-      } else {
-        const targetArtistWords = nTargetArtist.split(' ').filter((w) => w.length > 1)
-        const itemArtistWords = new Set(itemArtist.split(' ').filter((w) => w.length > 1))
-        if (targetArtistWords.length > 0) {
-          const matching = targetArtistWords.filter((w) => itemArtistWords.has(w)).length
-          artistScore = (matching / targetArtistWords.length) * 0.7
-        } else {
-          artistScore = 0.2
-        }
-      }
-    }
-
-    // 4. Duration delta check (penalize if diff > 15-30s)
-    let durationScore = 1.0
-    const itemDuration = typeof item.duration === 'number' ? item.duration : 0
-    if (targetDuration && targetDuration > 0 && itemDuration > 0) {
-      const diff = Math.abs(itemDuration - targetDuration)
-      if (diff <= 5) durationScore = 1.0
-      else if (diff <= 15) durationScore = 0.9
-      else if (diff <= 30) durationScore = 0.75
-      else if (diff <= 60) durationScore = 0.4
-      else durationScore = 0.1
-    }
-
-    const totalScore = titleScore * 0.5 + artistScore * 0.3 + durationScore * 0.2
-
-    if (totalScore > highestScore && totalScore >= 0.65) {
-      highestScore = totalScore
+    if (match.isAcceptable && match.score > highestScore) {
+      highestScore = match.score
       bestHit = item
     }
   }

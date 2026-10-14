@@ -394,16 +394,26 @@ export default function PlaybackControlBridge() {
             await waitFor(() => {
               if (currentAudio.error) throw new Error('PLAYBACK_FAILED')
               const state = snapshot()
-              const isProgressing =
-                currentAudio.currentTime > position + 0.01 || currentAudio.currentTime > 0.01
+              // Condition A: audio is audibly playing and data is ready
               const isReadyAndPlaying =
                 !currentAudio.paused &&
                 currentAudio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+              // Condition B: audio is progressing (position moved), means play() succeeded
+              const isProgressing =
+                currentAudio.currentTime > position + 0.01 || currentAudio.currentTime > 0.01
+              // Condition C: track is actively buffering — store says playing+correct song,
+              // audio has metadata (bytes arriving), play() call is in flight.
+              // Accept this so network-fetched tracks don't fail before HAVE_CURRENT_DATA.
+              const isActivelyBuffering =
+                state.isPlaying &&
+                (!expectedSongId || state.song?.id === expectedSongId) &&
+                currentAudio.readyState >= HTMLMediaElement.HAVE_METADATA &&
+                currentAudio.paused
               return (
                 state.isPlaying &&
                 !currentAudio.seeking &&
                 (!expectedSongId || state.song?.id === expectedSongId) &&
-                (isProgressing || isReadyAndPlaying)
+                (isProgressing || isReadyAndPlaying || isActivelyBuffering)
               )
             })
           }
