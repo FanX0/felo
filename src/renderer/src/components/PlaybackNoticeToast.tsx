@@ -1,12 +1,12 @@
 import { useEffect, useState, type ReactElement } from 'react'
-import { AlertCircle, Bot, CheckCircle2, Download, X } from 'lucide-react'
+import { AlertCircle, Bot, CheckCircle2, Download, EyeOff, X } from 'lucide-react'
 
 interface NoticeMessage {
   id: string
   title?: string
   artist?: string
   message: string
-  type?: 'unavailable' | 'bot' | 'download' | 'completed' | 'skip' | 'volume'
+  type?: 'unavailable' | 'bot' | 'download' | 'completed' | 'skip' | 'volume' | 'private_session'
 }
 
 export default function PlaybackNoticeToast(): ReactElement | null {
@@ -51,15 +51,34 @@ export default function PlaybackNoticeToast(): ReactElement | null {
       }, 5500)
     }
 
+    const handlePrivateSessionToast = (event: Event) => {
+      const detail = (event as CustomEvent).detail
+      if (!detail?.message) return
+
+      setNotice({
+        id: String(Date.now()),
+        title: detail.title || 'Private Session',
+        message: detail.message,
+        type: 'private_session'
+      })
+
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        setNotice(null)
+      }, 5000)
+    }
+
     window.addEventListener('felo:track-unavailable', handleUnavailable)
     window.addEventListener('fanxmusic:track-unavailable', handleUnavailable)
     window.addEventListener('felo:bot-activity', handleBotActivity)
+    window.addEventListener('felo:private-session-toast', handlePrivateSessionToast)
 
     return () => {
       if (timer) clearTimeout(timer)
       window.removeEventListener('felo:track-unavailable', handleUnavailable)
       window.removeEventListener('fanxmusic:track-unavailable', handleUnavailable)
       window.removeEventListener('felo:bot-activity', handleBotActivity)
+      window.removeEventListener('felo:private-session-toast', handlePrivateSessionToast)
     }
   }, [])
 
@@ -68,8 +87,11 @@ export default function PlaybackNoticeToast(): ReactElement | null {
   const isDownload = notice.type === 'download'
   const isCompleted = notice.type === 'completed'
   const isBot = notice.type === 'bot' || notice.type === 'skip' || notice.type === 'volume'
+  const isPrivateSession = notice.type === 'private_session'
 
-  const borderClass = isDownload
+  const borderClass = isPrivateSession
+    ? 'border-amber-500/50 bg-[#1c1409]/95 shadow-amber-950/40'
+    : isDownload
     ? 'border-sky-500/40 bg-[#0c192c]/95 shadow-sky-950/40'
     : isCompleted
     ? 'border-emerald-500/40 bg-[#062c1e]/95 shadow-emerald-950/40'
@@ -77,7 +99,9 @@ export default function PlaybackNoticeToast(): ReactElement | null {
     ? 'border-[#5865F2]/40 bg-[#14172e]/95 shadow-[#5865F2]/20'
     : 'border-amber-500/30 bg-[#1c1917]/95 shadow-amber-950/30'
 
-  const titleClass = isDownload
+  const titleClass = isPrivateSession
+    ? 'text-amber-400'
+    : isDownload
     ? 'text-sky-300'
     : isCompleted
     ? 'text-emerald-300'
@@ -91,7 +115,9 @@ export default function PlaybackNoticeToast(): ReactElement | null {
       aria-live="polite"
       className={`fixed bottom-24 right-6 z-50 flex max-w-sm items-start gap-3 rounded-xl border px-4 py-3 text-white shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-3 duration-200 ${borderClass}`}
     >
-      {isDownload ? (
+      {isPrivateSession ? (
+        <EyeOff className="h-5 w-5 shrink-0 text-amber-400 mt-0.5" />
+      ) : isDownload ? (
         <Download className="h-5 w-5 shrink-0 text-sky-400 mt-0.5 animate-pulse" />
       ) : isCompleted ? (
         <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400 mt-0.5" />

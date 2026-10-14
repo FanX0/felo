@@ -28,6 +28,7 @@ import { useConnectedDeviceStore, getInterpolatedPosition } from './hooks/useCon
 import { toMediaUrl } from './lib/media'
 import { AppCapabilities, isElectron } from './lib/appConfig'
 import { useIsMobile } from './hooks/useIsMobile'
+import { usePrivateSessionStore } from './hooks/usePrivateSessionStore'
 
 import Home from './pages/Home/Home'
 import Library from './pages/Library/Library'
@@ -78,7 +79,40 @@ function App() {
   const { searchQuery, searchMode, setSearchQuery, setSearchMode } = useAppStore()
   const [isSearchModeOpen, setIsSearchModeOpen] = useState(false)
   const [isProfileOpen, setIsProfileOpen] = useState(false)
-  const [isPrivateSession, setIsPrivateSession] = useState(false)
+  const isPrivateSession = usePrivateSessionStore((s) => s.isPrivateSession)
+  const togglePrivateSession = usePrivateSessionStore((s) => s.togglePrivateSession)
+  const getRemainingTimeMs = usePrivateSessionStore((s) => s.getRemainingTimeMs)
+  const checkExpiration = usePrivateSessionStore((s) => s.checkExpiration)
+
+  const [remainingTimeStr, setRemainingTimeStr] = useState<string | null>(null)
+  useEffect(() => {
+    checkExpiration()
+    const timer = setInterval(() => {
+      checkExpiration()
+    }, 60_000)
+    return () => clearInterval(timer)
+  }, [checkExpiration])
+
+  useEffect(() => {
+    if (!isPrivateSession) {
+      setRemainingTimeStr(null)
+      return
+    }
+    const updateTime = () => {
+      const ms = getRemainingTimeMs()
+      if (ms === null) {
+        setRemainingTimeStr(null)
+        return
+      }
+      const totalMinutes = Math.floor(ms / 60000)
+      const hours = Math.floor(totalMinutes / 60)
+      const minutes = totalMinutes % 60
+      setRemainingTimeStr(hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`)
+    }
+    updateTime()
+    const interval = setInterval(updateTime, 30_000)
+    return () => clearInterval(interval)
+  }, [isPrivateSession, getRemainingTimeMs])
   const [isDownloadPanelOpen, setIsDownloadPanelOpen] = useState(false)
   const [isFriendActivityOpen, setIsFriendActivityOpen] = useState(false)
   const [isQueueOpen, setIsQueueOpen] = useState(false)
@@ -379,6 +413,17 @@ function App() {
           )}
 
           <div className="flex items-center gap-1.5">
+            {isPrivateSession && (
+              <button
+                type="button"
+                onClick={togglePrivateSession}
+                title="Private session is active (tap to turn off)"
+                className="h-9 px-2.5 rounded-full flex items-center gap-1 bg-primary-amber/15 text-primary-amber border border-primary-amber/30 text-xs font-semibold hover:bg-primary-amber/25 transition cursor-pointer"
+              >
+                <EyeOff className="w-3.5 h-3.5" />
+                <span className="text-[11px] font-bold">Private</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -405,19 +450,21 @@ function App() {
               title="Connect Device"
               className={cn(
                 'h-9 px-3 rounded-full flex items-center gap-1.5 transition text-xs font-semibold cursor-pointer',
-                isRemoteConnected
+                isRemoteConnected || isCloudRemoteActive
                   ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                   : 'text-text-muted hover:text-text hover:bg-hover'
               )}
             >
               <Radio className="w-4 h-4" />
-              <span className="text-[11px]">{isRemoteConnected ? 'Connected' : 'Devices'}</span>
+              <span className="text-[11px]">
+                {isRemoteConnected || isCloudRemoteActive ? 'Connected' : 'Devices'}
+              </span>
             </button>
             <button
               type="button"
               onClick={() => navigate(user ? '/profile' : '/account')}
               title={user ? 'Profile' : 'Account'}
-              className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition cursor-pointer"
+              className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition cursor-pointer relative"
             >
               {profile?.avatar_url ? (
                 <img
@@ -427,6 +474,12 @@ function App() {
                 />
               ) : (
                 <User className="w-5 h-5" />
+              )}
+              {isPrivateSession && (
+                <span
+                  title="Private session active"
+                  className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-primary-amber rounded-full border-2 border-canvas shadow"
+                />
               )}
             </button>
           </div>
@@ -603,6 +656,20 @@ function App() {
           </form>
         </div>
         <div className="flex items-center gap-3 pointer-events-auto mr-2">
+          {isPrivateSession && (
+            <button
+              type="button"
+              onClick={togglePrivateSession}
+              title={`Private session active${remainingTimeStr ? ` (auto-ends in ${remainingTimeStr})` : ''} - click to turn off`}
+              className="h-8 px-3 rounded-full flex items-center gap-1.5 bg-primary-amber/15 text-primary-amber border border-primary-amber/30 text-xs font-semibold hover:bg-primary-amber/25 transition cursor-pointer"
+            >
+              <EyeOff className="w-3.5 h-3.5" />
+              <span>Private</span>
+              {remainingTimeStr && (
+                <span className="text-[10px] opacity-75 font-normal">({remainingTimeStr})</span>
+              )}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -627,8 +694,10 @@ function App() {
           <div ref={profileRef} className="relative">
             <button
               onClick={() => setIsProfileOpen(!isProfileOpen)}
-              title="Profile"
-              className="w-10 h-10 rounded-full bg-surface-elevated text-text-muted flex items-center justify-center no-drag hover:bg-hover hover:text-text transition-all shadow-sm"
+              title={isPrivateSession ? 'Profile (Private session active)' : 'Profile'}
+              className={`w-10 h-10 rounded-full bg-surface-elevated text-text-muted flex items-center justify-center no-drag hover:bg-hover hover:text-text transition-all shadow-sm relative ${
+                isPrivateSession ? 'ring-2 ring-primary-amber/60' : ''
+              }`}
             >
               {profile?.avatar_url ? (
                 <img
@@ -638,6 +707,14 @@ function App() {
                 />
               ) : (
                 <User className="w-5 h-5" />
+              )}
+              {isPrivateSession && (
+                <span
+                  title="Private session active"
+                  className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-primary-amber text-canvas rounded-full flex items-center justify-center shadow"
+                >
+                  <EyeOff className="w-2.5 h-2.5" />
+                </span>
               )}
             </button>
 
@@ -685,12 +762,19 @@ function App() {
                     Remote control (PC)
                   </button>
                   <button
-                    onClick={() => setIsPrivateSession(!isPrivateSession)}
+                    onClick={() => togglePrivateSession()}
                     className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-text-muted hover:bg-hover hover:text-text transition-colors"
                   >
                     <span className="flex items-center gap-3">
                       <EyeOff className="w-4 h-4" />
-                      Private session
+                      <span className="text-left">
+                        Private session
+                        {isPrivateSession && remainingTimeStr && (
+                          <span className="block text-[10px] text-primary-amber font-normal">
+                            {remainingTimeStr} remaining
+                          </span>
+                        )}
+                      </span>
                     </span>
                     <div
                       className={`w-9 h-5 rounded-full transition-colors relative ${isPrivateSession ? 'bg-primary-amber' : 'bg-border'}`}

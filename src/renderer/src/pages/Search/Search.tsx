@@ -32,6 +32,9 @@ import ArtistLinks from '../../components/Common/ArtistLinks'
 import { HighlightMatch } from '../../components/Common/HighlightMatch'
 import { ArtworkImage } from '../Home/components/ArtworkImage'
 import { AppCapabilities } from '../../lib/appConfig'
+import { remoteClient } from '../Remote/remoteClient'
+import { remoteLibraryService } from '../../services/RemoteLibraryService'
+import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
 
 type SearchTab = 'All' | 'Songs' | 'Artists' | 'Albums' | 'Playlists'
 
@@ -422,6 +425,64 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
             localSong: song
           }))
 
+          let remoteSongsList: SearchItem[] = []
+          if (mappedSongs.length === 0) {
+            if (remoteClient.getIsConnected()) {
+              try {
+                const remoteRes = await remoteLibraryService.getSongs({ q: query, limit: 20 })
+                remoteSongsList = (remoteRes.songs || []).map((s) => ({
+                  id: s.id,
+                  title: s.title,
+                  artist: s.artist,
+                  album: s.album || '',
+                  type: 'Song',
+                  duration: formatSongDuration(s.duration),
+                  url: '',
+                  thumbnail: s.artworkUrl || '',
+                  localSong: {
+                    id: s.id,
+                    title: s.title,
+                    artist: s.artist,
+                    album: s.album,
+                    duration: s.duration,
+                    filePath: remoteClient.getAudioStreamUrl(s.id),
+                    artworkPath: s.artworkUrl,
+                    artworkUrl: s.artworkUrl,
+                    isOnline: true
+                  }
+                }))
+              } catch {
+                // ignore
+              }
+            } else {
+              const remotePlayback = useConnectedDeviceStore.getState().activePlayback
+              const s = remotePlayback?.song
+              if (
+                s &&
+                (s.title?.toLowerCase().includes(query.toLowerCase()) ||
+                  s.artist?.toLowerCase().includes(query.toLowerCase()) ||
+                  s.album?.toLowerCase().includes(query.toLowerCase()))
+              ) {
+                remoteSongsList.push({
+                  id: s.id,
+                  title: s.title,
+                  artist: s.artist,
+                  album: s.album || '',
+                  type: 'Song',
+                  duration: formatSongDuration(s.duration),
+                  url: '',
+                  thumbnail: s.artworkUrl || toMediaUrl(s.artworkPath) || '',
+                  localSong: {
+                    ...s,
+                    filePath: `virtual:${s.title} - ${s.artist}`,
+                    isOnline: true
+                  }
+                })
+              }
+            }
+          }
+          const finalSongs = [...mappedSongs, ...remoteSongsList]
+
           const mappedArtists: SearchItem[] = (artists || []).map((artist: any) => ({
             id: String(artist.id),
             title: artist.name,
@@ -467,7 +528,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
           // Determine the most relevant top result using multi-factor relevance scoring
           const allLocalItems = [
             ...mappedArtists,
-            ...mappedSongs,
+            ...finalSongs,
             ...mappedAlbums,
             ...mappedPlaylists
           ]
@@ -484,7 +545,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
           if (!cancelled) {
             setResults({
               'Top Results': topResult ? [topResult] : [],
-              Songs: mappedSongs,
+              Songs: finalSongs,
               Artists: mappedArtists,
               Albums: mappedAlbums,
               Playlists: mappedPlaylists

@@ -34,6 +34,7 @@ import { useLibraryScanStore } from '../../hooks/useLibraryScanStore'
 import { useListeningStore } from '../../hooks/useListeningStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { useThemeStore, ACCENT_PRESETS } from '../../hooks/useThemeStore'
+import { usePrivateSessionStore } from '../../hooks/usePrivateSessionStore'
 import {
   DEFAULT_DOWNLOAD_PRIORITY,
   DOWNLOAD_LOCATION_SETTING,
@@ -220,7 +221,14 @@ export default function Settings() {
   const setAccentColor = useThemeStore((s) => s.setAccentColor)
 
   // Privacy
-  const [listenHistoryEnabled, setListenHistoryEnabled] = useState(true)
+  const isPrivateSession = usePrivateSessionStore((s) => s.isPrivateSession)
+  const setPrivateSession = usePrivateSessionStore((s) => s.setPrivateSession)
+  const maskMediaSession = usePrivateSessionStore((s) => s.maskMediaSession)
+  const setMaskMediaSession = usePrivateSessionStore((s) => s.setMaskMediaSession)
+  const autoDisableHours = usePrivateSessionStore((s) => s.autoDisableHours)
+  const setAutoDisableHours = usePrivateSessionStore((s) => s.setAutoDisableHours)
+  const listenHistoryEnabled = usePrivateSessionStore((s) => s.listenHistoryEnabled)
+  const setListenHistoryEnabled = usePrivateSessionStore((s) => s.setListenHistoryEnabled)
   const [analyticsEnabled, setAnalyticsEnabled] = useState(false)
 
   // Notifications
@@ -2393,14 +2401,45 @@ export default function Settings() {
               <SettingsSection
                 icon={<ShieldCheck className="w-5 h-5" />}
                 title="Privacy & Security"
-                description="Local-first privacy baseline and data controls."
+                description="End-to-end listening privacy, local-first data controls, and presence masking."
               >
                 <SettingRow
-                  label="Listening History"
-                  hint="Record play events locally for insights and recommendations."
+                  label="Private Session"
+                  hint="Listen completely off-the-record. Playback won't be saved to history, scrobbled, shared with friends, or announced to Discord."
+                >
+                  <Toggle enabled={isPrivateSession} onChange={(val) => setPrivateSession(val, true)} />
+                </SettingRow>
+
+                <SettingRow
+                  label="Auto-disable Private Session"
+                  hint="Automatically turn off Private Session after a period of time, matching Spotify's privacy standard."
+                >
+                  <select
+                    value={autoDisableHours}
+                    onChange={(e) => setAutoDisableHours(Number(e.target.value))}
+                    className="bg-surface-elevated border border-border text-text text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    <option value={1}>After 1 hour</option>
+                    <option value={6}>After 6 hours (Recommended)</option>
+                    <option value={12}>After 12 hours</option>
+                    <option value={0}>Until turned off manually</option>
+                  </select>
+                </SettingRow>
+
+                <SettingRow
+                  label="Mask System Media Controls (Discord & SMTC)"
+                  hint="Display 'Private Session' to Windows lock screen and Discord Music Presence instead of the real track title."
+                >
+                  <Toggle enabled={maskMediaSession} onChange={setMaskMediaSession} />
+                </SettingRow>
+
+                <SettingRow
+                  label="Listening History & Play Counts"
+                  hint="Record play events locally for insights, most played stats, and recommendations."
                 >
                   <Toggle enabled={listenHistoryEnabled} onChange={setListenHistoryEnabled} />
                 </SettingRow>
+
                 <SettingRow
                   label="Analytics & Telemetry"
                   hint="Send anonymous usage data to help improve Felo."
@@ -2419,7 +2458,7 @@ export default function Settings() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="w-1.5 h-1.5 rounded-full bg-text-muted/60 shrink-0" />
-                    <span>P2P networks and background seeding disabled in v1.</span>
+                    <span>Private Session automatically suppresses SQLite ledger, Supabase cloud sync, and Discord broadcasts.</span>
                   </div>
                 </div>
               </SettingsSection>
