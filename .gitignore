@@ -24,4 +24,4 @@ resources/downloader/
 resources/hermes/
 .vscode/
 *.tsbuildinfo
-scripts/register-*.cjs
+scripts/*.cjs

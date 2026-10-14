@@ -28,11 +28,11 @@ export function normalizeSearch(value: string): string {
 }
 
 function tokenMatches(token: string, word: string): boolean {
-  if (word.includes(token) || token.includes(word)) return true
+  if (word.includes(token)) return true
   // Transliteration collapse (e.g. double consonants "hussein" -> "husein", "connor" -> "conor")
   const cToken = token.replace(/(.)\1+/g, '$1')
   const cWord = word.replace(/(.)\1+/g, '$1')
-  if (cWord.includes(cToken) || cToken.includes(cWord)) return true
+  if (cWord.includes(cToken)) return true
   return false
 }
 
