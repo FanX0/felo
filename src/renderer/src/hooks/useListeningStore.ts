@@ -17,6 +17,11 @@ function makeCode(): string {
 }
 
 export function toSharedSong(song: Song): SharedSong {
+  const isPriorityOn =
+    typeof useListeningStore !== 'undefined' && useListeningStore?.getState
+      ? useListeningStore.getState().discordPriorityEnabled
+      : readInitialDiscordPriority()
+
   return {
     localId: song.id,
     title: song.title,
@@ -25,7 +30,8 @@ export function toSharedSong(song: Song): SharedSong {
     duration: song.duration,
     artworkUrl: /^https?:\/\//i.test(song.artworkPath || '') ? song.artworkPath : undefined,
     requestedBy: song.requestedBy,
-    isPriority: song.isPriority
+    isPriority: song.isPriority,
+    discordPriorityEnabled: isPriorityOn
   }
 }
 
@@ -46,7 +52,18 @@ export type SyncStatus = 'idle' | 'synced' | 'missing_song' | 'buffering'
 
 const AUTO_DOWNLOAD_STORAGE_KEY = 'fanxmusic:listen_together:auto_download'
 const SUBSTITUTES_STORAGE_KEY = 'fanxmusic:listen_together:substitutes'
+const DISCORD_PRIORITY_STORAGE_KEY = 'felo:discord-priority-enabled'
 let _isSessionSyncing = false
+
+function readInitialDiscordPriority(): boolean {
+  try {
+    const raw = localStorage.getItem(DISCORD_PRIORITY_STORAGE_KEY)
+    if (raw === null) return true // Default enabled
+    return raw === 'true'
+  } catch {
+    return true
+  }
+}
 
 function readInitialSubstitutes(): Record<string, Song> {
   try {
@@ -81,6 +98,8 @@ interface ListeningStoreState {
   setSyncStatus: (status: SyncStatus) => void
   setAutoDownloadMissing: (enabled: boolean) => void
   setSubstituteSong: (hostSong: SharedSong, localSong: Song | null) => void
+  discordPriorityEnabled: boolean
+  setDiscordPriorityEnabled: (enabled: boolean) => void
 
   // Room / Listen Along lifecycle
   ensureHostRoom: (enabled: boolean, forceNew?: boolean) => Promise<ListeningRoom | null>
@@ -277,6 +296,18 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
   setMemberCount: (memberCount) => set({ memberCount }),
   setError: (error) => set({ error }),
   setSyncStatus: (syncStatus) => set({ syncStatus }),
+  discordPriorityEnabled: readInitialDiscordPriority(),
+  setDiscordPriorityEnabled: (enabled: boolean) => {
+    try {
+      localStorage.setItem(DISCORD_PRIORITY_STORAGE_KEY, enabled ? 'true' : 'false')
+    } catch {
+      // ignore
+    }
+    set({ discordPriorityEnabled: enabled })
+    if (get().hostRoom) {
+      void get().ensureHostRoom(true)
+    }
+  },
 
   setAutoDownloadMissing: (enabled: boolean) => {
     localStorage.setItem(AUTO_DOWNLOAD_STORAGE_KEY, String(enabled))
@@ -362,7 +393,8 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         artist: profile?.display_name || user.email?.split('@')[0] || 'Host',
         album: 'Device Audio Stream',
         isDeviceStream: true,
-        streamType: 'device_audio'
+        streamType: 'device_audio',
+        discordPriorityEnabled: get().discordPriorityEnabled
       }
 
       const roomPayload = {

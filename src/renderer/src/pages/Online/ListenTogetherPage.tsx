@@ -141,6 +141,8 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   const toggleDeviceAudioMute = useListeningStore((state) => state.toggleDeviceAudioMute)
   const setDeviceAudioVolume = useListeningStore((state) => state.setDeviceAudioVolume)
   const unmuteDeviceStream = useListeningStore((state) => state.unmuteDeviceStream)
+  const discordPriorityEnabled = useListeningStore((state) => state.discordPriorityEnabled)
+  const setDiscordPriorityEnabled = useListeningStore((state) => state.setDiscordPriorityEnabled)
 
   const loadMessages = useRoomChatStore((state) => state.loadMessages)
   const addIncoming = useRoomChatStore((state) => state.addIncoming)
@@ -164,6 +166,8 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   const [copiedLink, setCopiedLink] = useState(false)
   const [copiedDiscord, setCopiedDiscord] = useState(false)
   const [showAllQueue, setShowAllQueue] = useState(false)
+  const [hostQueueTab, setHostQueueTab] = useState<'all' | 'priority' | 'local'>('all')
+  const [listenerQueueTab, setListenerQueueTab] = useState<'all' | 'priority' | 'local'>('all')
   const [qrDataUrl, setQrDataUrl] = useState('')
 
   const directJoinAttempt = useRef<string | null>(null)
@@ -1086,20 +1090,69 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
 
               return (
                 <div className="mt-8 w-full text-left rounded-2xl border border-border/80 bg-surface-elevated/50 p-5 shadow-lg backdrop-blur-sm">
-                  <div className="flex items-center justify-between border-b border-border/60 pb-3 mb-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-border/60 pb-3 mb-3 gap-2">
                     <div className="flex items-center gap-2">
                       <ListMusic className="h-4 w-4 text-text-muted" />
                       <h3 className="text-xs font-black uppercase tracking-wider text-text">
                         Live Session Queue
                       </h3>
                     </div>
-                    <span className="rounded-full bg-surface px-2.5 py-0.5 text-[10px] font-bold text-text-muted border border-border/40">
-                      {joinedRoom.queue.length} Tracks Total
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold border ${
+                        joinedRoom.song?.discordPriorityEnabled !== false
+                          ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                          : 'bg-surface border-border/40 text-text-muted'
+                      }`}>
+                        ⚡ Discord Priority: {joinedRoom.song?.discordPriorityEnabled !== false ? 'ON' : 'OFF'}
+                      </span>
+                      <span className="rounded-full bg-surface px-2.5 py-0.5 text-[10px] font-bold text-text-muted border border-border/40">
+                        {joinedRoom.queue.length} Tracks Total
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Filter Tabs for Listeners */}
+                  <div className="flex items-center gap-1.5 mb-3 overflow-x-auto pb-1 scrollbar-none">
+                    <button
+                      type="button"
+                      onClick={() => setListenerQueueTab('all')}
+                      className={`flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-bold cursor-pointer transition-colors ${
+                        listenerQueueTab === 'all'
+                          ? 'bg-primary text-black'
+                          : 'bg-surface text-text-muted hover:text-white border border-border/40'
+                      }`}
+                    >
+                      <ListMusic className="h-3 w-3" />
+                      <span>All ({priorityTracks.length + backgroundTracks.length})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setListenerQueueTab('priority')}
+                      className={`flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-bold cursor-pointer transition-colors ${
+                        listenerQueueTab === 'priority'
+                          ? 'bg-amber-400 text-black'
+                          : 'bg-surface text-text-muted hover:text-amber-300 border border-border/40'
+                      }`}
+                    >
+                      <Sparkles className="h-3 w-3 text-amber-400" />
+                      <span>🌟 Discord Priority ({priorityTracks.length})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setListenerQueueTab('local')}
+                      className={`flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-bold cursor-pointer transition-colors ${
+                        listenerQueueTab === 'local'
+                          ? 'bg-emerald-400 text-black'
+                          : 'bg-surface text-text-muted hover:text-emerald-300 border border-border/40'
+                      }`}
+                    >
+                      <Music2 className="h-3 w-3" />
+                      <span>📁 Host Playlist ({backgroundTracks.length})</span>
+                    </button>
                   </div>
 
                   {/* Priority Requests Section for Listeners */}
-                  {priorityTracks.length > 0 && (
+                  {(listenerQueueTab === 'all' || listenerQueueTab === 'priority') && priorityTracks.length > 0 && (
                     <div className="mb-3 rounded-xl border border-amber-500/35 bg-amber-500/10 p-3">
                       <div className="flex items-center gap-1.5 text-xs font-bold text-amber-300 uppercase tracking-wider mb-2">
                         <Sparkles className="h-3.5 w-3.5 text-amber-400" />
@@ -1150,8 +1203,16 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                     </div>
                   )}
 
+                  {listenerQueueTab === 'priority' && priorityTracks.length === 0 && (
+                    <div className="mb-3 rounded-xl border border-dashed border-amber-500/30 bg-amber-500/5 p-4 text-center">
+                      <Sparkles className="h-5 w-5 text-amber-400/50 mx-auto mb-1" />
+                      <p className="text-xs font-bold text-amber-200">No Priority Requests</p>
+                      <p className="text-[10px] text-text-muted mt-0.5">Use Discord /play or click the star to bump a track to priority.</p>
+                    </div>
+                  )}
+
                   {/* Background Playlist Preview for Listeners */}
-                  {backgroundTracks.length > 0 && (
+                  {(listenerQueueTab === 'all' || listenerQueueTab === 'local') && backgroundTracks.length > 0 && (
                     <div className="rounded-xl border border-border/40 bg-surface/40 p-3">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-xs font-bold text-text-muted uppercase tracking-wider">
@@ -1203,6 +1264,13 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                           </div>
                         )}
                       </div>
+                    </div>
+                  )}
+
+                  {listenerQueueTab === 'local' && backgroundTracks.length === 0 && (
+                    <div className="rounded-xl border border-dashed border-border/50 bg-surface/30 p-4 text-center">
+                      <Music2 className="h-5 w-5 text-text-muted/50 mx-auto mb-1" />
+                      <p className="text-xs font-bold text-text">No Background Playlist Tracks</p>
                     </div>
                   )}
                 </div>
@@ -1783,7 +1851,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       {/* Host Active Session Queue: 3 Crystal-Clear Tiers */}
       {hostRoom?.id && queue.length > 0 && (
         <section className="mt-8 rounded-2xl border border-border bg-surface-elevated/70 p-5 shadow-lg backdrop-blur-sm">
-          <div className="flex items-center justify-between border-b border-border/60 pb-3 mb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-border/60 pb-3 mb-4 gap-3">
             <div className="flex items-center gap-2">
               <ListMusic className="h-4 w-4 text-text-muted" />
               <div>
@@ -1795,9 +1863,40 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                 </p>
               </div>
             </div>
-            <span className="rounded-full bg-surface-elevated px-2.5 py-0.5 text-[10px] font-medium text-text-muted border border-border/60">
-              {queue.length} Tracks Total
-            </span>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              {/* Host Discord Priority Toggle */}
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !discordPriorityEnabled
+                  setDiscordPriorityEnabled(next)
+                  setMessage(
+                    next
+                      ? '⚡ Discord Priority enabled: Discord requests will play next up'
+                      : 'ℹ️ Discord Priority disabled: Discord requests added to end of playlist'
+                  )
+                  setTimeout(() => setMessage(''), 3500)
+                }}
+                className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-xs font-bold transition-all border cursor-pointer ${
+                  discordPriorityEnabled
+                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
+                    : 'bg-surface/80 border-border/60 text-text-muted hover:text-white hover:bg-surface-elevated'
+                }`}
+                title={
+                  discordPriorityEnabled
+                    ? 'Discord Priority is ON: Requests from Discord automatically play next up before local songs.'
+                    : 'Discord Priority is OFF: Requests from Discord are added to the end of your queue without interrupting order.'
+                }
+              >
+                <Sparkles className={`h-3.5 w-3.5 ${discordPriorityEnabled ? 'text-amber-400 fill-amber-400/30' : 'text-text-muted'}`} />
+                <span>Discord Priority: {discordPriorityEnabled ? 'ON' : 'OFF'}</span>
+                <span className={`inline-block h-2 w-2 rounded-full ${discordPriorityEnabled ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)]' : 'bg-zinc-600'}`} />
+              </button>
+
+              <span className="rounded-full bg-surface-elevated px-2.5 py-0.5 text-[10px] font-medium text-text-muted border border-border/60">
+                {queue.length} Tracks Total
+              </span>
+            </div>
           </div>
 
           {/* Tier 1: 🟢 NOW PLAYING LIVE SHOWCASE */}
@@ -1834,8 +1933,48 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
             </div>
           )}
 
+          {/* Queue Source Segregation Tabs */}
+          <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-1 scrollbar-none">
+            <button
+              type="button"
+              onClick={() => setHostQueueTab('all')}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
+                hostQueueTab === 'all'
+                  ? 'bg-primary text-black'
+                  : 'bg-surface/80 text-text-muted hover:text-white hover:bg-surface-elevated border border-border/50'
+              }`}
+            >
+              <ListMusic className="h-3.5 w-3.5" />
+              <span>All ({upcomingTracks.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setHostQueueTab('priority')}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
+                hostQueueTab === 'priority'
+                  ? 'bg-amber-400 text-black shadow-sm'
+                  : 'bg-surface/80 text-text-muted hover:text-amber-300 hover:bg-surface-elevated border border-border/50'
+              }`}
+            >
+              <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+              <span>🌟 Discord Priority ({priorityTracksList.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setHostQueueTab('local')}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
+                hostQueueTab === 'local'
+                  ? 'bg-emerald-400 text-black shadow-sm'
+                  : 'bg-surface/80 text-text-muted hover:text-emerald-300 hover:bg-surface-elevated border border-border/50'
+              }`}
+            >
+              <Music2 className="h-3.5 w-3.5" />
+              <span>📁 Local Playlist ({backgroundTracksList.length})</span>
+            </button>
+          </div>
+
           {/* Tier 2: 🌟 UP NEXT FROM DISCORD (PRIORITY REQUESTS) */}
-          {priorityTracksList.length > 0 && (
+          {(hostQueueTab === 'all' || hostQueueTab === 'priority') && priorityTracksList.length > 0 && (
             <div className="mb-4 rounded-xl border border-amber-500/35 bg-amber-500/10 p-3.5 shadow-sm">
               <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-amber-500/20">
                 <div className="flex items-center gap-2">
@@ -1897,8 +2036,16 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
             </div>
           )}
 
+          {hostQueueTab === 'priority' && priorityTracksList.length === 0 && (
+            <div className="mb-4 rounded-xl border border-dashed border-amber-500/30 bg-amber-500/5 p-6 text-center">
+              <Sparkles className="h-6 w-6 text-amber-400/50 mx-auto mb-2" />
+              <p className="text-xs font-bold text-amber-200">No Discord Priority Requests</p>
+              <p className="text-[11px] text-text-muted mt-1">Songs requested via Discord /play or bumped to priority will appear here.</p>
+            </div>
+          )}
+
           {/* Tier 3: 📜 BACKGROUND PLAYLIST (RESUMES AUTOMATICALLY) */}
-          {backgroundTracksList.length > 0 && (
+          {(hostQueueTab === 'all' || hostQueueTab === 'local') && backgroundTracksList.length > 0 && (
             <div className="rounded-xl border border-border/50 bg-surface/50 p-3.5">
               <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-border/40">
                 <div className="flex items-center gap-2">
@@ -1942,7 +2089,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                               playSong(idx)
                               void ensureHostRoom(true)
                             }}
-                            className="p-1 rounded text-text-muted hover:text-white"
+                            className="p-1 rounded text-text-muted hover:text-white cursor-pointer"
                             title="Play instantly"
                           >
                             <Zap className="h-3 w-3 fill-current" />
@@ -1953,7 +2100,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                               bumpSongToPriority(idx)
                               void ensureHostRoom(true)
                             }}
-                            className="p-1 rounded text-text-muted hover:text-amber-300"
+                            className="p-1 rounded text-text-muted hover:text-amber-300 cursor-pointer"
                             title="Make Important / Play Next"
                           >
                             <Star className="h-3 w-3" />
@@ -1964,7 +2111,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                               removeSongFromQueueByIndex(idx)
                               void ensureHostRoom(true)
                             }}
-                            className="p-1 rounded text-text-muted hover:text-rose-400"
+                            className="p-1 rounded text-text-muted hover:text-rose-400 cursor-pointer"
                             title="Remove"
                           >
                             <Trash2 className="h-3 w-3" />
@@ -1975,6 +2122,14 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                   )
                 )}
               </div>
+            </div>
+          )}
+
+          {hostQueueTab === 'local' && backgroundTracksList.length === 0 && (
+            <div className="rounded-xl border border-dashed border-border/50 bg-surface/30 p-6 text-center">
+              <Music2 className="h-6 w-6 text-text-muted/50 mx-auto mb-2" />
+              <p className="text-xs font-bold text-text">No Upcoming Local Playlist Tracks</p>
+              <p className="text-[11px] text-text-muted mt-1">Add tracks from your Library to continue background playback.</p>
             </div>
           )}
         </section>

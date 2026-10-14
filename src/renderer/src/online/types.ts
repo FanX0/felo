@@ -56,6 +56,7 @@ export interface SharedSong {
   streamType?: 'device_audio' | 'library'
   requestedBy?: string
   isPriority?: boolean
+  discordPriorityEnabled?: boolean
 }
 
 export interface Conversation {

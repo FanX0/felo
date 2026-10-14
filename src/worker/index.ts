@@ -816,6 +816,13 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
       }
 
       // Next up / Enqueued
+      const isPriorityEnabled =
+        (room?.song as any)?.discordPriorityEnabled !== undefined
+          ? Boolean((room?.song as any)?.discordPriorityEnabled)
+          : (fullQueue[0] as any)?.discordPriorityEnabled !== undefined
+            ? Boolean((fullQueue[0] as any)?.discordPriorityEnabled)
+            : true
+
       const isCurrentlyPlaying = Boolean(room?.is_playing && room?.song)
       const curRemaining = Math.max(0, (room?.song?.duration || 0) - (room?.position_seconds || 0))
       const waitMin = Math.floor(curRemaining / 60)
@@ -823,25 +830,30 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
       const waitStr = curRemaining > 0 ? `~${waitMin}m ${waitSec}s` : 'Moments'
       const existingPriorities = fullQueue.filter((t: any) => t.isPriority).length
       const priorityPos = existingPriorities + 1
-      const positionText = `Priority #${priorityPos} (Plays next after current track)`
+      const positionText = isPriorityEnabled
+        ? `Priority #${priorityPos} (Plays next after current track)`
+        : `Playlist #${fullQueue.length + 1} (End of queue • Priority disabled by Host)`
       const currentPlayingInfo = isCurrentlyPlaying
         ? `▶️ **Currently Playing:** **${room?.song?.title}** by ${room?.song?.artist || 'Unknown'}\n`
         : ''
+      const statusNotice = isPriorityEnabled
+        ? `🌟 *Marked as Priority Request! It will play right after the current song automatically.*`
+        : `ℹ️ *Added to the end of the host's background playlist (Host has disabled priority jump).*`
 
       return jsonResponse({
         type: 4,
         data: {
           embeds: [
             {
-              title: '🌟 Added as Priority Request',
+              title: isPriorityEnabled ? '🌟 Added as Priority Request' : '🎶 Added to Host Queue',
               description:
                 `🎶 **Track:** **${displayTitle}** ${displayArtist}${trackDur}\n` +
                 `📍 **Queue Position:** \`${positionText}\`\n` +
                 (isCurrentlyPlaying ? `⏳ **Estimated Wait:** \`${waitStr}\`\n` : '') +
                 currentPlayingInfo +
                 `🔑 **Room:** \`${roomCode}\`\n\n` +
-                `🌟 *Marked as Priority Request! It will play right after the current song automatically.*`,
-              color: 0xf59e0b,
+                statusNotice,
+              color: isPriorityEnabled ? 0xf59e0b : 0x3b82f6,
               footer: { text: `Requested by @${username} • Lossless Synchronized Audio` }
             }
           ],
@@ -1257,6 +1269,13 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
       const totalMins = Math.floor((totalRemainingSec % 3600) / 60)
       const totalTimeStr = totalHours > 0 ? `${totalHours}h ${totalMins}m` : `${totalMins}m`
 
+      const isPriorityEnabled =
+        (room?.song as any)?.discordPriorityEnabled !== undefined
+          ? Boolean((room?.song as any)?.discordPriorityEnabled)
+          : (fullQueue[0] as any)?.discordPriorityEnabled !== undefined
+            ? Boolean((fullQueue[0] as any)?.discordPriorityEnabled)
+            : true
+
       let queueDescription = ''
 
       // Tier 1: Now Playing Showcase
@@ -1272,6 +1291,8 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
       } else {
         queueDescription += `🔊 **NOW PLAYING:** *Nothing is playing right now*\n\n`
       }
+
+      queueDescription += `⚡ **Discord Priority:** \`${isPriorityEnabled ? 'Enabled (Requests Play Next)' : 'Disabled by Host (Requests Placed at End)'}\`\n\n`
 
       // Tier 2: 🌟 Up Next from Discord (Priority Requests)
       if (priorityTracks.length > 0) {

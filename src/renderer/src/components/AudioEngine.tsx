@@ -31,7 +31,9 @@ function getArtworkType(artworkPath?: string | null) {
 }
 
 function getArtworkEntries(srcs: string[], type: string): MediaImage[] {
-  return srcs.flatMap((src) =>
+  // CRITICAL: Filter out any file: or media: schemes that throw SecurityError on web browsers
+  const safeSrcs = srcs.filter((s) => s && /^(https?:|data:|blob:|\/|\.\/)/i.test(s))
+  return safeSrcs.flatMap((src) =>
     MEDIA_ARTWORK_SIZES.map((size) => ({
       src,
       sizes: `${size}x${size}`,
@@ -40,44 +42,23 @@ function getArtworkEntries(srcs: string[], type: string): MediaImage[] {
   )
 }
 
-function blobToDataUrl(blob: Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result || ''))
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(blob)
-  })
-}
+
 
 async function getArtworkSource(song?: Song) {
   const artworkUrl = toMediaUrl(song?.artworkPath) || song?.artworkUrl
   if (!artworkUrl) return null
 
-  const sources = [artworkUrl]
-  if (song?.artworkPath && !/^(blob:|data:|https?:)/i.test(song.artworkPath)) {
-    sources.push(`file:///${song.artworkPath.replace(/\\/g, '/').replace(/^\/+/, '')}`)
-  }
+  // In web environment, file: URLs and media: URLs MUST NOT be passed to MediaSession or fetched
+  if (/^file:|^media:/i.test(artworkUrl)) return null
 
-  if (/^data:|^blob:|^https?:/i.test(artworkUrl)) {
+  if (/^(data:|blob:|https?:)/i.test(artworkUrl)) {
     return {
-      srcs: sources,
+      srcs: [artworkUrl],
       type: getArtworkType(song?.artworkPath || (artworkUrl.includes('.png') ? 'png' : 'jpg'))
     }
   }
 
-  try {
-    const response = await fetch(artworkUrl)
-    if (!response.ok) return null
-    const blob = await response.blob()
-    sources.unshift(await blobToDataUrl(blob))
-    return {
-      srcs: sources,
-      type: blob.type || getArtworkType(song?.artworkPath)
-    }
-  } catch (error) {
-    console.warn('Failed to load media session artwork:', error)
-    return null
-  }
+  return null
 }
 
 function updateMediaPosition(audio: HTMLAudioElement): void {

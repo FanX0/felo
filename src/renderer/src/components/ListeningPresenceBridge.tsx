@@ -126,6 +126,9 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             }
 
             const cleanQ = query.toLowerCase()
+            const isPriorityEnabled = useListeningStore.getState().discordPriorityEnabled
+            const effectiveAction = !isPriorityEnabled && action === 'play_next' ? 'enqueue' : action
+            const isPriority = Boolean(isPriorityEnabled && (effectiveAction === 'play_next' || effectiveAction === 'play_now'))
 
             // 1. Check if the song is already in active player queue
             const queueMatchIndex = player.queue.findIndex(
@@ -138,12 +141,12 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
               const matchedSong = {
                 ...player.queue[queueMatchIndex],
                 requestedBy: requester,
-                isPriority: true
+                isPriority
               }
-              if (action === 'play_now') {
+              if (effectiveAction === 'play_now') {
                 player.updateSong(matchedSong, matchedSong.id)
                 player.playSong(queueMatchIndex)
-              } else if (action === 'enqueue') {
+              } else if (effectiveAction === 'enqueue') {
                 player.enqueueSong(matchedSong)
               } else {
                 // Priority / Important request: placed right after current song or after previous priority requests
@@ -169,24 +172,24 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             } catch {}
 
             if (libraryMatch) {
-              const prioritySong = {
+              const songToAdd = {
                 ...libraryMatch,
                 requestedBy: requester,
-                isPriority: true
+                isPriority
               }
-              if (action === 'enqueue') {
-                player.enqueueSong(prioritySong)
-              } else if (action === 'play_now') {
+              if (effectiveAction === 'enqueue') {
+                player.enqueueSong(songToAdd)
+              } else if (effectiveAction === 'play_now') {
                 if (player.queue.length === 0) {
-                  player.setQueue([prioritySong], 0)
+                  player.setQueue([songToAdd], 0)
                 } else {
-                  player.enqueueSongPriority(prioritySong)
+                  player.enqueueSongPriority(songToAdd)
                   const targetIdx = player.currentSongIndex === -1 ? 0 : player.currentSongIndex + 1
                   player.playSong(targetIdx)
                 }
               } else {
                 // Priority / Important request
-                player.enqueueSongPriority(prioritySong)
+                player.enqueueSongPriority(songToAdd)
                 if (!player.isPlaying || player.currentSongIndex === -1) {
                   const targetIdx = player.currentSongIndex === -1 ? 0 : player.currentSongIndex + 1
                   player.playSong(targetIdx)
@@ -206,12 +209,12 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
               artworkPath: '',
               filePath: `virtual:${query}`,
               requestedBy: requester,
-              isPriority: true
+              isPriority
             }
 
-            if (action === 'enqueue') {
+            if (effectiveAction === 'enqueue') {
               player.enqueueSong(virtualSong)
-            } else if (action === 'play_now') {
+            } else if (effectiveAction === 'play_now') {
               if (player.queue.length === 0) {
                 player.setQueue([virtualSong], 0)
               } else {
@@ -233,8 +236,8 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             void downloadTrackInBackground(
               { title: query },
               {
-                playAction: action,
-                autoPlay: action === 'play_now',
+                playAction: effectiveAction,
+                autoPlay: effectiveAction === 'play_now',
                 conflictMode: 'keep_both'
               }
             ).catch(() => undefined)

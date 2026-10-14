@@ -23,6 +23,7 @@
     "build": "npm run typecheck && electron-vite build",
     "build:web": "npm run typecheck:web && electron-vite build",
     "universal-bot": "node scripts/universal-discord-bot.mjs",
+    "register:discord": "node scripts/register-discord-commands.mjs",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
