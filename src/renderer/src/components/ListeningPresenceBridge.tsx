@@ -18,6 +18,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
     state.queue.slice(state.currentSongIndex, state.currentSongIndex + 10).map((s) => s.id).join(',')
   )
   const isPlaying = usePlayerStore((state) => state.isPlaying)
+  const isAudioActive = usePlayerStore((state) => state.isAudioActive)
 
   const joinedRoom = useListeningStore((state) => state.joinedRoom)
   const isJoiningRoom = useListeningStore((state) => state.isJoiningRoom)
@@ -34,7 +35,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
 
   // 1. Immediate Broadcast on Playback State Change (Song Change, Queue/Playlist Change, or Play/Pause)
   useEffect(() => {
-    if (!user || !enabled || isJoiningRoom || hostRoomStopped || joinedRoom !== null || isDeviceAudioSharing) return
+    if (!user || !enabled || !isAudioActive || isJoiningRoom || hostRoomStopped || joinedRoom !== null || isDeviceAudioSharing) return
 
     const songChanged = prevSongIdRef.current !== currentSongId
     const queueChanged = prevQueueKeyRef.current !== queueKey
@@ -53,7 +54,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
         isUpdatingRef.current = false
       })
     }
-  }, [user?.id, profile?.display_name, enabled, isJoiningRoom, hostRoomStopped, currentSongId, queueKey, isPlaying, joinedRoom, hostRoom?.id, ensureHostRoom])
+  }, [user?.id, profile?.display_name, enabled, isAudioActive, isJoiningRoom, hostRoomStopped, currentSongId, queueKey, isPlaying, joinedRoom, hostRoom?.id, ensureHostRoom])
 
   // Sync active room code and member count to Discord service
   const memberCount = useListeningStore((state) => state.memberCount)
@@ -69,8 +70,10 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
 
   // 2. Periodic Heartbeat (Every 5s) to Keep Room Timestamp & Position Fresh
   useEffect(() => {
-    if (!user || !enabled) {
-      void deactivateHostRoom()
+    if (!user || !enabled || !isAudioActive) {
+      if (isAudioActive && (!user || !enabled)) {
+        void deactivateHostRoom()
+      }
       return
     }
 
@@ -87,7 +90,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
     }, 5000)
 
     return () => window.clearInterval(interval)
-  }, [user?.id, enabled, isJoiningRoom, hostRoomStopped, joinedRoom, ensureHostRoom, deactivateHostRoom])
+  }, [user?.id, enabled, isAudioActive, isJoiningRoom, hostRoomStopped, joinedRoom, ensureHostRoom, deactivateHostRoom])
 
   // 3. Listen for incoming Universal Bot commands via Supabase Realtime
   useEffect(() => {
@@ -188,10 +191,12 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
     }
   }, [hostRoom?.code, enabled])
 
-  // 4. Deactivate room on unmount or disable
+  // 4. Deactivate room on unmount or disable ONLY if this tab was the active audio owner
   useEffect(() => {
     return () => {
-      void deactivateHostRoom()
+      if (usePlayerStore.getState().isAudioActive) {
+        void deactivateHostRoom()
+      }
     }
   }, [deactivateHostRoom])
 
