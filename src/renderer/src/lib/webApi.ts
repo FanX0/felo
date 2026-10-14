@@ -1699,7 +1699,29 @@ const webApi: Window['api'] = {
     await initializeBrowserLibrary()
     return createBrowserPlaylist(input)
   },
-  fetchPlaylistImportMetadata: async () => desktopOnly(),
+  fetchPlaylistImportMetadata: async (url: string) => {
+    const cleanUrl = (url || '').trim()
+    if (!/^https?:\/\//i.test(cleanUrl)) {
+      throw new Error('Enter a valid playlist URL.')
+    }
+    if (/open\.spotify\.com\/playlist\//i.test(cleanUrl)) {
+      try {
+        const response = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(cleanUrl)}`)
+        if (response.ok) {
+          const data = await response.json()
+          return {
+            name: String(data?.title || 'Spotify Playlist'),
+            description: 'Imported from Spotify link.',
+            thumbnail: String(data?.thumbnail_url || ''),
+            tracks: []
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to fetch browser Spotify metadata:', err)
+      }
+    }
+    return { name: 'Playlist', description: '', thumbnail: '', tracks: [] }
+  },
   fetchSpotifyPlaylistTracks: async () => desktopOnly(),
   importSpotifyPlaylist: async () => desktopOnly(),
   deletePlaylist: async (playlistId) => {

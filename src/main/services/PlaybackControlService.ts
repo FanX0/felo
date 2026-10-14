@@ -407,7 +407,13 @@ export class PlaybackControlService {
         )
         const songs = getDb()
           .prepare(
-            "SELECT id,title,artist,album,duration,filePath FROM songs WHERE filePath IS NOT NULL AND filePath != '' AND filePath NOT LIKE 'virtual:%'"
+            `SELECT s.id, s.title, s.artist, s.album, s.duration, s.filePath,
+                    GROUP_CONCAT(a.name, ' ') as allArtists
+             FROM songs s
+             LEFT JOIN song_artists sa ON sa.songId = s.id
+             LEFT JOIN artists a ON a.id = sa.artistId
+             WHERE s.filePath IS NOT NULL AND s.filePath != '' AND s.filePath NOT LIKE 'virtual:%'
+             GROUP BY s.id`
           )
           .all() as LibraryTrack[]
         return reply(200, searchLibrary(songs, query, artist, limit, fs.existsSync))
@@ -538,7 +544,13 @@ export class PlaybackControlService {
               if (!song && query) {
                 const localSongs = getDb()
                   .prepare(
-                    "SELECT id,title,artist,album,duration,filePath FROM songs WHERE filePath IS NOT NULL AND filePath != '' AND filePath NOT LIKE 'virtual:%'"
+                    `SELECT s.id, s.title, s.artist, s.album, s.duration, s.filePath,
+                            GROUP_CONCAT(a.name, ' ') as allArtists
+                     FROM songs s
+                     LEFT JOIN song_artists sa ON sa.songId = s.id
+                     LEFT JOIN artists a ON a.id = sa.artistId
+                     WHERE s.filePath IS NOT NULL AND s.filePath != '' AND s.filePath NOT LIKE 'virtual:%'
+                     GROUP BY s.id`
                   )
                   .all() as LibraryTrack[]
                 const search = searchLibrary(localSongs, query, artist, 10, fs.existsSync)

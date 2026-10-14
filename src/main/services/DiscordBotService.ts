@@ -35,7 +35,12 @@ type PendingCommand = { resolve: (value: unknown) => void; timer: NodeJS.Timeout
 export class DiscordBotService {
   private ws: WebSocket | null = null
   private heartbeatTimer: NodeJS.Timeout | null = null
+  private reconnectTimer: NodeJS.Timeout | null = null
   private lastHeartbeatAck = true
+
+  get isReconnecting(): boolean {
+    return this.reconnectTimer !== null
+  }
   private sequenceNumber: number | null = null
   private token = ''
   private prefix = '!'
@@ -75,7 +80,9 @@ export class DiscordBotService {
 
   initialize(): void {
     // Listen for player status updates
-    ipcMain.on(STATUS_CHANNEL, (_event, status: any) => {
+    ipcMain.on(STATUS_CHANNEL, (event, status: any) => {
+      const win = BrowserWindow.getAllWindows()[0]
+      if (!win || event.sender !== win.webContents) return
       if (!status) return
       this.playerState = {
         ...this.playerState,
@@ -294,7 +301,9 @@ export class DiscordBotService {
           this.error = 'Invalid Discord Bot Token. Please check your token in Settings.'
         } else if (this.enabled) {
           // Attempt reconnect after 5s if still enabled
-          setTimeout(() => {
+          if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+          this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null
             if (this.enabled) void this.connect()
           }, 5000)
         }
@@ -307,6 +316,10 @@ export class DiscordBotService {
 
   disconnect(): void {
     this.stopHeartbeat()
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
     if (this.ws) {
       try {
         this.ws.close(1000)
@@ -346,7 +359,9 @@ export class DiscordBotService {
       case 9:
         // Invalid session
         this.disconnect()
-        setTimeout(() => {
+        if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = null
           if (this.enabled) void this.connect()
         }, 3000)
         break
@@ -964,14 +979,54 @@ export class DiscordBotService {
     }
 
     if (!targetSong) {
+      const username = interaction.member?.user?.username || interaction.user?.username || 'User'
+      const roomCode = this.playerState.listeningRoomCode
+
+      await this.sendPlayerCommand({
+        type: 'download-and-play',
+        query,
+        action,
+        user: username
+      })
+
+      const actionText =
+        action === 'enqueue'
+          ? '➕ Added to Queue'
+          : action === 'play_next'
+          ? '⏭️ Played Next'
+          : '▶️ Played Immediately'
+
       await this.respondInteraction(interaction.id, interaction.token, {
         type: 4,
         data: {
           embeds: [
             {
-              title: '🔍 Track Not Found Locally',
-              description: `Could not find **"${query}"** in the host\'s local library.\n\n*Tip:* Add the song to Felo or download it via Deezer/Qobuz in Felo to play!`,
-              color: 0xf59e0b
+              title: '⚡ On-Demand Download Started',
+              description:
+                `**"${query}"** is not in the host's local library.\n\n` +
+                `🎯 **Playback Action:** ${actionText}\n` +
+                `🔄 **Priority Download Order:**\n` +
+                `1️⃣ **Qobuz** (24-bit Hi-Res) ➔ 2️⃣ **Deezer** (FLAC) ➔ 3️⃣ **Soulseek P2P** ➔ 4️⃣ **YouTube Music**\n\n` +
+                `⏳ **Status:** Searching, buffering, and downloading in the background. Playback will begin as soon as ready and sync across Listen Together!` +
+                (roomCode ? `\n\n🎧 **Listen Together Code:** \`${roomCode}\`` : ''),
+              color: 0x3b82f6,
+              footer: {
+                text: `Felo Downloader Engine • Requested by @${username}`
+              }
+            }
+          ],
+          components: [
+            {
+              type: 1,
+              components: [
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Download Felo App',
+                  emoji: { name: '📥' },
+                  url: 'https://bit.ly/47iv3PK'
+                }
+              ]
             }
           ]
         }
@@ -1431,28 +1486,131 @@ export class DiscordBotService {
   }
 
   private async handleSlashHelp(interaction: any): Promise<void> {
+    const p = this.prefix
+    const roomCode = this.playerState.listeningRoomCode
+
     await this.respondInteraction(interaction.id, interaction.token, {
       type: 4,
       data: {
         embeds: [
           {
-            title: '🎵 Felo Music Slash Commands',
+            title: '🎵 Felo Music Bot — Complete Guide',
             description:
-              `Control local Felo desktop music and your Listen Together session right from Discord!\n\n` +
-              `**/play** \`<query>\` — Autocomplete and play any song\n` +
-              `**/search** \`<query>\` — Search & customize tracks with interactive buttons\n` +
-              `**/invite** — Get room code and 1-click link to invite friends\n` +
-              `**/download** — Direct link to download the Felo desktop app\n` +
-              `**/nowplaying** — Show current track with progress bar\n` +
-              `**/queue** — View upcoming tracks in the queue\n` +
-              `**/skip** — Skip to next song\n` +
-              `**/pause** & **/resume** — Pause or resume playback\n` +
-              `**/volume** \`<0-100>\` — Set volume\n` +
-              `**/help** — Show this guide\n\n` +
-              `*Prefix commands like \`${this.prefix}play\` are also supported.*`,
+              `Felo controls your **local desktop music player** in real-time and syncs audio with everyone in your **Listen Together room** — zero voice channel lag, lossless quality.\n\n` +
+              `> 💡 Slash commands (\`/play\`) and prefix commands (\`${p}play\`) both work in any channel.\n` +
+              `> 🔊 Audio always plays through the **host's machine** — listeners join via the Felo app using a room code.`,
+            color: 0xf59e0b
+          },
+          {
+            title: '🎧 Playback Commands',
             color: 0x10b981,
+            fields: [
+              {
+                name: '/play <query> — Play a Song',
+                value:
+                  '• Start typing and autocomplete shows matching local tracks.\n' +
+                  '• Song **in library** → plays instantly at lossless quality.\n' +
+                  '• Song **not in library** → bot automatically searches your priority providers (Qobuz → Deezer → Soulseek → YouTube), downloads in the background, then plays or enqueues it once ready.\n' +
+                  '• Optional `action`: **Play Now** (default) | **Play Next** | **Add to Queue**\n' +
+                  '*Example: `/play query:Daft Punk Get Lucky action:Play Now`*',
+                inline: false
+              },
+              {
+                name: '/search <query> — Browse & Pick',
+                value:
+                  '• Shows top results in an interactive dropdown menu.\n' +
+                  '• Select a song → pick **▶️ Play Now**, **⏭️ Play Next**, or **➕ Add to Queue** via buttons.\n' +
+                  '*Example: `/search Radiohead Creep`*',
+                inline: false
+              },
+              {
+                name: '/skip',
+                value: 'Skip to the next song in the queue immediately.',
+                inline: true
+              },
+              {
+                name: '/pause & /resume',
+                value: 'Pause or resume playback and sync across the Listen Together room.',
+                inline: true
+              },
+              {
+                name: '/stop',
+                value: 'Stop playback entirely.',
+                inline: true
+              },
+              {
+                name: '/volume <0-100>',
+                value: 'Set the local player volume. *Example: `/volume 75`*',
+                inline: true
+              }
+            ]
+          },
+          {
+            title: '📋 Queue & Info Commands',
+            color: 0x3b82f6,
+            fields: [
+              {
+                name: '/nowplaying',
+                value: 'Shows the current track title, artist, album, and a live progress bar. Also shows the Listen Together room code if a session is active.',
+                inline: false
+              },
+              {
+                name: '/queue [page]',
+                value: 'Lists upcoming tracks in the queue with positions and durations. Add a page number for longer queues.',
+                inline: false
+              },
+              {
+                name: '/invite',
+                value: 'Shows your **Listen Together room code** and a 1-click join link so friends can join your session in the Felo app.',
+                inline: false
+              }
+            ]
+          },
+          {
+            title: '📥 On-Demand Auto-Download — How It Works',
+            color: 0x8b5cf6,
+            description:
+              `When you request a song that is not in the host's local library:\n\n` +
+              `**Step 1** — Bot replies instantly: *"Downloading via priority providers…"*\n` +
+              `**Step 2** — Felo searches providers in your configured priority order:\n` +
+              `　　\`Qobuz\` → \`Deezer\` → \`Soulseek P2P\` → \`YouTube Music\`\n` +
+              `**Step 3** — First successful provider downloads the file at the best available quality.\n` +
+              `**Step 4** — Track is automatically played or queued. If a Listen Together room is open, all listeners sync automatically.\n\n` +
+              `> ⚙️ Customize provider priority order in **Felo Settings → Downloads → Priority Order**.` +
+              (roomCode ? `\n\n🎧 **Current Room Code:** \`${roomCode}\`` : '')
+          },
+          {
+            title: '🌐 App & Session Commands',
+            color: 0x6366f1,
+            fields: [
+              {
+                name: '/download',
+                value: 'Sends the official Felo app download link (Windows / macOS / Linux).\n🔗 https://bit.ly/47iv3PK',
+                inline: false
+              },
+              {
+                name: '/help',
+                value: 'Shows this full command guide.',
+                inline: true
+              },
+              {
+                name: `${p}room (prefix only)`,
+                value: 'Shows your active Listen Together room code and member count.',
+                inline: true
+              }
+            ]
+          },
+          {
+            title: '💡 Tips & Best Practices',
+            color: 0xf59e0b,
+            description:
+              `• **Autocomplete works in /play** — just start typing the song name to see matching library tracks.\n` +
+              `• **Prefix commands** like \`${p}play <song>\`, \`${p}skip\`, \`${p}np\`, \`${p}queue\` work without slash syntax.\n` +
+              `• **Inviting friends** — they open Felo → Listen Together → enter the room code. No bot needed on their side.\n` +
+              `• **Audio quality** — Felo streams lossless FLAC/Hi-Res audio locally. Listeners sync in real-time without re-encoding.\n` +
+              `• **Provider not connecting?** — configure accounts in Felo → Settings → Streaming Accounts.`,
             footer: {
-              text: 'Felo Desktop Music • Zero Voice Channel Lag'
+              text: 'Felo Desktop Music • Lossless Local Audio • Zero Voice Channel Lag'
             }
           }
         ]
@@ -1479,12 +1637,44 @@ export class DiscordBotService {
     const search = searchLibrary(songs, query, '', 5, fs.existsSync)
 
     if (!search.results.length) {
+      await this.sendPlayerCommand({
+        type: 'download-and-play',
+        query,
+        action: 'play_now',
+        user: 'Discord'
+      })
+
+      const roomCode = this.playerState.listeningRoomCode
+
       await this.sendChannelMessage(channelId, {
         embeds: [
           {
-            title: '🔍 Track Not Found Locally',
-            description: `Could not find **"${query}"** in the host's local library.\n\n*Tip:* Add the song to Felo or download it via Soulseek/Deezer/Qobuz in Felo to play!`,
-            color: 0xf59e0b
+            title: '⚡ On-Demand Download Started',
+            description:
+              `**"${query}"** is not in the host's local library.\n\n` +
+              `🎯 **Playback Action:** ▶️ Play Now (Auto-Plays)\n` +
+              `🔄 **Priority Download Order:**\n` +
+              `1️⃣ **Qobuz** (24-bit Hi-Res) ➔ 2️⃣ **Deezer** (FLAC) ➔ 3️⃣ **Soulseek P2P** ➔ 4️⃣ **YouTube Music**\n\n` +
+              `⏳ **Status:** Searching, buffering, and downloading in the background. Playback will begin as soon as ready and sync across Listen Together!` +
+              (roomCode ? `\n\n🎧 **Listen Together Code:** \`${roomCode}\`` : ''),
+            color: 0x3b82f6,
+            footer: {
+              text: 'Felo Downloader Engine • Lossless Hi-Res Audio'
+            }
+          }
+        ],
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 2,
+                style: 5,
+                label: 'Download Felo App',
+                emoji: { name: '📥' },
+                url: 'https://bit.ly/47iv3PK'
+              }
+            ]
           }
         ]
       })
@@ -1749,27 +1939,97 @@ export class DiscordBotService {
 
   private async cmdHelp(channelId: string): Promise<void> {
     const p = this.prefix
+    const roomCode = this.playerState.listeningRoomCode
+
     await this.sendChannelMessage(channelId, {
       embeds: [
         {
-          title: '🎵 Felo Music Bot Commands',
+          title: '🎵 Felo Music Bot — Complete Guide',
           description:
-            `Control the local Felo desktop player directly from Discord chat.\n` +
-            `*Music plays in high quality on the host machine and synchronizes with everyone in the room! (No voice channel lag)*\n\n` +
-            `\`${p}play <song>\` — Search and play track\n` +
-            `\`${p}pause\` — Pause music\n` +
-            `\`${p}resume\` — Resume music\n` +
-            `\`${p}skip\` — Skip to next song\n` +
-            `\`${p}stop\` — Stop playback\n` +
-            `\`${p}np\` — Show currently playing track\n` +
-            `\`${p}queue\` — Show upcoming songs in queue\n` +
-            `\`${p}room\` — Show Listen Together room code\n` +
-            `\`${p}download\` — Get link to download Felo app\n` +
-            `\`${p}volume <0-100>\` — Set player volume\n` +
-            `\`${p}help\` — Show this command guide`,
+            `Felo controls your **local desktop music player** in real-time and syncs audio with everyone in your **Listen Together room** — zero voice channel lag, lossless quality.\n\n` +
+            `> 💡 Use \`${p}command\` below, or switch to slash commands (\`/play\`, \`/help\`, etc.) for autocomplete support.\n` +
+            `> 🔊 Audio plays through the **host's machine** — friends join via the Felo app using a room code.`,
+          color: 0xf59e0b
+        },
+        {
+          title: '🎧 Playback Commands',
           color: 0x10b981,
+          fields: [
+            {
+              name: `\`${p}play <song name>\` — Play a Song`,
+              value:
+                `• Song **in library** → plays instantly at lossless quality.\n` +
+                `• Song **not in library** → bot automatically searches your priority providers (Qobuz → Deezer → Soulseek → YouTube), downloads in the background, and plays once ready.\n` +
+                `*Example: \`${p}play Daft Punk Get Lucky\`*`,
+              inline: false
+            },
+            {
+              name: `\`${p}pause\` / \`${p}resume\``,
+              value: 'Pause or resume playback, synced across the Listen Together room.',
+              inline: true
+            },
+            {
+              name: `\`${p}skip\``,
+              value: 'Skip to the next track in the queue.',
+              inline: true
+            },
+            {
+              name: `\`${p}stop\``,
+              value: 'Stop playback entirely.',
+              inline: true
+            },
+            {
+              name: `\`${p}volume <0-100>\``,
+              value: `Set the local player volume. *Example: \`${p}volume 75\`*`,
+              inline: true
+            }
+          ]
+        },
+        {
+          title: '📋 Queue & Info Commands',
+          color: 0x3b82f6,
+          fields: [
+            {
+              name: `\`${p}np\` — Now Playing`,
+              value: 'Shows the current track title, artist, album, duration, and progress. Includes the Listen Together room code if active.',
+              inline: false
+            },
+            {
+              name: `\`${p}queue\` — View Queue`,
+              value: 'Lists upcoming tracks in the queue with positions and durations.',
+              inline: false
+            },
+            {
+              name: `\`${p}room\` — Room Code`,
+              value: 'Shows your active Listen Together room code and how many listeners are connected.',
+              inline: false
+            }
+          ]
+        },
+        {
+          title: '📥 On-Demand Auto-Download — How It Works',
+          color: 0x8b5cf6,
+          description:
+            `When you request a song **not in the host's local library**:\n\n` +
+            `**Step 1** — Bot replies: *"Downloading via priority providers…"*\n` +
+            `**Step 2** — Felo searches in your configured priority order:\n` +
+            `　　\`Qobuz\` → \`Deezer\` → \`Soulseek P2P\` → \`YouTube Music\`\n` +
+            `**Step 3** — First successful provider downloads the file at the best quality.\n` +
+            `**Step 4** — Track plays automatically. If a Listen Together room is active, all listeners sync.\n\n` +
+            `> ⚙️ Change provider priority in **Felo Settings → Downloads → Priority Order**.` +
+            (roomCode ? `\n\n🎧 **Current Room Code:** \`${roomCode}\`` : '')
+        },
+        {
+          title: '💡 Tips & Best Practices',
+          color: 0xf59e0b,
+          description:
+            `• **Slash commands** (\`/play\`, \`/search\`) give you autocomplete — try them!\n` +
+            `• **Inviting friends** — they open Felo → Listen Together → enter the room code.\n` +
+            `• **Audio quality** — Felo streams lossless FLAC/Hi-Res locally. Sync is real-time, no re-encoding.\n` +
+            `• **\`${p}download\`** — Get the Felo app: https://bit.ly/47iv3PK\n` +
+            `• **Provider not connecting?** — configure credentials in Felo → Settings → Streaming Accounts.`,
           footer: {
-            text: 'Felo • Desktop Music Player & Library'
+            text: 'Felo Desktop Music • Lossless Local Audio • Zero Voice Channel Lag'
           }
         }
       ]

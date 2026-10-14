@@ -58,9 +58,12 @@ if (!fs.existsSync(dbPath)) {
 app.setPath('userData', feloUserDataPath)
 const db = new Database(dbPath)
 
-// Enable WAL mode for better concurrent read performance
+// Enable WAL mode for better concurrent read performance and tuned SQLite performance
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
+db.pragma('synchronous = NORMAL')
+db.pragma('temp_store = MEMORY')
+db.pragma('cache_size = -64000')
 
 // Migration: Check if the songs table exists and needs new columns
 try {
@@ -171,7 +174,10 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_songs_title ON songs(title);
   CREATE INDEX IF NOT EXISTS idx_songs_artist ON songs(artist);
+  CREATE INDEX IF NOT EXISTS idx_songs_artistId ON songs(artistId);
   CREATE INDEX IF NOT EXISTS idx_songs_album ON songs(album);
+  CREATE INDEX IF NOT EXISTS idx_songs_albumId ON songs(albumId);
+  CREATE INDEX IF NOT EXISTS idx_songs_isFavorite ON songs(isFavorite);
   CREATE INDEX IF NOT EXISTS idx_songs_filePath ON songs(filePath);
   CREATE INDEX IF NOT EXISTS idx_songs_rootId ON songs(rootId);
 
@@ -199,6 +205,7 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_playlist_items_playlistId ON playlist_items(playlistId);
   CREATE INDEX IF NOT EXISTS idx_playlist_items_songId ON playlist_items(songId);
+  CREATE INDEX IF NOT EXISTS idx_playlist_items_order ON playlist_items(playlistId, sortOrder);
 
   -- Play events (local listening history)
   CREATE TABLE IF NOT EXISTS play_events (
@@ -210,6 +217,7 @@ db.exec(`
     FOREIGN KEY (songId) REFERENCES songs(id) ON DELETE CASCADE
   );
   CREATE INDEX IF NOT EXISTS idx_play_events_songId ON play_events(songId);
+  CREATE INDEX IF NOT EXISTS idx_play_events_startedAt ON play_events(startedAt);
 
   -- App settings
   CREATE TABLE IF NOT EXISTS app_settings (
@@ -282,6 +290,13 @@ try {
     })
     migrateTx()
   }
+
+  // Ensure any songs with artistId that are missing in song_artists are linked
+  db.exec(`
+    INSERT OR IGNORE INTO song_artists (songId, artistId, role, sortOrder)
+    SELECT id, artistId, 'primary', 0 FROM songs
+    WHERE artistId IS NOT NULL AND id NOT IN (SELECT songId FROM song_artists);
+  `)
 } catch (migErr) {
   console.warn('Error during song_artists backfill migration:', migErr)
 }
@@ -382,6 +397,43 @@ export function recordPlayEvent(input: PlayRecordInput): { success: boolean; pla
   }
 }
 
+function attachArtistsToSongList(songs: any[]) {
+  if (!songs || songs.length === 0) return songs
+  try {
+    const songIds = songs.map((s) => s?.id).filter((id): id is string => typeof id === 'string' && id.length > 0)
+    if (songIds.length === 0) return songs
+    const placeholders = songIds.map(() => '?').join(',')
+    const rows = db
+      .prepare(
+        `
+      SELECT sa.songId, sa.artistId as id, sa.role, sa.sortOrder, a.name
+      FROM song_artists sa
+      JOIN artists a ON sa.artistId = a.id
+      WHERE sa.songId IN (${placeholders})
+      ORDER BY sa.sortOrder ASC
+    `
+      )
+      .all(...songIds) as Array<{ songId: string; id: string; role: 'primary' | 'featured'; name: string }>
+
+    const map = new Map<string, Array<{ id: string; name: string; role: 'primary' | 'featured' }>>()
+    for (const r of rows) {
+      let list = map.get(r.songId)
+      if (!list) {
+        list = []
+        map.set(r.songId, list)
+      }
+      list.push({ id: r.id, name: r.name, role: r.role })
+    }
+    for (const s of songs) {
+      if (!s) continue
+      s.artists = map.get(s.id) || (s.artist ? [{ name: s.artist, role: 'primary' }] : [])
+    }
+  } catch (e) {
+    console.warn('Error attaching artists in database.ts:', e)
+  }
+  return songs
+}
+
 export function getListeningHistory(limit = 50) {
   try {
     const recent = db.prepare(`
@@ -390,14 +442,17 @@ export function getListeningHistory(limit = 50) {
       JOIN songs s ON pe.songId = s.id
       ORDER BY pe.startedAt DESC
       LIMIT ?
-    `).all(limit)
+    `).all(limit) as any[]
 
     const topTracks = db.prepare(`
       SELECT * FROM songs
       WHERE playCount > 0
       ORDER BY playCount DESC, lastPlayedAt DESC
       LIMIT ?
-    `).all(limit)
+    `).all(limit) as any[]
+
+    attachArtistsToSongList(recent)
+    attachArtistsToSongList(topTracks)
 
     const topArtists = db.prepare(`
       SELECT COALESCE(a.name, s.artist) as artist, SUM(s.playCount) as playCount

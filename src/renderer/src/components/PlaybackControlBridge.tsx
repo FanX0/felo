@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { usePlayerStore } from '../hooks/usePlayerStore'
 import { useListeningStore } from '../hooks/useListeningStore'
 import { useOnlineStore } from '../hooks/useOnlineStore'
+import { downloadTrackInBackground } from '../lib/backgroundDownloader'
 import type { Song } from '../pages/Library/Library'
 
 type Command = {
@@ -9,6 +10,8 @@ type Command = {
   deadline: number
   command: {
     type: string
+    query?: string
+    action?: 'play_now' | 'play_next' | 'enqueue'
     song?: Song
     songs?: Song[]
     songId?: string
@@ -213,6 +216,15 @@ export default function PlaybackControlBridge() {
               const song = command.song
               if (!song?.id || !song.filePath || song.filePath.startsWith('virtual:'))
                 throw new Error('SONG_NOT_PLAYABLE')
+              window.dispatchEvent(
+                new CustomEvent('felo:bot-activity', {
+                  detail: {
+                    type: 'bot',
+                    title: '🤖 Playing Track',
+                    message: `Now playing "${song.title}" by ${song.artist} via bot command.`
+                  }
+                })
+              )
               // Preserve the queue when selecting an existing item; append new choices.
               const index = player.queue.findIndex((item) => item.id === song.id)
               if (index >= 0) {
@@ -266,6 +278,15 @@ export default function PlaybackControlBridge() {
                 throw new Error(
                   'END_OF_QUEUE: Add another song with felo_enqueue or choose one with felo_play.'
                 )
+              window.dispatchEvent(
+                new CustomEvent('felo:bot-activity', {
+                  detail: {
+                    type: 'skip',
+                    title: '🤖 Track Skipped',
+                    message: 'Skipped to next track via bot command.'
+                  }
+                })
+              )
               player.playNext(true)
               verifyPlayback = true
               expectedSongId = usePlayerStore.getState().queue[usePlayerStore.getState().currentSongIndex]?.id
@@ -281,6 +302,15 @@ export default function PlaybackControlBridge() {
               player.setVolume(command.percent! / 100)
               currentAudio.volume = command.percent! / 100
               currentAudio.muted = false
+              window.dispatchEvent(
+                new CustomEvent('felo:bot-activity', {
+                  detail: {
+                    type: 'volume',
+                    title: '🤖 Volume Changed',
+                    message: `Volume set to ${command.percent}% via bot command.`
+                  }
+                })
+              )
               break
             case 'seek': {
               if (!player.queue[player.currentSongIndex] || !Number.isFinite(currentAudio.duration))
@@ -303,6 +333,33 @@ export default function PlaybackControlBridge() {
               if (!command.song) throw new Error('SONG_NOT_PLAYABLE')
               player.enqueueSongNext(command.song)
               break
+            case 'download-and-play': {
+              const query = command.query?.trim()
+              const action = command.action || 'play_now'
+              const user = (command as any).user ? `@${(command as any).user}` : 'Discord'
+              if (!query) throw new Error('QUERY_REQUIRED')
+              window.dispatchEvent(
+                new CustomEvent('felo:bot-activity', {
+                  detail: {
+                    type: 'download',
+                    title: `🤖 Bot Request: ${user}`,
+                    message: `Searching & downloading "${query}" via priority providers (${action === 'enqueue' ? 'Queueing' : action === 'play_next' ? 'Plays Next' : 'Auto-Plays'}).`
+                  }
+                })
+              )
+              void downloadTrackInBackground(
+                { title: query },
+                {
+                  playAction: action,
+                  autoPlay: action === 'play_now',
+                  conflictMode: 'keep_both',
+                  requestedBy: `${user} (Bot)`
+                }
+              )
+              result = { ok: true, state: publish(), downloading: true, query, action }
+              window.api.respondToExternalPlayerCommand(requestId, result)
+              return
+            }
             case 'remove': {
               const currentId = player.queue[player.currentSongIndex]?.id
               if (currentId === command.songId)

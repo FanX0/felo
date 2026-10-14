@@ -6,7 +6,7 @@ import { findMatchingLibrarySong } from '../lib/songMatching'
 export type RepeatMode = 'off' | 'all' | 'one'
 
 export interface PlaybackContext {
-  type: 'album' | 'playlist' | 'artist' | 'library' | 'search'
+  type: 'album' | 'playlist' | 'artist' | 'library' | 'search' | 'radio'
   id?: string
   title: string
   subtitle?: string
@@ -24,6 +24,7 @@ interface PlayerState {
   duration: number
   isShuffle: boolean
   repeatMode: RepeatMode
+  isAutoplay: boolean
   seekRequest: number | null // used by AudioEngine to jump to a specific time
   playbackContext: PlaybackContext | null
 
@@ -48,9 +49,10 @@ interface PlayerState {
   setDuration: (duration: number) => void
   toggleShuffle: () => void
   toggleRepeat: () => void
+  toggleAutoplay: () => void
   seek: (time: number) => void
   clearSeekRequest: () => void
-  updateSong: (song: Song) => void
+  updateSong: (song: Song, targetQueueId?: string) => void
 }
 
 // Helper to shuffle an array (Fisher-Yates)
@@ -108,6 +110,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   repeatMode: (['off', 'all', 'one'].includes(getMigratedPreference('felo_repeat', 'fanx_repeat', 'off'))
     ? (getMigratedPreference('felo_repeat', 'fanx_repeat', 'off') as RepeatMode)
     : 'off'),
+  isAutoplay: getMigratedPreference('felo_autoplay', 'fanx_autoplay', 'true') === 'true',
   playbackContext: null,
   seekRequest: null,
 
@@ -118,8 +121,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const { isShuffle } = get()
     rememberPlayedSong(newQueue[startPlayingIndex] || newQueue[0])
     const contextToSet = context !== undefined ? context : get().playbackContext
+    const selectedSong = newQueue[startPlayingIndex] || newQueue[0]
+    const isVirtual = !selectedSong?.filePath || selectedSong.filePath.startsWith('virtual:')
     if (isShuffle && newQueue.length > 0) {
-      const selectedSong = newQueue[startPlayingIndex] || newQueue[0]
       const remaining = newQueue.filter((_, idx) => idx !== startPlayingIndex)
       const shuffled = [selectedSong, ...shuffleArray(remaining)]
       set({
@@ -127,6 +131,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         queue: shuffled,
         currentSongIndex: 0,
         isPlaying: true,
+        isBuffering: isVirtual,
         currentTime: 0,
         seekRequest: 0,
         playbackContext: contextToSet
@@ -137,6 +142,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         queue: newQueue,
         currentSongIndex: startPlayingIndex,
         isPlaying: true,
+        isBuffering: isVirtual,
         currentTime: 0,
         seekRequest: 0,
         playbackContext: contextToSet
@@ -266,6 +272,61 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           seekRequest: 0
         })
       }
+    } else if (get().isAutoplay) {
+      // Seamless Autoplay / Infinity mode: seed recommendations from the last played track
+      const lastSong = queue[currentSongIndex]
+      if (lastSong && typeof window !== 'undefined' && Boolean(window.api?.fetchDeezerRecommendations)) {
+        set({ isBuffering: true })
+        void (async () => {
+          try {
+            let libSongs: Song[] = []
+            if (window.api?.getSongs) {
+              libSongs = (await window.api.getSongs()) || []
+            }
+            const { PersonalizationService } = await import('../services/PersonalizationService')
+            const recommendations = await PersonalizationService.generateRadioStation(
+              {
+                title: lastSong.title,
+                artist: lastSong.artist,
+                album: lastSong.album,
+                artworkUrl: lastSong.artworkPath,
+                filePath: lastSong.filePath,
+                id: lastSong.id
+              },
+              libSongs
+            )
+            const existingIds = new Set(get().queue.map((s) => s.id))
+            const newTracks = recommendations.filter((r) => !existingIds.has(r.id))
+            if (newTracks.length > 0) {
+              const currentQ = get().queue
+              const nextIndex = currentQ.length
+              const updatedQueue = [...currentQ, ...newTracks]
+              const nextTrack = updatedQueue[nextIndex]
+              rememberPlayedSong(nextTrack)
+              const isVirtual = !nextTrack?.filePath || nextTrack.filePath.startsWith('virtual:')
+              set({
+                queue: updatedQueue,
+                originalQueue: [...get().originalQueue, ...newTracks],
+                currentSongIndex: nextIndex,
+                isPlaying: true,
+                isBuffering: isVirtual,
+                currentTime: 0,
+                seekRequest: 0,
+                playbackContext: {
+                  type: 'radio',
+                  title: `Autoplay · ${lastSong.title}`
+                }
+              })
+              return
+            }
+          } catch (autoplayErr) {
+            console.warn('Smart autoplay could not fetch additional tracks:', autoplayErr)
+          }
+          set({ isPlaying: false, isBuffering: false, currentTime: 0 })
+        })()
+      } else {
+        set({ isPlaying: false, isBuffering: false, currentTime: 0 })
+      }
     } else {
       // End of playlist
       set({ isPlaying: false, isBuffering: false, currentTime: 0 })
@@ -364,6 +425,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set({ repeatMode: nextMode })
   },
 
+  toggleAutoplay: () => {
+    const nextMode = !get().isAutoplay
+    localStorage.setItem('felo_autoplay', String(nextMode))
+    set({ isAutoplay: nextMode })
+  },
+
   seek: (time) => {
     set({ seekRequest: time, currentTime: time })
   },
@@ -385,14 +452,25 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           originalQueue: [],
           currentSongIndex: -1,
           isPlaying: false,
-          isBuffering: false
+          isBuffering: false,
+          currentTime: 0,
+          seekRequest: 0
         }
       }
 
       let newIndex = state.currentSongIndex
+      let isBuffering = state.isBuffering
+      let currentTime = state.currentTime
+      let seekRequest = state.seekRequest
+
       if (removingCurrent) {
         newIndex = Math.min(state.currentSongIndex, queue.length - 1)
-        rememberPlayedSong(queue[newIndex])
+        const nextSong = queue[newIndex]
+        const isVirtual = !nextSong?.filePath || nextSong.filePath.startsWith('virtual:')
+        isBuffering = isVirtual
+        currentTime = 0
+        seekRequest = 0
+        rememberPlayedSong(nextSong)
       } else {
         const foundIdx = currentSong ? queue.findIndex((s) => s.id === currentSong.id) : -1
         newIndex = foundIdx >= 0 ? foundIdx : Math.min(state.currentSongIndex, queue.length - 1)
@@ -402,7 +480,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         queue,
         originalQueue,
         currentSongIndex: newIndex,
-        isPlaying: removingCurrent ? true : state.isPlaying
+        isPlaying: removingCurrent ? true : state.isPlaying,
+        isBuffering,
+        currentTime,
+        seekRequest
       }
     })
   },
@@ -427,14 +508,25 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           originalQueue: [],
           currentSongIndex: -1,
           isPlaying: false,
-          isBuffering: false
+          isBuffering: false,
+          currentTime: 0,
+          seekRequest: 0
         }
       }
 
       let newIndex = state.currentSongIndex
+      let isBuffering = state.isBuffering
+      let currentTime = state.currentTime
+      let seekRequest = state.seekRequest
+
       if (removingCurrent) {
         newIndex = Math.min(state.currentSongIndex, newQueue.length - 1)
-        rememberPlayedSong(newQueue[newIndex])
+        const nextSong = newQueue[newIndex]
+        const isVirtual = !nextSong?.filePath || nextSong.filePath.startsWith('virtual:')
+        isBuffering = isVirtual
+        currentTime = 0
+        seekRequest = 0
+        rememberPlayedSong(nextSong)
       } else if (index < state.currentSongIndex) {
         newIndex = state.currentSongIndex - 1
       }
@@ -443,7 +535,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         queue: newQueue,
         originalQueue: newOriginalQueue,
         currentSongIndex: newIndex,
-        isPlaying: removingCurrent ? true : state.isPlaying
+        isPlaying: removingCurrent ? true : state.isPlaying,
+        isBuffering,
+        currentTime,
+        seekRequest
       }
     })
   },
@@ -508,13 +603,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     })
   },
 
-  updateSong: (song) => {
+  updateSong: (song, targetQueueId) => {
     set((state) => {
       const normalize = (v?: string) => (v || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
       const targetTitleNorm = normalize(song.title)
       const targetArtistNorm = normalize(song.artist)
 
       const isMatch = (item: Song) => {
+        if (targetQueueId && item.id === targetQueueId) return true
         if (item.id === song.id) return true
         if (findMatchingLibrarySong(item.title, item.artist, [song])) return true
         if (!targetTitleNorm) return false

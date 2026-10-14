@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   AlertCircle,
+  Bot,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -51,7 +52,7 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
     removeTransfer,
     clearTransfers
   } = useDownloadStore()
-  const { setQueue } = usePlayerStore()
+  const setQueue = usePlayerStore((s) => s.setQueue)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -130,6 +131,20 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
     } else {
       removeTransfer(transfer.id)
     }
+  }
+
+  const handleClearAllTransfers = async () => {
+    const activeTransfers = transfers.filter(
+      (t) => t.status === 'downloading' || t.status === 'queued' || t.status === 'waiting_connector'
+    )
+    for (const t of activeTransfers) {
+      try {
+        await window.api?.cancelDownload?.(t.id)
+      } catch (err) {
+        console.warn(`Failed to cancel transfer ${t.id} on clear:`, err)
+      }
+    }
+    clearTransfers()
   }
 
   const handleRetryTransfer = async (transfer: TransferItem) => {
@@ -481,6 +496,19 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
                             <div className="mt-0.5 truncate text-[11px] text-text-muted">
                               {transfer.sourceName} · {transfer.quality} · {transfer.size}
                             </div>
+                            {(transfer.requestedBy || transfer.playAction) && (
+                              <div className="mt-1 flex items-center gap-1.5">
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#5865F2]/20 text-[#818cf8] border border-[#5865F2]/30">
+                                  <Bot className="w-2.5 h-2.5" />
+                                  {transfer.requestedBy ? transfer.requestedBy : 'Discord Bot'} ·{' '}
+                                  {transfer.playAction === 'enqueue'
+                                    ? 'Queued'
+                                    : transfer.playAction === 'play_next'
+                                    ? 'Plays Next'
+                                    : 'Auto-Play'}
+                                </span>
+                              </div>
+                            )}
                             <div className="mt-2 flex items-center justify-between gap-3 text-[11px] font-medium">
                               <span
                                 className={`min-w-0 truncate ${
@@ -655,7 +683,7 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
                 {transfers.length > 0 && (
                   <button
                     type="button"
-                    onClick={clearTransfers}
+                    onClick={handleClearAllTransfers}
                     className="rounded-md border border-border/50 px-3 py-2 text-xs font-bold text-text-muted hover:bg-hover hover:text-text"
                   >
                     Clear

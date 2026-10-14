@@ -120,11 +120,27 @@ export class ArtworkService {
     }
   }
 
+  private static isSafeArtworkUrl(rawUrl: string): boolean {
+    try {
+      const parsed = new URL(rawUrl)
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+      const hostname = parsed.hostname.toLowerCase()
+      if (!hostname) return false
+      if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) return false
+      if (hostname === '127.0.0.1' || hostname.startsWith('127.')) return false
+      if (hostname === '0.0.0.0' || hostname === '::1' || hostname === '[::1]') return false
+      if (hostname.startsWith('169.254.')) return false
+      return true
+    } catch {
+      return false
+    }
+  }
+
   /**
    * Fetch an image from a remote HTTP(S) URL and save it to the artwork directory.
    */
   static async fetchArtworkUrl(url: string, timeoutMs = 12000): Promise<string | null> {
-    if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) return null
+    if (!url || typeof url !== 'string' || !this.isSafeArtworkUrl(url)) return null
     try {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), timeoutMs)

@@ -28,7 +28,7 @@ export default function CommandBar() {
         <input
           type="text"
           placeholder="Search library or type a command... (Ctrl+K)"
-          className="w-full h-9 bg-surface border border-border rounded-full pl-9 pr-4 text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-primary-amber focus:ring-1 focus:ring-primary-amber transition-all"
+          className="w-full h-9 bg-surface border border-border rounded-full pl-9 pr-4 text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-white/40 focus:ring-1 focus:ring-white/40 transition-all"
         />
       </div>
 

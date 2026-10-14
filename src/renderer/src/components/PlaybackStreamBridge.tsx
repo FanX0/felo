@@ -20,6 +20,7 @@ export default function PlaybackStreamBridge(): null {
   const repeatMode = usePlayerStore((s) => s.repeatMode)
 
   const activeStreamingKeyRef = useRef<string | null>(null)
+  const activeTransferIdRef = useRef<string | null>(null)
   const activeInFlightRef = useRef(false)
   const prefetchingKeyRef = useRef<string | null>(null)
   const prefetchTransferIdRef = useRef<string | null>(null)
@@ -49,6 +50,7 @@ export default function PlaybackStreamBridge(): null {
     if (currentSong.filePath && !currentSong.filePath.startsWith('virtual:')) {
       if (isBuffering) usePlayerStore.getState().setIsBuffering(false)
       activeStreamingKeyRef.current = null
+      activeTransferIdRef.current = null
       return () => {
         isCancelled = true
       }
@@ -63,6 +65,18 @@ export default function PlaybackStreamBridge(): null {
     }
 
     const trackKey = `${currentSong.title.toLowerCase()}::${(currentSong.artist || '').toLowerCase()}`
+
+    // If skipping to a different active track while an old download was in-flight, cancel old download
+    if (activeStreamingKeyRef.current && activeStreamingKeyRef.current !== trackKey) {
+      if (activeTransferIdRef.current) {
+        try {
+          void window.api?.cancelDownload?.(activeTransferIdRef.current)
+        } catch {}
+        activeTransferIdRef.current = null
+      }
+      activeInFlightRef.current = false
+    }
+
     if (activeStreamingKeyRef.current === trackKey && activeInFlightRef.current) {
       return () => {
         isCancelled = true
@@ -82,6 +96,7 @@ export default function PlaybackStreamBridge(): null {
           autoPlay: true,
           message: `Streaming "${currentSong.title}"...`
         })
+        activeTransferIdRef.current = prefetchTransferIdRef.current
         prefetchTransferIdRef.current = null
         prefetchInFlightRef.current = false
         prefetchingKeyRef.current = null
@@ -123,10 +138,11 @@ export default function PlaybackStreamBridge(): null {
 
         const localMatch = findMatchingLibrarySong(currentSong.title, currentSong.artist, librarySongs)
         if (localMatch && localMatch.filePath) {
-          usePlayerStore.getState().updateSong(localMatch as any)
+          usePlayerStore.getState().updateSong(localMatch as any, currentSong.id)
           usePlayerStore.getState().setIsBuffering(false)
           usePlayerStore.getState().setIsPlaying(true)
           activeInFlightRef.current = false
+          activeTransferIdRef.current = null
           return
         }
 
@@ -173,12 +189,19 @@ export default function PlaybackStreamBridge(): null {
         // 4. Search in priority order for verified high-confidence identity match
         for (const source of priority) {
           if (isCancelled || usePlayerStore.getState().currentSongIndex !== currentSongIndex) return
+          if (source === 'qobuz' && !accounts.qobuzSecret && !accounts.qobuzUser) continue
+          if (source === 'deezer' && !accounts.deezerArl) continue
+          if (source === 'soulseek' && !accounts.soulseekUser && !accounts.soulseekPassword) continue
+
           try {
             const searchPromise = window.api.searchDownloadSource(source, query, accounts)
-            const timeoutPromise = new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error(`Stream search timed out on ${source}`)), 12000)
-            )
-            const rawResults = await Promise.race([searchPromise, timeoutPromise])
+            let timer: ReturnType<typeof setTimeout> | undefined
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              timer = setTimeout(() => reject(new Error(`Stream search timed out on ${source}`)), 12000)
+            })
+            const rawResults = await Promise.race([searchPromise, timeoutPromise]).finally(() => {
+              if (timer) clearTimeout(timer)
+            })
             if (isCancelled || usePlayerStore.getState().currentSongIndex !== currentSongIndex) return
 
             const results = Array.isArray(rawResults) ? rawResults : []
@@ -263,6 +286,7 @@ export default function PlaybackStreamBridge(): null {
           },
           { openDrawer: false }
         )
+        activeTransferIdRef.current = transferId
 
         if (isCancelled || usePlayerStore.getState().currentSongIndex !== currentSongIndex) return
 
@@ -284,7 +308,31 @@ export default function PlaybackStreamBridge(): null {
         })
       } catch (error) {
         console.warn('Failed to stream active track:', error)
-        if (!isCancelled) usePlayerStore.getState().setIsBuffering(false)
+        if (!isCancelled) {
+          usePlayerStore.getState().setIsBuffering(false)
+          const errMessage = error instanceof Error ? error.message : 'Streaming failed'
+          const unavailDetail = {
+            title: currentSong.title,
+            artist: currentSong.artist,
+            message: `Playback stream failed for "${currentSong.title}": ${errMessage}. Advancing to next track.`
+          }
+          window.dispatchEvent(new CustomEvent('fanxmusic:track-unavailable', { detail: unavailDetail }))
+          window.dispatchEvent(new CustomEvent('felo:track-unavailable', { detail: unavailDetail }))
+
+          const failDetail = {
+            transferId: '',
+            songId: currentSong.id,
+            title: currentSong.title,
+            artist: currentSong.artist,
+            message: `Playback stream failed for "${currentSong.title}": ${errMessage}. Advancing to next track.`
+          }
+          window.dispatchEvent(new CustomEvent('fanxmusic:download-failed', { detail: failDetail }))
+          window.dispatchEvent(new CustomEvent('felo:download-failed', { detail: failDetail }))
+
+          if (usePlayerStore.getState().currentSongIndex === currentSongIndex) {
+            usePlayerStore.getState().playNext()
+          }
+        }
       } finally {
         activeInFlightRef.current = false
       }
@@ -374,7 +422,7 @@ export default function PlaybackStreamBridge(): null {
 
           const localMatch = findMatchingLibrarySong(nextSong.title, nextSong.artist, librarySongs)
           if (localMatch && localMatch.filePath) {
-            usePlayerStore.getState().updateSong(localMatch as any)
+            usePlayerStore.getState().updateSong(localMatch as any, nextSong.id)
             prefetchInFlightRef.current = false
             return
           }
@@ -400,12 +448,19 @@ export default function PlaybackStreamBridge(): null {
 
           for (const source of priority) {
             if (isCancelled || usePlayerStore.getState().currentSongIndex !== currentSongIndex) return
+            if (source === 'qobuz' && !accounts.qobuzSecret && !accounts.qobuzUser) continue
+            if (source === 'deezer' && !accounts.deezerArl) continue
+            if (source === 'soulseek' && !accounts.soulseekUser && !accounts.soulseekPassword) continue
+
             try {
               const searchPromise = window.api.searchDownloadSource(source, query, accounts)
-              const timeoutPromise = new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error(`Prefetch search timed out on ${source}`)), 12000)
-              )
-              const rawResults = await Promise.race([searchPromise, timeoutPromise])
+              let timer: ReturnType<typeof setTimeout> | undefined
+              const timeoutPromise = new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error(`Prefetch search timed out on ${source}`)), 12000)
+              })
+              const rawResults = await Promise.race([searchPromise, timeoutPromise]).finally(() => {
+                if (timer) clearTimeout(timer)
+              })
               if (isCancelled || usePlayerStore.getState().currentSongIndex !== currentSongIndex) return
 
               const results = Array.isArray(rawResults) ? rawResults : []

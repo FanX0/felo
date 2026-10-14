@@ -1,14 +1,21 @@
 import { FormEvent, type ReactElement, useEffect, useMemo, useState } from 'react'
 import {
+  Award,
   Check,
+  Clock,
   Clock3,
+  Compass,
   ListMusic,
   Loader2,
   LogOut,
   MessageCircle,
+  Moon,
+  Music,
   Play,
   Radio,
   Settings,
+  Sparkles,
+  Sun,
   UserCheck,
   UserMinus,
   UserPlus,
@@ -31,6 +38,7 @@ import type {
   UserListeningStats
 } from '../../online/types'
 import { findMatchingLibrarySong } from '../../lib/songMatching'
+import { PersonalizationService, type UserTasteMetrics } from '../../services/PersonalizationService'
 import type { Song } from '../Library/Library'
 import {
   PLAYED_SONGS_STORAGE_KEY,
@@ -368,7 +376,7 @@ function FullListeningHistoryModal({
   onClose: () => void
   initialTab?: 'recent' | 'mostPlayed' | 'artists'
 }): ReactElement {
-  const { setQueue } = usePlayerStore()
+  const setQueue = usePlayerStore((s) => s.setQueue)
   const [activeTab, setActiveTab] = useState<'recent' | 'mostPlayed' | 'artists'>(initialTab)
   const [searchQuery, setSearchQuery] = useState('')
   const [page, setPage] = useState(1)
@@ -622,7 +630,9 @@ function FullListeningHistoryModal({
                           </div>
                           {song.lastPlayedAt && activeTab === 'recent' && (
                             <span className="text-[11px] text-text-muted hidden sm:inline">
-                              {new Date(song.lastPlayedAt).toLocaleDateString()}
+                              {new Date(
+                                song.lastPlayedAt < 10_000_000_000 ? song.lastPlayedAt * 1000 : song.lastPlayedAt
+                              ).toLocaleDateString()}
                             </span>
                           )}
                           <span className="rounded-full border border-border bg-surface px-2.5 py-0.5 text-xs font-bold text-text-muted">
@@ -671,7 +681,7 @@ function ProfileWorkspace(): ReactElement {
   const { username } = useParams<{ username?: string }>()
   const navigate = useNavigate()
   const { user, profile: ownProfile } = useOnlineStore()
-  const { setQueue } = usePlayerStore()
+  const setQueue = usePlayerStore((s) => s.setQueue)
   const [viewedProfile, setViewedProfile] = useState<OnlineProfile | null>(null)
   const [relationship, setRelationship] = useState<FriendRequest | null>(null)
   const [playlists, setPlaylists] = useState<SharedPlaylist[]>([])
@@ -682,6 +692,7 @@ function ProfileWorkspace(): ReactElement {
   const [mostPlayedArtists, setMostPlayedArtists] = useState<Array<{ artist: string; playCount: number }>>([])
   const [artworkBySongId, setArtworkBySongId] = useState<Record<string, string>>({})
   const [friendRoom, setFriendRoom] = useState<ListeningRoom | null>(null)
+  const [tasteMetrics, setTasteMetrics] = useState<UserTasteMetrics | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [joining, setJoining] = useState(false)
@@ -773,6 +784,13 @@ function ProfileWorkspace(): ReactElement {
         setRecentSongs(history.recent)
         setMostPlayed(history.mostPlayed)
         setMostPlayedArtists(history.artists)
+
+        try {
+          const allSongs = ((await window.api?.getSongs?.()) as Song[]) || []
+          setTasteMetrics(PersonalizationService.calculateTasteMetrics(allSongs))
+        } catch {
+          setTasteMetrics(PersonalizationService.calculateTasteMetrics([]))
+        }
       } else if (nextProfile.is_history_public !== false) {
         try {
           const [statsRes, eventsRes] = await Promise.all([
@@ -819,16 +837,29 @@ function ProfileWorkspace(): ReactElement {
               playCount: a.playCount ?? a.play_count ?? 1
             }))
           )
+
+          // Calculate friend's taste metrics
+          const friendTopArtists = (stats?.top_artists || []).map((a: any) => a.artist)
+          const friendTimestamps = events.map((ev) => new Date(ev.played_at).getTime()).filter(Boolean)
+          const friendMetrics = PersonalizationService.calculateTasteMetrics([], {
+            totalPlays: stats?.total_plays || events.length,
+            playTimestamps: friendTimestamps,
+            topArtists: friendTopArtists,
+            topGenres: (stats as any)?.top_genres || []
+          })
+          setTasteMetrics(friendMetrics)
         } catch (historyErr) {
           console.warn('Could not load remote listening history:', historyErr)
           setRecentSongs([])
           setMostPlayed([])
           setMostPlayedArtists([])
+          setTasteMetrics(null)
         }
       } else {
         setRecentSongs([])
         setMostPlayed([])
         setMostPlayedArtists([])
+        setTasteMetrics(null)
       }
       setPlaylists(
         ((playlistsResult.data || []) as SharedPlaylist[]).filter(
@@ -888,14 +919,19 @@ function ProfileWorkspace(): ReactElement {
 
   useEffect(() => {
     if (!isOwnProfile) return
-    const refreshHistory = (): void => {
+    const refreshHistory = async (): Promise<void> => {
       const history = readListeningHistory()
       setRecentSongs(history.recent)
       setMostPlayed(history.mostPlayed)
       setMostPlayedArtists(history.artists)
+      try {
+        const allSongs = ((await window.api?.getSongs?.()) as Song[]) || []
+        setTasteMetrics(PersonalizationService.calculateTasteMetrics(allSongs))
+      } catch {}
     }
-    window.addEventListener('felo:recently-played-updated', refreshHistory)
-    return () => window.removeEventListener('felo:recently-played-updated', refreshHistory)
+    window.addEventListener('felo:recently-played-updated', () => void refreshHistory())
+    return () =>
+      window.removeEventListener('felo:recently-played-updated', () => void refreshHistory())
   }, [isOwnProfile])
 
   useEffect(() => {
@@ -1134,6 +1170,109 @@ function ProfileWorkspace(): ReactElement {
         {viewedProfile && (
           isOwnProfile || viewedProfile.is_history_public !== false ? (
             <>
+              {/* Taste Profile & Mini-Wrapped Banner */}
+              {tasteMetrics && tasteMetrics.totalPlays > 0 && (
+                <section className="mt-8">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="h-5 w-5 text-amber-400" />
+                        <h2 className="text-2xl font-black text-text">Taste Profile</h2>
+                      </div>
+                      <p className="mt-1 text-sm text-text-muted">
+                        {isOwnProfile
+                          ? 'Your sonic personality and listening habits'
+                          : `${viewedProfile.display_name}'s sonic personality and listening habits`}
+                      </p>
+                    </div>
+                    <span className="rounded-full border border-border/80 bg-surface-elevated/70 px-3 py-1 text-xs font-black tracking-wide text-white/90">
+                      {tasteMetrics.listenerTier.title} · {tasteMetrics.listenerTier.badge}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {/* 1. Time Listened */}
+                    <div className="flex flex-col justify-between rounded-xl border border-border/60 bg-gradient-to-br from-surface to-surface-elevated/60 p-4 transition-all hover:border-border">
+                      <div className="flex items-center justify-between text-text-muted">
+                        <span className="text-xs font-bold uppercase tracking-wider">Listening Time</span>
+                        <Clock className="h-4 w-4 text-emerald-400" />
+                      </div>
+                      <div className="mt-4">
+                        <div className="text-2xl font-black text-text">{tasteMetrics.formattedTime}</div>
+                        <p className="mt-1 text-xs text-text-muted">
+                          {tasteMetrics.totalPlays} total {tasteMetrics.totalPlays === 1 ? 'play' : 'plays'} recorded
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* 2. Sonic Chronotype */}
+                    <div className="flex flex-col justify-between rounded-xl border border-border/60 bg-gradient-to-br from-surface to-surface-elevated/60 p-4 transition-all hover:border-border">
+                      <div className="flex items-center justify-between text-text-muted">
+                        <span className="text-xs font-bold uppercase tracking-wider">Sonic Chronotype</span>
+                        {tasteMetrics.chronotype.icon === 'night' ? (
+                          <Moon className="h-4 w-4 text-indigo-400" />
+                        ) : tasteMetrics.chronotype.icon === 'morning' ? (
+                          <Sun className="h-4 w-4 text-amber-400" />
+                        ) : tasteMetrics.chronotype.icon === 'afternoon' ? (
+                          <Compass className="h-4 w-4 text-cyan-400" />
+                        ) : (
+                          <Clock3 className="h-4 w-4 text-purple-400" />
+                        )}
+                      </div>
+                      <div className="mt-4">
+                        <div className="text-lg font-black text-text">{tasteMetrics.chronotype.label}</div>
+                        <p className="mt-1 text-xs text-text-muted line-clamp-2">
+                          {tasteMetrics.chronotype.description}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* 3. Top Genres */}
+                    <div className="flex flex-col justify-between rounded-xl border border-border/60 bg-gradient-to-br from-surface to-surface-elevated/60 p-4 transition-all hover:border-border">
+                      <div className="flex items-center justify-between text-text-muted">
+                        <span className="text-xs font-bold uppercase tracking-wider">Top Genres</span>
+                        <Music className="h-4 w-4 text-pink-400" />
+                      </div>
+                      <div className="mt-4">
+                        {tasteMetrics.topGenres.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {tasteMetrics.topGenres.slice(0, 3).map((g) => (
+                              <span
+                                key={g}
+                                className="rounded-md bg-white/5 border border-white/10 px-2 py-0.5 text-xs font-medium text-text"
+                              >
+                                {g}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-sm font-bold text-text-muted">Eclectic Mix</span>
+                        )}
+                        <p className="mt-2 text-xs text-text-muted">
+                          Derived from listening preference
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* 4. Top Artist / Identity */}
+                    <div className="flex flex-col justify-between rounded-xl border border-border/60 bg-gradient-to-br from-surface to-surface-elevated/60 p-4 transition-all hover:border-border">
+                      <div className="flex items-center justify-between text-text-muted">
+                        <span className="text-xs font-bold uppercase tracking-wider">Top Artist</span>
+                        <Award className="h-4 w-4 text-amber-400" />
+                      </div>
+                      <div className="mt-4">
+                        <div className="truncate text-lg font-black text-text">
+                          {tasteMetrics.topArtist || 'Diverse Catalog'}
+                        </div>
+                        <p className="mt-1 text-xs text-text-muted">
+                          {tasteMetrics.listenerTier.title} ({tasteMetrics.listenerTier.badge})
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              )}
+
               <section className="mt-8">
                 <div className="flex items-end justify-between">
                   <div>
@@ -1240,7 +1379,9 @@ function ProfileWorkspace(): ReactElement {
                           </div>
                           <span className="text-xs text-text-muted">
                             {song.lastPlayedAt
-                              ? new Date(song.lastPlayedAt).toLocaleDateString()
+                              ? new Date(
+                                  song.lastPlayedAt < 10_000_000_000 ? song.lastPlayedAt * 1000 : song.lastPlayedAt
+                                ).toLocaleDateString()
                               : ''}
                           </span>
                         </div>

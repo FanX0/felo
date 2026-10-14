@@ -16,6 +16,7 @@ import OnlineGate from '../../components/Online/OnlineGate'
 import { useAppStore } from '../../hooks/useAppStore'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { useShallow } from 'zustand/react/shallow'
 import { useListeningStore } from '../../hooks/useListeningStore'
 import { useDirectChatStore } from '../../hooks/useDirectChatStore'
 import { getSupabase } from '../../lib/supabase'
@@ -71,7 +72,13 @@ interface ChatPageProps {
 
 function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
   const { user } = useOnlineStore()
-  const { queue, currentSongIndex, setQueue } = usePlayerStore()
+  const { queue, currentSongIndex, setQueue } = usePlayerStore(
+    useShallow((s) => ({
+      queue: s.queue,
+      currentSongIndex: s.currentSongIndex,
+      setQueue: s.setQueue
+    }))
+  )
   const { setSearchQuery } = useAppStore()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()

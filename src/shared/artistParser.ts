@@ -139,6 +139,23 @@ export function getArtistId(name: string): string {
   return computeMd5((name || '').trim().toLowerCase())
 }
 
+// In-memory cache for fast O(1) repeated artist parsing in virtualized lists
+const artistParseCache = new Map<string, ParsedArtist[]>()
+const MAX_CACHE_SIZE = 5000
+
+/**
+ * Strips featuring annotations from title when artist credits are displayed separately.
+ * e.g. "Song Name (feat. Artist B)" -> "Song Name"
+ */
+export function cleanTrackTitle(title?: string): string {
+  if (!title) return ''
+  return title
+    .replace(/\s*\((?:feat\.?|ft\.?|featuring|with|w\/)\s+[^)]+\)/gi, '')
+    .replace(/\s*\[(?:feat\.?|ft\.?|featuring|with|w\/)\s+[^\]]+\]/gi, '')
+    .replace(/\s+(?:feat\.?|ft\.?|featuring)\s+.*$/i, '')
+    .trim()
+}
+
 /**
  * Extracts featured artists from track title e.g. "Song Name (feat. Artist B)"
  */
@@ -146,9 +163,9 @@ function extractFeaturesFromTitle(title?: string): string[] {
   if (!title) return []
   const features: string[] = []
   const featPatterns = [
-    /\((?:feat\.|ft\.|featuring)\s+([^)]+)\)/gi,
-    /\[(?:feat\.|ft\.|featuring)\s+([^\]]+)\]/gi,
-    /\s+(?:feat\.|ft\.|featuring)\s+([^(\[]+)/gi
+    /\((?:feat\.?|ft\.?|featuring|with|w\/)\s+([^)]+)\)/gi,
+    /\[(?:feat\.?|ft\.?|featuring|with|w\/)\s+([^\]]+)\]/gi,
+    /\s+(?:feat\.?|ft\.?|featuring)\s+([^(\[]+)/gi
   ]
 
   for (const pattern of featPatterns) {
@@ -172,8 +189,8 @@ function splitRawArtistString(raw: string): string[] {
   if (!trimmed) return []
   if (isPreservedArtist(trimmed)) return [trimmed]
 
-  // First handle explicit 'feat.' / 'ft.' / 'featuring'
-  const featParts = trimmed.split(/\s+(?:feat\.|ft\.|featuring)\s+/i)
+  // First handle explicit 'feat.' / 'ft.' / 'featuring' (with or without dot)
+  const featParts = trimmed.split(/\s+(?:feat\.?|ft\.?|featuring)\s+/i)
   if (featParts.length > 1) {
     const results: string[] = []
     results.push(...splitRawArtistString(featParts[0]))
@@ -227,6 +244,15 @@ export function parseArtists(
   artistsArray?: string[],
   trackTitle?: string
 ): ParsedArtist[] {
+  // Fast path: if single string without title/array, use in-memory cache
+  const isSimpleString = Boolean(
+    primaryArtist && (!artistsArray || artistsArray.length === 0) && !trackTitle
+  )
+  if (isSimpleString && primaryArtist) {
+    const cached = artistParseCache.get(primaryArtist)
+    if (cached) return cached
+  }
+
   const rawList: Array<{ name: string; role: 'primary' | 'featured' }> = []
 
   // 1. If explicit artists array is provided by music-metadata or Spotify API
@@ -287,7 +313,17 @@ export function parseArtists(
 
   if (result.length === 0) {
     const fallback = (primaryArtist || 'Unknown Artist').trim()
-    return [{ name: fallback, role: 'primary' }]
+    const fallbackResult: ParsedArtist[] = [{ name: fallback, role: 'primary' }]
+    if (isSimpleString && primaryArtist) {
+      if (artistParseCache.size >= MAX_CACHE_SIZE) artistParseCache.clear()
+      artistParseCache.set(primaryArtist, fallbackResult)
+    }
+    return fallbackResult
+  }
+
+  if (isSimpleString && primaryArtist) {
+    if (artistParseCache.size >= MAX_CACHE_SIZE) artistParseCache.clear()
+    artistParseCache.set(primaryArtist, result)
   }
 
   return result

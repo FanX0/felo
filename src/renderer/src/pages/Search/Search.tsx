@@ -27,6 +27,8 @@ import { toMediaUrl } from '../../lib/media'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import type { DownloadTarget } from '../../components/DownloadPanel/DownloadPanel'
 import ArtistLinks from '../../components/Common/ArtistLinks'
+import { HighlightMatch } from '../../components/Common/HighlightMatch'
+import { ArtworkImage } from '../Home/components/ArtworkImage'
 
 type SearchTab = 'All' | 'Songs' | 'Artists' | 'Albums' | 'Playlists'
 
@@ -115,6 +117,60 @@ function formatSongDuration(seconds: number): string {
   return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`
 }
 
+
+function scoreSearchItem(item: SearchItem, query: string): number {
+  const normQuery = query.toLowerCase().trim()
+  const normTitle = (item.title || '').toLowerCase().trim()
+  const normArtist = (item.artist || '').toLowerCase().trim()
+  const normAlbum = (item.album || '').toLowerCase().trim()
+
+  let score = 0
+
+  // Exact matches
+  if (normTitle === normQuery) {
+    score += 100
+  } else if (normTitle.startsWith(normQuery)) {
+    score += 70
+  } else if (normTitle.includes(normQuery)) {
+    score += 40
+  }
+
+  if (normArtist === normQuery) {
+    score += 85
+  } else if (normArtist.startsWith(normQuery)) {
+    score += 60
+  } else if (normArtist.includes(normQuery)) {
+    score += 30
+  }
+
+  if (normAlbum === normQuery) {
+    score += 50
+  } else if (normAlbum.startsWith(normQuery)) {
+    score += 35
+  }
+
+  const tokens = normQuery.split(/\s+/).filter(Boolean)
+  if (tokens.length > 1) {
+    const combined = `${normTitle} ${normArtist} ${normAlbum}`
+    const allTokensMatch = tokens.every((t) => combined.includes(t))
+    if (allTokensMatch) score += 45
+  }
+
+  // Boost artists with high song counts
+  if (item.type === 'Artist') {
+    if (normTitle === normQuery || normTitle.startsWith(normQuery)) {
+      score += Math.min(30, (item.trackCount || 0) * 2)
+    }
+  }
+
+  // Boost albums with tracks
+  if (item.type === 'Album' && (item.trackCount || 0) > 0) {
+    score += Math.min(15, item.trackCount || 0)
+  }
+
+  return score
+}
+
 function Artwork({
   item,
   className,
@@ -124,6 +180,16 @@ function Artwork({
   className: string
   artist?: boolean
 }): ReactNode {
+  const fallbackIcon = artist ? (
+    <UserIcon className="w-1/3 h-1/3 text-text-muted" />
+  ) : item.type === 'Playlist' ? (
+    <ListMusic className="w-1/3 h-1/3 text-text-muted" />
+  ) : item.type === 'Album' ? (
+    <Disc3 className="w-1/3 h-1/3 text-text-muted" />
+  ) : (
+    <Music2 className="w-1/3 h-1/3 text-text-muted" />
+  )
+
   return (
     <div
       className={cn(
@@ -132,33 +198,20 @@ function Artwork({
         className
       )}
     >
-      {artist ? (
-        <UserIcon className="w-1/3 h-1/3 text-text-muted" />
-      ) : item.type === 'Playlist' ? (
-        <ListMusic className="w-1/3 h-1/3 text-text-muted" />
-      ) : item.type === 'Album' ? (
-        <Disc3 className="w-1/3 h-1/3 text-text-muted" />
-      ) : (
-        <Music2 className="w-1/3 h-1/3 text-text-muted" />
-      )}
-      {item.thumbnail && (
-        <img
-          src={item.thumbnail}
-          alt=""
-          draggable={false}
-          onError={(event) => {
-            event.currentTarget.style.display = 'none'
-          }}
-          className="absolute inset-0 h-full w-full object-cover"
-        />
-      )}
+      <ArtworkImage
+        src={item.thumbnail}
+        title={item.title}
+        artist={item.artist || ''}
+        className="absolute inset-0 h-full w-full object-cover"
+        fallbackIcon={fallbackIcon}
+      />
     </div>
   )
 }
 
 export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode {
-  const { searchQuery, searchMode, setSearchQuery, setSearchMode } = useAppStore()
-  const { setQueue } = usePlayerStore()
+  const { searchQuery, setSearchQuery, searchMode, setSearchMode } = useAppStore()
+  const { setQueue, queue, playSong, playbackContext } = usePlayerStore()
   const { transfers } = useDownloadStore()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -259,8 +312,23 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
         if (searchMode === 'apple_music') {
           const appleResults = await window.api.searchAppleMusic(query)
           if (!cancelled) {
+            const raw = appleResults as SearchSections
+            const allExternal = [
+              ...(raw.Artists || []),
+              ...(raw.Songs || []),
+              ...(raw.Albums || [])
+            ]
+            let topResult = raw['Top Results']?.[0]
+            if (!topResult && allExternal.length > 0) {
+              const scored = allExternal.map((item) => ({ item, score: scoreSearchItem(item, query) }))
+              scored.sort((a, b) => b.score - a.score)
+              topResult = scored[0].item
+            }
             setResults({
-              ...(appleResults as SearchSections),
+              'Top Results': topResult ? [topResult] : [],
+              Songs: raw.Songs || [],
+              Artists: raw.Artists || [],
+              Albums: raw.Albums || [],
               Playlists: []
             })
           }
@@ -270,8 +338,23 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
         if (searchMode === 'musicbrainz') {
           const musicBrainzResults = await window.api.searchMusicBrainz(query)
           if (!cancelled) {
+            const raw = musicBrainzResults as SearchSections
+            const allExternal = [
+              ...(raw.Artists || []),
+              ...(raw.Songs || []),
+              ...(raw.Albums || [])
+            ]
+            let topResult = raw['Top Results']?.[0]
+            if (!topResult && allExternal.length > 0) {
+              const scored = allExternal.map((item) => ({ item, score: scoreSearchItem(item, query) }))
+              scored.sort((a, b) => b.score - a.score)
+              topResult = scored[0].item
+            }
             setResults({
-              ...(musicBrainzResults as SearchSections),
+              'Top Results': topResult ? [topResult] : [],
+              Songs: raw.Songs || [],
+              Artists: raw.Artists || [],
+              Albums: raw.Albums || [],
               Playlists: []
             })
           }
@@ -281,8 +364,23 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
         if (searchMode === 'lastfm') {
           const lastFmResults = await window.api.searchLastFm(query)
           if (!cancelled) {
+            const raw = lastFmResults as SearchSections
+            const allExternal = [
+              ...(raw.Artists || []),
+              ...(raw.Songs || []),
+              ...(raw.Albums || [])
+            ]
+            let topResult = raw['Top Results']?.[0]
+            if (!topResult && allExternal.length > 0) {
+              const scored = allExternal.map((item) => ({ item, score: scoreSearchItem(item, query) }))
+              scored.sort((a, b) => b.score - a.score)
+              topResult = scored[0].item
+            }
             setResults({
-              ...(lastFmResults as SearchSections),
+              'Top Results': topResult ? [topResult] : [],
+              Songs: raw.Songs || [],
+              Artists: raw.Artists || [],
+              Albums: raw.Albums || [],
               Playlists: []
             })
           }
@@ -317,7 +415,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
             type: 'Artist',
             duration: null,
             url: '',
-            thumbnail: '',
+            thumbnail: toMediaUrl(artist.artworkPath) || '',
             trackCount: artist.songCount
           }))
 
@@ -333,12 +431,11 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
             trackCount: album.songCount
           }))
 
-          const lowerQuery = query.toLowerCase()
-          const matchingPlaylists = (playlists || []).filter(
-            (pl: any) =>
-              pl?.name?.toLowerCase().includes(lowerQuery) ||
-              pl?.description?.toLowerCase().includes(lowerQuery)
-          )
+          const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean)
+          const matchingPlaylists = (playlists || []).filter((pl: any) => {
+            const combined = `${pl?.name || ''} ${pl?.description || ''}`.toLowerCase()
+            return queryTokens.every((token) => combined.includes(token))
+          })
 
           const mappedPlaylists: SearchItem[] = matchingPlaylists.map((pl: any) => ({
             id: String(pl.id),
@@ -352,24 +449,21 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
             trackCount: pl.songCount
           }))
 
-          // Determine the most relevant top result
+          // Determine the most relevant top result using multi-factor relevance scoring
+          const allLocalItems = [
+            ...mappedArtists,
+            ...mappedSongs,
+            ...mappedAlbums,
+            ...mappedPlaylists
+          ]
           let topResult: SearchItem | undefined
-          const exactSong = mappedSongs.find((s) => s.title.toLowerCase() === lowerQuery)
-          const exactArtist = mappedArtists.find((a) => a.title.toLowerCase() === lowerQuery)
-          const exactAlbum = mappedAlbums.find((al) => al.title.toLowerCase() === lowerQuery)
-          const exactPlaylist = mappedPlaylists.find((pl) => pl.title.toLowerCase() === lowerQuery)
-
-          if (exactSong) {
-            topResult = exactSong
-          } else if (exactArtist) {
-            topResult = exactArtist
-          } else if (exactAlbum) {
-            topResult = exactAlbum
-          } else if (exactPlaylist) {
-            topResult = exactPlaylist
-          } else {
-            topResult =
-              mappedSongs[0] || mappedArtists[0] || mappedAlbums[0] || mappedPlaylists[0]
+          if (allLocalItems.length > 0) {
+            const scored = allLocalItems.map((item) => ({
+              item,
+              score: scoreSearchItem(item, query)
+            }))
+            scored.sort((a, b) => b.score - a.score)
+            topResult = scored[0].item
           }
 
           if (!cancelled) {
@@ -441,14 +535,14 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
             type: 'playlist',
             title: item.title,
             subtitle: `${playlistQueue.length} tracks`,
-            route: `/playlist/${item.id}`
+            route: `/playlists/${item.id}`
           })
           return
         }
       } catch (err) {
         console.error('Failed to play playlist tracks:', err)
       }
-      navigate(`/playlist/${item.id}`)
+      navigate(`/playlists/${item.id}`)
       return
     }
 
@@ -491,17 +585,24 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
       return
     }
 
-    const localMatch = localMatchFor(item)
-    if (localMatch) {
-      const queue = item.localSong
-        ? results.Songs.map((song) => song.localSong!).filter(Boolean)
-        : librarySongs
-      const index = queue.findIndex((song) => song.id === localMatch.id)
-      setQueue(queue, Math.max(0, index))
-      return
-    }
-
     if (item.type === 'Song') {
+      const isSameSearchContext =
+        playbackContext?.type === 'search' &&
+        playbackContext.title === `Search: "${searchQuery}"`
+
+      if (isSameSearchContext) {
+        const existingIdx = queue.findIndex(
+          (s) =>
+            s.id === item.id ||
+            (s.title.toLowerCase() === item.title.toLowerCase() &&
+              (!item.artist || !s.artist || s.artist.toLowerCase() === item.artist.toLowerCase()))
+        )
+        if (existingIdx >= 0) {
+          playSong(existingIdx)
+          return
+        }
+      }
+
       const searchQueue: Song[] = results.Songs.map((s) => {
         const match = localMatchFor(s)
         if (match) return match
@@ -536,6 +637,8 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
 
       const effectiveQueue = searchQueue.length > 0 ? searchQueue : [fallbackSong]
       const effectiveIndex = playIdx >= 0 ? playIdx : 0
+      const activeItem = effectiveQueue[effectiveIndex]
+      const isVirtual = !activeItem?.filePath || activeItem.filePath.startsWith('virtual:')
 
       setQueue(effectiveQueue, effectiveIndex, {
         type: 'search',
@@ -543,7 +646,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
         subtitle: `${effectiveQueue.length} tracks`,
         route: `/search?q=${encodeURIComponent(searchQuery)}`
       })
-      usePlayerStore.getState().setIsBuffering(true)
+      usePlayerStore.getState().setIsBuffering(isVirtual)
       return
     }
 
@@ -613,7 +716,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
       return
     }
     if (item.type === 'Playlist') {
-      navigate(`/playlist/${item.id}`)
+      navigate(`/playlists/${item.id}`)
       return
     }
 
@@ -645,7 +748,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
         type: 'Song',
         duration: formatSongDuration(song.duration),
         url: '',
-        thumbnail: toMediaUrl(song.artworkPath) || '',
+        thumbnail: toMediaUrl(song.artworkPath) || song.artworkUrl || '',
         localSong: song
       }))
 
@@ -960,7 +1063,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
                   />
                   <div className="mt-auto min-w-0 w-full pr-14">
                     <h3 className="text-2xl font-bold text-text truncate group-hover:text-primary-amber transition-colors">
-                      {topResult.title}
+                      <HighlightMatch text={topResult.title} query={searchQuery} />
                     </h3>
                     <div className="flex items-center gap-2 mt-2 text-xs text-text-muted min-w-0">
                       {localMatchFor(topResult) && (
@@ -1065,6 +1168,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
                   </div>
                   <SongList
                     songs={visibleSongs}
+                    query={searchQuery}
                     onPlay={handlePlayItem}
                     onDownload={handleDownloadItem}
                     onChooseSource={handleChooseSource}
@@ -1083,6 +1187,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
               </div>
               <SongList
                 songs={results.Songs}
+                query={searchQuery}
                 onPlay={handlePlayItem}
                 onDownload={handleDownloadItem}
                 onChooseSource={handleChooseSource}
@@ -1097,6 +1202,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
             <ResultGrid
               title="Artists"
               items={results.Artists}
+              query={searchQuery}
               artist
               onSelect={handleOpenItem}
               onPlay={handlePlayItem}
@@ -1110,6 +1216,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
             <ResultGrid
               title="Albums"
               items={results.Albums}
+              query={searchQuery}
               onSelect={handleOpenItem}
               onPlay={handlePlayItem}
               showAllButton={activeTab === 'All' && results.Albums.length > 6}
@@ -1122,6 +1229,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
             <ResultGrid
               title="Playlists"
               items={results.Playlists}
+              query={searchQuery}
               onSelect={handleOpenItem}
               onPlay={handlePlayItem}
               showAllButton={activeTab === 'All' && results.Playlists.length > 6}
@@ -1145,22 +1253,40 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
             external streaming catalogs.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-2 mt-2">
-            {searchMode !== 'apple_music' && (
-              <button
-                type="button"
-                onClick={() => setSearchMode('apple_music')}
-                className="px-3 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
-              >
-                <Globe className="w-3.5 h-3.5 text-primary-amber" /> Search Apple Music
-              </button>
-            )}
             {searchMode !== 'local' && (
               <button
                 type="button"
                 onClick={() => setSearchMode('local')}
-                className="px-3 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
+                className="px-3.5 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
               >
                 <HardDrive className="w-3.5 h-3.5 text-primary-amber" /> Search Local Library
+              </button>
+            )}
+            {searchMode !== 'apple_music' && (
+              <button
+                type="button"
+                onClick={() => setSearchMode('apple_music')}
+                className="px-3.5 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
+              >
+                <Globe className="w-3.5 h-3.5 text-primary-amber" /> Search Apple Music
+              </button>
+            )}
+            {searchMode !== 'lastfm' && (
+              <button
+                type="button"
+                onClick={() => setSearchMode('lastfm')}
+                className="px-3.5 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
+              >
+                <Radio className="w-3.5 h-3.5 text-primary-amber" /> Search Last.fm
+              </button>
+            )}
+            {searchMode !== 'musicbrainz' && (
+              <button
+                type="button"
+                onClick={() => setSearchMode('musicbrainz')}
+                className="px-3.5 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
+              >
+                <Database className="w-3.5 h-3.5 text-primary-amber" /> Search MusicBrainz
               </button>
             )}
           </div>
@@ -1226,6 +1352,7 @@ function RecentlyPlayedList({
 
 function SongList({
   songs,
+  query,
   onPlay,
   onDownload,
   onChooseSource,
@@ -1233,13 +1360,16 @@ function SongList({
   fullView = false
 }: {
   songs: SearchItem[]
-  onPlay: (item: SearchItem) => void
+  query?: string
+  onPlay: (item: SearchItem) => void | Promise<void>
   onDownload: (item: SearchItem) => void
   onChooseSource: (item: SearchItem) => void
   isLocal: (item: SearchItem) => Song | undefined
   fullView?: boolean
 }) {
-  const { currentSongIndex, queue, isPlaying } = usePlayerStore()
+  const currentSongIndex = usePlayerStore((s) => s.currentSongIndex)
+  const queue = usePlayerStore((s) => s.queue)
+  const isPlaying = usePlayerStore((s) => s.isPlaying)
   const { transfers } = useDownloadStore()
   const currentTrack = queue[currentSongIndex]
 
@@ -1327,7 +1457,7 @@ function SongList({
                       isCurrentSong ? 'text-primary-amber' : 'text-text'
                     )}
                   >
-                    {song.title}
+                    <HighlightMatch text={song.title} query={query} />
                   </span>
                   {song.explicit && (
                     <span className="text-[9px] font-bold px-1 rounded bg-surface-elevated text-text-muted border border-border/40">
@@ -1409,6 +1539,7 @@ function SongList({
 function ResultGrid({
   title,
   items,
+  query,
   artist = false,
   onSelect,
   onPlay,
@@ -1417,9 +1548,10 @@ function ResultGrid({
 }: {
   title: string
   items: SearchItem[]
+  query?: string
   artist?: boolean
   onSelect: (item: SearchItem) => void
-  onPlay?: (item: SearchItem) => void
+  onPlay?: (item: SearchItem) => void | Promise<void>
   showAllButton?: boolean
   onShowAll?: () => void
 }) {
@@ -1478,7 +1610,7 @@ function ResultGrid({
               )}
             </div>
             <div className="font-bold text-sm text-text group-hover:text-primary-amber transition-colors truncate">
-              {item.title}
+              <HighlightMatch text={item.title} query={query} />
             </div>
             <div className="text-xs text-text-muted mt-0.5 truncate">
               {artist

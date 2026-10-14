@@ -1,5 +1,6 @@
 import crypto from 'crypto'
 import { getDb } from '../database'
+import { LibraryService } from './LibraryService'
 
 export interface CreatePlaylistTrackInput {
   title: string
@@ -157,16 +158,32 @@ export class PlaylistService {
         )
         .all() as any[]
 
+      // Index local songs by normalized title for fast lookup candidates
+      const titleMap = new Map<string, any[]>()
+      for (const song of allLocalSongs) {
+        const normTitle = normalizeMatching(song.title || '')
+        if (!normTitle) continue
+        let bucket = titleMap.get(normTitle)
+        if (!bucket) {
+          bucket = []
+          titleMap.set(normTitle, bucket)
+        }
+        bucket.push(song)
+      }
+
+      const updateItem = db.prepare(
+        'UPDATE OR IGNORE playlist_items SET songId = ? WHERE playlistId = ? AND songId = ?'
+      )
+      const matchesToUpdate: Array<{ matchId: string; virtualId: string }> = []
+
       for (let i = 0; i < playlistSongs.length; i++) {
         const s = playlistSongs[i]
         if (s.filePath && String(s.filePath).startsWith('virtual:')) {
-          const match = findMatchingLocalSong(s.title, s.artist, allLocalSongs)
+          const normTitle = normalizeMatching(s.title || '')
+          const candidates = (normTitle && titleMap.get(normTitle)) || allLocalSongs
+          const match = findMatchingLocalSong(s.title, s.artist, candidates)
           if (match) {
-            try {
-              db.prepare(
-                'UPDATE OR IGNORE playlist_items SET songId = ? WHERE playlistId = ? AND songId = ?'
-              ).run(match.id, playlistId, s.id)
-            } catch {}
+            matchesToUpdate.push({ matchId: match.id, virtualId: s.id })
             playlistSongs[i] = {
               ...match,
               playlistDateAdded: s.playlistDateAdded,
@@ -175,8 +192,20 @@ export class PlaylistService {
           }
         }
       }
+
+      if (matchesToUpdate.length > 0) {
+        const applyUpdates = db.transaction(() => {
+          for (const item of matchesToUpdate) {
+            try {
+              updateItem.run(item.matchId, playlistId, item.virtualId)
+            } catch {}
+          }
+        })
+        applyUpdates()
+      }
     }
 
+    LibraryService.attachSongArtists(playlistSongs)
     playlist.songs = playlistSongs
 
     return playlist
@@ -212,6 +241,12 @@ export class PlaylistService {
       let sortOrder = 0
 
       if (Array.isArray(input.tracks) && input.tracks.length > 0) {
+        const insertVirtualSong = db.prepare(
+          `
+            INSERT INTO songs (id, title, artist, album, duration, filePath, size, isFavorite, playCount)
+            VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0)
+          `
+        )
         for (const track of input.tracks) {
           let songId = track.matchedSongId
 
@@ -223,20 +258,16 @@ export class PlaylistService {
             const duration = Number(track.duration) || 0
             const virtualPath = `virtual:imported:${crypto.randomUUID()}`
 
-            db.prepare(
-              `
-                INSERT INTO songs (id, title, artist, album, duration, filePath, size, isFavorite, playCount)
-                VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0)
-              `
-            ).run(songId, title, artist, album, duration, virtualPath)
+            insertVirtualSong.run(songId, title, artist, album, duration, virtualPath)
           }
 
           insertItem.run(crypto.randomUUID(), id, songId, sortOrder++)
         }
       } else if (Array.isArray(input.songIds) && input.songIds.length > 0) {
+        const checkSongExists = db.prepare('SELECT 1 FROM songs WHERE id = ?')
         const songIds = [...new Set(input.songIds)]
         for (const songId of songIds) {
-          const exists = db.prepare('SELECT 1 FROM songs WHERE id = ?').get(songId)
+          const exists = checkSongExists.get(songId)
           if (exists) {
             insertItem.run(crypto.randomUUID(), id, songId, sortOrder++)
           }

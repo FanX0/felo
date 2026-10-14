@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { useShallow } from 'zustand/react/shallow'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
 import { toMediaUrl } from '../../lib/media'
 import { findMatchingLibrarySong, scoreProviderMatch, cleanSearchQuery } from '../../lib/songMatching'
@@ -79,7 +80,15 @@ interface SourceResult {
 }
 
 export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProps) {
-  const { queue, currentSongIndex, isPlaying, togglePlay, setQueue } = usePlayerStore()
+  const { queue, currentSongIndex, isPlaying, togglePlay, setQueue } = usePlayerStore(
+    useShallow((s) => ({
+      queue: s.queue,
+      currentSongIndex: s.currentSongIndex,
+      isPlaying: s.isPlaying,
+      togglePlay: s.togglePlay,
+      setQueue: s.setQueue
+    }))
+  )
   const { transfers, queueTransfer, updateTransfer } = useDownloadStore()
   const navigate = useNavigate()
   const currentSong = queue[currentSongIndex]

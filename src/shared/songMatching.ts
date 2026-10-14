@@ -127,6 +127,80 @@ export function cleanSearchQuery(artist?: string, title?: string, fallbackQuery?
   return ''
 }
 
+export interface SmartParsedQuery {
+  title: string
+  artist: string
+  cleanQuery: string
+  isCollaboration: boolean
+}
+
+/**
+ * Parses user input queries into canonical title, artist, and collaboration metadata.
+ * Handles natural connectors like "by", "-", "feat.", "ft.", "&", "with".
+ */
+export function parseSmartQuery(raw: string, explicitArtist?: string): SmartParsedQuery {
+  if (!raw) {
+    return { title: '', artist: explicitArtist?.trim() || '', cleanQuery: '', isCollaboration: false }
+  }
+
+  let text = stripJunkTags(raw)
+    .replace(/^(?:play|putar|dengarkan|listen to)\s+/i, '')
+    .replace(TRACK_NUM_PREFIX_REGEX, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  const cleanQuery = text
+    .replace(/\b(?:song|songs|lagu|track|audio|music)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (explicitArtist && explicitArtist.trim()) {
+    const artist = explicitArtist.trim()
+    const title = cleanQuery.replace(new RegExp(`\\b${artist}\\b`, 'gi'), '').trim() || cleanQuery
+    return {
+      title,
+      artist,
+      cleanQuery: `${artist} ${title}`.trim(),
+      isCollaboration: /\b(?:feat\.?|ft\.?|&|\bwith\b|\bvs\.?\b)\b/i.test(artist)
+    }
+  }
+
+  // 1. Connector: "Title by Artist" (e.g. "Shape of You by Ed Sheeran")
+  const byMatch = cleanQuery.match(/^(.+?)\s+by\s+(.+)$/i)
+  if (byMatch) {
+    const title = byMatch[1].trim()
+    const artist = byMatch[2].trim()
+    return {
+      title,
+      artist,
+      cleanQuery: `${artist} ${title}`,
+      isCollaboration: /\b(?:feat\.?|ft\.?|&|\bwith\b|\bvs\.?\b)\b/i.test(artist)
+    }
+  }
+
+  // 2. Connector: "Artist - Title" (e.g. "Coldplay - Yellow")
+  const dashMatch = cleanQuery.match(/^(.+?)\s*-\s*(.+)$/i)
+  if (dashMatch) {
+    const artist = dashMatch[1].trim()
+    const title = dashMatch[2].trim()
+    return {
+      title,
+      artist,
+      cleanQuery: `${artist} ${title}`,
+      isCollaboration: /\b(?:feat\.?|ft\.?|&|\bwith\b|\bvs\.?\b)\b/i.test(artist)
+    }
+  }
+
+  const isCollaboration = /\b(?:feat\.?|ft\.?|&|\bwith\b|\bvs\.?\b)\b/i.test(cleanQuery)
+
+  return {
+    title: cleanQuery,
+    artist: '',
+    cleanQuery,
+    isCollaboration
+  }
+}
+
 /**
  * Parses a Soulseek or local file path into extracted artist, title, and album metadata.
  */

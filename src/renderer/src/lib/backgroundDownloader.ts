@@ -12,6 +12,8 @@ import { cleanSearchQuery, findMatchingLibrarySong, scoreProviderMatch } from '.
 export interface DownloadSongOptions {
   conflictMode?: DownloadConflictMode
   autoPlay?: boolean
+  playAction?: 'play_now' | 'play_next' | 'enqueue'
+  requestedBy?: string
   openDrawer?: boolean
   skipIfExists?: boolean
 }
@@ -31,6 +33,8 @@ export async function downloadTrackInBackground(
   const {
     conflictMode = 'keep_both',
     autoPlay = false,
+    playAction,
+    requestedBy,
     openDrawer = false,
     skipIfExists = true
   } = options
@@ -75,6 +79,8 @@ export async function downloadTrackInBackground(
       progress: 2,
       message: `Searching sources for "${song.title}"...`,
       autoPlay,
+      playAction: playAction || (autoPlay ? 'play_now' : undefined),
+      requestedBy,
       song: song as any
     },
     { openDrawer }
@@ -108,6 +114,17 @@ export async function downloadTrackInBackground(
     let chosenResult: any = null
 
     for (const source of priority) {
+      // Fast-skip provider if login/credentials are required but not configured
+      if (source === 'qobuz' && !accounts.qobuzSecret && !accounts.qobuzUser) {
+        continue
+      }
+      if (source === 'deezer' && !accounts.deezerArl) {
+        continue
+      }
+      if (source === 'soulseek' && !accounts.soulseekUser && !accounts.soulseekPassword) {
+        continue
+      }
+
       useDownloadStore.getState().updateTransfer(transferId, {
         source,
         sourceName: sourceName(source),
@@ -116,10 +133,13 @@ export async function downloadTrackInBackground(
 
       try {
         const searchPromise = window.api?.searchDownloadSource?.(source, query, accounts)
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Search timed out (12s)')), 12000)
-        )
-        const rawResults = await Promise.race([searchPromise, timeoutPromise])
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Search timed out (12s)')), 12000)
+        })
+        const rawResults = await Promise.race([searchPromise, timeoutPromise]).finally(() => {
+          if (timer) clearTimeout(timer)
+        })
         const results = Array.isArray(rawResults) ? rawResults : []
         if (results.length === 0) continue
 

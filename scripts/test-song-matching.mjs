@@ -4,7 +4,8 @@ import {
   cleanSearchQuery,
   parseAudioFilePath,
   stringSimilarity,
-  scoreProviderMatch
+  scoreProviderMatch,
+  parseSmartQuery
 } from '../src/shared/songMatching.js'
 
 console.log('--- Running Song Matching Test Suite ---')
@@ -163,4 +164,24 @@ console.log('--- Running Song Matching Test Suite ---')
   console.log(`✓ Collaboration freeform query scored ${scoreCollab.score}% (${scoreCollab.confidence})`)
 }
 
-console.log('\n--- All 10 Song Matching Verification Tests Passed Successfully! ---')
+// 11. parseSmartQuery - Natural language and connector queries
+{
+  const p1 = parseSmartQuery('Walau Berantakan by Prince Husein')
+  assert.strictEqual(p1.title, 'Walau Berantakan')
+  assert.strictEqual(p1.artist, 'Prince Husein')
+  assert.strictEqual(p1.cleanQuery, 'Prince Husein Walau Berantakan')
+
+  const p2 = parseSmartQuery('Coldplay - Yellow')
+  assert.strictEqual(p2.artist, 'Coldplay')
+  assert.strictEqual(p2.title, 'Yellow')
+
+  const p3 = parseSmartQuery('feby hussein song')
+  assert.strictEqual(p3.cleanQuery, 'feby hussein')
+
+  const p4 = parseSmartQuery('Prince Husein feat. Feby Putri - Walau Berantakan')
+  assert.strictEqual(p4.isCollaboration, true)
+  assert.strictEqual(p4.title, 'Walau Berantakan')
+  console.log('✓ parseSmartQuery accurately decomposes connectors, artists, and collaborations')
+}
+
+console.log('\n--- All 11 Song Matching Verification Tests Passed Successfully! ---')

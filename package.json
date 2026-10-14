@@ -32,7 +32,10 @@
     "mobile:sync": "npx cap sync",
     "mobile:apk": "npm run build && npx cap sync android && cd android && gradlew.bat assembleDebug",
     "mobile:android": "npx cap open android",
-    "mobile:ios": "npx cap open ios"
+    "mobile:ios": "npx cap open ios",
+    "sync:private": "node scripts/repo-sync.mjs private",
+    "sync:public": "node scripts/repo-sync.mjs public",
+    "sync:status": "node scripts/repo-sync.mjs status"
   },
   "dependencies": {
     "@capacitor/core": "^8.5.3",

@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'http'
-import { randomBytes } from 'crypto'
+import { randomBytes, timingSafeEqual } from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
@@ -408,7 +408,13 @@ export class RemoteControlService {
     const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
     const queryToken = parsedUrl.searchParams.get('token') || ''
     const providedToken = bearerToken || queryToken
-    const isTokenValid = providedToken === this.token
+    const providedBuf = Buffer.from(providedToken)
+    const tokenBuf = Buffer.from(this.token)
+    const isTokenValid = Boolean(
+      this.token &&
+        providedBuf.length === tokenBuf.length &&
+        timingSafeEqual(providedBuf, tokenBuf)
+    )
 
     // Static assets & web client do not strictly require token to download HTML/JS/CSS,
     // but the app on the phone stores and sends the token for all API and SSE calls.

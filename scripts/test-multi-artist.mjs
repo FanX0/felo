@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { parseArtists, formatArtistsDisplay, getArtistId } from '../src/shared/artistParser.js'
+import { parseArtists, formatArtistsDisplay, getArtistId, cleanTrackTitle } from '../src/shared/artistParser.ts'
 
 console.log('Testing Multi-Artist Parser...')
 
@@ -74,6 +74,36 @@ console.log('Testing Multi-Artist Parser...')
   const id1 = getArtistId('Bruno Mars')
   const id2 = getArtistId('bruno mars')
   assert.equal(id1, id2)
+}
+
+// 8. cleanTrackTitle
+{
+  assert.equal(cleanTrackTitle('Levitating (feat. DaBaby)'), 'Levitating')
+  assert.equal(cleanTrackTitle('STAY (with Justin Bieber)'), 'STAY')
+  assert.equal(cleanTrackTitle('Industry Baby [feat Lil Nas X]'), 'Industry Baby')
+  assert.equal(cleanTrackTitle('Plain Song Title'), 'Plain Song Title')
+}
+
+// 9. Track title feature extraction with dot-less ft and with
+{
+  const res1 = parseArtists('The Kid LAROI', undefined, 'STAY (with Justin Bieber)')
+  assert.equal(res1.length, 2)
+  assert.equal(res1[0].name, 'The Kid LAROI')
+  assert.equal(res1[1].name, 'Justin Bieber')
+  assert.equal(res1[1].role, 'featured')
+
+  const res2 = parseArtists('Dua Lipa', undefined, 'Levitating (ft DaBaby)')
+  assert.equal(res2.length, 2)
+  assert.equal(res2[0].name, 'Dua Lipa')
+  assert.equal(res2[1].name, 'DaBaby')
+  assert.equal(res2[1].role, 'featured')
+}
+
+// 10. LRU / Memory Cache lookup returns identical references
+{
+  const first = parseArtists('Coldplay & BTS')
+  const second = parseArtists('Coldplay & BTS')
+  assert.equal(first, second)
 }
 
 console.log('All multi-artist parser tests passed successfully!')
