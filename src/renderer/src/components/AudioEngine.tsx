@@ -279,7 +279,14 @@ export default function AudioEngine() {
     }
 
     syncAudio(usePlayerStore.getState())
-    return usePlayerStore.subscribe((state, previousState) => {
+
+    const handlePrivacyRefresh = () => {
+      syncAudio(usePlayerStore.getState())
+    }
+    window.addEventListener('felo:private-session-changed', handlePrivacyRefresh)
+    window.addEventListener('felo:media-session-refresh', handlePrivacyRefresh)
+
+    const unsubscribe = usePlayerStore.subscribe((state, previousState) => {
       const song = state.queue[state.currentSongIndex]
       const previousSong = previousState.queue[previousState.currentSongIndex]
       if (
@@ -291,6 +298,12 @@ export default function AudioEngine() {
         syncAudio(state)
       }
     })
+
+    return () => {
+      window.removeEventListener('felo:private-session-changed', handlePrivacyRefresh)
+      window.removeEventListener('felo:media-session-refresh', handlePrivacyRefresh)
+      unsubscribe()
+    }
   }, [setCurrentTime, setDuration])
 
   useEffect(() => {

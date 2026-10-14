@@ -127,14 +127,19 @@ export default function MobileNowPlaying({
     setScrubPreview(localPos)
   }
 
+  const user = useOnlineStore((s) => s.user)
+  const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
+  const isCloudRemote = Boolean(activeRemote && activeRemote.song && user?.id)
   const isRemoteActive = Boolean(isConnected && state.song)
 
   const handleScrubEnd = () => {
     triggerHaptic(14)
     setIsScrubbing(false)
     setLocalPos(scrubPreview)
-    if (isRemoteActive) {
+    if (remoteClient.getIsConnected()) {
       void remoteClient.seek(scrubPreview)
+    } else if (isCloudRemote && activeRemote && user?.id) {
+      void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'seek', { seconds: scrubPreview })
     } else {
       usePlayerStore.getState().seek(scrubPreview)
     }
@@ -142,8 +147,14 @@ export default function MobileNowPlaying({
 
   const handleTogglePlay = () => {
     triggerHaptic(15)
-    if (isRemoteActive) {
+    if (remoteClient.getIsConnected()) {
       void remoteClient.togglePlay()
+    } else if (isCloudRemote && activeRemote && user?.id) {
+      void sendDeviceCommand(
+        user.id,
+        activeRemote.activeDeviceId,
+        activeRemote.isPlaying ? 'pause' : 'play'
+      )
     } else {
       usePlayerStore.getState().togglePlay()
     }
@@ -151,8 +162,10 @@ export default function MobileNowPlaying({
 
   const handleNext = () => {
     triggerHaptic(15)
-    if (isRemoteActive) {
+    if (remoteClient.getIsConnected()) {
       void remoteClient.next()
+    } else if (isCloudRemote && activeRemote && user?.id) {
+      void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'next')
     } else {
       usePlayerStore.getState().playNext(true)
     }
@@ -160,8 +173,10 @@ export default function MobileNowPlaying({
 
   const handlePrevious = () => {
     triggerHaptic(15)
-    if (isRemoteActive) {
+    if (remoteClient.getIsConnected()) {
       void remoteClient.previous()
+    } else if (isCloudRemote && activeRemote && user?.id) {
+      void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'previous')
     } else {
       usePlayerStore.getState().playPrevious()
     }
@@ -169,7 +184,7 @@ export default function MobileNowPlaying({
 
   const handleToggleShuffle = () => {
     triggerHaptic(10)
-    if (isRemoteActive) {
+    if (remoteClient.getIsConnected()) {
       void remoteClient.setMode(!state.shuffle, undefined)
     } else {
       usePlayerStore.getState().toggleShuffle()
@@ -178,7 +193,7 @@ export default function MobileNowPlaying({
 
   const handleToggleRepeat = () => {
     triggerHaptic(10)
-    if (isRemoteActive) {
+    if (remoteClient.getIsConnected()) {
       const nextRepeat =
         state.repeat === 'off' ? 'all' : state.repeat === 'all' ? 'one' : 'off'
       void remoteClient.setMode(undefined, nextRepeat)
@@ -192,10 +207,17 @@ export default function MobileNowPlaying({
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = Number(e.target.value)
     setVolume(val)
-    if (isRemoteActive) {
+    if (remoteClient.getIsConnected()) {
       if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current)
       volumeTimerRef.current = setTimeout(() => {
         void remoteClient.setVolume(val)
+      }, 75)
+    } else if (isCloudRemote && activeRemote && user?.id) {
+      if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current)
+      volumeTimerRef.current = setTimeout(() => {
+        void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'volume', {
+          volume: val / 100
+        })
       }, 75)
     } else {
       usePlayerStore.getState().setVolume(val / 100)
@@ -567,7 +589,7 @@ export default function MobileNowPlaying({
               ? 'Playing on Both (PC + Phone)'
               : isMobileTarget
                 ? `Listening on ${getDeviceDisplayName()}`
-                : isConnected
+                : isConnected || state.isPlaying || Boolean(state.song)
                   ? `Listening on ${state.deviceName || 'Felo Desktop'}`
                   : 'Reconnecting...'}
           </span>

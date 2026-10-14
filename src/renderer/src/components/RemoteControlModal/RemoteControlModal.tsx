@@ -53,7 +53,7 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
   const [copied, setCopied] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
-  const [qrMode, setQrMode] = useState<'cloudflare' | 'local'>('cloudflare')
+  const [qrMode, setQrMode] = useState<'cloudflare' | 'local'>('local')
 
   // Web mode state
   const [currentTarget, setCurrentTarget] = useState<PlaybackTarget>(() => remoteClient.getTargetDevice())
@@ -171,8 +171,15 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
 
         if (!error && Array.isArray(data)) {
           const now = Date.now()
-          const active = data.filter((d: any) => now - new Date(d.last_seen_at).getTime() < 180_000)
-          setDiscoveredDevices(active)
+          const active = data.filter((d: any) => now - new Date(d.last_seen_at).getTime() < 300_000)
+          const storeDevs = useConnectedDeviceStore.getState().discoveredDevices
+          const merged = [...active]
+          for (const sDev of storeDevs) {
+            if (!merged.some((m) => m.id === sDev.id)) {
+              merged.push(sDev)
+            }
+          }
+          setDiscoveredDevices(merged)
         }
       } catch (err) {
         console.warn('[RemoteControlModal] Failed to fetch devices:', err)

@@ -107,10 +107,51 @@ export default function CrossTabSyncBridge(): null {
               }
               break
             }
+
+            case 'REQUEST_SYNC_STATE': {
+              if (state.isAudioActive && (state.queue.length > 0 || state.isPlaying)) {
+                const audioTime = getActiveAudioTime() || state.currentTime
+                const snapshot: PlayerSyncSnapshot = {
+                  isPlaying: state.isPlaying,
+                  isBuffering: state.isBuffering,
+                  currentSongIndex: state.currentSongIndex,
+                  queue: state.queue,
+                  originalQueue: state.originalQueue,
+                  currentTime: audioTime,
+                  duration: state.duration,
+                  volume: state.volume,
+                  isShuffle: state.isShuffle,
+                  repeatMode: state.repeatMode,
+                  playbackContext: state.playbackContext,
+                  timestamp: Date.now(),
+                  activeInstanceId: tabId
+                }
+                sendRealtimeBroadcast('SYNC_STATE_RESPONSE', {
+                  targetId: payload.senderId,
+                  snapshot
+                })
+              }
+              break
+            }
+
+            case 'SYNC_STATE_RESPONSE': {
+              if (payload.payload?.targetId && payload.payload.targetId !== tabId) return
+              if (!payload.payload?.snapshot) return
+              isApplyingRemoteRef.current = true
+              state.syncFromExternal({
+                ...payload.payload.snapshot,
+                activeInstanceId: payload.senderId
+              })
+              break
+            }
           }
         })
 
-        channel.subscribe()
+        channel.subscribe((status: string) => {
+          if (status === 'SUBSCRIBED') {
+            sendRealtimeBroadcast('REQUEST_SYNC_STATE')
+          }
+        })
         currentChannel = channel
         realtimeChannelRef.current = channel
       } catch (err) {

@@ -35,6 +35,7 @@ import { ArtworkImage } from '../Home/components/ArtworkImage'
 import { AppCapabilities } from '../../lib/appConfig'
 import { remoteClient } from '../Remote/remoteClient'
 import { remoteLibraryService } from '../../services/RemoteLibraryService'
+import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
 
 type ArtistPageTrack = {
   id: string
@@ -216,6 +217,23 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
               createdAt: Date.now()
             }))
             data = [...data, ...mappedRemote]
+          }
+        } else if (!hasArtistSongs && !remoteClient.getIsConnected()) {
+          const remotePlayback = useConnectedDeviceStore.getState().activePlayback
+          const s = remotePlayback?.song
+          if (s && artistNameMatches(s.artist || '', decodedName)) {
+            const mappedRemote: Song = {
+              id: s.id,
+              title: s.title,
+              artist: s.artist || decodedName,
+              album: s.album || '',
+              duration: s.duration || 0,
+              filePath: `virtual:${s.title} - ${s.artist}`,
+              artworkPath: s.artworkUrl || toMediaUrl(s.artworkPath) || '',
+              artworkUrl: s.artworkUrl || toMediaUrl(s.artworkPath) || '',
+              isOnline: true
+            }
+            data = [...data, mappedRemote]
           }
         }
         if (mounted) setSongs(data)

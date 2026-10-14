@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { usePlayerStore } from '../hooks/usePlayerStore'
 import { useListeningStore } from '../hooks/useListeningStore'
 import { useOnlineStore } from '../hooks/useOnlineStore'
+import { usePrivateSessionStore } from '../hooks/usePrivateSessionStore'
 import { getActiveAudioElement } from '../lib/audioBridge'
 import { downloadTrackInBackground } from '../lib/backgroundDownloader'
 import type { Song } from '../pages/Library/Library'
@@ -99,7 +100,8 @@ export default function PlaybackControlBridge() {
           useListeningStore.getState().hostRoom ||
           (useListeningStore.getState().joinedRoom &&
            useListeningStore.getState().joinedRoom?.host_id === useOnlineStore.getState().user?.id)
-        )
+        ),
+        isPrivateSession: usePrivateSessionStore.getState().isPrivateSession
       }
     }
     const publish = () => {
@@ -120,6 +122,9 @@ export default function PlaybackControlBridge() {
       if (songChanged || playbackChanged || volumeChanged || queueChanged || modeChanged) {
         publish()
       }
+    })
+    const unsubscribePrivateStore = usePrivateSessionStore.subscribe(() => {
+      publish()
     })
     const audio = document.querySelector('audio')
     const audioEvents = [
@@ -449,6 +454,7 @@ export default function PlaybackControlBridge() {
       disposed = true
       window.clearInterval(interval)
       unsubscribeStore()
+      unsubscribePrivateStore()
       audioEvents.forEach((event) => audio?.removeEventListener(event, onAudioChange))
       removeCommandListener()
     }

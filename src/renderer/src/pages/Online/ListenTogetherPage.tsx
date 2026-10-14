@@ -25,7 +25,8 @@ import {
   VolumeX,
   Wifi,
   Plus,
-  Sparkles
+  Sparkles,
+  ClipboardPaste
 } from 'lucide-react'
 import QRCode from 'qrcode'
 import { useSearchParams, NavLink } from 'react-router-dom'
@@ -676,15 +677,16 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
     const songProgress = songDuration > 0 ? Math.min(100, (currentTime / songDuration) * 100) : 0
 
     return (
-      <div className="mx-auto flex h-full w-full max-w-4xl flex-col px-8 py-7 overflow-y-auto pb-24 select-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="mx-auto flex h-full w-full max-w-4xl flex-col px-4 sm:px-6 md:px-8 py-5 sm:py-7 overflow-y-auto pb-36 sm:pb-32 md:pb-24 select-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {/* Active Header */}
-        <header className="flex items-center justify-between border-b border-border pb-6">
+        <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/80 pb-6">
           <div>
             <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-text">
-              <Radio className="h-4 w-4 animate-pulse" />
-              Listening Along Live
+              <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              <Radio className="h-4 w-4 animate-pulse text-emerald-400" />
+              <span>Listening Along Live</span>
             </div>
-            <h1 className="mt-1.5 text-3xl font-extrabold text-text tracking-tight">
+            <h1 className="mt-1.5 text-2xl sm:text-3xl font-extrabold text-text tracking-tight">
               {joinedRoom.name}
             </h1>
             <p className="mt-1 text-xs text-text-muted">
@@ -692,7 +694,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
             {/* Ephemeral Stream vs Save toggle */}
             <button
               type="button"
@@ -702,14 +704,14 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                   ? 'Saving full tracks to local library (Personal copy)'
                   : 'Stream Mode: Ephemeral playback in RAM only (Safe & Compliant • No file saved)'
               }
-              className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all border ${
+              className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all border cursor-pointer ${
                 autoDownloadMissing
                   ? 'border-amber-500/40 bg-amber-500/15 text-amber-300'
                   : 'border-emerald-500/40 bg-emerald-500/15 text-emerald-400'
               }`}
             >
               <Radio className="h-3.5 w-3.5" />
-              <span>{autoDownloadMissing ? 'Save to Library: ON' : 'Stream Mode: Ephemeral (Lossless)'}</span>
+              <span>{autoDownloadMissing ? 'Save to Library: ON' : 'Lossless RAM Stream'}</span>
             </button>
 
             {/* Leave / Stop Syncing button */}
@@ -717,29 +719,29 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
               type="button"
               onClick={handleLeaveSession}
               disabled={busy}
-              className="flex items-center gap-2 rounded-full bg-danger/15 border border-danger/30 hover:bg-danger hover:text-white px-4 py-2 text-xs font-bold text-danger transition-all disabled:opacity-50"
+              className="flex items-center gap-2 rounded-full bg-danger/15 border border-danger/30 hover:bg-danger hover:text-white px-4 py-2 text-xs font-bold text-danger transition-all disabled:opacity-50 cursor-pointer"
             >
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogOut className="h-3.5 w-3.5" />}
-              Stop Listening Along
+              <span>Stop Listening</span>
             </button>
           </div>
         </header>
 
         {/* Compliance & Fidelity Notice */}
-        <div className="mt-4 p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex items-center justify-between gap-3 text-xs">
+        <div className="mt-4 p-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 flex items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2.5">
-            <span className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+            <span className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 shrink-0">
               <Radio className="w-4 h-4" />
             </span>
             <div>
-              <span className="font-bold text-white flex items-center gap-2">
-                <span>Mode A: Ephemeral Live Stream</span>
+              <span className="font-bold text-white flex items-center gap-2 flex-wrap">
+                <span>Lossless Ephemeral Audio Sync</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 font-mono">
-                  100% Studio Lossless • Ephemeral in RAM
+                  100% Studio Lossless • In-RAM
                 </span>
               </span>
               <p className="text-[11px] text-emerald-100/70 mt-0.5">
-                Audio plays live in synchronized lossless quality for this session only. No permanent files are saved or distributed to listener drives.
+                Audio streams in synchronized lossless quality for this session only. No permanent files are saved to your drive.
               </p>
             </div>
           </div>
@@ -1088,8 +1090,8 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
 
         {/* Replace Modal */}
         {showReplaceModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-            <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-2xl">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-5 sm:p-6 shadow-2xl">
               <div className="flex items-center justify-between border-b border-border pb-4">
                 <div>
                   <h3 className="text-base font-bold text-text">Choose Replacement Track</h3>
@@ -1100,20 +1102,20 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                 <button
                   type="button"
                   onClick={() => setShowReplaceModal(false)}
-                  className="rounded-full p-1 text-text-muted hover:bg-hover hover:text-text"
+                  className="rounded-full p-1.5 text-text-muted hover:bg-hover hover:text-text cursor-pointer"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
 
               <div className="mt-4 relative">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-text-muted" />
+                <Search className="absolute left-3 top-3 h-4 w-4 text-text-muted" />
                 <input
                   type="text"
                   placeholder="Search your library..."
                   value={replaceSearchQuery}
                   onChange={(e) => setReplaceSearchQuery(e.target.value)}
-                  className="w-full rounded-full border border-border bg-surface-elevated py-2 pl-9 pr-4 text-xs font-medium text-text placeholder-text-muted focus:border-white/40 focus:outline-none"
+                  className="w-full h-10 rounded-xl border border-border bg-surface-elevated py-2 pl-9 pr-4 text-xs font-medium text-text placeholder-text-muted focus:border-white/50 focus:outline-none"
                 />
               </div>
 
@@ -1178,28 +1180,32 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   // VIEW B: LIVE SESSIONS HUB (DEFAULT SPOTIFY-STYLE EXPERIENCE)
   // ──────────────────────────────────────────────────────────────────────────
   return (
-    <div className="mx-auto flex h-full w-full max-w-4xl flex-col px-8 py-7 overflow-y-auto pb-24 select-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div className="mx-auto flex h-full w-full max-w-4xl flex-col px-4 sm:px-6 md:px-8 py-5 sm:py-7 overflow-y-auto pb-36 sm:pb-32 md:pb-24 select-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       {/* Top Header */}
-      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border pb-6">
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/80 pb-6">
         <div>
           <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-text">
-            <Radio className="h-4 w-4 animate-pulse text-primary-amber" />
-            Live Listening Sessions
+            <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            <Radio className="h-3.5 w-3.5 text-text" />
+            <span>Live Audio Sync</span>
           </div>
-          <h1 className="mt-1.5 text-3xl font-extrabold text-text tracking-tight">
+          <h1 className="mt-1.5 text-2xl sm:text-3xl font-extrabold text-text tracking-tight">
             Listen Together
           </h1>
-          <p className="mt-1 text-xs text-text-muted">
-            Listen along with your friends in real-time with instant auto-sync.
+          <p className="mt-1 text-xs sm:text-sm text-text-muted">
+            Listen along with friends in real-time with instant auto-sync.
           </p>
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
           {!hostRoom?.code && (
-            <div className="flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-1.5 text-xs font-semibold text-emerald-400 shadow-sm">
+            <div
+              title="Ephemeral In-RAM streaming: Audio streams live without saving permanent files to listener drives."
+              className="flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-1.5 text-xs font-semibold text-emerald-400 shadow-sm"
+            >
               <Radio className="h-3.5 w-3.5 animate-pulse" />
-              <span>Mode A: In-RAM Stream</span>
-              <span className="text-[10px] text-emerald-300/70 font-mono hidden md:inline">• Studio Lossless</span>
+              <span>Lossless Stereo Sync</span>
+              <span className="text-[10px] text-emerald-300/80 font-mono hidden sm:inline">• In-RAM Stream</span>
             </div>
           )}
 
@@ -1248,83 +1254,131 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
         </div>
       )}
 
-      {/* 2-Column Action Grid: Host vs Join (when not hosting) */}
+      {/* 2-Column Responsive Bento Grid: Host vs Join (when not hosting) */}
       {!hostRoom?.code && !joinedRoom && (
-        <section className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-5 animate-fade-in">
+        <section className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5 animate-fade-in">
           {/* Card 1: Host a Session */}
-          <div className="group relative flex flex-col justify-between rounded-2xl border border-primary-amber/35 bg-gradient-to-br from-primary-amber/10 via-surface-elevated/80 to-surface p-6 shadow-xl backdrop-blur-sm transition-all duration-200 hover:border-primary-amber/60 hover:shadow-2xl">
+          <div className="group relative flex flex-col justify-between rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.07] via-surface-elevated/90 to-surface p-5 sm:p-6 shadow-xl backdrop-blur-sm transition-all duration-200 hover:border-white/25 hover:shadow-2xl">
             <div>
               <div className="flex items-center justify-between">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-amber/20 text-primary-amber border border-primary-amber/30 group-hover:scale-105 transition-transform">
-                  <Radio className="h-6 w-6 animate-pulse" />
+                <div className="flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-2xl bg-white/10 text-white border border-white/15 group-hover:scale-105 transition-transform shadow-inner">
+                  <Radio className="h-5 w-5 sm:h-6 sm:w-6 animate-pulse" />
                 </div>
-                <span className="rounded-full bg-primary-amber/15 border border-primary-amber/30 px-2.5 py-1 text-[10px] font-mono font-bold text-primary-amber tracking-wider">
+                <span className="rounded-full bg-white/10 border border-white/15 px-2.5 py-1 text-[10px] font-mono font-bold text-white tracking-wider">
                   HOST ROOM
                 </span>
               </div>
 
-              <h2 className="mt-4 text-xl font-black text-text tracking-tight">
+              <h2 className="mt-4 text-lg sm:text-xl font-black text-text tracking-tight">
                 Start a Listening Room
               </h2>
               <p className="mt-2 text-xs text-text-muted leading-relaxed">
                 Create an instant live room for your friends. Broadcast your local music queue or stream your computer's audio with zero driver setup.
               </p>
+
+              {/* Feature bullet list */}
+              <ul className="mt-4 space-y-2 border-t border-border/40 pt-3 text-[11px] text-text-muted">
+                <li className="flex items-center gap-2">
+                  <Sparkles className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                  <span>Real-time queue auto-sync & friend join</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <Volume2 className="h-3.5 w-3.5 text-primary-amber shrink-0" />
+                  <span>Lossless WASAPI system audio broadcast</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <MessageSquare className="h-3.5 w-3.5 text-secondary-cyan shrink-0" />
+                  <span>In-room live chat & Discord bot integration</span>
+                </li>
+              </ul>
             </div>
 
-            <div className="mt-6 pt-4 border-t border-border/40 flex items-center justify-between gap-3">
-              <span className="text-[11px] font-medium text-text-muted flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-primary-amber" />
-                Discord bot & Web supported
-              </span>
+            <div className="mt-6 pt-4 border-t border-border/40">
               <button
                 type="button"
                 onClick={handleCreateRoom}
                 disabled={busy}
-                className="flex items-center gap-2 rounded-xl bg-primary-amber hover:bg-primary-amber/90 text-black px-5 py-2.5 text-xs font-black transition-all shadow-md hover:scale-[1.02] active:scale-[0.98] cursor-pointer disabled:opacity-50 shrink-0"
+                className="w-full flex min-h-[44px] items-center justify-center gap-2 rounded-xl bg-white hover:bg-white/90 text-black px-5 py-2.5 text-xs font-black transition-all shadow-md hover:scale-[1.01] active:scale-[0.99] cursor-pointer disabled:opacity-50"
               >
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4 stroke-[3]" />}
-                <span>Create Room</span>
+                <span>Create Room Now</span>
               </button>
             </div>
           </div>
 
           {/* Card 2: Join with Room Code */}
-          <div className="group relative flex flex-col justify-between rounded-2xl border border-border/80 bg-gradient-to-br from-surface-elevated/90 via-surface-elevated to-surface p-6 shadow-xl backdrop-blur-sm transition-all duration-200 hover:border-white/30 hover:shadow-2xl">
+          <div className="group relative flex flex-col justify-between rounded-2xl border border-white/10 bg-gradient-to-br from-surface-elevated via-surface-elevated/90 to-surface p-5 sm:p-6 shadow-xl backdrop-blur-sm transition-all duration-200 hover:border-white/25 hover:shadow-2xl">
             <div>
               <div className="flex items-center justify-between">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-surface border border-border text-text group-hover:scale-105 transition-transform">
-                  <Users className="h-6 w-6" />
+                <div className="flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-2xl bg-surface border border-border text-text group-hover:scale-105 transition-transform shadow-inner">
+                  <Users className="h-5 w-5 sm:h-6 sm:w-6" />
                 </div>
                 <span className="rounded-full bg-surface border border-border px-2.5 py-1 text-[10px] font-mono font-bold text-text-muted tracking-wider">
                   LISTENER ACCESS
                 </span>
               </div>
 
-              <h2 className="mt-4 text-xl font-black text-text tracking-tight">
+              <h2 className="mt-4 text-lg sm:text-xl font-black text-text tracking-tight">
                 Join with Room Code
               </h2>
               <p className="mt-2 text-xs text-text-muted leading-relaxed">
                 Have a 6-character room code from a friend or Discord? Enter it below to sync playback instantly in your browser or desktop.
               </p>
+
+              {/* Helpful tips */}
+              <div className="mt-4 rounded-xl border border-border/50 bg-black/20 p-3 text-[11px] text-text-muted">
+                <p className="leading-snug">
+                  💡 Tip: Codes are 6 letters (e.g. <strong className="text-text font-mono">AB12CD</strong>). You can also click or paste invite links.
+                </p>
+              </div>
             </div>
 
-            <form onSubmit={handleJoinWithCode} className="mt-6 pt-4 border-t border-border/40 flex items-center gap-2.5">
-              <input
-                type="text"
-                maxLength={8}
-                placeholder="e.g. AB12CD"
-                value={joinCodeInput}
-                onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
-                className="h-10 flex-1 rounded-xl border border-border bg-surface px-3 text-center text-sm font-black tracking-widest text-text outline-none focus:border-white/40 transition-colors uppercase placeholder:normal-case placeholder:tracking-normal placeholder:font-medium placeholder:text-text-muted/50"
-              />
-              <button
-                type="submit"
-                disabled={busy || !joinCodeInput.trim()}
-                className="flex h-10 items-center justify-center gap-2 rounded-xl bg-white px-5 text-xs font-black text-black transition-all hover:bg-white/90 disabled:opacity-50 cursor-pointer shrink-0 shadow-sm"
-              >
-                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                <span>Join</span>
-              </button>
+            <form onSubmit={handleJoinWithCode} className="mt-6 pt-4 border-t border-border/40">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    maxLength={8}
+                    placeholder="ENTER CODE"
+                    value={joinCodeInput}
+                    autoCapitalize="characters"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    inputMode="text"
+                    onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase().trim())}
+                    className="h-11 w-full rounded-xl border border-border bg-surface px-3 pr-10 text-center sm:text-left sm:pl-3.5 text-sm sm:text-base font-black font-mono tracking-widest text-text outline-none focus:border-white/50 transition-colors uppercase placeholder:normal-case placeholder:tracking-normal placeholder:font-medium placeholder:text-text-muted/40"
+                  />
+                  {/* Quick Paste button from clipboard */}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const text = await navigator.clipboard.readText()
+                        if (text) {
+                          const codeMatch = text.match(/code=([A-Za-z0-9]+)/i) || text.match(/[A-Za-z0-9]{6}/)
+                          const extracted = codeMatch ? (codeMatch[1] || codeMatch[0]) : text.trim()
+                          setJoinCodeInput(extracted.toUpperCase().slice(0, 8))
+                        }
+                      } catch {
+                        // ignore if clipboard permissions not granted
+                      }
+                    }}
+                    title="Paste from clipboard"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-lg p-1 text-text-muted hover:text-white hover:bg-hover transition-colors cursor-pointer"
+                  >
+                    <ClipboardPaste className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={busy || !joinCodeInput.trim()}
+                  className="flex h-11 min-h-[44px] items-center justify-center gap-2 rounded-xl bg-white px-6 text-xs font-black text-black transition-all hover:bg-white/90 disabled:opacity-50 cursor-pointer shrink-0 shadow-sm hover:scale-[1.01] active:scale-[0.99]"
+                >
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4 fill-black" />}
+                  <span>Join Session</span>
+                </button>
+              </div>
             </form>
           </div>
         </section>
@@ -1690,13 +1744,13 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
             ))}
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-surface-elevated/30 py-12 px-6 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-surface-elevated text-text-muted">
-              <Headphones className="h-7 w-7" />
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border/80 bg-surface-elevated/30 py-8 sm:py-10 px-4 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-elevated border border-border text-text-muted">
+              <Headphones className="h-6 w-6" />
             </div>
-            <h3 className="mt-4 text-sm font-bold text-text">No friends are listening right now</h3>
-            <p className="mt-1 max-w-sm text-xs text-text-muted">
-              When an online friend starts playing music, their live session will automatically appear here so you can tune in with 1 click.
+            <h3 className="mt-3 text-sm font-bold text-text">No friends are broadcasting right now</h3>
+            <p className="mt-1 max-w-sm text-xs text-text-muted leading-relaxed">
+              When an online friend starts playing music or hosts a room, their live session will automatically appear here so you can tune in with 1 click.
             </p>
           </div>
         )}
@@ -1704,17 +1758,17 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
 
       {/* Join with Code Modal */}
       {showJoinModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
           <form
             onSubmit={handleJoinWithCode}
-            className="w-full max-w-sm rounded-2xl border border-border bg-surface p-6 shadow-2xl"
+            className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5 sm:p-6 shadow-2xl"
           >
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-text">Join with Room Code</h3>
               <button
                 type="button"
                 onClick={() => setShowJoinModal(false)}
-                className="rounded-full p-1 text-text-muted hover:bg-hover hover:text-text"
+                className="rounded-full p-1.5 text-text-muted hover:bg-hover hover:text-text cursor-pointer"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -1723,20 +1777,45 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
               Enter the 6-character room code shared by your friend.
             </p>
 
-            <input
-              type="text"
-              required
-              maxLength={8}
-              placeholder="e.g. AB12CD"
-              value={joinCodeInput}
-              onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
-              className="mt-4 h-11 w-full rounded-xl border border-border bg-surface-elevated px-3 text-center text-lg font-black tracking-widest text-text outline-none focus:border-white/40"
-            />
+            <div className="relative mt-4">
+              <input
+                type="text"
+                required
+                maxLength={8}
+                placeholder="e.g. AB12CD"
+                value={joinCodeInput}
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+                inputMode="text"
+                onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase().trim())}
+                className="h-12 w-full rounded-xl border border-border bg-surface-elevated px-3 pr-10 text-center text-lg font-black font-mono tracking-widest text-text outline-none focus:border-white/50 uppercase"
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const text = await navigator.clipboard.readText()
+                    if (text) {
+                      const codeMatch = text.match(/code=([A-Za-z0-9]+)/i) || text.match(/[A-Za-z0-9]{6}/)
+                      const extracted = codeMatch ? (codeMatch[1] || codeMatch[0]) : text.trim()
+                      setJoinCodeInput(extracted.toUpperCase().slice(0, 8))
+                    }
+                  } catch {
+                    // ignore
+                  }
+                }}
+                title="Paste from clipboard"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-white cursor-pointer"
+              >
+                <ClipboardPaste className="h-4 w-4" />
+              </button>
+            </div>
 
             <button
               type="submit"
               disabled={busy || !joinCodeInput.trim()}
-              className="mt-5 flex h-11 w-full items-center justify-center rounded-xl bg-white text-xs font-black text-black transition-all hover:bg-white/90 disabled:opacity-50"
+              className="mt-5 flex h-11 min-h-[44px] w-full items-center justify-center rounded-xl bg-white text-xs font-black text-black transition-all hover:bg-white/90 disabled:opacity-50 cursor-pointer shadow-sm hover:scale-[1.01] active:scale-[0.99]"
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Join Session'}
             </button>
@@ -1746,14 +1825,14 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
 
       {/* Invite / Share Code Modal */}
       {showShareModal && hostRoom?.code && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-          <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-6 shadow-2xl text-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5 sm:p-6 shadow-2xl text-center">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-text">Invite Friends</h3>
               <button
                 type="button"
                 onClick={() => setShowShareModal(false)}
-                className="rounded-full p-1 text-text-muted hover:bg-hover hover:text-text"
+                className="rounded-full p-1.5 text-text-muted hover:bg-hover hover:text-text cursor-pointer"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -1764,14 +1843,14 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
 
             <div className="mt-4 rounded-xl border border-border bg-surface-elevated p-4">
               <span className="text-[10px] uppercase font-bold text-text-muted tracking-wider">Room Code</span>
-              <p className="text-3xl font-black tracking-widest text-text mt-0.5">{hostRoom.code}</p>
+              <p className="text-3xl font-black font-mono tracking-widest text-text mt-0.5">{hostRoom.code}</p>
             </div>
 
             <div className="mt-3 flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => handleCopyCode(hostRoom.code)}
-                className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl bg-white text-xs font-black text-black transition-all hover:bg-white/90"
+                className="flex h-11 min-h-[44px] flex-1 items-center justify-center gap-1.5 rounded-xl bg-white text-xs font-black text-black transition-all hover:bg-white/90 cursor-pointer shadow-sm"
               >
                 {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                 <span>{copied ? 'Copied Code!' : 'Copy Code'}</span>
@@ -1783,7 +1862,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                   setCopiedLink(true)
                   setTimeout(() => setCopiedLink(false), 2500)
                 }}
-                className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-elevated text-xs font-bold text-text hover:bg-hover transition-all"
+                className="flex h-11 min-h-[44px] flex-1 items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-elevated text-xs font-bold text-text hover:bg-hover transition-all cursor-pointer"
               >
                 {copiedLink ? <Check className="h-3.5 w-3.5 text-success" /> : <Link2 className="h-3.5 w-3.5" />}
                 <span>{copiedLink ? 'Copied Link!' : 'Copy Link'}</span>
@@ -1793,7 +1872,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
             {/* QR Code Section */}
             {qrDataUrl && (
               <div className="mt-4 pt-4 border-t border-border/40 flex flex-col items-center">
-                <div className="rounded-xl bg-white p-2 shadow-sm">
+                <div className="rounded-2xl bg-white p-2.5 shadow-md">
                   <img src={qrDataUrl} alt="Scan QR code to join" className="h-28 w-28" />
                 </div>
                 <span className="mt-2 text-[11px] text-text-muted">Scan with phone camera to join</span>

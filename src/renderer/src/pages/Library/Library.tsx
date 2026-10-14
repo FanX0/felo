@@ -41,6 +41,7 @@ import { ArtworkImage } from '../Home/components/ArtworkImage'
 import { HighlightMatch } from '../../components/Common/HighlightMatch'
 import { remoteClient } from '../Remote/remoteClient'
 import { remoteLibraryService } from '../../services/RemoteLibraryService'
+import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
 
 export interface SongArtist {
   id?: string
@@ -174,6 +175,9 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
   const [creditsSong, setCreditsSong] = useState<Song | null>(null)
   const [librarySource, setLibrarySource] = useState<'local' | 'pc'>('local')
   const [isRemoteConnected, setIsRemoteConnected] = useState(() => remoteClient.getIsConnected())
+  const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
+  const isElectronApp = typeof window !== 'undefined' && Boolean((window as any).electron)
+  const hasRemoteDevice = Boolean(isRemoteConnected || (activeRemote && activeRemote.song))
 
   useEffect(() => {
     const unsub = remoteClient.subscribeConnection(setIsRemoteConnected)
@@ -244,24 +248,42 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     setIsLoadingSongs(true)
     try {
       if (source === 'pc') {
-        const res = await remoteLibraryService.getSongs({ limit: 200 })
-        const mapped: Song[] = res.songs.map((s) => ({
-          id: s.id,
-          title: s.title,
-          artist: s.artist,
-          album: s.album,
-          duration: s.duration,
-          filePath: remoteClient.getAudioStreamUrl(s.id),
-          artworkPath: s.artworkUrl,
-          artworkUrl: s.artworkUrl,
-          bitrate: s.bitrate,
-          sampleRate: s.sampleRate,
-          trackNumber: s.trackNumber,
-          genre: s.genre,
-          dateAdded: s.dateAdded,
-          isOnline: true
-        }))
-        setSongs(mapped)
+        if (remoteClient.getIsConnected()) {
+          const res = await remoteLibraryService.getSongs({ limit: 200 })
+          const mapped: Song[] = res.songs.map((s) => ({
+            id: s.id,
+            title: s.title,
+            artist: s.artist,
+            album: s.album,
+            duration: s.duration,
+            filePath: remoteClient.getAudioStreamUrl(s.id),
+            artworkPath: s.artworkUrl,
+            artworkUrl: s.artworkUrl,
+            bitrate: s.bitrate,
+            sampleRate: s.sampleRate,
+            trackNumber: s.trackNumber,
+            genre: s.genre,
+            dateAdded: s.dateAdded,
+            isOnline: true
+          }))
+          setSongs(mapped)
+        } else if (activeRemote?.song) {
+          const s = activeRemote.song
+          const mapped: Song = {
+            id: s.id,
+            title: s.title,
+            artist: s.artist,
+            album: s.album,
+            duration: s.duration,
+            filePath: `virtual:${s.title} - ${s.artist}`,
+            artworkPath: s.artworkUrl || toMediaUrl(s.artworkPath) || undefined,
+            artworkUrl: s.artworkUrl || toMediaUrl(s.artworkPath) || undefined,
+            isOnline: true
+          }
+          setSongs([mapped])
+        } else {
+          setSongs([])
+        }
       } else if (window.api?.getSongs) {
         const data = await window.api.getSongs()
         setSongs(data || [])
@@ -281,6 +303,19 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
       }
     }
   }
+
+  // Auto-switch to PC library if local library is empty on mobile and PC is connected
+  useEffect(() => {
+    if (
+      !isElectronApp &&
+      hasLoadedSongs &&
+      songs.length === 0 &&
+      librarySource === 'local' &&
+      (isRemoteConnected || activeRemote?.song)
+    ) {
+      setLibrarySource('pc')
+    }
+  }, [isElectronApp, hasLoadedSongs, songs.length, librarySource, isRemoteConnected, activeRemote?.song])
 
   useEffect(() => {
     void loadSongs(librarySource)
@@ -687,7 +722,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
           </div>
 
           {/* Library Source Switcher (when connected to PC desktop) */}
-          {isRemoteConnected && (
+          {hasRemoteDevice && (
             <div className="flex items-center gap-1 p-1 rounded-xl bg-surface-elevated border border-border/60 text-xs shrink-0 shadow-sm">
               <button
                 type="button"
@@ -1020,16 +1055,28 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
         <div className="flex-1 flex flex-col items-center justify-center text-text-muted gap-4">
           <p className="text-base text-text">Your library is currently empty.</p>
           <p className="text-xs text-text-muted max-w-sm text-center">
-            Add a local music folder to scan and index all your high-resolution and lossless audio
-            tracks.
+            {hasRemoteDevice
+              ? 'Connect to your PC to browse and control playback from your desktop library.'
+              : 'Add a local music folder to scan and index all your high-resolution and lossless audio tracks.'}
           </p>
-          <button
-            onClick={handleAddFolder}
-            disabled={isScanning}
-            className="flex h-11 items-center gap-2 rounded-full bg-white px-6 text-sm font-bold text-black transition-all hover:scale-[1.02] hover:bg-white/90 shadow-md"
-          >
-            <Plus className="h-4 w-4 stroke-[3]" /> Add Local Music Folder
-          </button>
+          {hasRemoteDevice && librarySource === 'local' ? (
+            <button
+              type="button"
+              onClick={() => setLibrarySource('pc')}
+              className="flex h-11 items-center gap-2 rounded-full bg-emerald-500 hover:bg-emerald-400 px-6 text-sm font-bold text-black transition-all hover:scale-[1.02] shadow-md cursor-pointer"
+            >
+              <Laptop2 className="h-4 w-4" />
+              <span>Browse PC Library</span>
+            </button>
+          ) : (
+            <button
+              onClick={handleAddFolder}
+              disabled={isScanning}
+              className="flex h-11 items-center gap-2 rounded-full bg-white px-6 text-sm font-bold text-black transition-all hover:scale-[1.02] hover:bg-white/90 shadow-md"
+            >
+              <Plus className="h-4 w-4 stroke-[3]" /> Add Local Music Folder
+            </button>
+          )}
         </div>
       ) : (
         <div className="flex-1 flex flex-col min-h-0">

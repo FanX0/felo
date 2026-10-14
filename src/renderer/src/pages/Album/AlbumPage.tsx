@@ -29,6 +29,7 @@ import { parseArtists } from '../../lib/artistParser'
 import { AppCapabilities } from '../../lib/appConfig'
 import { remoteClient } from '../Remote/remoteClient'
 import { remoteLibraryService } from '../../services/RemoteLibraryService'
+import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
 
 interface AlbumPageProps {
   onOpenDownloadPanel?: (target: DownloadTarget) => void
@@ -237,6 +238,34 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
 
       if (!AppCapabilities.onlineSearch || !window.api?.searchAppleMusic) {
         if (!cancelled && localAlbumSongs.length === 0) {
+          const remotePlayback = useConnectedDeviceStore.getState().activePlayback
+          const s = remotePlayback?.song
+          if (
+            s &&
+            (s.album?.toLowerCase() === albumTitle.toLowerCase() ||
+              s.artist?.toLowerCase() === albumArtist.toLowerCase())
+          ) {
+            const mapped: AlbumTrack = {
+              id: String(s.id),
+              title: s.title,
+              artist: s.artist || albumArtist,
+              album: s.album || albumTitle,
+              duration: s.duration
+                ? `${Math.floor(s.duration / 60)}:${String(s.duration % 60).padStart(2, '0')}`
+                : null,
+              thumbnail: s.artworkUrl || toMediaUrl(s.artworkPath) || '',
+              localSong: {
+                ...s,
+                filePath: `virtual:${s.title} - ${s.artist}`,
+                isOnline: true
+              }
+            }
+            setTracks([mapped])
+            if (mapped.thumbnail) setArtwork(mapped.thumbnail)
+            setError('')
+            setLoading(false)
+            return
+          }
           setError('Album not found in your local library.')
         }
         if (!cancelled) setLoading(false)

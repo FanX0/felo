@@ -72,6 +72,7 @@ export class DiscordBotService {
     listeningRoomCode?: string
     listeningRoomName?: string
     listeningRoomMembers?: number
+    isPrivateSession?: boolean
   } = {
     ready: false,
     isPlaying: false,
@@ -79,7 +80,8 @@ export class DiscordBotService {
     position: 0,
     duration: 0,
     volume: 1,
-    queueLength: 0
+    queueLength: 0,
+    isPrivateSession: false
   }
 
   initialize(): void {
@@ -95,7 +97,8 @@ export class DiscordBotService {
         position: Math.max(0, Number(status.position) || 0),
         duration: Math.max(0, Number(status.duration) || 0),
         volume: Math.max(0, Math.min(1, Number(status.volume) ?? 1)),
-        queueLength: Number(status.queueLength) || 0
+        queueLength: Number(status.queueLength) || 0,
+        isPrivateSession: Boolean(status.isPrivateSession)
       }
 
       if (status.song) {
@@ -118,8 +121,9 @@ export class DiscordBotService {
         this.playerState.listeningRoomMembers = status.listeningRoomMembers
       }
 
-      // Outgoing webhook auto-announce on track change
+      // Outgoing webhook auto-announce on track change (suppressed in Private Session)
       if (
+        !status.isPrivateSession &&
         this.webhookEnabled &&
         this.webhookUrl &&
         status.isPlaying &&
@@ -1261,6 +1265,22 @@ export class DiscordBotService {
   }
 
   private async handleSlashNowPlaying(interaction: any): Promise<void> {
+    if (this.playerState.isPrivateSession) {
+      await this.respondInteraction(interaction.id, interaction.token, {
+        type: 4,
+        data: {
+          embeds: [
+            {
+              title: '🔒 Private Session',
+              description: 'The host is currently in a Private Session. Track details and playback are private.',
+              color: 0xf59e0b
+            }
+          ]
+        }
+      })
+      return
+    }
+
     const song = this.playerState.song
     if (!song) {
       await this.respondInteraction(interaction.id, interaction.token, {
@@ -1797,6 +1817,19 @@ export class DiscordBotService {
   }
 
   private async cmdNowPlaying(channelId: string): Promise<void> {
+    if (this.playerState.isPrivateSession) {
+      await this.sendChannelMessage(channelId, {
+        embeds: [
+          {
+            title: '🔒 Private Session',
+            description: 'The host is currently in a Private Session. Track details and playback are private.',
+            color: 0xf59e0b
+          }
+        ]
+      })
+      return
+    }
+
     const song = this.playerState.song
     if (!song) {
       await this.sendChannelMessage(channelId, {

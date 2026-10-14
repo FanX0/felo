@@ -4,45 +4,83 @@ import { usePlayerStore } from '../hooks/usePlayerStore'
 import { useConnectedDeviceStore } from '../hooks/useConnectedDeviceStore'
 import { getSupabase, isSupabaseConfigured } from '../lib/supabase'
 import { toMediaUrl } from '../lib/media'
+import { detectDeviceInfo } from '../lib/deviceInfo'
 
-function getOrCreateDeviceId(isElectron: boolean): string {
+function getIsDesktop(isElectron: boolean): boolean {
+  if (isElectron) return true
+  if (typeof window === 'undefined') return true
+  const info = detectDeviceInfo()
+  return info.type === 'desktop'
+}
+
+function getOrCreateDeviceId(isDesktop: boolean): string {
   if (typeof window === 'undefined') return 'felo-desktop-main'
   let id = localStorage.getItem('felo_device_id')
   if (!id) {
-    const prefix = isElectron ? 'desktop' : 'mobile'
+    const prefix = isDesktop ? 'desktop' : 'mobile'
     id = `${prefix}-${Math.random().toString(36).substring(2, 10)}-${Date.now().toString(36)}`
     localStorage.setItem('felo_device_id', id)
   }
   return id
 }
 
-function getDeviceName(isElectron: boolean, ip?: string): string {
+function getDeviceName(isElectron: boolean, isDesktop: boolean, ip?: string): string {
   if (isElectron) {
     return `${ip ? 'Felo Desktop' : 'Felo Player'} (${ip || 'LAN'})`
   }
   if (typeof window === 'undefined') return 'Felo Web Player'
-  const ua = navigator.userAgent
-  if (/iPhone/i.test(ua)) return 'iPhone'
-  if (/iPad/i.test(ua)) return 'iPad'
-  if (/Android.*Mobile/i.test(ua)) return 'Android Phone'
-  if (/Android/i.test(ua)) return 'Android Tablet'
-  if (/Mac/i.test(ua)) return 'Mac (Web)'
-  if (/Win/i.test(ua)) return 'Windows (Web)'
-  return 'Web Player'
+  const info = detectDeviceInfo()
+  if (isDesktop) {
+    return `${info.name} (${info.browser})`
+  }
+  return info.name || 'Web Player'
 }
 
 export default function DevicePresenceBridge() {
   const user = useOnlineStore((s) => s.user)
   const isElectron = typeof window !== 'undefined' && Boolean((window as any).electron)
-  const deviceIdRef = useRef<string>(getOrCreateDeviceId(isElectron))
+  const isDesktopDevice = getIsDesktop(isElectron)
+  const deviceType: 'desktop' | 'mobile' = isDesktopDevice ? 'desktop' : 'mobile'
+  const deviceIdRef = useRef<string>(getOrCreateDeviceId(isDesktopDevice))
   const heartbeatTimerRef = useRef<any>(null)
   const channelRef = useRef<any>(null)
   const wasPlayingRef = useRef(false)
 
   const isPlaying = usePlayerStore((s) => s.isPlaying)
   const currentSong = usePlayerStore((s) => s.queue[s.currentSongIndex] || null)
-  const currentTime = usePlayerStore((s) => s.currentTime)
-  const duration = usePlayerStore((s) => s.duration)
+
+  // Broadcast current player state to all peers
+  const broadcastCurrentState = (playing: boolean) => {
+    if (!channelRef.current || !user?.id) return
+    const player = usePlayerStore.getState()
+    const song = player.queue[player.currentSongIndex] || currentSong
+    const deviceId = deviceIdRef.current
+    const devName = getDeviceName(isElectron, isDesktopDevice)
+
+    void channelRef.current.send({
+      type: 'broadcast',
+      event: 'playback_state',
+      payload: {
+        activeDeviceId: deviceId,
+        activeDeviceName: devName,
+        activeDeviceType: deviceType,
+        isPlaying: playing,
+        song: song
+          ? {
+              id: song.id,
+              title: song.title,
+              artist: song.artist,
+              album: song.album,
+              duration: song.duration,
+              artworkUrl: song.artworkUrl || toMediaUrl(song.artworkPath)
+            }
+          : null,
+        position: player.currentTime,
+        duration: player.duration || song?.duration || 0,
+        timestamp: Date.now()
+      }
+    })
+  }
 
   useEffect(() => {
     if (!user?.id || !isSupabaseConfigured) return undefined
@@ -52,7 +90,7 @@ export default function DevicePresenceBridge() {
 
     const publishPresence = async (isActive = true) => {
       try {
-        let deviceName = getDeviceName(isElectron)
+        let deviceName = getDeviceName(isElectron, isDesktopDevice)
         let localIp: string | null = null
         let port: number | null = null
         let token: string | null = null
@@ -65,7 +103,7 @@ export default function DevicePresenceBridge() {
             port = info.port || 4788
             token = info.token || null
             isRunning = isActive && Boolean(info.enabled && info.running)
-            deviceName = getDeviceName(isElectron, info.ip)
+            deviceName = getDeviceName(isElectron, isDesktopDevice, info.ip)
           }
         }
 
@@ -73,7 +111,7 @@ export default function DevicePresenceBridge() {
           id: deviceId,
           user_id: user.id,
           device_name: deviceName,
-          device_type: isElectron ? 'desktop' : 'mobile',
+          device_type: deviceType,
           local_ip: localIp,
           port: port,
           token: token,
@@ -82,7 +120,10 @@ export default function DevicePresenceBridge() {
           updated_at: new Date().toISOString()
         }
 
-        await supabase.from('user_devices').upsert(payload, { onConflict: 'id' })
+        const { error } = await supabase.from('user_devices').upsert(payload, { onConflict: 'id' })
+        if (error) {
+          console.warn('[DevicePresence] Failed to update presence:', error.message)
+        }
       } catch (err) {
         console.warn('[DevicePresence] Failed to update presence:', err)
       }
@@ -149,15 +190,47 @@ export default function DevicePresenceBridge() {
       )
       .on(
         'broadcast',
+        { event: 'request_playback_state' },
+        ({ payload: reqPayload }: { payload: any }) => {
+          if (reqPayload?.requesterDeviceId === deviceId) return
+          const player = usePlayerStore.getState()
+          const song = player.queue[player.currentSongIndex]
+          if (song && player.isPlaying) {
+            broadcastCurrentState(true)
+          }
+        }
+      )
+      .on(
+        'broadcast',
         { event: 'playback_state' },
         ({ payload }: { payload: any }) => {
           if (!payload || payload.activeDeviceId === deviceId) return
-          if (payload.isPlaying) {
-            useConnectedDeviceStore.getState().setRemotePlayback(payload)
+          const store = useConnectedDeviceStore.getState()
+
+          if (payload.song) {
+            store.setRemotePlayback({
+              ...payload,
+              timestamp: Date.now()
+            })
+
+            // Also register in discoveredDevices store so UI immediately displays this device
+            const existing = store.discoveredDevices
+            const updated = {
+              id: payload.activeDeviceId,
+              user_id: user.id,
+              device_name: payload.activeDeviceName || 'Felo Desktop',
+              device_type: payload.activeDeviceType || 'desktop',
+              last_seen_at: new Date(payload.timestamp || Date.now()).toISOString(),
+              is_active: true
+            }
+            store.setDiscoveredDevices([
+              updated,
+              ...existing.filter((d) => d.id !== payload.activeDeviceId)
+            ])
           } else {
-            const currentActive = useConnectedDeviceStore.getState().activePlayback
+            const currentActive = store.activePlayback
             if (currentActive && currentActive.activeDeviceId === payload.activeDeviceId) {
-              useConnectedDeviceStore.getState().setRemotePlayback({
+              store.setRemotePlayback({
                 ...currentActive,
                 isPlaying: false,
                 position: payload.position ?? currentActive.position,
@@ -167,7 +240,20 @@ export default function DevicePresenceBridge() {
           }
         }
       )
-      .subscribe()
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          const player = usePlayerStore.getState()
+          if (player.isPlaying && (player.queue[player.currentSongIndex] || currentSong)) {
+            broadcastCurrentState(true)
+          } else {
+            void channel.send({
+              type: 'broadcast',
+              event: 'request_playback_state',
+              payload: { requesterDeviceId: deviceId }
+            })
+          }
+        }
+      })
 
     channelRef.current = channel
 
@@ -186,56 +272,20 @@ export default function DevicePresenceBridge() {
       void supabase.removeChannel(channel)
       void publishPresence(false)
     }
-  }, [isElectron, user?.id])
+  }, [isElectron, isDesktopDevice, deviceType, user?.id])
 
   // Broadcast immediate state change (play, pause, song switch)
   useEffect(() => {
     if (!channelRef.current || !user?.id) return
-    const deviceId = deviceIdRef.current
-    const deviceName = getDeviceName(isElectron)
 
     if (isPlaying && currentSong) {
-      // Clear remote playback because this device is actively outputting sound now
       useConnectedDeviceStore.getState().clearRemotePlayback()
-
-      void channelRef.current.send({
-        type: 'broadcast',
-        event: 'playback_state',
-        payload: {
-          activeDeviceId: deviceId,
-          activeDeviceName: deviceName,
-          activeDeviceType: isElectron ? 'desktop' : 'mobile',
-          isPlaying: true,
-          song: {
-            id: currentSong.id,
-            title: currentSong.title,
-            artist: currentSong.artist,
-            album: currentSong.album,
-            duration: currentSong.duration,
-            artworkUrl: currentSong.artworkUrl || toMediaUrl(currentSong.artworkPath)
-          },
-          position: currentTime,
-          duration: duration || currentSong.duration || 0,
-          timestamp: Date.now()
-        }
-      })
+      broadcastCurrentState(true)
     } else if (!isPlaying && wasPlayingRef.current) {
-      void channelRef.current.send({
-        type: 'broadcast',
-        event: 'playback_state',
-        payload: {
-          activeDeviceId: deviceId,
-          activeDeviceName: deviceName,
-          activeDeviceType: isElectron ? 'desktop' : 'mobile',
-          isPlaying: false,
-          position: currentTime,
-          duration: duration || currentSong?.duration || 0,
-          timestamp: Date.now()
-        }
-      })
+      broadcastCurrentState(false)
     }
     wasPlayingRef.current = isPlaying
-  }, [isPlaying, currentSong?.id, isElectron, user?.id])
+  }, [isPlaying, currentSong?.id, isElectron, isDesktopDevice, deviceType, user?.id])
 
   // Periodic 5-second sync pulse while playing to maintain drift-free position tracking
   useEffect(() => {
@@ -243,32 +293,12 @@ export default function DevicePresenceBridge() {
     const syncTimer = setInterval(() => {
       const player = usePlayerStore.getState()
       if (channelRef.current && player.isPlaying && currentSong) {
-        void channelRef.current.send({
-          type: 'broadcast',
-          event: 'playback_state',
-          payload: {
-            activeDeviceId: deviceIdRef.current,
-            activeDeviceName: getDeviceName(isElectron),
-            activeDeviceType: isElectron ? 'desktop' : 'mobile',
-            isPlaying: true,
-            song: {
-              id: currentSong.id,
-              title: currentSong.title,
-              artist: currentSong.artist,
-              album: currentSong.album,
-              duration: currentSong.duration,
-              artworkUrl: currentSong.artworkUrl || toMediaUrl(currentSong.artworkPath)
-            },
-            position: player.currentTime,
-            duration: player.duration || currentSong.duration || 0,
-            timestamp: Date.now()
-          }
-        })
+        broadcastCurrentState(true)
       }
     }, 5_000)
 
     return () => clearInterval(syncTimer)
-  }, [isPlaying, currentSong?.id, isElectron, user?.id])
+  }, [isPlaying, currentSong?.id, isElectron, isDesktopDevice, deviceType, user?.id])
 
   return null
 }

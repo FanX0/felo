@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Laptop2,
   Smartphone,
@@ -9,7 +9,10 @@ import {
   Radio,
   User,
   RefreshCw,
-  Sparkles
+  Sparkles,
+  ChevronDown,
+  ChevronUp,
+  Link2
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { remoteClient, type RemotePlayerState, type PlaybackTarget } from './remoteClient'
@@ -32,7 +35,7 @@ interface MobileDeviceSheetProps {
 
 export default function MobileDeviceSheet({
   state,
-  isConnected: _isConnected,
+  isConnected,
   isOpen,
   onClose
 }: MobileDeviceSheetProps) {
@@ -40,19 +43,24 @@ export default function MobileDeviceSheet({
   const user = useOnlineStore((s) => s.user)
 
   const [switching, setSwitching] = useState(false)
+  const [showManualConnect, setShowManualConnect] = useState(false)
+  const [manualIp, setManualIp] = useState(() => remoteClient.getBaseUrl() || '')
+  const [manualToken, setManualToken] = useState(() => remoteClient.getToken() || '')
+
   const deviceInfo = detectDeviceInfo()
   const thisDeviceName = getDeviceDisplayName()
 
   const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
+  const storeDiscovered = useConnectedDeviceStore((s) => s.discoveredDevices)
   const myDeviceId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : null
 
-  // Discovered desktop devices from Supabase
-  const [discoveredDevices, setDiscoveredDevices] = useState<UserConnectedDevice[]>([])
+  // Discovered desktop devices from Supabase DB
+  const [dbDevices, setDbDevices] = useState<UserConnectedDevice[]>([])
   const [isLoadingDevices, setIsLoadingDevices] = useState(false)
 
   const currentTarget: PlaybackTarget = state.targetDevice || remoteClient.getTargetDevice()
 
-  // Fetch discovered active devices when logged in
+  // Fetch discovered active devices from Supabase when logged in
   const fetchDevices = useCallback(async () => {
     if (!user?.id || !isSupabaseConfigured) return
     setIsLoadingDevices(true)
@@ -66,20 +74,24 @@ export default function MobileDeviceSheet({
         .order('last_seen_at', { ascending: false })
 
       if (!error && Array.isArray(data)) {
-        // Filter out devices with heartbeat older than 3 minutes
         const now = Date.now()
+        // Accept desktop devices or any active device heartbeat under 5 minutes
         const activeList = data.filter((d: any) => {
           const age = now - new Date(d.last_seen_at).getTime()
-          return age < 180_000 && d.device_type === 'desktop'
+          const isDesktop =
+            d.device_type === 'desktop' ||
+            !d.device_type ||
+            /PC|Mac|Desktop|Windows/i.test(d.device_name || '')
+          return age < 300_000 && isDesktop && d.id !== myDeviceId
         })
-        setDiscoveredDevices(activeList)
+        setDbDevices(activeList)
       }
     } catch (err) {
       console.warn('[MobileDeviceSheet] Failed to load devices:', err)
     } finally {
       setIsLoadingDevices(false)
     }
-  }, [user?.id])
+  }, [user?.id, myDeviceId])
 
   useEffect(() => {
     if (!isOpen || !user?.id || !isSupabaseConfigured) return undefined
@@ -109,6 +121,96 @@ export default function MobileDeviceSheet({
       void supabase.removeChannel(channel)
     }
   }, [isOpen, user?.id, fetchDevices])
+
+  // Unified list of all discovered devices across Supabase, Cloud Broadcast, and Local LAN
+  const allDevices = useMemo(() => {
+    const map = new Map<string, UserConnectedDevice>()
+
+    // 1. Devices from Supabase database
+    for (const d of dbDevices) {
+      if (d.id !== myDeviceId) {
+        map.set(d.id, d)
+      }
+    }
+
+    // 2. Devices from store (populated by realtime broadcast)
+    for (const d of storeDiscovered) {
+      if (d.id !== myDeviceId) {
+        if (!map.has(d.id)) {
+          map.set(d.id, d)
+        } else {
+          // Merge metadata
+          const existing = map.get(d.id)!
+          map.set(d.id, { ...existing, ...d })
+        }
+      }
+    }
+
+    // 3. Active Remote device currently playing via Cloud Broadcast
+    if (activeRemote && activeRemote.activeDeviceId !== myDeviceId) {
+      const existing = map.get(activeRemote.activeDeviceId)
+      map.set(activeRemote.activeDeviceId, {
+        id: activeRemote.activeDeviceId,
+        user_id: user?.id || '',
+        device_name: activeRemote.activeDeviceName || existing?.device_name || 'Felo Desktop',
+        device_type: activeRemote.activeDeviceType || existing?.device_type || 'desktop',
+        local_ip: existing?.local_ip,
+        port: existing?.port,
+        token: existing?.token,
+        last_seen_at: new Date(activeRemote.timestamp || Date.now()).toISOString(),
+        is_active: true
+      })
+    }
+
+    // 4. Local LAN-connected Desktop (via remoteClient HTTP/SSE)
+    const lanBaseUrl = remoteClient.getBaseUrl()
+    const isLanActive = isConnected || (lanBaseUrl && !lanBaseUrl.includes(window.location.host))
+    if (isLanActive) {
+      let lanIp = ''
+      let lanPort = 4788
+      try {
+        const parsed = new URL(lanBaseUrl)
+        lanIp = parsed.hostname
+        lanPort = parsed.port ? Number(parsed.port) : 4788
+      } catch {
+        // ignore
+      }
+
+      // Check if this LAN device already exists in the map
+      let foundExistingKey: string | null = null
+      for (const [key, dev] of map.entries()) {
+        if (dev.local_ip && dev.local_ip === lanIp) {
+          foundExistingKey = key
+          break
+        }
+      }
+
+      if (foundExistingKey) {
+        const existing = map.get(foundExistingKey)!
+        map.set(foundExistingKey, {
+          ...existing,
+          local_ip: lanIp,
+          port: lanPort,
+          token: remoteClient.getToken() || existing.token,
+          is_active: true
+        })
+      } else {
+        map.set('lan-desktop', {
+          id: 'lan-desktop',
+          user_id: user?.id || '',
+          device_name: state.deviceName || (lanIp ? `Felo Desktop (${lanIp})` : 'Felo Desktop'),
+          device_type: 'desktop',
+          local_ip: lanIp || undefined,
+          port: lanPort,
+          token: remoteClient.getToken() || undefined,
+          last_seen_at: new Date().toISOString(),
+          is_active: true
+        })
+      }
+    }
+
+    return Array.from(map.values())
+  }, [dbDevices, storeDiscovered, activeRemote, myDeviceId, isConnected, state.deviceName, user?.id])
 
   if (!isOpen) return null
 
@@ -144,11 +246,30 @@ export default function MobileDeviceSheet({
     }
   }
 
-  const handleConnectToDiscoveredDevice = async (device: UserConnectedDevice) => {
-    if (!device.local_ip) return
-    const targetUrl = `http://${device.local_ip}:${device.port || 4788}`
-    remoteClient.configure(targetUrl, device.token || '')
+  const handleConnectToDevice = async (device: UserConnectedDevice) => {
+    if (device.local_ip) {
+      const targetUrl = `http://${device.local_ip}:${device.port || 4788}`
+      remoteClient.configure(targetUrl, device.token || '')
+      await handleSelectDevice('desktop')
+    } else if (user?.id && activeRemote?.activeDeviceId === device.id) {
+      // Cloud-only handover
+      await handleSelectDevice('desktop')
+      await sendDeviceCommand(user.id, device.id, 'play')
+    } else {
+      await handleSelectDevice('desktop')
+    }
+  }
+
+  const handleManualConnectSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    let url = manualIp.trim()
+    if (!url) return
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = `http://${url}`
+    }
+    remoteClient.configure(url, manualToken.trim())
     await handleSelectDevice('desktop')
+    setShowManualConnect(false)
   }
 
   return (
@@ -172,7 +293,7 @@ export default function MobileDeviceSheet({
         <button
           type="button"
           onClick={onClose}
-          className="w-9 h-9 rounded-full flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/10 transition"
+          className="w-9 h-9 rounded-full flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
         >
           <X className="w-5 h-5" />
         </button>
@@ -180,152 +301,113 @@ export default function MobileDeviceSheet({
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        {/* LOGGED OUT STATE: Spotify Connect Call to Action */}
-        {!user ? (
-          <div className="bg-gradient-to-br from-emerald-950/40 via-zinc-900 to-zinc-900 border border-emerald-500/20 rounded-3xl p-5 shadow-2xl space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
-                <Radio className="w-6 h-6 animate-pulse" />
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <h3 className="text-sm font-bold text-white">Spotify Connect with Felo</h3>
-                  <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                </div>
-                <p className="text-[11px] text-emerald-400/90 font-medium">
-                  Log in to see all your connected devices
-                </p>
-              </div>
-            </div>
-
-            <p className="text-xs text-zinc-300 leading-relaxed">
-              Log in to your Felo account to see and seamlessly control all your desktop players in real time without entering IP addresses or pairing tokens.
-            </p>
-
+        {/* SECTION 1: CONNECTED & DISCOVERED DESKTOP DEVICES */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between px-1">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+              <Radio className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Available Devices ({allDevices.length})</span>
+            </h3>
             <button
               type="button"
-              onClick={() => {
-                onClose()
-                navigate('/account')
-              }}
-              className="w-full py-3 rounded-full bg-white text-black font-bold text-xs hover:bg-zinc-200 transition active:scale-95 shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+              onClick={() => void fetchDevices()}
+              className="text-[11px] text-zinc-400 hover:text-white flex items-center gap-1 transition cursor-pointer"
+              title="Refresh discovered devices"
             >
-              <User className="w-4 h-4" />
-              <span>Log In or Sign Up to Connect Devices</span>
+              <RefreshCw className={`w-3 h-3 ${isLoadingDevices ? 'animate-spin' : ''}`} />
+              <span>Refresh</span>
             </button>
           </div>
-        ) : (
-          /* LOGGED IN STATE: Discovered Devices Section */
-          <div className="space-y-3">
-            <div className="flex items-center justify-between px-1">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-                <Radio className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Connected Devices ({discoveredDevices.length})</span>
-              </h3>
-              <button
-                type="button"
-                onClick={() => void fetchDevices()}
-                className="text-[11px] text-zinc-400 hover:text-white flex items-center gap-1 transition"
-                title="Refresh discovered devices"
-              >
-                <RefreshCw className={`w-3 h-3 ${isLoadingDevices ? 'animate-spin' : ''}`} />
-                <span>Refresh</span>
-              </button>
-            </div>
 
-            {discoveredDevices.length > 0 ? (
-              <div className="space-y-2.5">
-                {discoveredDevices.map((device) => {
-                  const isDevicePlaying =
-                    activeRemote?.activeDeviceId === device.id && activeRemote.isPlaying
-                  const isDeviceActive =
-                    isDevicePlaying ||
-                    (currentTarget === 'desktop' &&
-                      Boolean(device.local_ip && remoteClient.getBaseUrl().includes(device.local_ip)))
+          {allDevices.length > 0 ? (
+            <div className="space-y-2.5">
+              {allDevices.map((device) => {
+                const isDevicePlaying =
+                  activeRemote?.activeDeviceId === device.id && activeRemote.isPlaying
+                const isLanMatch =
+                  Boolean(device.local_ip && remoteClient.getBaseUrl().includes(device.local_ip)) ||
+                  (isConnected && device.id === 'lan-desktop')
+                const isDeviceActive =
+                  isDevicePlaying || (currentTarget === 'desktop' && isLanMatch)
 
-                  return (
-                    <button
-                      key={device.id}
-                      type="button"
-                      onClick={() => void handleConnectToDiscoveredDevice(device)}
-                      disabled={switching}
-                      className={`w-full p-4 rounded-2xl text-left transition flex items-center justify-between border cursor-pointer ${
-                        isDeviceActive
-                          ? 'bg-white/[0.08] border-emerald-500/50 shadow-lg shadow-emerald-500/5'
-                          : 'bg-white/[0.03] border-white/5 hover:bg-white/[0.06] hover:border-white/20'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3.5 min-w-0">
-                        <div
-                          className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
-                            isDeviceActive
-                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                              : 'bg-zinc-800 text-zinc-400'
+                return (
+                  <button
+                    key={device.id}
+                    type="button"
+                    onClick={() => void handleConnectToDevice(device)}
+                    disabled={switching}
+                    className={`w-full p-4 rounded-2xl text-left transition flex items-center justify-between border cursor-pointer ${
+                      isDeviceActive
+                        ? 'bg-white/[0.08] border-emerald-500/50 shadow-lg shadow-emerald-500/5'
+                        : 'bg-white/[0.03] border-white/5 hover:bg-white/[0.06] hover:border-white/20'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3.5 min-w-0">
+                      <div
+                        className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
+                          isDeviceActive
+                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                            : 'bg-zinc-800 text-zinc-400'
+                        }`}
+                      >
+                        <Laptop2
+                          className={`w-6 h-6 ${isDeviceActive && (state.isPlaying || isDevicePlaying) ? 'animate-pulse' : ''}`}
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-sm font-bold text-white truncate">
+                            {device.device_name || 'Felo Desktop'}
+                          </h4>
+                          {isDeviceActive && (
+                            <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300">
+                              {isDevicePlaying ? 'Currently Playing' : 'Active Output'}
+                            </span>
+                          )}
+                        </div>
+                        <p
+                          className={`text-xs mt-0.5 truncate ${
+                            isDeviceActive ? 'text-emerald-400 font-medium' : 'text-zinc-400'
                           }`}
                         >
-                          <Laptop2
-                            className={`w-6 h-6 ${isDeviceActive && (state.isPlaying || isDevicePlaying) ? 'animate-pulse' : ''}`}
-                          />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <h4 className="text-sm font-bold text-white truncate">
-                              {device.device_name || 'Felo Desktop'}
-                            </h4>
-                            {isDeviceActive && (
-                              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300">
-                                {isDevicePlaying ? 'Currently Playing' : 'Active Output'}
-                              </span>
-                            )}
-                          </div>
-                          <p
-                            className={`text-xs mt-0.5 truncate ${
-                              isDeviceActive ? 'text-emerald-400 font-medium' : 'text-zinc-400'
-                            }`}
-                          >
-                            {isDevicePlaying && activeRemote?.song
-                              ? `${activeRemote.song.title} • ${activeRemote.song.artist}`
-                              : isDeviceActive
-                                ? state.isPlaying || isDevicePlaying
-                                  ? 'Playing on PC speakers'
-                                  : 'Desktop speakers ready'
-                                : `Wi-Fi IP: ${device.local_ip || 'Local Network'}`}
-                          </p>
-                        </div>
+                          {isDevicePlaying && activeRemote?.song
+                            ? `${activeRemote.song.title} • ${activeRemote.song.artist}`
+                            : isDeviceActive
+                              ? state.isPlaying || isDevicePlaying
+                                ? 'Playing on PC speakers'
+                                : 'Desktop speakers ready'
+                              : device.local_ip
+                                ? `Wi-Fi IP: ${device.local_ip}`
+                                : 'Connected via Felo Account'}
+                        </p>
                       </div>
+                    </div>
 
-                      {isDeviceActive ? (
-                        <div className="w-7 h-7 rounded-full bg-emerald-400 flex items-center justify-center text-black shrink-0">
-                          <Check className="w-4 h-4 stroke-[3]" />
-                        </div>
-                      ) : (
-                        <div className="w-6 h-6 rounded-full border border-zinc-600 shrink-0" />
-                      )}
-                    </button>
-                  )
-                })}
-                {typeof window !== 'undefined' && window.location.protocol === 'https:' && (
-                  <p className="text-[10px] text-zinc-500 px-1 pt-1 leading-normal">
-                    Tip: If your browser blocks local IP connections over HTTPS, open{' '}
-                    <span className="text-zinc-400 font-mono">http://&lt;desktop-ip&gt;:4788</span> directly on your phone.
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div className="p-5 rounded-2xl bg-zinc-900/60 border border-white/5 text-center flex flex-col items-center">
-                <Laptop2 className="w-8 h-8 text-zinc-600 mb-2" />
-                <p className="text-xs font-semibold text-zinc-300">
-                  No active Felo Desktop players found
-                </p>
-                <p className="text-[11px] text-zinc-500 max-w-xs mt-1 leading-relaxed">
-                  Open Felo on your computer and make sure you are logged into this account ({user.email}). It will connect automatically.
-                </p>
-              </div>
-            )}
-          </div>
-        )}
+                    {isDeviceActive ? (
+                      <div className="w-7 h-7 rounded-full bg-emerald-400 flex items-center justify-center text-black shrink-0">
+                        <Check className="w-4 h-4 stroke-[3]" />
+                      </div>
+                    ) : (
+                      <div className="w-6 h-6 rounded-full border border-zinc-600 shrink-0" />
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="p-5 rounded-2xl bg-zinc-900/60 border border-white/5 text-center flex flex-col items-center">
+              <Laptop2 className="w-8 h-8 text-zinc-600 mb-2" />
+              <p className="text-xs font-semibold text-zinc-300">
+                No active Felo Desktop players found
+              </p>
+              <p className="text-[11px] text-zinc-500 max-w-xs mt-1 leading-relaxed">
+                Open Felo on your computer and start playing. Make sure both devices are on the same Wi-Fi or logged into the same account.
+              </p>
+            </div>
+          )}
+        </div>
 
-        {/* SECTION: PLAYBACK OUTPUT TARGETS */}
+        {/* SECTION 2: PLAYBACK OUTPUT TARGETS */}
         <div>
           <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-3 px-1">
             Playback Target
@@ -462,6 +544,87 @@ export default function MobileDeviceSheet({
           </div>
         </div>
 
+        {/* LOGGED OUT CALL TO ACTION BANNER (NON-BLOCKING) */}
+        {!user && (
+          <div className="bg-gradient-to-br from-emerald-950/30 via-zinc-900 to-zinc-900 border border-emerald-500/20 rounded-2xl p-4 shadow-lg space-y-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-xs font-bold text-white">Enable Cloud Remote Control</h4>
+                <p className="text-[11px] text-emerald-400/90">
+                  Log in on PC and Phone for instant automatic discovery
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                onClose()
+                navigate('/account')
+              }}
+              className="w-full py-2.5 rounded-xl bg-white text-black font-bold text-xs hover:bg-zinc-200 transition active:scale-95 shadow flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <User className="w-4 h-4" />
+              <span>Log In to Felo Account</span>
+            </button>
+          </div>
+        )}
+
+        {/* MANUAL WI-FI IP CONNECTION ACCORDION */}
+        <div className="border border-white/10 rounded-2xl p-4 bg-white/[0.02]">
+          <button
+            type="button"
+            onClick={() => setShowManualConnect(!showManualConnect)}
+            className="w-full flex items-center justify-between text-xs font-semibold text-zinc-300 hover:text-white transition cursor-pointer"
+          >
+            <div className="flex items-center gap-2">
+              <Link2 className="w-4 h-4 text-emerald-400" />
+              <span>Manual Wi-Fi Connection (IP & Token)</span>
+            </div>
+            {showManualConnect ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+
+          {showManualConnect && (
+            <form onSubmit={handleManualConnectSubmit} className="mt-3.5 space-y-3 pt-3 border-t border-white/5">
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                If automatic discovery is blocked by your Wi-Fi router, enter your PC&apos;s local IP address and pairing token found in Felo Desktop &gt; Connect Your Phone.
+              </p>
+              <div>
+                <label className="block text-[11px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
+                  Desktop IP / Address
+                </label>
+                <input
+                  type="text"
+                  value={manualIp}
+                  onChange={(e) => setManualIp(e.target.value)}
+                  placeholder="http://192.168.1.5:4788"
+                  className="w-full bg-zinc-800 text-white px-3 py-2 rounded-xl border border-white/10 focus:border-emerald-500/50 outline-none text-xs font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
+                  Pairing Token (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={manualToken}
+                  onChange={(e) => setManualToken(e.target.value)}
+                  placeholder="Token from desktop QR code"
+                  className="w-full bg-zinc-800 text-white px-3 py-2 rounded-xl border border-white/10 focus:border-emerald-500/50 outline-none text-xs font-mono"
+                />
+              </div>
+              <button
+                type="submit"
+                className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs transition cursor-pointer active:scale-95 shadow"
+              >
+                Connect to PC
+              </button>
+            </form>
+          )}
+        </div>
+
         {/* Feature Highlights Card */}
         <div className="bg-white/[0.03] border border-white/5 rounded-2xl p-4 text-xs space-y-2.5 text-zinc-300">
           <div className="flex items-center gap-2.5">
@@ -474,7 +637,7 @@ export default function MobileDeviceSheet({
           </div>
           <div className="flex items-center gap-2.5">
             <ShieldCheck className="w-4 h-4 text-zinc-400 shrink-0" />
-            <span>Automatic discovery via same Felo account</span>
+            <span>Seamless Spotify Connect across all your devices</span>
           </div>
           {user?.email && (
             <div className="pt-1 text-[11px] text-zinc-500 font-mono truncate">
