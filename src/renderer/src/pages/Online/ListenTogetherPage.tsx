@@ -171,22 +171,25 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   const activeSubstitute = joinedRoom?.song ? substitutes[getSongKey(joinedRoom.song)] : undefined
   const activeRoom = joinedRoom || hostRoom
 
-  const upcomingPriorityCount = useMemo(
-    () => queue.slice(currentSongIndex + 1).filter((s) => s.isPriority).length,
-    [queue, currentSongIndex]
-  )
-
-  const visibleQueueItems = useMemo(() => {
-    if (showAllQueue || queue.length <= 15) {
-      return queue.map((song, idx) => ({ song, idx }))
+  const currentPlayingTrack = useMemo(() => {
+    if (currentSongIndex >= 0 && currentSongIndex < queue.length) {
+      return queue[currentSongIndex]
     }
-    const currentIdx = Math.max(0, currentSongIndex)
-    const currentItem = queue[currentIdx] ? [{ song: queue[currentIdx], idx: currentIdx }] : []
-    const upcoming = queue.slice(currentIdx + 1).map((song, i) => ({ song, idx: currentIdx + 1 + i }))
-    const priorityItems = upcoming.filter((item) => item.song.isPriority)
-    const backgroundItems = upcoming.filter((item) => !item.song.isPriority).slice(0, 10)
-    return [...currentItem, ...priorityItems, ...backgroundItems]
-  }, [queue, currentSongIndex, showAllQueue])
+    return undefined
+  }, [queue, currentSongIndex])
+
+  const upcomingTracks = useMemo(() => {
+    if (currentSongIndex < 0) return queue.map((song, idx) => ({ song, idx }))
+    return queue.slice(currentSongIndex + 1).map((song, i) => ({ song, idx: currentSongIndex + 1 + i }))
+  }, [queue, currentSongIndex])
+
+  const priorityTracksList = useMemo(() => {
+    return upcomingTracks.filter((t) => t.song.isPriority)
+  }, [upcomingTracks])
+
+  const backgroundTracksList = useMemo(() => {
+    return upcomingTracks.filter((t) => !t.song.isPriority)
+  }, [upcomingTracks])
 
   const shareUrl = useMemo(() => {
     const code = hostRoom?.code || ''
@@ -1072,121 +1075,139 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
             </div>
 
             {/* Live Session Queue from Host */}
-            {joinedRoom.queue && joinedRoom.queue.length > 0 && (
-              <div className="mt-8 w-full text-left rounded-2xl border border-border/80 bg-surface-elevated/50 p-5 shadow-lg backdrop-blur-sm">
-                <div className="flex items-center justify-between border-b border-border/60 pb-3 mb-3">
-                  <div className="flex items-center gap-2">
-                    <ListMusic className="h-4 w-4 text-text-muted" />
-                    <h3 className="text-xs font-black uppercase tracking-wider text-text">
-                      Live Session Queue
-                    </h3>
+            {joinedRoom.queue && joinedRoom.queue.length > 0 && (() => {
+              const currentSong = joinedRoom.song
+              const priorityTracks = joinedRoom.queue.filter(
+                (s) => s.isPriority && !(s.title === currentSong?.title && s.artist === currentSong?.artist)
+              )
+              const backgroundTracks = joinedRoom.queue.filter(
+                (s) => !s.isPriority && !(s.title === currentSong?.title && s.artist === currentSong?.artist)
+              )
+
+              return (
+                <div className="mt-8 w-full text-left rounded-2xl border border-border/80 bg-surface-elevated/50 p-5 shadow-lg backdrop-blur-sm">
+                  <div className="flex items-center justify-between border-b border-border/60 pb-3 mb-3">
+                    <div className="flex items-center gap-2">
+                      <ListMusic className="h-4 w-4 text-text-muted" />
+                      <h3 className="text-xs font-black uppercase tracking-wider text-text">
+                        Live Session Queue
+                      </h3>
+                    </div>
+                    <span className="rounded-full bg-surface px-2.5 py-0.5 text-[10px] font-bold text-text-muted border border-border/40">
+                      {joinedRoom.queue.length} Tracks Total
+                    </span>
                   </div>
-                  <span className="rounded-full bg-surface px-2.5 py-0.5 text-[10px] font-bold text-text-muted border border-border/40">
-                    {joinedRoom.queue.length} Tracks
-                  </span>
-                </div>
 
-                <div className="divide-y divide-border/20 max-h-56 overflow-y-auto space-y-1 pr-1 scrollbar-thin">
-                  {joinedRoom.queue.map((song, idx) => {
-                    const isNowPlaying =
-                      idx === 0 ||
-                      (song.title === joinedRoom.song?.title && song.artist === joinedRoom.song?.artist)
-                    const isPriority = Boolean(song.isPriority)
-                    return (
-                      <div
-                        key={`${song.title}-${song.artist}-${idx}`}
-                        className={`flex items-center justify-between p-2 rounded-xl transition-all group ${
-                          isNowPlaying
-                            ? 'bg-white/10 text-text font-bold'
-                            : isPriority
-                              ? 'border border-amber-500/35 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20'
-                              : 'hover:bg-hover text-text-muted hover:text-text'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
-                          <span className="w-5 text-center text-[10px] font-bold opacity-60">
-                            {isNowPlaying ? (
-                              <Radio className="h-3 w-3 animate-pulse text-text mx-auto" />
-                            ) : isPriority ? (
-                              <span className="text-amber-400 font-black">★</span>
-                            ) : (
-                              idx + 1
-                            )}
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <p className={`truncate text-xs font-bold ${isPriority ? 'text-amber-200' : ''}`}>
-                                {song.title}
-                              </p>
-                              {isPriority && (
-                                <span className="rounded-full bg-amber-400/20 border border-amber-400/30 px-1.5 py-0.2 text-[8px] font-black text-amber-300">
-                                  🌟 {song.requestedBy || 'Request'}
-                                </span>
-                              )}
-                            </div>
-                            <p className="truncate text-[10px] opacity-70">{song.artist}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                          <span className="text-[10px] font-mono opacity-60">
-                            {formatTime(song.duration || 0)}
-                          </span>
-
-                          {!isNowPlaying && joinedRoom?.code && (
-                            <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  try {
-                                    const supabase = getSupabase()
-                                    const sender = user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'Listener'
-                                    await supabase.from('listening_room_commands').insert({
-                                      room_code: joinedRoom.code,
-                                      command: 'jump',
-                                      payload: { index: idx, query: song.title },
-                                      sender_name: sender
-                                    })
-                                    setMessage(`Requested to play "${song.title}" now!`)
-                                    setTimeout(() => setMessage(''), 3000)
-                                  } catch {}
-                                }}
-                                title="Request to Play Now"
-                                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold bg-white/10 hover:bg-white text-white hover:text-black transition-all cursor-pointer"
-                              >
-                                <Zap className="h-3 w-3 fill-current" />
-                                <span className="hidden md:inline">Instant</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  try {
-                                    const supabase = getSupabase()
-                                    const sender = user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'Listener'
-                                    await supabase.from('listening_room_commands').insert({
-                                      room_code: joinedRoom.code,
-                                      command: 'bump',
-                                      payload: { index: idx, query: song.title },
-                                      sender_name: sender
-                                    })
-                                    setMessage(`Requested "${song.title}" as Priority Request!`)
-                                    setTimeout(() => setMessage(''), 3000)
-                                  } catch {}
-                                }}
-                                title="Request as Important / Play Next"
-                                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 transition-all cursor-pointer"
-                              >
-                                <Star className="h-3 w-3 fill-amber-400/30" />
-                                <span className="hidden md:inline">Next</span>
-                              </button>
-                            </div>
-                          )}
-                        </div>
+                  {/* Priority Requests Section for Listeners */}
+                  {priorityTracks.length > 0 && (
+                    <div className="mb-3 rounded-xl border border-amber-500/35 bg-amber-500/10 p-3">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-amber-300 uppercase tracking-wider mb-2">
+                        <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                        <span>Up Next (Priority Requests)</span>
                       </div>
-                    )
-                  })}
+                      <div className="divide-y divide-amber-500/20 space-y-1">
+                        {priorityTracks.map((song, pIdx) => {
+                          const origIdx = joinedRoom.queue!.findIndex((s) => s.title === song.title && s.artist === song.artist)
+                          return (
+                            <div key={`${song.title}-${song.artist}-${pIdx}`} className="flex items-center justify-between py-1.5 text-xs">
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <span className="rounded-md bg-amber-400/20 px-1 py-0.5 text-[9px] font-black text-amber-300 shrink-0">
+                                  NEXT #{pIdx + 1}
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate font-bold text-amber-100">{song.title}</p>
+                                  <p className="truncate text-[10px] text-text-muted">{song.artist} • by {song.requestedBy || 'Request'}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                                <span className="text-[10px] font-mono opacity-60">{formatTime(song.duration || 0)}</span>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    try {
+                                      const supabase = getSupabase()
+                                      const sender = user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'Listener'
+                                      await supabase.from('listening_room_commands').insert({
+                                        room_code: joinedRoom.code,
+                                        command: 'jump',
+                                        payload: { index: origIdx, query: song.title },
+                                        sender_name: sender
+                                      })
+                                      setMessage(`Requested to play "${song.title}" now!`)
+                                      setTimeout(() => setMessage(''), 3000)
+                                    } catch {}
+                                  }}
+                                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold bg-white/10 hover:bg-white text-white hover:text-black cursor-pointer shadow-xs"
+                                >
+                                  <Zap className="h-3 w-3 fill-current" />
+                                  <span>Play Now</span>
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Background Playlist Preview for Listeners */}
+                  {backgroundTracks.length > 0 && (
+                    <div className="rounded-xl border border-border/40 bg-surface/40 p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-bold text-text-muted uppercase tracking-wider">
+                          📜 Background Playlist ({backgroundTracks.length} tracks)
+                        </span>
+                      </div>
+                      <div className="divide-y divide-border/20 space-y-1 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
+                        {backgroundTracks.slice(0, 5).map((song, bIdx) => {
+                          const origIdx = joinedRoom.queue!.findIndex((s) => s.title === song.title && s.artist === song.artist)
+                          return (
+                            <div key={`${song.title}-${song.artist}-${bIdx}`} className="flex items-center justify-between py-1 text-xs group hover:bg-white/5 rounded-lg px-1 transition-colors">
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <span className="text-[10px] font-bold opacity-60 w-4 text-center">{bIdx + 1}</span>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate font-medium text-text">{song.title}</p>
+                                  <p className="truncate text-[10px] text-text-muted">{song.artist}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0 ml-2">
+                                <span className="text-[10px] font-mono opacity-60 mr-1">{formatTime(song.duration || 0)}</span>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    try {
+                                      const supabase = getSupabase()
+                                      const sender = user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'Listener'
+                                      await supabase.from('listening_room_commands').insert({
+                                        room_code: joinedRoom.code,
+                                        command: 'bump',
+                                        payload: { index: origIdx, query: song.title },
+                                        sender_name: sender
+                                      })
+                                      setMessage(`Requested "${song.title}" as Priority Request!`)
+                                      setTimeout(() => setMessage(''), 3000)
+                                    } catch {}
+                                  }}
+                                  className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-muted hover:text-amber-300 transition-opacity"
+                                  title="Request as next"
+                                >
+                                  <Star className="h-3 w-3" />
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                        {backgroundTracks.length > 5 && (
+                          <div className="pt-2 text-center text-[10px] text-text-muted font-medium">
+                            + {backgroundTracks.length - 5} more songs in host background playlist
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              )
+            })()}
 
             {/* Real-time Room Chat */}
             <div className="mt-8 w-full text-left">
@@ -1759,151 +1780,203 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
         </div>
       )}
 
-      {/* Host Active Session Queue */}
+      {/* Host Active Session Queue: 3 Crystal-Clear Tiers */}
       {hostRoom?.id && queue.length > 0 && (
         <section className="mt-8 rounded-2xl border border-border bg-surface-elevated/70 p-5 shadow-lg backdrop-blur-sm">
-          <div className="flex items-center justify-between border-b border-border/60 pb-3 mb-3">
+          <div className="flex items-center justify-between border-b border-border/60 pb-3 mb-4">
             <div className="flex items-center gap-2">
               <ListMusic className="h-4 w-4 text-text-muted" />
               <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-text">
-                    Your Live Session Queue
-                  </h3>
-                  {upcomingPriorityCount > 0 && (
-                    <span className="rounded-full bg-amber-500/20 border border-amber-500/40 px-2 py-0.5 text-[9px] font-bold text-amber-300">
-                      🌟 {upcomingPriorityCount} Discord Request{upcomingPriorityCount > 1 ? 's' : ''} Next Up
-                    </span>
-                  )}
-                </div>
+                <h3 className="text-xs font-black uppercase tracking-wider text-text">
+                  Live Session Queue
+                </h3>
                 <p className="text-[11px] text-text-muted mt-0.5">
-                  Broadcasted live to all session listeners. Click any song to jump.
+                  Synchronized live across all listeners and connected Discord channels.
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              {queue.length > 15 && (
-                <button
-                  type="button"
-                  onClick={() => setShowAllQueue((prev) => !prev)}
-                  className="rounded-lg bg-surface px-2.5 py-1 text-[10px] font-bold text-text-muted border border-border/60 hover:text-white hover:border-white/30 transition-colors"
-                >
-                  {showAllQueue ? 'Show Compact View' : `Show Full Playlist (${queue.length})`}
-                </button>
-              )}
-              <span className="rounded-full bg-surface-elevated px-2.5 py-0.5 text-[10px] font-medium text-text-muted border border-border/60">
-                {queue.length} Tracks
-              </span>
-            </div>
+            <span className="rounded-full bg-surface-elevated px-2.5 py-0.5 text-[10px] font-medium text-text-muted border border-border/60">
+              {queue.length} Tracks Total
+            </span>
           </div>
 
-          <div className="divide-y divide-border/20 max-h-60 overflow-y-auto space-y-1 pr-1 scrollbar-thin">
-            {visibleQueueItems.map(({ song, idx }) => {
-              const isCurrent = idx === currentSongIndex
-              const isPriority = Boolean(song.isPriority)
-              return (
-                <div
-                  key={`${song.id}-${idx}`}
-                  className={`w-full flex items-center justify-between p-2 rounded-xl text-left transition-all group ${
-                    isCurrent
-                      ? 'bg-white/10 text-white font-bold shadow-sm'
-                      : isPriority
-                        ? 'border border-amber-500/35 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20'
-                        : 'hover:bg-hover text-text-muted hover:text-text'
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      playSong(idx)
-                      void ensureHostRoom(true)
-                    }}
-                    className="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer"
-                    title={`Play "${song.title}" instantly`}
-                  >
-                    <span className="w-5 text-center text-xs font-bold opacity-60">
-                      {isCurrent ? (
-                        <Radio className="h-3.5 w-3.5 animate-pulse text-text mx-auto" />
-                      ) : isPriority ? (
-                        <span className="text-amber-400 font-black">★</span>
-                      ) : (
-                        idx + 1
-                      )}
+          {/* Tier 1: 🟢 NOW PLAYING LIVE SHOWCASE */}
+          {currentPlayingTrack && (
+            <div className="mb-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3.5 flex items-center justify-between gap-3 shadow-sm">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400">
+                  <Radio className="h-5 w-5 animate-pulse" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
+                      NOW PLAYING LIVE
                     </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <p className={`truncate text-xs font-bold ${isPriority ? 'text-amber-200' : ''}`}>
-                          {song.title}
-                        </p>
-                        {isPriority && (
-                          <span className="rounded-full bg-amber-400/20 border border-amber-400/30 px-1.5 py-0.2 text-[8px] font-black text-amber-300">
-                            🌟 {song.requestedBy || 'Discord Request'}
-                          </span>
-                        )}
-                      </div>
-                      <p className="truncate text-[10px] opacity-75">{song.artist}</p>
-                    </div>
-                  </button>
-
-                  <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                    <span className="text-[10px] font-mono opacity-70 mr-1">
-                      {formatTime(song.duration || 0)}
-                    </span>
-
-                    {/* Interactive Action Choice Buttons */}
-                    {!isCurrent && (
-                      <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            playSong(idx)
-                            void ensureHostRoom(true)
-                          }}
-                          title="⚡ Play Now (Instant)"
-                          className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold bg-white/10 hover:bg-white text-white hover:text-black transition-all cursor-pointer shadow-xs"
-                        >
-                          <Zap className="h-3 w-3 fill-current" />
-                          <span className="hidden md:inline">Instant</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            bumpSongToPriority(idx)
-                            void ensureHostRoom(true)
-                          }}
-                          title={isPriority ? '🌟 Priority Request • Move to Next' : '🌟 Make Important / Play Next'}
-                          className={`flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold transition-all cursor-pointer shadow-xs ${
-                            isPriority
-                              ? 'bg-amber-500/25 border border-amber-400/40 text-amber-300'
-                              : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:border-amber-400/30 border border-transparent'
-                          }`}
-                        >
-                          <Star className={`h-3 w-3 ${isPriority ? 'fill-amber-400' : 'fill-transparent'}`} />
-                          <span className="hidden md:inline">Next</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            removeSongFromQueueByIndex(idx)
-                            void ensureHostRoom(true)
-                          }}
-                          title="Remove from queue"
-                          className="p-1 rounded-md text-text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
+                    {currentPlayingTrack.isPriority ? (
+                      <span className="rounded-full bg-amber-400/20 border border-amber-400/40 px-2 py-0.5 text-[9px] font-bold text-amber-300">
+                        🌟 Requested by {currentPlayingTrack.requestedBy || 'Discord User'}
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-medium text-text-muted">
+                        📁 Host Playlist
+                      </span>
                     )}
                   </div>
+                  <p className="truncate text-sm font-black text-white mt-0.5">{currentPlayingTrack.title}</p>
+                  <p className="truncate text-xs text-text-muted">{currentPlayingTrack.artist}</p>
                 </div>
-              )
-            })}
-          </div>
+              </div>
+              <div className="text-right shrink-0">
+                <span className="text-xs font-mono font-bold text-emerald-300">
+                  {formatTime(currentTime)} / {formatTime(currentPlayingTrack.duration || 0)}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Tier 2: 🌟 UP NEXT FROM DISCORD (PRIORITY REQUESTS) */}
+          {priorityTracksList.length > 0 && (
+            <div className="mb-4 rounded-xl border border-amber-500/35 bg-amber-500/10 p-3.5 shadow-sm">
+              <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-amber-500/20">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-amber-400" />
+                  <span className="text-xs font-black uppercase tracking-wider text-amber-300">
+                    Up Next from Discord ({priorityTracksList.length} Request{priorityTracksList.length > 1 ? 's' : ''})
+                  </span>
+                </div>
+                <span className="text-[10px] font-bold text-amber-300/80">
+                  Plays immediately next in order
+                </span>
+              </div>
+              <div className="divide-y divide-amber-500/15 space-y-1">
+                {priorityTracksList.map(({ song, idx }, pIdx) => (
+                  <div key={`${song.id}-${idx}`} className="flex items-center justify-between py-2 text-left group">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <span className="rounded-md bg-amber-500/20 border border-amber-500/30 px-1.5 py-0.5 text-[9px] font-black text-amber-300 shrink-0">
+                        NEXT #{pIdx + 1}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="truncate text-xs font-bold text-amber-100">{song.title}</p>
+                          <span className="text-[10px] text-amber-300/90 font-medium">
+                            • by {song.requestedBy || 'Discord'}
+                          </span>
+                        </div>
+                        <p className="truncate text-[10px] text-text-muted">{song.artist}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 ml-2">
+                      <span className="text-[10px] font-mono opacity-70">{formatTime(song.duration || 0)}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          playSong(idx)
+                          void ensureHostRoom(true)
+                        }}
+                        className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold bg-white/10 hover:bg-white text-white hover:text-black transition-all cursor-pointer shadow-xs"
+                        title="Play immediately now"
+                      >
+                        <Zap className="h-3 w-3 fill-current" />
+                        <span>Play Now</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          removeSongFromQueueByIndex(idx)
+                          void ensureHostRoom(true)
+                        }}
+                        className="p-1 rounded-md text-text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                        title="Remove from queue"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Tier 3: 📜 BACKGROUND PLAYLIST (RESUMES AUTOMATICALLY) */}
+          {backgroundTracksList.length > 0 && (
+            <div className="rounded-xl border border-border/50 bg-surface/50 p-3.5">
+              <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-border/40">
+                <div className="flex items-center gap-2">
+                  <ListMusic className="h-4 w-4 text-text-muted" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-text-muted">
+                    Upcoming Playlist ({backgroundTracksList.length} tracks • Resumes automatically)
+                  </span>
+                </div>
+                {backgroundTracksList.length > 4 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllQueue((prev) => !prev)}
+                    className="text-[10px] font-bold text-text-muted hover:text-white transition-colors cursor-pointer"
+                  >
+                    {showAllQueue ? 'Collapse' : `Show all (${backgroundTracksList.length})`}
+                  </button>
+                )}
+              </div>
+              <div className="divide-y divide-border/20 space-y-1 max-h-56 overflow-y-auto pr-1 scrollbar-thin">
+                {(showAllQueue ? backgroundTracksList : backgroundTracksList.slice(0, 4)).map(
+                  ({ song, idx }, bIdx) => (
+                    <div
+                      key={`${song.id}-${idx}`}
+                      className="flex items-center justify-between py-1.5 text-left group hover:bg-white/5 rounded-lg px-2 transition-colors"
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <span className="w-5 text-center text-[10px] font-bold text-text-muted opacity-70">
+                          {bIdx + 1}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-medium text-text">{song.title}</p>
+                          <p className="truncate text-[10px] text-text-muted">{song.artist}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0 ml-2">
+                        <span className="text-[10px] font-mono opacity-60">{formatTime(song.duration || 0)}</span>
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              playSong(idx)
+                              void ensureHostRoom(true)
+                            }}
+                            className="p-1 rounded text-text-muted hover:text-white"
+                            title="Play instantly"
+                          >
+                            <Zap className="h-3 w-3 fill-current" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              bumpSongToPriority(idx)
+                              void ensureHostRoom(true)
+                            }}
+                            className="p-1 rounded text-text-muted hover:text-amber-300"
+                            title="Make Important / Play Next"
+                          >
+                            <Star className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              removeSongFromQueueByIndex(idx)
+                              void ensureHostRoom(true)
+                            }}
+                            className="p-1 rounded text-text-muted hover:text-rose-400"
+                            title="Remove"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                )}
+              </div>
+            </div>
+          )}
         </section>
       )}
 

@@ -1,7 +1,7 @@
 // Felo - Industry Standard Offline Service Worker (PWA)
 // Caches application shell, assets, fonts, icons, and API fallbacks for offline music playback
 
-const VERSION = '1.1.0'
+const VERSION = '1.1.1'
 const SHELL_CACHE = `felo-shell-v${VERSION}`
 const RUNTIME_CACHE = `felo-runtime-v${VERSION}`
 const IMAGES_CACHE = `felo-images-v${VERSION}`
