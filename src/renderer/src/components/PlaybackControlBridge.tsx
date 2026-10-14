@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { usePlayerStore } from '../hooks/usePlayerStore'
 import { useListeningStore } from '../hooks/useListeningStore'
 import { useOnlineStore } from '../hooks/useOnlineStore'
+import { getActiveAudioElement } from '../lib/audioBridge'
 import { downloadTrackInBackground } from '../lib/backgroundDownloader'
 import type { Song } from '../pages/Library/Library'
 
@@ -50,7 +51,7 @@ export default function PlaybackControlBridge() {
     const snapshot = () => {
       const player = usePlayerStore.getState()
       const song = player.queue[player.currentSongIndex]
-      const audio = document.querySelector('audio')
+      const audio = getActiveAudioElement() ?? document.querySelector('audio')
       const isPlaying = Boolean(
         audio &&
         !audio.paused &&
@@ -157,7 +158,7 @@ export default function PlaybackControlBridge() {
         try {
           checkDeadline()
           const player = usePlayerStore.getState()
-          const domAudio = document.querySelector('audio')
+          const domAudio = getActiveAudioElement() ?? document.querySelector('audio')
           if (!domAudio) throw new Error('PLAYER_NOT_READY')
           const currentAudio: HTMLAudioElement = domAudio
           const listeningState = useListeningStore.getState()
@@ -430,7 +431,7 @@ export default function PlaybackControlBridge() {
           const current = usePlayerStore.getState()
           if (!disposed && verifyPlayback && current.queue[current.currentSongIndex]?.id === expectedSongId) {
             current.setIsPlaying(false)
-            document.querySelector('audio')?.pause()
+            ;(getActiveAudioElement() ?? document.querySelector('audio'))?.pause()
           }
           result = {
             ok: false,

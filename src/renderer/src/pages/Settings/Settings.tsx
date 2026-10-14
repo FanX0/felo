@@ -32,6 +32,7 @@ import {
 } from 'lucide-react'
 import { useLibraryScanStore } from '../../hooks/useLibraryScanStore'
 import { useListeningStore } from '../../hooks/useListeningStore'
+import { usePlayerStore } from '../../hooks/usePlayerStore'
 import {
   DEFAULT_DOWNLOAD_PRIORITY,
   DOWNLOAD_LOCATION_SETTING,
@@ -140,11 +141,25 @@ export default function Settings() {
   const [version, setVersion] = useState('1.0.0')
 
   // Playback settings
-  const [crossfadeEnabled, setCrossfadeEnabled] = useState(false)
-  const [crossfadeDuration, setCrossfadeDuration] = useState(5)
-  const [gaplessEnabled, setGaplessEnabled] = useState(true)
-  const [automixEnabled, setAutomixEnabled] = useState(false)
-  const [normalizeVolume, setNormalizeVolume] = useState(false)
+  const crossfadeEnabled = usePlayerStore((s) => s.crossfadeEnabled)
+  const setCrossfadeEnabled = usePlayerStore((s) => s.setCrossfadeEnabled)
+  const crossfadeDuration = usePlayerStore((s) => s.crossfadeDuration)
+  const setCrossfadeDuration = usePlayerStore((s) => s.setCrossfadeDuration)
+  const [gaplessEnabled, setGaplessEnabledState] = useState(() => localStorage.getItem('felo_gapless') !== 'false')
+  const setGaplessEnabled = (val: boolean) => {
+    localStorage.setItem('felo_gapless', String(val))
+    setGaplessEnabledState(val)
+  }
+  const [automixEnabled, setAutomixEnabledState] = useState(() => localStorage.getItem('felo_automix') === 'true')
+  const setAutomixEnabled = (val: boolean) => {
+    localStorage.setItem('felo_automix', String(val))
+    setAutomixEnabledState(val)
+  }
+  const [normalizeVolume, setNormalizeVolumeState] = useState(() => localStorage.getItem('felo_normalize_volume') === 'true')
+  const setNormalizeVolume = (val: boolean) => {
+    localStorage.setItem('felo_normalize_volume', String(val))
+    setNormalizeVolumeState(val)
+  }
   const [externalPlayerEnabled, setExternalPlayerEnabled] = useState(false)
   const [externalPlayerMessage, setExternalPlayerMessage] = useState('')
   const [externalPlayerApiKey, setExternalPlayerApiKey] = useState('')
