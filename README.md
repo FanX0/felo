@@ -48,3 +48,9 @@ $ npm run build:mac
 # For Linux
 $ npm run build:linux
 ```
+ 
+## Legal and Disclaimer 
+Felo is a local-first personal audio player and library manager designed solely for organizing and playing legally acquired personal media collections. 
+- Felo does not host, store, distribute, or stream copyrighted audio files. 
+- All track metadata, artist info, album art, and lyrics are retrieved dynamically from publicly accessible third-party APIs (such as MusicBrainz, the Apple Music / iTunes Search API, and LRCLIB) under fair use and their respective developer terms. 
+- Felo is an independent open-source project and is not affiliated with, endorsed by, or sponsored by any streaming provider or third-party platform. 
