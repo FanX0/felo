@@ -23,7 +23,9 @@ export function toSharedSong(song: Song): SharedSong {
     artist: song.artist,
     album: song.album,
     duration: song.duration,
-    artworkUrl: /^https?:\/\//i.test(song.artworkPath || '') ? song.artworkPath : undefined
+    artworkUrl: /^https?:\/\//i.test(song.artworkPath || '') ? song.artworkPath : undefined,
+    requestedBy: song.requestedBy,
+    isPriority: song.isPriority
   }
 }
 
@@ -34,7 +36,9 @@ export function fromSharedSong(song: SharedSong): Song {
     artist: song.artist,
     album: song.album || '',
     duration: song.duration || 0,
-    artworkUrl: song.artworkUrl
+    artworkUrl: song.artworkUrl,
+    requestedBy: song.requestedBy,
+    isPriority: song.isPriority
   }
 }
 

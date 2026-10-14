@@ -118,6 +118,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
           case 'play': {
             const query = (cmdPayload?.query || '').trim()
             const action = cmdPayload?.action || 'play_next'
+            const requester = record?.sender_name ? `@${record.sender_name}` : 'Discord'
             if (!query) {
               player.setIsPlaying(true)
               void ensureHostRoom(true)
@@ -134,14 +135,18 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             )
 
             if (queueMatchIndex >= 0) {
-              const matchedSong = player.queue[queueMatchIndex]
+              const matchedSong = {
+                ...player.queue[queueMatchIndex],
+                requestedBy: requester,
+                isPriority: true
+              }
               if (action === 'play_now') {
                 player.playSong(queueMatchIndex)
               } else if (action === 'enqueue') {
                 player.enqueueSong(matchedSong)
               } else {
-                // Default: play_next (Queue as next up in session)
-                player.enqueueSongNext(matchedSong)
+                // Priority / Important request: placed right after current song or after previous priority requests
+                player.enqueueSongPriority(matchedSong)
                 if (!player.isPlaying || player.currentSongIndex === -1) {
                   player.playNext(true)
                 }
@@ -162,14 +167,19 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             } catch {}
 
             if (libraryMatch) {
+              const prioritySong = {
+                ...libraryMatch,
+                requestedBy: requester,
+                isPriority: true
+              }
               if (action === 'enqueue') {
-                player.enqueueSong(libraryMatch)
+                player.enqueueSong(prioritySong)
               } else if (action === 'play_now') {
-                player.enqueueSongNext(libraryMatch)
+                player.enqueueSongPriority(prioritySong)
                 player.playNext(true)
               } else {
-                // Default: play_next (Queue as next up in session)
-                player.enqueueSongNext(libraryMatch)
+                // Priority / Important request
+                player.enqueueSongPriority(prioritySong)
                 if (!player.isPlaying || player.currentSongIndex === -1) {
                   player.playNext(true)
                 }
@@ -186,17 +196,19 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
               album: '',
               duration: cmdPayload?.duration || 0,
               artworkPath: '',
-              filePath: `virtual:${query}`
+              filePath: `virtual:${query}`,
+              requestedBy: requester,
+              isPriority: true
             }
 
             if (action === 'enqueue') {
               player.enqueueSong(virtualSong)
             } else if (action === 'play_now') {
-              player.enqueueSongNext(virtualSong)
+              player.enqueueSongPriority(virtualSong)
               player.playNext(true)
             } else {
-              // Default: play_next
-              player.enqueueSongNext(virtualSong)
+              // Priority / Important request
+              player.enqueueSongPriority(virtualSong)
               if (!player.isPlaying || player.currentSongIndex === -1) {
                 player.playNext(true)
               }

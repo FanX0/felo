@@ -70,6 +70,8 @@ export interface Song {
   artworkUrl?: string
   isOnline?: boolean
   dateAdded?: number
+  requestedBy?: string
+  isPriority?: boolean
 }
 
 interface LibraryProps {

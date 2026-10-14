@@ -44,6 +44,7 @@ interface PlayerState {
   setPlaybackContext: (context: PlaybackContext | null) => void
   enqueueSong: (song: Song) => void
   enqueueSongNext: (song: Song) => void
+  enqueueSongPriority: (song: Song) => void
   playSong: (index: number) => void
   togglePlay: () => void
   playNext: (manual?: boolean) => void
@@ -264,6 +265,52 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           ? Math.min(newOriginalQueue.length, origCurrentIdx + 1)
           : newOriginalQueue.length
       newOriginalQueue.splice(origInsertIdx, 0, song)
+
+      return {
+        queue: newQueue,
+        originalQueue: newOriginalQueue,
+        currentSongIndex: adjustedCurrentIndex === -1 ? 0 : adjustedCurrentIndex
+      }
+    })
+  },
+
+  enqueueSongPriority: (song) => {
+    set((state) => {
+      const prioritySong: Song = { ...song, isPriority: true }
+      const existingIndex = state.queue.findIndex((item) => item.id === song.id)
+      const newQueue = [...state.queue]
+      let adjustedCurrentIndex = state.currentSongIndex
+
+      if (existingIndex >= 0) {
+        newQueue.splice(existingIndex, 1)
+        if (existingIndex < state.currentSongIndex) {
+          adjustedCurrentIndex = Math.max(0, adjustedCurrentIndex - 1)
+        }
+      }
+
+      // Priority requests are placed after the currently playing song AND after any previous priority requests!
+      let insertIndex = adjustedCurrentIndex === -1 ? 0 : adjustedCurrentIndex + 1
+      while (insertIndex < newQueue.length && newQueue[insertIndex]?.isPriority) {
+        insertIndex++
+      }
+
+      newQueue.splice(insertIndex, 0, prioritySong)
+
+      // Also safely update originalQueue
+      const existingOrigIndex = state.originalQueue.findIndex((item) => item.id === song.id)
+      const newOriginalQueue = [...state.originalQueue]
+      if (existingOrigIndex >= 0) {
+        newOriginalQueue.splice(existingOrigIndex, 1)
+      }
+      const currentSong = state.queue[state.currentSongIndex]
+      const origCurrentIdx = currentSong
+        ? newOriginalQueue.findIndex((item) => item.id === currentSong.id)
+        : -1
+      const origInsertIdx =
+        origCurrentIdx >= 0
+          ? Math.min(newOriginalQueue.length, origCurrentIdx + 1)
+          : newOriginalQueue.length
+      newOriginalQueue.splice(origInsertIdx, 0, prioritySong)
 
       return {
         queue: newQueue,

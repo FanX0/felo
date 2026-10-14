@@ -1,4 +1,4 @@
-import { FormEvent, type ReactElement, useCallback, useEffect, useRef, useState } from 'react'
+import { FormEvent, type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   Check,
@@ -150,12 +150,30 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   const [copied, setCopied] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
   const [copiedDiscord, setCopiedDiscord] = useState(false)
+  const [showAllQueue, setShowAllQueue] = useState(false)
   const [qrDataUrl, setQrDataUrl] = useState('')
 
   const directJoinAttempt = useRef<string | null>(null)
 
   const activeSubstitute = joinedRoom?.song ? substitutes[getSongKey(joinedRoom.song)] : undefined
   const activeRoom = joinedRoom || hostRoom
+
+  const upcomingPriorityCount = useMemo(
+    () => queue.slice(currentSongIndex + 1).filter((s) => s.isPriority).length,
+    [queue, currentSongIndex]
+  )
+
+  const visibleQueueItems = useMemo(() => {
+    if (showAllQueue || queue.length <= 15) {
+      return queue.map((song, idx) => ({ song, idx }))
+    }
+    const currentIdx = Math.max(0, currentSongIndex)
+    const currentItem = queue[currentIdx] ? [{ song: queue[currentIdx], idx: currentIdx }] : []
+    const upcoming = queue.slice(currentIdx + 1).map((song, i) => ({ song, idx: currentIdx + 1 + i }))
+    const priorityItems = upcoming.filter((item) => item.song.isPriority)
+    const backgroundItems = upcoming.filter((item) => !item.song.isPriority).slice(0, 10)
+    return [...currentItem, ...priorityItems, ...backgroundItems]
+  }, [queue, currentSongIndex, showAllQueue])
 
   const shareUrl = typeof window !== 'undefined' && window.location.origin && !window.location.origin.startsWith('file:') && window.location.origin !== 'null'
     ? `${window.location.origin}${window.location.pathname}#/online/listen?code=${hostRoom?.code || ''}`
@@ -1050,25 +1068,39 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                     const isNowPlaying =
                       idx === 0 ||
                       (song.title === joinedRoom.song?.title && song.artist === joinedRoom.song?.artist)
+                    const isPriority = Boolean(song.isPriority)
                     return (
                       <div
                         key={`${song.title}-${song.artist}-${idx}`}
                         className={`flex items-center justify-between p-2 rounded-xl transition-all ${
                           isNowPlaying
                             ? 'bg-white/10 text-text font-bold'
-                            : 'text-text-muted hover:text-text'
+                            : isPriority
+                              ? 'border border-amber-500/35 bg-amber-500/10 text-amber-200'
+                              : 'text-text-muted hover:text-text'
                         }`}
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
                           <span className="w-5 text-center text-[10px] font-bold opacity-60">
                             {isNowPlaying ? (
                               <Radio className="h-3 w-3 animate-pulse text-text mx-auto" />
+                            ) : isPriority ? (
+                              <span className="text-amber-400 font-black">★</span>
                             ) : (
                               idx + 1
                             )}
                           </span>
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-xs font-bold">{song.title}</p>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <p className={`truncate text-xs font-bold ${isPriority ? 'text-amber-200' : ''}`}>
+                                {song.title}
+                              </p>
+                              {isPriority && (
+                                <span className="rounded-full bg-amber-400/20 border border-amber-400/30 px-1.5 py-0.2 text-[8px] font-black text-amber-300">
+                                  🌟 {song.requestedBy || 'Request'}
+                                </span>
+                              )}
+                            </div>
                             <p className="truncate text-[10px] opacity-70">{song.artist}</p>
                           </div>
                         </div>
@@ -1660,22 +1692,41 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
             <div className="flex items-center gap-2">
               <ListMusic className="h-4 w-4 text-text-muted" />
               <div>
-                <h3 className="text-xs font-black uppercase tracking-wider text-text">
-                  Your Live Session Queue
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-text">
+                    Your Live Session Queue
+                  </h3>
+                  {upcomingPriorityCount > 0 && (
+                    <span className="rounded-full bg-amber-500/20 border border-amber-500/40 px-2 py-0.5 text-[9px] font-bold text-amber-300">
+                      🌟 {upcomingPriorityCount} Discord Request{upcomingPriorityCount > 1 ? 's' : ''} Next Up
+                    </span>
+                  )}
+                </div>
                 <p className="text-[11px] text-text-muted mt-0.5">
                   Broadcasted live to all session listeners. Click any song to jump.
                 </p>
               </div>
             </div>
-            <span className="rounded-full bg-surface-elevated px-2.5 py-0.5 text-[10px] font-medium text-text-muted border border-border/60">
-              {queue.length} Tracks
-            </span>
+            <div className="flex items-center gap-2">
+              {queue.length > 15 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllQueue((prev) => !prev)}
+                  className="rounded-lg bg-surface px-2.5 py-1 text-[10px] font-bold text-text-muted border border-border/60 hover:text-white hover:border-white/30 transition-colors"
+                >
+                  {showAllQueue ? 'Show Compact View' : `Show Full Playlist (${queue.length})`}
+                </button>
+              )}
+              <span className="rounded-full bg-surface-elevated px-2.5 py-0.5 text-[10px] font-medium text-text-muted border border-border/60">
+                {queue.length} Tracks
+              </span>
+            </div>
           </div>
 
           <div className="divide-y divide-border/20 max-h-60 overflow-y-auto space-y-1 pr-1 scrollbar-thin">
-            {queue.map((song, idx) => {
+            {visibleQueueItems.map(({ song, idx }) => {
               const isCurrent = idx === currentSongIndex
+              const isPriority = Boolean(song.isPriority)
               return (
                 <button
                   key={`${song.id}-${idx}`}
@@ -1684,19 +1735,32 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                   className={`w-full flex items-center justify-between p-2 rounded-xl text-left transition-all group ${
                     isCurrent
                       ? 'bg-white/10 text-white font-bold shadow-sm'
-                      : 'hover:bg-hover text-text-muted hover:text-text'
+                      : isPriority
+                        ? 'border border-amber-500/35 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20'
+                        : 'hover:bg-hover text-text-muted hover:text-text'
                   }`}
                 >
                   <div className="flex items-center gap-3 min-w-0 flex-1">
                     <span className="w-5 text-center text-xs font-bold opacity-60">
                       {isCurrent ? (
                         <Radio className="h-3.5 w-3.5 animate-pulse text-text mx-auto" />
+                      ) : isPriority ? (
+                        <span className="text-amber-400 font-black">★</span>
                       ) : (
                         idx + 1
                       )}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-bold">{song.title}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className={`truncate text-xs font-bold ${isPriority ? 'text-amber-200' : ''}`}>
+                          {song.title}
+                        </p>
+                        {isPriority && (
+                          <span className="rounded-full bg-amber-400/20 border border-amber-400/30 px-1.5 py-0.2 text-[8px] font-black text-amber-300">
+                            🌟 {song.requestedBy || 'Discord Request'}
+                          </span>
+                        )}
+                      </div>
                       <p className="truncate text-[10px] opacity-75">{song.artist}</p>
                     </div>
                   </div>

@@ -54,6 +54,8 @@ export interface SharedSong {
   artworkUrl?: string
   isDeviceStream?: boolean
   streamType?: 'device_audio' | 'library'
+  requestedBy?: string
+  isPriority?: boolean
 }
 
 export interface Conversation {

@@ -656,23 +656,23 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
       const waitMin = Math.floor(curRemaining / 60)
       const waitSec = (curRemaining % 60).toString().padStart(2, '0')
       const waitStr = curRemaining > 0 ? `~${waitMin}m ${waitSec}s` : 'Moments'
-      const positionText = action === 'play_next' ? '#1 (Next Up)' : `#${Math.max(1, fullQueue.length)}`
+      const existingPriorities = fullQueue.filter((t: any) => t.isPriority).length
+      const priorityPos = existingPriorities + 1
+      const positionText = `Priority #${priorityPos} (Plays next after current track)`
 
       return jsonResponse({
         type: 4,
         data: {
           embeds: [
             {
-              title: '➕ Added to Queue',
+              title: '🌟 Added as Priority Request',
               description:
                 `**Track:** **${displayTitle}** ${displayArtist}${trackDur}\n` +
-                `**Position in Queue:** \`${positionText}\`\n` +
+                `**Queue Position:** \`${positionText}\`\n` +
                 (isCurrentlyPlaying ? `**Estimated Wait:** \`${waitStr}\`\n` : '') +
                 `**Room:** \`${roomCode}\`\n\n` +
-                (matchInQueue
-                  ? `✨ *Found in host library queue • Positioned as next up!*`
-                  : `⚡ *Dispatched to host player. Online providers searching lossless audio...*`),
-              color: 0x10b981,
+                `🌟 *Marked as Priority Request! It will play right after the current song before background playlist tracks.*`,
+              color: 0xf59e0b,
               footer: { text: `Requested by @${username} • Lossless Synchronized Audio` }
             }
           ]
@@ -927,12 +927,15 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
 
       const upcomingQueue = isFirstCurrent ? fullQueue.slice(1) : fullQueue
 
+      const priorityTracks = upcomingQueue.filter((t: any) => Boolean(t.isPriority))
+      const backgroundTracks = upcomingQueue.filter((t: any) => !t.isPriority)
+
       const page = Math.max(1, Number(options.find((o: any) => o.name === 'page')?.value) || 1)
       const pageSize = 10
-      const totalPages = Math.max(1, Math.ceil(upcomingQueue.length / pageSize))
+      const totalPages = Math.max(1, Math.ceil(backgroundTracks.length / pageSize))
       const safePage = Math.min(page, totalPages)
       const startIdx = (safePage - 1) * pageSize
-      const pageTracks = upcomingQueue.slice(startIdx, startIdx + pageSize)
+      const pageTracks = backgroundTracks.slice(startIdx, startIdx + pageSize)
 
       const pos = room.position_seconds || 0
       const dur = song?.duration || 0
@@ -958,18 +961,41 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
       let queueDescription = ''
 
       if (song) {
+        const isCurrentPriority = Boolean(song.isPriority)
+        const priorityTag = isCurrentPriority ? ' *(🌟 Priority Request)*' : ''
         queueDescription +=
-          `**🎶 Now Playing:**\n` +
+          `**🎶 Now Playing:**${priorityTag}\n` +
           `**${song.title}** — *${song.artist || 'Unknown'}*\n` +
           `\`${progressBar}\` \`${posStr} / ${durStr}\`\n\n`
       } else {
         queueDescription += `**🎶 Now Playing:** *Nothing is playing right now*\n\n`
       }
 
-      queueDescription += `**⏭️ Up Next (${upcomingQueue.length} tracks):**\n`
+      // 1. Priority Requests Section (Discord requested songs)
+      if (priorityTracks.length > 0) {
+        queueDescription += `**🌟 Priority Requests (${priorityTracks.length} track${priorityTracks.length > 1 ? 's' : ''}):**\n`
+        const priorityLines = priorityTracks.slice(0, 5).map((t, idx) => {
+          const tDur = t.duration || 0
+          const tDurStr = `${Math.floor(tDur / 60)}:${(tDur % 60).toString().padStart(2, '0')}`
+          const reqBy = t.requestedBy ? ` • *by @${t.requestedBy}*` : ''
+          return `\`★ ${idx + 1}.\` **${t.title}** — ${t.artist || 'Unknown'} \`[${tDurStr}]\`${reqBy}`
+        })
+        queueDescription += priorityLines.join('\n')
+        if (priorityTracks.length > 5) {
+          queueDescription += `\n*...and ${priorityTracks.length - 5} more priority requests*`
+        }
+        queueDescription += '\n\n'
+      }
 
-      if (upcomingQueue.length === 0) {
-        queueDescription += `*No upcoming tracks in queue. Use \`/play <song>\` to add songs!*`
+      // 2. Upcoming Background Playlist
+      queueDescription += `**📜 Upcoming Playlist (${backgroundTracks.length} tracks):**\n`
+
+      if (backgroundTracks.length === 0) {
+        if (priorityTracks.length === 0) {
+          queueDescription += `*No upcoming tracks in queue. Use \`/play <song>\` to add songs!*`
+        } else {
+          queueDescription += `*No background playlist tracks queued.*`
+        }
       } else {
         const lines = pageTracks.map((t, idx) => {
           const globalIdx = startIdx + idx + 1
@@ -987,9 +1013,9 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
             {
               title: `📜 Live Session Queue • Room \`${roomCode}\``,
               description: queueDescription,
-              color: 0x10b981,
+              color: priorityTracks.length > 0 ? 0xf59e0b : 0x10b981,
               footer: {
-                text: `Page ${safePage}/${totalPages} • ${upcomingQueue.length} tracks queued • Est. queue time: ${totalTimeStr}`
+                text: `Page ${safePage}/${totalPages} • ${priorityTracks.length} priority request(s), ${backgroundTracks.length} background track(s) • Est. queue time: ${totalTimeStr}`
               }
             }
           ]
