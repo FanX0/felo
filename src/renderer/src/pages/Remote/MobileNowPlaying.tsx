@@ -205,6 +205,7 @@ export default function MobileNowPlaying({
     : ''
 
   const isMobileTarget = state.targetDevice === 'mobile'
+  const isBothTarget = state.targetDevice === 'both'
 
   return (
     <div className="relative w-full h-full flex flex-col justify-between pt-[max(1.25rem,env(safe-area-inset-top))] pb-[max(1.25rem,env(safe-area-inset-bottom))] px-[max(1.5rem,env(safe-area-inset-left))] bg-gradient-to-b from-zinc-900 via-[#121212] to-black text-white select-none overflow-hidden touch-manipulation">
@@ -232,10 +233,10 @@ export default function MobileNowPlaying({
 
         <div className="flex flex-col items-center text-center">
           <span className="text-[10px] font-bold tracking-widest text-zinc-400 uppercase">
-            {isMobileTarget ? 'Streaming on Phone' : 'Playing on Desktop'}
+            {isBothTarget ? 'Dual Sync Audio' : isMobileTarget ? 'Streaming on Device' : 'Playing on Desktop'}
           </span>
           <span className="text-xs font-semibold text-zinc-200 truncate max-w-[200px]">
-            {song?.album || (isMobileTarget ? 'Mobile Audio' : 'Desktop Library')}
+            {song?.album || (isBothTarget ? 'PC + Phone' : isMobileTarget ? 'Device Audio' : 'Desktop Library')}
           </span>
         </div>
 
@@ -491,17 +492,24 @@ export default function MobileNowPlaying({
           }}
           className="flex items-center gap-2 text-xs font-semibold text-zinc-300 hover:text-white transition active:scale-95 px-1 py-1 cursor-pointer"
         >
-          {isMobileTarget ? (
+          {isBothTarget ? (
+            <div className="flex items-center -space-x-1 shrink-0">
+              <Laptop2 className="w-3.5 h-3.5 text-zinc-300" />
+              <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+            </div>
+          ) : isMobileTarget ? (
             <Smartphone className="w-4 h-4 shrink-0" />
           ) : (
             <Laptop2 className="w-4 h-4 shrink-0" />
           )}
           <span className="truncate max-w-[200px]">
-            {isMobileTarget
-              ? 'Listening on This Phone'
-              : isConnected
-                ? `Listening on ${state.deviceName || 'Felo Desktop'}`
-                : 'Reconnecting...'}
+            {isBothTarget
+              ? 'Playing on Both (PC + Phone)'
+              : isMobileTarget
+                ? 'Listening on This Device'
+                : isConnected
+                  ? `Listening on ${state.deviceName || 'Felo Desktop'}`
+                  : 'Reconnecting...'}
           </span>
         </button>
 

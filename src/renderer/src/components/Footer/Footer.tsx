@@ -15,7 +15,6 @@ import {
   Maximize2,
   Radio,
   LogOut,
-  Smartphone,
   ListMusic,
   Loader2
 } from 'lucide-react'
@@ -29,6 +28,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { toMediaUrl } from '../../lib/media'
 import { ArtworkImage } from '../../pages/Home/components/ArtworkImage'
 import type { DownloadTarget } from '../DownloadPanel/DownloadPanel'
+import { AppCapabilities } from '../../lib/appConfig'
 
 interface FooterProps {
   onOpenDownloadPanel?: (target?: DownloadTarget) => void
@@ -283,7 +283,9 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
       void handlePlayClick()
       return
     }
-    onOpenDownloadPanel?.(currentSong)
+    if (AppCapabilities.downloads) {
+      onOpenDownloadPanel?.(currentSong)
+    }
   }
 
   return (
@@ -293,7 +295,13 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
         {/* Cover Art */}
         <div
           onClick={currentSong ? handleTitleClick : () => void handlePlayClick()}
-          title={currentSong ? `Open download sources for "${currentSong.title}"` : 'Click play to start recently added'}
+          title={
+            currentSong
+              ? AppCapabilities.downloads
+                ? `Open download sources for "${currentSong.title}"`
+                : currentSong.title
+              : 'Click play to start recently added'
+          }
           className="relative h-[64px] w-[64px] bg-surface-elevated rounded-md shrink-0 flex items-center justify-center shadow-md overflow-hidden border border-border/10 cursor-pointer hover:border-white/30"
         >
           {currentSong ? (
@@ -342,7 +350,7 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
                   <span className="truncate">{playbackContext.type}: {playbackContext.title}</span>
                 </button>
               )}
-              {prefetchingTransfer && (
+              {AppCapabilities.downloads && prefetchingTransfer && (
                 <span
                   className="inline-flex items-center gap-1 text-[10px] text-primary-amber bg-primary-amber/10 px-1.5 py-0.2 rounded font-medium shrink-0 animate-pulse"
                   title={`Buffering upcoming track "${prefetchingTransfer.title}" in background...`}
@@ -354,7 +362,13 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
           )}
           <p
             onClick={handleTitleClick}
-            title={currentSong ? `Open download sources for "${currentSong.title}"` : 'Click play to start recently added'}
+            title={
+              currentSong
+                ? AppCapabilities.downloads
+                  ? `Open download sources for "${currentSong.title}"`
+                  : currentSong.title
+                : 'Click play to start recently added'
+            }
             className="text-[14px] font-medium text-text truncate hover:underline cursor-pointer no-drag"
           >
             {currentSong ? currentSong.title : 'No track selected'}
@@ -533,13 +547,15 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
         )}
 
         {/* Download sources */}
-        <button
-          title="Download sources"
-          onClick={() => onOpenDownloadPanel?.(currentSong)}
-          className="hover:text-text transition-colors p-1"
-        >
-          <ListVideo className="w-4 h-4" />
-        </button>
+        {AppCapabilities.downloads && (
+          <button
+            title="Download sources"
+            onClick={() => onOpenDownloadPanel?.(currentSong)}
+            className="hover:text-text transition-colors p-1"
+          >
+            <ListVideo className="w-4 h-4" />
+          </button>
+        )}
 
         {/* Volume */}
         <div className="flex items-center gap-2 w-28">
@@ -562,15 +578,15 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
           </div>
         </div>
 
-        {/* Phone Remote Control */}
+        {/* Device Output Switcher / Remote Control */}
         <button
-          title="Connect Phone (Remote Control)"
+          title="Connect to a Device (Output & Remote Control)"
           onClick={() => setIsRemoteModalOpen(true)}
           className={`hover:text-text transition-colors p-1 relative ${
             connectedPhones > 0 ? 'text-white' : ''
           }`}
         >
-          <Smartphone className="w-4 h-4" />
+          <Radio className="w-4 h-4" />
           {connectedPhones > 0 && (
             <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
           )}

@@ -37,6 +37,7 @@ import { ArtworkImage } from '../Home/components/ArtworkImage'
 import ArtistLinks from '../../components/Common/ArtistLinks'
 import SongCreditsModal from '../../components/Common/SongCreditsModal'
 import { parseArtists } from '../../lib/artistParser'
+import { AppCapabilities } from '../../lib/appConfig'
 
 function formatDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return '0:00'
@@ -585,10 +586,12 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
             <span className="font-bold">
               {songs.length} {songs.length === 1 ? 'song' : 'songs'}
             </span>
-            <span className="text-white/65">
-              ({downloadedCount} downloaded
-              {missingCount > 0 ? `, ${missingCount} not downloaded` : ''})
-            </span>
+            {AppCapabilities.downloads && (
+              <span className="text-white/65">
+                ({downloadedCount} downloaded
+                {missingCount > 0 ? `, ${missingCount} not downloaded` : ''})
+              </span>
+            )}
             <span className="text-white/65">•</span>
             <span>Created {new Date(playlist.dateCreated * 1000).toLocaleDateString()}</span>
           </div>
@@ -628,42 +631,44 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
         >
           <Shuffle className="h-4 w-4" /> Shuffle
         </button>
-        {missingCount > 0 ? (
-          <button
-            type="button"
-            onClick={handleDownloadMissing}
-            title={
-              isDownloadingMissing
-                ? 'Click to stop downloading missing tracks'
-                : `Download ${missingCount} missing tracks 1 by 1`
-            }
-            className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-bold shadow-md transition-all ${
-              isDownloadingMissing
-                ? 'border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
-                : 'border-border/60 bg-surface-elevated text-white hover:bg-hover'
-            }`}
-          >
-            {isDownloadingMissing ? (
-              <>
-                <Loader2 className="h-5 w-5 animate-spin text-amber-400" />
-                <span>Downloading missing ({missingCount} left)...</span>
-              </>
-            ) : (
-              <>
-                <Download className="h-5 w-5" />
-                <span>Download missing ({missingCount})</span>
-              </>
-            )}
-          </button>
-        ) : (
-          <button
-            type="button"
-            disabled
-            title="All playlist tracks are stored locally"
-            className="text-[#b3b3b3] disabled:opacity-50"
-          >
-            <Download className="h-9 w-9" />
-          </button>
+        {AppCapabilities.downloads && (
+          missingCount > 0 ? (
+            <button
+              type="button"
+              onClick={handleDownloadMissing}
+              title={
+                isDownloadingMissing
+                  ? 'Click to stop downloading missing tracks'
+                  : `Download ${missingCount} missing tracks 1 by 1`
+              }
+              className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-bold shadow-md transition-all ${
+                isDownloadingMissing
+                  ? 'border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
+                  : 'border-border/60 bg-surface-elevated text-white hover:bg-hover'
+              }`}
+            >
+              {isDownloadingMissing ? (
+                <>
+                  <Loader2 className="h-5 w-5 animate-spin text-amber-400" />
+                  <span>Downloading missing ({missingCount} left)...</span>
+                </>
+              ) : (
+                <>
+                  <Download className="h-5 w-5" />
+                  <span>Download missing ({missingCount})</span>
+                </>
+              )}
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled
+              title="All playlist tracks are stored locally"
+              className="text-[#b3b3b3] disabled:opacity-50"
+            >
+              <Download className="h-9 w-9" />
+            </button>
+          )
         )}
         <button
           type="button"
@@ -907,7 +912,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
                         </span>
                         <span className="truncate">{qualityLabel(song)}</span>
                       </>
-                    ) : (
+                    ) : AppCapabilities.downloads ? (
                       (() => {
                         const transfer = transfers.find(
                           (t) =>
@@ -935,10 +940,10 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
                           </button>
                         )
                       })()
-                    )}
+                    ) : null}
                   </div>
                   <div className="flex items-center justify-end gap-2">
-                    {!isDownloaded && (
+                    {!isDownloaded && AppCapabilities.downloads && (
                       <button
                         type="button"
                         onClick={(e) => {
@@ -1125,30 +1130,34 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
               <FileText className="h-4 w-4" />
               Show Credits
             </button>
-            {(!activeSongMenu.song.filePath || activeSongMenu.song.filePath.startsWith('virtual:')) && (
-              <button
-                type="button"
-                onClick={() => {
-                  handleDownloadTrack(activeSongMenu.song, false)
-                  setActiveSongMenu(null)
-                }}
-                className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
-              >
-                <Download className="h-4 w-4" />
-                Download to library
-              </button>
+            {AppCapabilities.downloads && (
+              <>
+                {(!activeSongMenu.song.filePath || activeSongMenu.song.filePath.startsWith('virtual:')) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleDownloadTrack(activeSongMenu.song, false)
+                      setActiveSongMenu(null)
+                    }}
+                    className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+                  >
+                    <Download className="h-4 w-4" />
+                    Download to library
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleChooseSource(activeSongMenu.song)
+                    setActiveSongMenu(null)
+                  }}
+                  className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+                >
+                  <Download className="h-4 w-4" />
+                  Choose download source...
+                </button>
+              </>
             )}
-            <button
-              type="button"
-              onClick={() => {
-                handleChooseSource(activeSongMenu.song)
-                setActiveSongMenu(null)
-              }}
-              className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
-            >
-              <Download className="h-4 w-4" />
-              Choose download source...
-            </button>
             <div className="mx-2 my-1 h-px bg-white/10" />
             <button
               type="button"

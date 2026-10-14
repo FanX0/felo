@@ -31,6 +31,7 @@ import {
   ListMusic
 } from 'lucide-react'
 import { useLibraryScanStore } from '../../hooks/useLibraryScanStore'
+import { useListeningStore } from '../../hooks/useListeningStore'
 import {
   DEFAULT_DOWNLOAD_PRIORITY,
   DOWNLOAD_LOCATION_SETTING,
@@ -187,6 +188,9 @@ export default function Settings() {
   const [discordWebhookEnabled, setDiscordWebhookEnabled] = useState(false)
   const [discordTestStatus, setDiscordTestStatus] = useState<{ loading: boolean; message?: string; success?: boolean }>({ loading: false })
   const [discordMessage, setDiscordMessage] = useState('')
+  const hostRoom = useListeningStore((state) => state.hostRoom)
+  const ensureHostRoom = useListeningStore((state) => state.ensureHostRoom)
+  const [copiedRoomCode, setCopiedRoomCode] = useState(false)
 
   // Appearance
   const [reducedMotion, setReducedMotion] = useState(false)
@@ -1939,6 +1943,72 @@ export default function Settings() {
                   {discordMessage}
                 </div>
               )}
+
+              {/* Universal Cloudflare Bot Section (1-Click) */}
+              <div className="mt-4 p-4 rounded-xl bg-surface-elevated/40 border border-primary-amber/30 space-y-3.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <span className="p-2 rounded-lg bg-primary-amber/15 text-primary-amber">
+                      <Bot className="w-5 h-5" />
+                    </span>
+                    <div>
+                      <h4 className="text-xs font-bold text-text flex items-center gap-2">
+                        <span>Universal Discord Bot (1-Click)</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-mono font-medium">
+                          felo.feloapp.workers.dev
+                        </span>
+                      </h4>
+                      <p className="text-[11px] text-text-muted mt-0.5">
+                        Zero setup. Invite our bot to your Discord server and control this desktop player from any channel.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Room Code Display */}
+                <div className="p-3 rounded-lg bg-surface border border-border/60 flex items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[10px] text-text-muted uppercase tracking-wider font-semibold block">
+                      Your Discord Connect Code
+                    </span>
+                    <span className="text-base font-mono font-bold tracking-widest text-primary-amber">
+                      {hostRoom?.code || 'NO ACTIVE CODE'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {hostRoom?.code ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void navigator.clipboard.writeText(hostRoom.code)
+                          setCopiedRoomCode(true)
+                          setTimeout(() => setCopiedRoomCode(false), 2000)
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-text text-xs font-medium flex items-center gap-1.5 transition-colors"
+                      >
+                        {copiedRoomCode ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copiedRoomCode ? 'Copied!' : 'Copy Code'}</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void ensureHostRoom(true)}
+                        className="px-3 py-1.5 rounded-lg bg-primary-amber text-black text-xs font-bold transition-all hover:bg-primary-amber/90"
+                      >
+                        Generate Code
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-text-muted space-y-1 pt-1">
+                  <p className="font-semibold text-text">How to connect in Discord:</p>
+                  <ol className="list-decimal list-inside space-y-0.5 text-[11px] text-text-muted">
+                    <li>In your Discord server, type <code className="text-text font-mono font-bold">/connect {hostRoom?.code || '<code>'}</code></li>
+                    <li>Type <code className="text-text font-mono font-bold">/play &lt;song&gt;</code> — Felo plays it and auto-downloads missing songs online!</li>
+                  </ol>
+                </div>
+              </div>
 
               {/* Bot Configuration Fields */}
               <div className="mt-4 space-y-4 pt-4 border-t border-border/30">

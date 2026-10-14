@@ -25,6 +25,7 @@ import type { DownloadTarget } from '../../components/DownloadPanel/DownloadPane
 import ArtistLinks from '../../components/Common/ArtistLinks'
 import SongCreditsModal from '../../components/Common/SongCreditsModal'
 import { parseArtists } from '../../lib/artistParser'
+import { AppCapabilities } from '../../lib/appConfig'
 
 interface AlbumPageProps {
   onOpenDownloadPanel?: (target: DownloadTarget) => void
@@ -496,41 +497,43 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
             >
               <Shuffle className="h-4 w-4" /> Shuffle
             </button>
-            {tracks.length > 0 && missingTracks.length === 0 ? (
-              <button
-                type="button"
-                disabled
-                className="flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-5 py-3 text-sm font-bold text-emerald-400 opacity-90 cursor-default"
-                title="All album tracks are already in your library"
-              >
-                <CheckCircle2 className="h-4 w-4" /> In Library
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void handleDownloadAlbum()}
-                disabled={loading || tracks.length === 0}
-                className={`flex items-center gap-2 rounded-full border px-5 py-3 text-sm font-bold transition-all hover:scale-105 cursor-pointer ${
-                  isDownloadingAlbum || albumActiveTransfers.length > 0
-                    ? 'border-primary-amber bg-primary-amber/10 text-primary-amber hover:bg-primary-amber/20'
-                    : 'border-white/20 bg-white/5 text-white hover:bg-white/10'
-                } disabled:opacity-50`}
-                title={
-                  isDownloadingAlbum || albumActiveTransfers.length > 0
-                    ? 'Click to stop downloading missing tracks'
-                    : `Download all ${missingTracks.length} missing tracks to library`
-                }
-              >
-                {isDownloadingAlbum || albumActiveTransfers.length > 0 ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Downloading missing ({albumActiveTransfers.length || missingTracks.length})... (Click to stop)
-                  </>
-                ) : (
-                  <>
-                    <Download className="h-4 w-4" /> Download Album ({missingTracks.length})
-                  </>
-                )}
-              </button>
+            {AppCapabilities.downloads && (
+              tracks.length > 0 && missingTracks.length === 0 ? (
+                <button
+                  type="button"
+                  disabled
+                  className="flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-5 py-3 text-sm font-bold text-emerald-400 opacity-90 cursor-default"
+                  title="All album tracks are already in your library"
+                >
+                  <CheckCircle2 className="h-4 w-4" /> In Library
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void handleDownloadAlbum()}
+                  disabled={loading || tracks.length === 0}
+                  className={`flex items-center gap-2 rounded-full border px-5 py-3 text-sm font-bold transition-all hover:scale-105 cursor-pointer ${
+                    isDownloadingAlbum || albumActiveTransfers.length > 0
+                      ? 'border-primary-amber bg-primary-amber/10 text-primary-amber hover:bg-primary-amber/20'
+                      : 'border-white/20 bg-white/5 text-white hover:bg-white/10'
+                  } disabled:opacity-50`}
+                  title={
+                    isDownloadingAlbum || albumActiveTransfers.length > 0
+                      ? 'Click to stop downloading missing tracks'
+                      : `Download all ${missingTracks.length} missing tracks to library`
+                  }
+                >
+                  {isDownloadingAlbum || albumActiveTransfers.length > 0 ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" /> Downloading missing ({albumActiveTransfers.length || missingTracks.length})... (Click to stop)
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-4 w-4" /> Download Album ({missingTracks.length})
+                    </>
+                  )}
+                </button>
+              )
             )}
             <button
               type="button"
@@ -661,6 +664,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
 
                 <div className="flex items-center justify-end gap-2 text-sm text-[#a7a7a7]">
                   <span>{parseDuration(track.duration)}</span>
+                  {AppCapabilities.downloads && (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -690,6 +694,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                       <Download className="h-4 w-4" />
                     )}
                   </button>
+                  )}
                   <button
                     type="button"
                     onClick={(e) => {
@@ -845,7 +850,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
               <FileText className="h-4 w-4" />
               Show Credits
             </button>
-            {!activeMenu.track.localSong && (
+            {!activeMenu.track.localSong && AppCapabilities.downloads && (
               <button
                 type="button"
                 onClick={() => {

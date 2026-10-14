@@ -58,7 +58,9 @@ export default function MobileMiniPlayer({ state, isConnected, onExpand }: Mobil
           </h4>
           <p className="text-xs text-zinc-400 truncate mt-0.5 flex items-center gap-1.5">
             <span className="truncate">{song?.artist || 'Felo Desktop'}</span>
-            <span className="text-[10px] text-white/80 font-medium shrink-0">• Desktop</span>
+            <span className="text-[10px] text-white/80 font-medium shrink-0">
+              {state.targetDevice === 'both' ? '• Dual Sync' : state.targetDevice === 'mobile' ? '• Device' : '• Desktop'}
+            </span>
           </p>
         </div>
 

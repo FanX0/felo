@@ -254,11 +254,19 @@ export class RemoteControlService {
     token: string
     url: string
     qrDataUrl: string
+    cloudflareUrl: string
+    cloudflareQrDataUrl: string
     connectedClients: number
   }> {
     this.ipAddress = getLocalIpAddress()
     const url = `http://${this.ipAddress}:${this.port}/#remote?token=${this.token}`
+    const cloudflareUrl = `https://felo.feloapp.workers.dev/#remote?host=${encodeURIComponent(
+      `http://${this.ipAddress}:${this.port}`
+    )}&token=${encodeURIComponent(this.token)}`
+
     let qrDataUrl = ''
+    let cloudflareQrDataUrl = ''
+
     try {
       qrDataUrl = await QRCode.toDataURL(url, {
         margin: 2,
@@ -266,7 +274,17 @@ export class RemoteControlService {
         color: { dark: '#000000', light: '#ffffff' }
       })
     } catch (e) {
-      console.error('Failed to generate QR code data URL:', e)
+      console.error('Failed to generate local QR code data URL:', e)
+    }
+
+    try {
+      cloudflareQrDataUrl = await QRCode.toDataURL(cloudflareUrl, {
+        margin: 2,
+        scale: 7,
+        color: { dark: '#000000', light: '#ffffff' }
+      })
+    } catch (e) {
+      console.error('Failed to generate Cloudflare QR code data URL:', e)
     }
 
     return {
@@ -277,6 +295,8 @@ export class RemoteControlService {
       token: this.token,
       url,
       qrDataUrl,
+      cloudflareUrl,
+      cloudflareQrDataUrl,
       connectedClients: this.sseClients.size
     }
   }
@@ -378,8 +398,9 @@ export class RemoteControlService {
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const corsHeaders: Record<string, string> = {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, HEAD',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Range',
+      'Access-Control-Allow-Private-Network': 'true',
       'Cache-Control': 'no-store'
     }
 

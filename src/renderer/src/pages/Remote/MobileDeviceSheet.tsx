@@ -70,6 +70,25 @@ export default function MobileDeviceSheet({
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {!isConnected && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 text-xs text-amber-200 flex flex-col gap-2">
+            <div className="flex items-center gap-2 font-bold text-amber-300">
+              <Wifi className="w-4 h-4 shrink-0" />
+              <span>Not Connected to Felo Desktop</span>
+            </div>
+            <p className="text-[11px] text-amber-200/80 leading-relaxed">
+              To control your desktop, stream audio, or play on both devices, make sure both devices are on the same Wi-Fi and configure the Desktop Server URL below or scan the desktop QR code.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowConfig(true)}
+              className="self-start mt-1 px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-semibold text-[11px] transition cursor-pointer"
+            >
+              Configure Desktop IP & Token
+            </button>
+          </div>
+        )}
+
         <div>
           <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-3 px-1">
             Playback Devices
@@ -164,7 +183,7 @@ export default function MobileDeviceSheet({
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <h4 className="text-base font-bold text-white truncate">
-                      This Mobile Device
+                      This Device
                     </h4>
                     {currentTarget === 'mobile' && (
                       <div className="flex items-center gap-1.5">
@@ -186,14 +205,79 @@ export default function MobileDeviceSheet({
                   >
                     {currentTarget === 'mobile'
                       ? state.isPlaying
-                        ? 'Streaming to phone speakers / headphones'
-                        : 'Phone output ready'
-                      : 'Stream audio directly to this phone'}
+                        ? 'Streaming to phone / browser output'
+                        : 'Device output ready'
+                      : 'Stream audio directly to this phone/browser'}
                   </p>
                 </div>
               </div>
 
               {currentTarget === 'mobile' ? (
+                <div className="w-7 h-7 rounded-full bg-white flex items-center justify-center text-black shrink-0">
+                  <Check className="w-4 h-4 stroke-[3]" />
+                </div>
+              ) : (
+                <div className="w-6 h-6 rounded-full border border-zinc-600 shrink-0" />
+              )}
+            </button>
+
+            {/* 3. Play on Both Devices (Dual Audio Sync) Card */}
+            <button
+              type="button"
+              onClick={() => handleSelectDevice('both')}
+              disabled={switching}
+              className={`w-full p-4 rounded-2xl text-left transition flex items-center justify-between border cursor-pointer ${
+                currentTarget === 'both'
+                  ? 'bg-white/[0.08] border-white/40 shadow-lg shadow-white/5'
+                  : 'bg-white/[0.03] border-white/5 hover:bg-white/[0.06] hover:border-white/20'
+              }`}
+            >
+              <div className="flex items-center gap-3.5 min-w-0">
+                <div
+                  className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
+                    currentTarget === 'both'
+                      ? 'bg-gradient-to-br from-amber-500/20 to-emerald-500/20 text-white border border-white/20'
+                      : 'bg-zinc-800 text-zinc-400'
+                  }`}
+                >
+                  <div className="relative flex items-center justify-center">
+                    <Laptop2 className={`w-5 h-5 -mr-1.5 ${currentTarget === 'both' && state.isPlaying ? 'animate-pulse' : ''}`} />
+                    <Smartphone className={`w-4 h-4 text-emerald-400 ${currentTarget === 'both' && state.isPlaying ? 'animate-pulse' : ''}`} />
+                  </div>
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-base font-bold text-white truncate">
+                      Play on Both Devices
+                    </h4>
+                    {currentTarget === 'both' && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                        {state.isPlaying && (
+                          <div className="flex items-end gap-0.5 h-3">
+                            <span className="w-0.5 h-full bg-emerald-400 animate-pulse" />
+                            <span className="w-0.5 h-2/3 bg-emerald-400 animate-pulse" style={{ animationDelay: '150ms' }} />
+                            <span className="w-0.5 h-4/5 bg-emerald-400 animate-pulse" style={{ animationDelay: '300ms' }} />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <p
+                    className={`text-xs mt-0.5 truncate ${
+                      currentTarget === 'both' ? 'text-emerald-400 font-medium' : 'text-zinc-400'
+                    }`}
+                  >
+                    {currentTarget === 'both'
+                      ? state.isPlaying
+                        ? 'Synchronized audio on PC and Phone'
+                        : 'Dual playback ready'
+                      : 'Play simultaneously on Desktop and Phone in sync'}
+                  </p>
+                </div>
+              </div>
+
+              {currentTarget === 'both' ? (
                 <div className="w-7 h-7 rounded-full bg-white flex items-center justify-center text-black shrink-0">
                   <Check className="w-4 h-4 stroke-[3]" />
                 </div>

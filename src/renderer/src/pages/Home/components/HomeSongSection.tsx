@@ -3,6 +3,7 @@ import type { HomeSongItem } from '../types'
 import { ArtworkImage } from './ArtworkImage'
 import { usePlayerStore } from '../../../hooks/usePlayerStore'
 import { useDownloadStore } from '../../../hooks/useDownloadStore'
+import { AppCapabilities } from '../../../lib/appConfig'
 
 interface HomeSongSectionProps {
   songs: HomeSongItem[]
@@ -173,39 +174,41 @@ export function HomeSongSection({
                 </button>
 
                 {/* Download / In Library Button */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (isInLibrary) {
-                      onChooseSourceOrReplace(song)
-                    } else {
-                      onDownloadSong(song)
+                {AppCapabilities.downloads && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (isInLibrary) {
+                        onChooseSourceOrReplace(song)
+                      } else {
+                        onDownloadSong(song)
+                      }
+                    }}
+                    title={
+                      isDownloading
+                        ? `Downloading (${transfer?.progress || 0}%)...`
+                        : isInLibrary
+                          ? 'In your library (Click to choose source or replace)'
+                          : 'Download track to library'
                     }
-                  }}
-                  title={
-                    isDownloading
-                      ? `Downloading (${transfer?.progress || 0}%)...`
-                      : isInLibrary
-                        ? 'In your library (Click to choose source or replace)'
-                        : 'Download track to library'
-                  }
-                  className={`h-7 w-7 flex items-center justify-center rounded-full transition-all ${
-                    isDownloading
-                      ? 'text-primary-amber'
-                      : isInLibrary
-                        ? 'text-text-muted hover:text-white hover:bg-white/10'
-                        : 'text-text-muted opacity-0 group-hover:opacity-100 hover:text-white hover:bg-white/10'
-                  }`}
-                >
-                  {isDownloading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : isInLibrary ? (
-                    <CheckCircle2 className="h-4 w-4" />
-                  ) : (
-                    <Download className="h-4 w-4" />
-                  )}
-                </button>
+                    className={`h-7 w-7 flex items-center justify-center rounded-full transition-all ${
+                      isDownloading
+                        ? 'text-primary-amber'
+                        : isInLibrary
+                          ? 'text-text-muted hover:text-white hover:bg-white/10'
+                          : 'text-text-muted opacity-0 group-hover:opacity-100 hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    {isDownloading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : isInLibrary ? (
+                      <CheckCircle2 className="h-4 w-4" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                  </button>
+                )}
 
                 <span className="w-9 text-right text-xs text-text-muted tabular-nums">
                   {formatDuration(song.duration)}

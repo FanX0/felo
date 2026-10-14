@@ -192,7 +192,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
   syncStatus: 'idle',
   missingSong: null,
   lastHostUpdate: 0,
-  autoDownloadMissing: localStorage.getItem(AUTO_DOWNLOAD_STORAGE_KEY) !== 'false',
+  autoDownloadMissing: localStorage.getItem(AUTO_DOWNLOAD_STORAGE_KEY) === 'true',
   substitutes: readInitialSubstitutes(),
 
   setHostRoom: (hostRoom) => set({ hostRoom }),

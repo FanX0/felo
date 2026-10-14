@@ -603,19 +603,23 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Auto-download toggle */}
+            {/* Ephemeral Stream vs Save toggle */}
             <button
               type="button"
               onClick={() => setAutoDownloadMissing(!autoDownloadMissing)}
-              title="Automatically download missing tracks in background"
+              title={
+                autoDownloadMissing
+                  ? 'Saving full tracks to local library (Personal copy)'
+                  : 'Stream Mode: Ephemeral playback in RAM only (Safe & Compliant • No file saved)'
+              }
               className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all border ${
                 autoDownloadMissing
-                  ? 'border-white/30 bg-white/10 text-text'
-                  : 'border-border bg-surface-elevated text-text-muted hover:text-text'
+                  ? 'border-amber-500/40 bg-amber-500/15 text-amber-300'
+                  : 'border-emerald-500/40 bg-emerald-500/15 text-emerald-400'
               }`}
             >
-              <Download className="h-3.5 w-3.5" />
-              <span>Auto-Download {autoDownloadMissing ? 'ON' : 'OFF'}</span>
+              <Radio className="h-3.5 w-3.5" />
+              <span>{autoDownloadMissing ? 'Save to Library: ON' : 'Stream Mode: Ephemeral (Lossless)'}</span>
             </button>
 
             {/* Leave / Stop Syncing button */}
@@ -630,6 +634,26 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
             </button>
           </div>
         </header>
+
+        {/* Compliance & Fidelity Notice */}
+        <div className="mt-4 p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5">
+            <span className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+              <Radio className="w-4 h-4" />
+            </span>
+            <div>
+              <span className="font-bold text-white flex items-center gap-2">
+                <span>Mode A: Ephemeral Live Stream</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 font-mono">
+                  100% Studio Lossless • Ephemeral in RAM
+                </span>
+              </span>
+              <p className="text-[11px] text-emerald-100/70 mt-0.5">
+                Audio plays live in synchronized lossless quality for this session only. No permanent files are saved or distributed to listener drives.
+              </p>
+            </div>
+          </div>
+        </div>
 
         {/* Missing Song Alert Banner */}
         {syncStatus === 'missing_song' && missingSong && !activeSubstitute && (
@@ -1009,6 +1033,26 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
           )}
         </div>
       </header>
+
+      {/* Compliance & Fidelity Notice (Mode A: Ephemeral Stream) */}
+      <div className="mt-4 p-3.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2.5">
+          <span className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+            <Radio className="w-4 h-4" />
+          </span>
+          <div>
+            <span className="font-bold text-white flex items-center gap-2">
+              <span>Mode A: Ephemeral Live Stream</span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 font-mono">
+                100% Studio Lossless • In-RAM Playback
+              </span>
+            </span>
+            <p className="text-[11px] text-emerald-100/70 mt-0.5">
+              Audio streams live in synchronized lossless quality for this session only. No permanent files are saved or distributed to listener drives.
+            </p>
+          </div>
+        </div>
+      </div>
 
       {message && (
         <div className="mt-4 rounded-xl border border-border/60 bg-surface-elevated/80 p-3 text-xs font-bold text-text text-center">

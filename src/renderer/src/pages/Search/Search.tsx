@@ -29,6 +29,7 @@ import type { DownloadTarget } from '../../components/DownloadPanel/DownloadPane
 import ArtistLinks from '../../components/Common/ArtistLinks'
 import { HighlightMatch } from '../../components/Common/HighlightMatch'
 import { ArtworkImage } from '../Home/components/ArtworkImage'
+import { AppCapabilities } from '../../lib/appConfig'
 
 type SearchTab = 'All' | 'Songs' | 'Artists' | 'Albums' | 'Playlists'
 
@@ -242,6 +243,12 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
       }
     }
   }, [searchQuery, searchParams, setSearchParams])
+
+  useEffect(() => {
+    if (!AppCapabilities.onlineDiscovery && searchMode !== 'local') {
+      setSearchMode('local')
+    }
+  }, [searchMode, setSearchMode])
 
   useEffect(() => {
     const loadLibrarySongs = (): void => {
@@ -757,7 +764,9 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
         <div>
           <h1 className="text-3xl font-extrabold text-text tracking-tight">Search & Browse</h1>
           <p className="text-sm text-text-muted mt-1">
-            Explore your library or search across global catalog streaming sources.
+            {AppCapabilities.onlineDiscovery
+              ? 'Explore your library or search across global catalog streaming sources.'
+              : 'Search and explore your local music library.'}
           </p>
         </div>
 
@@ -856,31 +865,35 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
               <Disc3 className="absolute bottom-2 right-2 w-10 h-10 text-white/20 group-hover:rotate-12 transition-transform" />
             </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setSearchMode('apple_music')
-                setSearchQuery('Billboard Hot 100')
-              }}
-              className="relative overflow-hidden h-28 rounded-xl p-3.5 text-left transition-all hover:scale-[1.02] bg-gradient-to-br from-blue-600/90 to-cyan-900 border border-blue-500/20 shadow-md group"
-            >
-              <span className="text-base font-bold text-white block">Apple Music</span>
-              <span className="text-[11px] text-white/70 block mt-0.5">Global Catalog</span>
-              <Globe className="absolute bottom-2 right-2 w-10 h-10 text-white/20 group-hover:rotate-12 transition-transform" />
-            </button>
+            {AppCapabilities.onlineDiscovery && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchMode('apple_music')
+                    setSearchQuery('Billboard Hot 100')
+                  }}
+                  className="relative overflow-hidden h-28 rounded-xl p-3.5 text-left transition-all hover:scale-[1.02] bg-gradient-to-br from-blue-600/90 to-cyan-900 border border-blue-500/20 shadow-md group"
+                >
+                  <span className="text-base font-bold text-white block">Apple Music</span>
+                  <span className="text-[11px] text-white/70 block mt-0.5">Global Catalog</span>
+                  <Globe className="absolute bottom-2 right-2 w-10 h-10 text-white/20 group-hover:rotate-12 transition-transform" />
+                </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setSearchMode('lastfm')
-                setSearchQuery('Top Tracks')
-              }}
-              className="relative overflow-hidden h-28 rounded-xl p-3.5 text-left transition-all hover:scale-[1.02] bg-gradient-to-br from-red-600/90 to-orange-900 border border-red-500/20 shadow-md group"
-            >
-              <span className="text-base font-bold text-white block">Last.fm</span>
-              <span className="text-[11px] text-white/70 block mt-0.5">Scrobbles & Charts</span>
-              <Radio className="absolute bottom-2 right-2 w-10 h-10 text-white/20 group-hover:rotate-12 transition-transform" />
-            </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchMode('lastfm')
+                    setSearchQuery('Top Tracks')
+                  }}
+                  className="relative overflow-hidden h-28 rounded-xl p-3.5 text-left transition-all hover:scale-[1.02] bg-gradient-to-br from-red-600/90 to-orange-900 border border-red-500/20 shadow-md group"
+                >
+                  <span className="text-base font-bold text-white block">Last.fm</span>
+                  <span className="text-[11px] text-white/70 block mt-0.5">Scrobbles & Charts</span>
+                  <Radio className="absolute bottom-2 right-2 w-10 h-10 text-white/20 group-hover:rotate-12 transition-transform" />
+                </button>
+              </>
+            )}
           </div>
         </section>
 
@@ -948,56 +961,58 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
         </div>
 
         {/* Source Switcher Pills */}
-        <div className="flex items-center gap-1 bg-surface-elevated p-1 rounded-full border border-border/50 text-xs shrink-0 self-start sm:self-auto">
-          <button
-            type="button"
-            onClick={() => setSearchMode('local')}
-            className={cn(
-              'flex items-center gap-1.5 px-3 py-1 rounded-full font-medium transition-colors',
-              searchMode === 'local'
-                ? 'bg-white text-black font-bold shadow-sm'
-                : 'text-text-muted hover:text-text hover:bg-hover'
-            )}
-          >
-            <HardDrive className="w-3.5 h-3.5" /> Local
-          </button>
-          <button
-            type="button"
-            onClick={() => setSearchMode('apple_music')}
-            className={cn(
-              'flex items-center gap-1.5 px-3 py-1 rounded-full font-medium transition-colors',
-              searchMode === 'apple_music'
-                ? 'bg-white text-black font-bold shadow-sm'
-                : 'text-text-muted hover:text-text hover:bg-hover'
-            )}
-          >
-            <Globe className="w-3.5 h-3.5" /> Apple Music
-          </button>
-          <button
-            type="button"
-            onClick={() => setSearchMode('musicbrainz')}
-            className={cn(
-              'flex items-center gap-1.5 px-3 py-1 rounded-full font-medium transition-colors',
-              searchMode === 'musicbrainz'
-                ? 'bg-white text-black font-bold shadow-sm'
-                : 'text-text-muted hover:text-text hover:bg-hover'
-            )}
-          >
-            <Database className="w-3.5 h-3.5" /> MusicBrainz
-          </button>
-          <button
-            type="button"
-            onClick={() => setSearchMode('lastfm')}
-            className={cn(
-              'flex items-center gap-1.5 px-3 py-1 rounded-full font-medium transition-colors',
-              searchMode === 'lastfm'
-                ? 'bg-white text-black font-bold shadow-sm'
-                : 'text-text-muted hover:text-text hover:bg-hover'
-            )}
-          >
-            <Radio className="w-3.5 h-3.5" /> Last.fm
-          </button>
-        </div>
+        {AppCapabilities.onlineDiscovery && (
+          <div className="flex items-center gap-1 bg-surface-elevated p-1 rounded-full border border-border/50 text-xs shrink-0 self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setSearchMode('local')}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1 rounded-full font-medium transition-colors',
+                searchMode === 'local'
+                  ? 'bg-white text-black font-bold shadow-sm'
+                  : 'text-text-muted hover:text-text hover:bg-hover'
+              )}
+            >
+              <HardDrive className="w-3.5 h-3.5" /> Local
+            </button>
+            <button
+              type="button"
+              onClick={() => setSearchMode('apple_music')}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1 rounded-full font-medium transition-colors',
+                searchMode === 'apple_music'
+                  ? 'bg-white text-black font-bold shadow-sm'
+                  : 'text-text-muted hover:text-text hover:bg-hover'
+              )}
+            >
+              <Globe className="w-3.5 h-3.5" /> Apple Music
+            </button>
+            <button
+              type="button"
+              onClick={() => setSearchMode('musicbrainz')}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1 rounded-full font-medium transition-colors',
+                searchMode === 'musicbrainz'
+                  ? 'bg-white text-black font-bold shadow-sm'
+                  : 'text-text-muted hover:text-text hover:bg-hover'
+              )}
+            >
+              <Database className="w-3.5 h-3.5" /> MusicBrainz
+            </button>
+            <button
+              type="button"
+              onClick={() => setSearchMode('lastfm')}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1 rounded-full font-medium transition-colors',
+                searchMode === 'lastfm'
+                  ? 'bg-white text-black font-bold shadow-sm'
+                  : 'text-text-muted hover:text-text hover:bg-hover'
+              )}
+            >
+              <Radio className="w-3.5 h-3.5" /> Last.fm
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Loading Skeleton */}
@@ -1094,7 +1109,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
                   </div>
 
                   <div className="absolute right-5 bottom-5 flex items-center gap-2">
-                    {topResult.type === 'Song' && (() => {
+                    {AppCapabilities.downloads && topResult.type === 'Song' && (() => {
                       const topTransfer = transfers.find(
                         (t) =>
                           t.title.toLowerCase() === topResult.title.toLowerCase() &&
@@ -1249,47 +1264,50 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
             No results found for &quot;{searchQuery}&quot;
           </h3>
           <p className="text-xs text-text-muted max-w-md">
-            Please check your spelling, try fewer keywords, or switch your search source to explore
-            external streaming catalogs.
+            {AppCapabilities.onlineDiscovery
+              ? 'Please check your spelling, try fewer keywords, or switch your search source to explore external streaming catalogs.'
+              : 'Please check your spelling, try fewer keywords, or ensure the songs are imported into your local library.'}
           </p>
-          <div className="flex flex-wrap items-center justify-center gap-2 mt-2">
-            {searchMode !== 'local' && (
-              <button
-                type="button"
-                onClick={() => setSearchMode('local')}
-                className="px-3.5 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
-              >
-                <HardDrive className="w-3.5 h-3.5 text-primary-amber" /> Search Local Library
-              </button>
-            )}
-            {searchMode !== 'apple_music' && (
-              <button
-                type="button"
-                onClick={() => setSearchMode('apple_music')}
-                className="px-3.5 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
-              >
-                <Globe className="w-3.5 h-3.5 text-primary-amber" /> Search Apple Music
-              </button>
-            )}
-            {searchMode !== 'lastfm' && (
-              <button
-                type="button"
-                onClick={() => setSearchMode('lastfm')}
-                className="px-3.5 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
-              >
-                <Radio className="w-3.5 h-3.5 text-primary-amber" /> Search Last.fm
-              </button>
-            )}
-            {searchMode !== 'musicbrainz' && (
-              <button
-                type="button"
-                onClick={() => setSearchMode('musicbrainz')}
-                className="px-3.5 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
-              >
-                <Database className="w-3.5 h-3.5 text-primary-amber" /> Search MusicBrainz
-              </button>
-            )}
-          </div>
+          {AppCapabilities.onlineDiscovery && (
+            <div className="flex flex-wrap items-center justify-center gap-2 mt-2">
+              {searchMode !== 'local' && (
+                <button
+                  type="button"
+                  onClick={() => setSearchMode('local')}
+                  className="px-3.5 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
+                >
+                  <HardDrive className="w-3.5 h-3.5 text-primary-amber" /> Search Local Library
+                </button>
+              )}
+              {searchMode !== 'apple_music' && (
+                <button
+                  type="button"
+                  onClick={() => setSearchMode('apple_music')}
+                  className="px-3.5 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
+                >
+                  <Globe className="w-3.5 h-3.5 text-primary-amber" /> Search Apple Music
+                </button>
+              )}
+              {searchMode !== 'lastfm' && (
+                <button
+                  type="button"
+                  onClick={() => setSearchMode('lastfm')}
+                  className="px-3.5 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
+                >
+                  <Radio className="w-3.5 h-3.5 text-primary-amber" /> Search Last.fm
+                </button>
+              )}
+              {searchMode !== 'musicbrainz' && (
+                <button
+                  type="button"
+                  onClick={() => setSearchMode('musicbrainz')}
+                  className="px-3.5 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
+                >
+                  <Database className="w-3.5 h-3.5 text-primary-amber" /> Search MusicBrainz
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1494,40 +1512,42 @@ function SongList({
                 <span className="text-xs text-text-muted tabular-nums">{song.duration}</span>
               )}
 
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (localSong) {
-                    onChooseSource(song)
-                  } else {
-                    onDownload(song)
+              {AppCapabilities.downloads && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (localSong) {
+                      onChooseSource(song)
+                    } else {
+                      onDownload(song)
+                    }
+                  }}
+                  title={
+                    isDownloading
+                      ? `Downloading (${transfer?.progress || 0}%)...`
+                      : localSong
+                        ? 'In your library (Click to choose source or replace)'
+                        : 'Download track to library'
                   }
-                }}
-                title={
-                  isDownloading
-                    ? `Downloading (${transfer?.progress || 0}%)...`
-                    : localSong
-                      ? 'In your library (Click to choose source or replace)'
-                      : 'Download track to library'
-                }
-                className={cn(
-                  'h-8 w-8 flex items-center justify-center rounded-full transition-all',
-                  isDownloading
-                    ? 'text-primary-amber'
-                    : localSong
-                      ? 'text-text-muted hover:text-white hover:bg-white/10'
-                      : 'text-text-muted opacity-0 group-hover:opacity-100 hover:text-white hover:bg-white/10'
-                )}
-              >
-                {isDownloading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : localSong ? (
-                  <CheckCircle2 className="w-4 h-4" />
-                ) : (
-                  <Download className="w-4 h-4" />
-                )}
-              </button>
+                  className={cn(
+                    'h-8 w-8 flex items-center justify-center rounded-full transition-all',
+                    isDownloading
+                      ? 'text-primary-amber'
+                      : localSong
+                        ? 'text-text-muted hover:text-white hover:bg-white/10'
+                        : 'text-text-muted opacity-0 group-hover:opacity-100 hover:text-white hover:bg-white/10'
+                  )}
+                >
+                  {isDownloading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : localSong ? (
+                    <CheckCircle2 className="w-4 h-4" />
+                  ) : (
+                    <Download className="w-4 h-4" />
+                  )}
+                </button>
+              )}
             </div>
           </div>
         )

@@ -27,6 +27,7 @@ import { STREAMING_ACCOUNTS_SETTING } from '../../lib/downloadConfig'
 import type { Playlist } from '../../pages/Playlists/types'
 import type { DownloadTarget } from '../DownloadPanel/DownloadPanel'
 import CreatePlaylistModal from '../../pages/Playlists/CreatePlaylistModal'
+import { AppCapabilities } from '../../lib/appConfig'
 
 interface SidebarProps {
   isOpen?: boolean
@@ -255,26 +256,28 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
         </div>
 
         <div className="w-full border-t border-border/40 bg-surface px-3 py-3">
-          <button
-            type="button"
-            onClick={() => {
-              onToggle?.()
-              setTransfersOpen(true)
-            }}
-            title={
-              transfers.length === 0
-                ? 'Transfers'
-                : `${transfers.length} transfer${transfers.length === 1 ? '' : 's'}`
-            }
-            className="relative flex h-10 w-10 items-center justify-center rounded-full border border-border/50 bg-surface-elevated text-text-muted transition-colors hover:bg-hover hover:text-white no-drag"
-          >
-            <Download className="h-4 w-4" />
-            {transfers.length > 0 && (
-              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[9px] font-bold text-white">
-                {transfers.length > 9 ? '9+' : transfers.length}
-              </span>
-            )}
-          </button>
+          {AppCapabilities.downloads && (
+            <button
+              type="button"
+              onClick={() => {
+                onToggle?.()
+                setTransfersOpen(true)
+              }}
+              title={
+                transfers.length === 0
+                  ? 'Transfers'
+                  : `${transfers.length} transfer${transfers.length === 1 ? '' : 's'}`
+              }
+              className="relative flex h-10 w-10 items-center justify-center rounded-full border border-border/50 bg-surface-elevated text-text-muted transition-colors hover:bg-hover hover:text-white no-drag"
+            >
+              <Download className="h-4 w-4" />
+              {transfers.length > 0 && (
+                <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[9px] font-bold text-white">
+                  {transfers.length > 9 ? '9+' : transfers.length}
+                </span>
+              )}
+            </button>
+          )}
         </div>
       </aside>
     )
@@ -442,7 +445,8 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
       </div>
 
       {/* Transfers / Download Footer */}
-      <div className="relative border-t border-border/40 bg-surface">
+      {AppCapabilities.downloads && (
+        <div className="relative border-t border-border/40 bg-surface">
         {isTransfersOpen && (
           <div className="absolute bottom-full left-0 right-0 z-50 h-[380px] max-h-[70vh] overflow-hidden rounded-t-xl border border-border/70 border-b-0 bg-[#181818] shadow-[0_-8px_24px_rgba(0,0,0,0.6)]">
             <div className="flex h-14 items-center justify-between border-b border-border/60 bg-black/20 px-4">
@@ -720,6 +724,7 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
           )}
         </button>
       </div>
+      )}
 
       {isCreatePlaylistOpen && (
         <CreatePlaylistModal

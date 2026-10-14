@@ -31,6 +31,7 @@ import SongCreditsModal from '../../components/Common/SongCreditsModal'
 import { PersonalizationService } from '../../services/PersonalizationService'
 import { parseArtists } from '../../lib/artistParser'
 import { ArtworkImage } from '../Home/components/ArtworkImage'
+import { AppCapabilities } from '../../lib/appConfig'
 
 type ArtistPageTrack = {
   id: string
@@ -674,6 +675,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
               <FileText className="h-3.5 w-3.5" />
             </span>
           )}
+          {AppCapabilities.downloads && (
           <span
             role="button"
             tabIndex={0}
@@ -711,6 +713,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
               <Download className="h-4 w-4" />
             )}
           </span>
+          )}
           <span
             role="button"
             tabIndex={0}
@@ -1111,6 +1114,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
             )}
 
             {/* Download */}
+            {AppCapabilities.downloads && (
             <button
               className="flex w-full items-center gap-3 px-4 py-2.5 text-[14px] text-white hover:bg-white/10 transition-colors"
               onClick={() => {
@@ -1124,6 +1128,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
                 <><Download className="h-4 w-4" /> Download to library</>
               )}
             </button>
+            )}
           </div>,
           document.body
         )}

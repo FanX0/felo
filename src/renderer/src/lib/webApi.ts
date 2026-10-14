@@ -1585,16 +1585,24 @@ const webApi: Window['api'] = {
     windsurf: ''
   }),
   copyHermesConfig: async () => desktopOnly(),
-  getRemoteControlInfo: async () => ({
-    enabled: false,
-    running: false,
-    port: 0,
-    ip: '127.0.0.1',
-    token: '',
-    url: '',
-    qrDataUrl: '',
-    connectedClients: 0
-  }),
+  getRemoteControlInfo: async () => {
+    const host = localStorage.getItem('felo_remote_base_url') || ''
+    const token = localStorage.getItem('felo_remote_token') || ''
+    return {
+      enabled: Boolean(host),
+      running: Boolean(host),
+      port: 4788,
+      ip: host || '127.0.0.1',
+      token,
+      url: host ? `${host}/#remote?token=${token}` : '',
+      qrDataUrl: '',
+      cloudflareUrl: host
+        ? `https://felo.feloapp.workers.dev/#remote?host=${encodeURIComponent(host)}&token=${token}`
+        : '',
+      cloudflareQrDataUrl: '',
+      connectedClients: 0
+    }
+  },
   setRemoteControlEnabled: async () => desktopOnly(),
   regenerateRemoteControlToken: async () => desktopOnly(),
   onExternalPlayerCommand: () => () => undefined,

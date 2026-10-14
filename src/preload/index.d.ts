@@ -26,6 +26,8 @@ declare global {
         token: string
         url: string
         qrDataUrl: string
+        cloudflareUrl: string
+        cloudflareQrDataUrl: string
         connectedClients: number
       }>
       setRemoteControlEnabled: (enabled: boolean) => Promise<any>
@@ -289,6 +291,8 @@ declare global {
         token: string
         url: string
         qrDataUrl: string
+        cloudflareUrl: string
+        cloudflareQrDataUrl: string
         connectedClients: number
       }>
       setRemoteControlEnabled: (enabled: boolean) => Promise<any>

@@ -1,6 +1,7 @@
 import { ArrowLeft, Play, Download, CheckCircle2, Music2, RotateCw } from 'lucide-react'
 import type { PersonalizedMix } from '../../../services/PersonalizationService'
 import type { HomeSongItem } from '../types'
+import { AppCapabilities } from '../../../lib/appConfig'
 
 interface PersonalizedMixesSectionProps {
   mixes: PersonalizedMix[]
@@ -111,25 +112,27 @@ export function PersonalizedMixesSection({
                       {formatDuration(track.duration)}
                     </span>
                   )}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onDownloadSong(track)
-                    }}
-                    title={isInLibrary ? 'In library' : 'Download track'}
-                    className={`h-7 w-7 flex items-center justify-center rounded-full transition-all ${
-                      isInLibrary
-                        ? 'text-text-muted hover:text-white'
-                        : 'text-text-muted hover:text-white hover:bg-white/10'
-                    }`}
-                  >
-                    {isInLibrary ? (
-                      <CheckCircle2 className="h-4 w-4" />
-                    ) : (
-                      <Download className="h-4 w-4" />
-                    )}
-                  </button>
+                  {AppCapabilities.downloads && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onDownloadSong(track)
+                      }}
+                      title={isInLibrary ? 'In library' : 'Download track'}
+                      className={`h-7 w-7 flex items-center justify-center rounded-full transition-all ${
+                        isInLibrary
+                          ? 'text-text-muted hover:text-white'
+                          : 'text-text-muted hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      {isInLibrary ? (
+                        <CheckCircle2 className="h-4 w-4" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                    </button>
+                  )}
                 </div>
               </div>
             )

@@ -5,6 +5,7 @@ import type { HomeProps, HomeTabType, HomeSongItem, HomeAlbumItem } from './type
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { findMatchingLibrarySong } from '../../lib/songMatching'
 import type { PersonalizedMix } from '../../services/PersonalizationService'
+import { AppCapabilities } from '../../lib/appConfig'
 
 // Custom Hooks
 import { useHomeData } from './hooks/useHomeData'
@@ -267,7 +268,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
         )}
 
         {/* ─── Apple Music Charts Tab ───────────────────────────────────────────────── */}
-        {activeTab === 'apple' && (
+        {AppCapabilities.onlineDiscovery && activeTab === 'apple' && (
           <AppleChartsTab
             onPlaySong={handlePlaySong}
             onDownloadSong={handleDownloadSong}
@@ -277,7 +278,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
         )}
 
         {/* ─── Spotify Playlists Tab ────────────────────────────────────────────────── */}
-        {activeTab === 'spotify' && (
+        {AppCapabilities.onlineDiscovery && activeTab === 'spotify' && (
           <SpotifyPlaylistsTab
             onPlaySong={handlePlaySong}
             onDownloadSong={handleDownloadSong}
@@ -287,10 +288,10 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
         )}
 
         {/* ─── Album of the Year Critic Reviews Tab ─────────────────────────────────── */}
-        {activeTab === 'aoty' && <AotyTab />}
+        {AppCapabilities.onlineDiscovery && activeTab === 'aoty' && <AotyTab />}
 
         {/* ─── Last.fm Community Scrobbles Tab ──────────────────────────────────────── */}
-        {activeTab === 'lastfm' && <LastFmTab onPlaySong={handlePlaySong} />}
+        {AppCapabilities.onlineDiscovery && activeTab === 'lastfm' && <LastFmTab onPlaySong={handlePlaySong} />}
       </div>
     </div>
   )

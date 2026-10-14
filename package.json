@@ -37,7 +37,8 @@
     "sync:public": "node scripts/repo-sync.mjs public",
     "sync:status": "node scripts/repo-sync.mjs status",
     "deploy:cf": "npm run build:web && npx wrangler pages deploy out/renderer --project-name=felo",
-    "deploy:cf:preview": "npm run build:web && npx wrangler pages deploy out/renderer --project-name=felo --branch=preview"
+    "deploy:cf:preview": "npm run build:web && npx wrangler pages deploy out/renderer --project-name=felo --branch=preview",
+    "deploy:worker": "npm run build:web && npx wrangler deploy"
   },
   "dependencies": {
     "@capacitor/core": "^8.5.3",

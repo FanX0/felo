@@ -16,6 +16,7 @@ import PlaybackStreamBridge from './components/PlaybackStreamBridge'
 import PlaybackNoticeToast from './components/PlaybackNoticeToast'
 import QueueDrawer from './components/Queue/QueueDrawer'
 import RemotePhoneView from './pages/Remote/RemotePhoneView'
+import { AppCapabilities } from './lib/appConfig'
 
 import Home from './pages/Home/Home'
 import Library from './pages/Library/Library'
@@ -213,7 +214,7 @@ function App() {
     (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
       window.innerWidth <= 768 ||
       isCapacitor)
-  const isElectron = typeof window !== 'undefined' && Boolean((window as any).api)
+  const isElectron = typeof window !== 'undefined' && Boolean((window as any).electron)
 
   const isRemoteMode =
     location.pathname.includes('remote') ||
@@ -234,7 +235,7 @@ function App() {
       <AudioEngine />
       <PlaybackControlBridge />
       <PlaybackStreamBridge />
-      <DownloadEventBridge />
+      {AppCapabilities.downloads && <DownloadEventBridge />}
       <LibraryScanEventBridge />
       <ListeningPresenceBridge enabled={!isPrivateSession} />
 
@@ -317,90 +318,92 @@ function App() {
             )}
 
             {/* Search Mode Selector */}
-            <div ref={searchModeRef} className="relative shrink-0">
-              <button
-                type="button"
-                onClick={() => setIsSearchModeOpen(!isSearchModeOpen)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-canvas hover:bg-hover transition-colors text-xs font-medium text-text-muted hover:text-text border border-border/50"
-              >
-                {searchMode === 'local' && (
-                  <>
-                    <HardDrive className="w-3.5 h-3.5" /> Local
-                  </>
-                )}
-                {searchMode === 'apple_music' && (
-                  <>
-                    <Globe className="w-3.5 h-3.5" /> Apple Music
-                  </>
-                )}
-                {searchMode === 'musicbrainz' && (
-                  <>
-                    <Database className="w-3.5 h-3.5" /> MusicBrainz
-                  </>
-                )}
-                {searchMode === 'lastfm' && (
-                  <>
-                    <Radio className="w-3.5 h-3.5" /> Last.fm
-                  </>
-                )}
-              </button>
+            {AppCapabilities.onlineDiscovery && (
+              <div ref={searchModeRef} className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsSearchModeOpen(!isSearchModeOpen)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-canvas hover:bg-hover transition-colors text-xs font-medium text-text-muted hover:text-text border border-border/50"
+                >
+                  {searchMode === 'local' && (
+                    <>
+                      <HardDrive className="w-3.5 h-3.5" /> Local
+                    </>
+                  )}
+                  {searchMode === 'apple_music' && (
+                    <>
+                      <Globe className="w-3.5 h-3.5" /> Apple Music
+                    </>
+                  )}
+                  {searchMode === 'musicbrainz' && (
+                    <>
+                      <Database className="w-3.5 h-3.5" /> MusicBrainz
+                    </>
+                  )}
+                  {searchMode === 'lastfm' && (
+                    <>
+                      <Radio className="w-3.5 h-3.5" /> Last.fm
+                    </>
+                  )}
+                </button>
 
-              {isSearchModeOpen && (
-                <div className="absolute right-0 top-full mt-2 w-48 bg-surface-elevated border border-border rounded-lg shadow-xl py-1.5 z-[100] animate-in fade-in slide-in-from-top-1">
-                  <div className="px-3 py-2 text-[10px] font-bold text-text-muted uppercase tracking-wider">
-                    Search Source
+                {isSearchModeOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-48 bg-surface-elevated border border-border rounded-lg shadow-xl py-1.5 z-[100] animate-in fade-in slide-in-from-top-1">
+                    <div className="px-3 py-2 text-[10px] font-bold text-text-muted uppercase tracking-wider">
+                      Search Source
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchMode('local')
+                        setIsSearchModeOpen(false)
+                      }}
+                      className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'local' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
+                    >
+                      <HardDrive className="w-4 h-4" />
+                      Local Library
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchMode('apple_music')
+                        setIsSearchModeOpen(false)
+                      }}
+                      className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'apple_music' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
+                    >
+                      <Globe className="w-4 h-4" />
+                      Apple Music
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchMode('musicbrainz')
+                        setIsSearchModeOpen(false)
+                      }}
+                      className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'musicbrainz' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
+                    >
+                      <Database className="w-4 h-4" />
+                      MusicBrainz
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchMode('lastfm')
+                        setIsSearchModeOpen(false)
+                      }}
+                      className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'lastfm' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
+                    >
+                      <Radio className="w-4 h-4" />
+                      Last.fm
+                    </button>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSearchMode('local')
-                      setIsSearchModeOpen(false)
-                    }}
-                    className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'local' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
-                  >
-                    <HardDrive className="w-4 h-4" />
-                    Local Library
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSearchMode('apple_music')
-                      setIsSearchModeOpen(false)
-                    }}
-                    className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'apple_music' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
-                  >
-                    <Globe className="w-4 h-4" />
-                    Apple Music
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSearchMode('musicbrainz')
-                      setIsSearchModeOpen(false)
-                    }}
-                    className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'musicbrainz' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
-                  >
-                    <Database className="w-4 h-4" />
-                    MusicBrainz
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSearchMode('lastfm')
-                      setIsSearchModeOpen(false)
-                    }}
-                    className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'lastfm' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
-                  >
-                    <Radio className="w-4 h-4" />
-                    Last.fm
-                  </button>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </form>
         </div>
         <div className="flex items-center gap-3 pointer-events-auto mr-2">
@@ -672,7 +675,7 @@ function App() {
             </div>
           </section>
         </main>
-        {isDownloadPanelOpen && (
+        {AppCapabilities.downloads && isDownloadPanelOpen && (
           <DownloadPanel
             targetSong={downloadTarget}
             onClose={() => {
@@ -694,6 +697,7 @@ function App() {
           isQueueOpen={isQueueOpen}
           onToggleQueue={() => setIsQueueOpen((open) => !open)}
           onOpenDownloadPanel={(target) => {
+            if (!AppCapabilities.downloads) return
             if (target) {
               setDownloadTarget(target)
               setIsFriendActivityOpen(false)
