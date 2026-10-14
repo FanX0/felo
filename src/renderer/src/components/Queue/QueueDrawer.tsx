@@ -1,10 +1,11 @@
 import { useMemo } from 'react'
 import {
+  ChevronDown,
+  ChevronUp,
   X,
   Play,
   Pause,
   Trash2,
-  Music2,
   ListMusic,
   Disc3,
   Shuffle,
@@ -16,6 +17,7 @@ import { useDownloadStore } from '../../hooks/useDownloadStore'
 import { toMediaUrl } from '../../lib/media'
 import type { Song } from '../../pages/Library/Library'
 import ArtistLinks from '../Common/ArtistLinks'
+import { ArtworkImage } from '../../pages/Home/components/ArtworkImage'
 
 interface QueueDrawerProps {
   isOpen: boolean
@@ -39,6 +41,7 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
   const playbackContext = usePlayerStore((s) => s.playbackContext)
   const playSong = usePlayerStore((s) => s.playSong)
   const togglePlay = usePlayerStore((s) => s.togglePlay)
+  const reorderQueue = usePlayerStore((s) => s.reorderQueue)
   const removeSongFromQueueByIndex = usePlayerStore((s) => s.removeSongFromQueueByIndex)
   const clearUpcomingQueue = usePlayerStore((s) => s.clearUpcomingQueue)
   const transfers = useDownloadStore((s) => s.transfers)
@@ -116,17 +119,12 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
           {currentSong ? (
             <div className="group relative flex items-center gap-3 rounded-lg border border-white/10 bg-surface-elevated/70 p-3 shadow-sm hover:bg-surface-elevated transition-colors">
               <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded bg-[#282828]">
-                {currentSong.artworkPath || currentSong.artworkUrl ? (
-                  <img
-                    src={toMediaUrl(currentSong.artworkPath) || currentSong.artworkUrl}
-                    alt=""
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center">
-                    <Music2 className="h-5 w-5 text-text-muted" />
-                  </div>
-                )}
+                <ArtworkImage
+                  src={toMediaUrl(currentSong.artworkPath) || currentSong.artworkUrl}
+                  title={currentSong.title}
+                  artist={currentSong.artist}
+                  className="h-full w-full object-cover"
+                />
                 <button
                   type="button"
                   onClick={togglePlay}
@@ -206,14 +204,13 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
                       <Play className="h-3.5 w-3.5 fill-current" />
                     </button>
 
-                    <div className="h-9 w-9 shrink-0 overflow-hidden rounded bg-[#282828]">
-                      {artworkUrl ? (
-                        <img src={artworkUrl} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center">
-                          <Music2 className="h-4 w-4 text-text-muted" />
-                        </div>
-                      )}
+                    <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded bg-[#282828]">
+                      <ArtworkImage
+                        src={artworkUrl}
+                        title={song.title}
+                        artist={song.artist}
+                        className="h-full w-full object-cover"
+                      />
                     </div>
 
                     <div className="min-w-0 flex-1">
@@ -240,17 +237,45 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
                       {formatDuration(song.duration)}
                     </span>
 
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        removeSongFromQueueByIndex(actualIndex)
-                      }}
-                      title="Remove from queue"
-                      className="opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-danger hover:bg-white/10 rounded transition-all"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
+                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {idx > 0 && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            reorderQueue(actualIndex, actualIndex - 1)
+                          }}
+                          title="Move up"
+                          className="p-1 text-text-muted hover:text-white hover:bg-white/10 rounded transition-all"
+                        >
+                          <ChevronUp className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {idx < upcomingSongs.length - 1 && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            reorderQueue(actualIndex, actualIndex + 1)
+                          }}
+                          title="Move down"
+                          className="p-1 text-text-muted hover:text-white hover:bg-white/10 rounded transition-all"
+                        >
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          removeSongFromQueueByIndex(actualIndex)
+                        }}
+                        title="Remove from queue"
+                        className="p-1 text-text-muted hover:text-danger hover:bg-white/10 rounded transition-all"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
                 )
               })}

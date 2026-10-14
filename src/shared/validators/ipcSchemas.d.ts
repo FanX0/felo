@@ -3,8 +3,8 @@ import { z } from 'zod';
  * Standardized validation error helper
  */
 export declare class ValidationError extends Error {
-    issues?: z.ZodIssue[] | undefined;
-    constructor(message: string, issues?: z.ZodIssue[] | undefined);
+    issues?: z.ZodIssue[];
+    constructor(message: string, issues?: z.ZodIssue[]);
 }
 /**
  * Validates data against a Zod schema or throws a safe ValidationError.
@@ -16,9 +16,9 @@ export declare function validateWith<T>(schema: z.ZodType<T>, data: unknown): T;
  * are strictly forbidden here and can only be managed by their dedicated privileged handlers.
  */
 export declare const AllowedSettingsKeySchema: z.ZodEnum<{
-    "download.streamCacheLimit": "download.streamCacheLimit";
     "download.priority": "download.priority";
     "download.playbackStorage": "download.playbackStorage";
+    "download.streamCacheLimit": "download.streamCacheLimit";
     "download.location": "download.location";
     "download.streamingAccounts": "download.streamingAccounts";
     "search.lastFmApiKey": "search.lastFmApiKey";
@@ -59,10 +59,10 @@ export declare const SettingValueSchema: z.ZodUnion<readonly [z.ZodString, z.Zod
     soulseekPassword: z.ZodOptional<z.ZodString>;
 }, z.core.$loose>, z.ZodRecord<z.ZodString, z.ZodUnknown>]>;
 export declare const StreamingSourceSchema: z.ZodEnum<{
-    youtube: "youtube";
+    qobuz: "qobuz";
     deezer: "deezer";
     soulseek: "soulseek";
-    qobuz: "qobuz";
+    youtube: "youtube";
 }>;
 /**
  * Strict transfer ID: only safe alphanumeric characters and hyphens/underscores.
@@ -80,10 +80,10 @@ export declare const DownloadStorageModeSchema: z.ZodOptional<z.ZodEnum<{
 export declare const StartDownloadRequestSchema: z.ZodObject<{
     transferId: z.ZodString;
     source: z.ZodEnum<{
-        youtube: "youtube";
+        qobuz: "qobuz";
         deezer: "deezer";
         soulseek: "soulseek";
-        qobuz: "qobuz";
+        youtube: "youtube";
     }>;
     resultId: z.ZodString;
     title: z.ZodString;
@@ -113,6 +113,7 @@ export declare const StartDownloadRequestSchema: z.ZodObject<{
         download: "download";
     }>>;
     skipIfExists: z.ZodOptional<z.ZodBoolean>;
+    autoPlay: z.ZodOptional<z.ZodBoolean>;
     artworkUrl: z.ZodOptional<z.ZodString>;
     album: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;

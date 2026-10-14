@@ -9,8 +9,7 @@ interface InspectorProps {
 }
 
 export default function Inspector({ isOpen, onClose }: InspectorProps) {
-  const { queue, currentSongIndex } = usePlayerStore()
-  const currentSong = queue[currentSongIndex]
+  const currentSong = usePlayerStore((s) => s.queue[s.currentSongIndex])
   const artworkUrl = toMediaUrl(currentSong?.artworkPath)
 
   if (!isOpen) return null

@@ -7,7 +7,7 @@ import path from 'path'
 import { getDb } from '../database'
 import { LibraryService } from './LibraryService'
 import { ArtworkService } from './ArtworkService'
-import { scoreProviderMatch, cleanSearchQuery, parseAudioFilePath } from '../../shared/songMatching'
+import { scoreProviderMatch, cleanSearchQuery, parseAudioFilePath, parseSmartQuery } from '../../shared/songMatching'
 
 interface ExternalProviders {
   QobuzClient?: any
@@ -79,6 +79,7 @@ export interface StartDownloadRequest {
   accounts: StreamingAccounts
   storageMode?: 'stream' | 'download'
   skipIfExists?: boolean
+  autoPlay?: boolean
   artworkUrl?: string
   album?: string
 }
@@ -629,6 +630,7 @@ export class DownloadService {
   private static readonly pendingQueue: QueuedDownloadItem[] = []
   private static readonly activeDownloadKeys = new Set<string>()
   private static readonly activeTasks = new Map<string, ActiveTask>()
+  private static readonly inFlightAcquisitions = new Map<string, Promise<any>>()
 
   static async acquireAndDownload(
     query: string,
@@ -639,8 +641,9 @@ export class DownloadService {
       onProgress?: (message: string, progress: number) => void
     }
   ): Promise<any> {
-    const cleanTitle = (query || '').trim()
-    const cleanArtist = (artist || '').trim()
+    const parsed = parseSmartQuery(query, artist)
+    const cleanTitle = (parsed.title || query || '').trim()
+    const cleanArtist = (parsed.artist || artist || '').trim()
     if (!cleanTitle) throw new Error('QUERY_REQUIRED')
 
     // 1. Check if song already exists locally
@@ -649,7 +652,32 @@ export class DownloadService {
       return existingSong
     }
 
-    // 2. Load configured accounts and priority
+    // 2. Single-Flight Coalescing: return existing pending promise for identical query
+    const flightKey = `${cleanArtist}::${cleanTitle}`.toLowerCase()
+    const existingFlight = this.inFlightAcquisitions.get(flightKey)
+    if (existingFlight) {
+      return existingFlight
+    }
+
+    const taskPromise = this.performAcquisition(cleanTitle, cleanArtist, options)
+    this.inFlightAcquisitions.set(flightKey, taskPromise)
+    taskPromise.finally(() => {
+      this.inFlightAcquisitions.delete(flightKey)
+    })
+
+    return taskPromise
+  }
+
+  private static async performAcquisition(
+    cleanTitle: string,
+    cleanArtist: string,
+    options?: {
+      timeoutMs?: number
+      storageMode?: 'stream' | 'download'
+      onProgress?: (message: string, progress: number) => void
+    }
+  ): Promise<any> {
+    // Load configured accounts and priority
     let prioritySetting: string[] = ['qobuz', 'deezer', 'soulseek', 'youtube']
     try {
       const priorityRow = getDb().prepare("SELECT value FROM app_settings WHERE key = 'download.priority'").get() as any
@@ -800,8 +828,28 @@ export class DownloadService {
 
       const startResult = DownloadService.start(startReq)
       if (!startResult.started) {
-        cleanup()
-        reject(new Error('DOWNLOAD_START_FAILED: Could not initiate download task.'))
+        if (startResult.duplicateRequest) {
+          const onGlobal = (evt: DownloadProgressEvent) => {
+            const matchesResult =
+              (evt.song as any)?.title?.toLowerCase() === cleanTitle.toLowerCase() ||
+              (evt.filePath && fs.existsSync(evt.filePath))
+            if (evt.status === 'completed' && matchesResult) {
+              DownloadService.emitter.removeListener('progress', onGlobal)
+              cleanup()
+              resolve(
+                evt.song || getDb().prepare('SELECT * FROM songs WHERE filePath = ?').get(evt.filePath)
+              )
+            } else if (evt.status === 'failed' && matchesResult) {
+              DownloadService.emitter.removeListener('progress', onGlobal)
+              cleanup()
+              reject(new Error(evt.message || 'DOWNLOAD_FAILED: Song download could not be completed.'))
+            }
+          }
+          DownloadService.emitter.on('progress', onGlobal)
+        } else {
+          cleanup()
+          reject(new Error('DOWNLOAD_START_FAILED: Could not initiate download task.'))
+        }
       }
     })
   }
@@ -1358,16 +1406,27 @@ export class DownloadService {
       downloadKey
     }
 
-    if (this.activeDownloadCount < this.MAX_CONCURRENT_DOWNLOADS) {
+    const isUrgentPlayback = Boolean(request.autoPlay)
+    const maxAllowedSlots = isUrgentPlayback
+      ? this.MAX_CONCURRENT_DOWNLOADS + 1
+      : this.MAX_CONCURRENT_DOWNLOADS
+
+    if (this.activeDownloadCount < maxAllowedSlots) {
       this.activeDownloadCount++
       void this.dispatchTask(queuedItem)
     } else {
-      this.pendingQueue.push(queuedItem)
+      if (isUrgentPlayback) {
+        this.pendingQueue.unshift(queuedItem)
+      } else {
+        this.pendingQueue.push(queuedItem)
+      }
       emitProgress({
         transferId: request.transferId,
         status: 'queued',
         progress: 0,
-        message: `Queued behind active downloads (position ${this.pendingQueue.length})...`
+        message: isUrgentPlayback
+          ? 'Queued with priority for playback...'
+          : `Queued behind active downloads (position ${this.pendingQueue.length})...`
       })
     }
 
@@ -1397,6 +1456,9 @@ export class DownloadService {
   }
 
   private static pumpQueue(): void {
+    if (this.pendingQueue.length > 1) {
+      this.pendingQueue.sort((a, b) => (b.request.autoPlay ? 1 : 0) - (a.request.autoPlay ? 1 : 0))
+    }
     while (this.pendingQueue.length > 0 && this.activeDownloadCount < this.MAX_CONCURRENT_DOWNLOADS) {
       const nextItem = this.pendingQueue.shift()
       if (!nextItem) break
@@ -1939,14 +2001,6 @@ export class DownloadService {
     }
 
     const completed = await finalizeDownloadedFile(downloadedFiles[0], request, song, stagingDirectory)
-
-    if (completed.oldPath && fs.existsSync(completed.oldPath)) {
-      try {
-        fs.unlinkSync(completed.oldPath)
-      } catch (err) {
-        console.warn('Could not delete old file:', err)
-      }
-    }
 
     emitProgress({
       transferId: request.transferId,

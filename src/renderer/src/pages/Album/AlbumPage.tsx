@@ -1,13 +1,30 @@
-import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, Download, Loader2, Music2, Pause, Play, Shuffle } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import {
+  CheckCircle2,
+  ChevronRight,
+  Download,
+  FileText,
+  ListPlus,
+  Loader2,
+  MoreVertical,
+  Music2,
+  Pause,
+  Play,
+  Shuffle,
+  User
+} from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { usePlayerStore, type PlaybackContext } from '../../hooks/usePlayerStore'
+import { useShallow } from 'zustand/react/shallow'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
 import { toMediaUrl } from '../../lib/media'
 import { downloadTrackInBackground } from '../../lib/backgroundDownloader'
 import type { Song } from '../Library/Library'
 import type { DownloadTarget } from '../../components/DownloadPanel/DownloadPanel'
 import ArtistLinks from '../../components/Common/ArtistLinks'
+import SongCreditsModal from '../../components/Common/SongCreditsModal'
+import { parseArtists } from '../../lib/artistParser'
 
 interface AlbumPageProps {
   onOpenDownloadPanel?: (target: DownloadTarget) => void
@@ -52,6 +69,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
   const [artwork, setArtwork] = useState('')
   const {
     setQueue,
+    enqueueSong,
     togglePlay,
     queue,
     currentSongIndex,
@@ -60,13 +78,43 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
     isShuffle,
     toggleShuffle,
     playbackContext
-  } = usePlayerStore()
+  } = usePlayerStore(
+    useShallow((s) => ({
+      setQueue: s.setQueue,
+      enqueueSong: s.enqueueSong,
+      togglePlay: s.togglePlay,
+      queue: s.queue,
+      currentSongIndex: s.currentSongIndex,
+      isPlaying: s.isPlaying,
+      isBuffering: s.isBuffering,
+      isShuffle: s.isShuffle,
+      toggleShuffle: s.toggleShuffle,
+      playbackContext: s.playbackContext
+    }))
+  )
   const { transfers } = useDownloadStore()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [saveMessage, setSaveMessage] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [isDownloadingAlbum, setIsDownloadingAlbum] = useState(false)
+  const [activeMenu, setActiveMenu] = useState<{
+    track: AlbumTrack
+    song: Song
+    x: number
+    y: number
+  } | null>(null)
+  const [creditsSong, setCreditsSong] = useState<Song | null>(null)
+
+  useEffect(() => {
+    const closeMenu = () => setActiveMenu(null)
+    window.addEventListener('click', closeMenu)
+    window.addEventListener('resize', closeMenu)
+    return () => {
+      window.removeEventListener('click', closeMenu)
+      window.removeEventListener('resize', closeMenu)
+    }
+  }, [])
 
   const albumContext = useMemo<PlaybackContext>(
     () => ({
@@ -98,6 +146,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
           ? track.duration.split(':').reduce((total, part) => total * 60 + Number(part), 0)
           : 0,
         artworkUrl: track.thumbnail || artwork,
+        filePath: `virtual:${track.title} - ${track.artist || albumArtist}`,
         isOnline: true
       }
     })
@@ -248,12 +297,28 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
       return
     }
 
+    // Same-context stability: if this album is already playing, jump to the track in queue
+    // to preserve shuffle order and playback history
+    const isSameAlbumContext =
+      playbackContext?.type === 'album' &&
+      playbackContext.title.toLowerCase() === albumTitle.toLowerCase() &&
+      playbackContext.subtitle?.toLowerCase() === albumArtist.toLowerCase()
+
+    if (isSameAlbumContext) {
+      const existingQueueIndex = queue.findIndex(
+        (item) =>
+          item.id === (track.localSong?.id || track.id) ||
+          (item.title.toLowerCase() === track.title.toLowerCase() &&
+            item.artist.toLowerCase() === track.artist.toLowerCase())
+      )
+      if (existingQueueIndex >= 0) {
+        usePlayerStore.getState().playSong(existingQueueIndex)
+        return
+      }
+    }
+
     // Set the entire album into the player queue with Spotify-standard scoped context!
     setQueue(allAlbumSongs, index, albumContext)
-
-    if (!track.localSong) {
-      usePlayerStore.getState().setIsBuffering(true)
-    }
   }
 
   const handlePlayAlbum = () => {
@@ -274,14 +339,46 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
 
   const missingTracks = useMemo(() => tracks.filter((t) => !t.localSong), [tracks])
 
-  const handleDownloadAlbum = async () => {
-    if (isDownloadingAlbum || tracks.length === 0) return
-    if (missingTracks.length === 0) return
+  const albumActiveTransfers = useMemo(() => {
+    return transfers.filter(
+      (t) =>
+        (t.status === 'downloading' || t.status === 'queued' || t.status === 'waiting_connector') &&
+        missingTracks.some(
+          (track) =>
+            t.title.toLowerCase() === track.title.toLowerCase() &&
+            (!track.artist || !t.artist || t.artist.toLowerCase() === track.artist.toLowerCase())
+        )
+    )
+  }, [missingTracks, transfers])
 
+  const abortAlbumDownloadRef = useRef(false)
+
+  useEffect(() => {
+    return () => {
+      abortAlbumDownloadRef.current = true
+    }
+  }, [])
+
+  const handleDownloadAlbum = async () => {
+    if (isDownloadingAlbum || albumActiveTransfers.length > 0) {
+      abortAlbumDownloadRef.current = true
+      setIsDownloadingAlbum(false)
+      for (const t of albumActiveTransfers) {
+        try {
+          await window.api?.cancelDownload?.(t.id)
+        } catch {}
+        useDownloadStore.getState().removeTransfer(t.id)
+      }
+      return
+    }
+    if (tracks.length === 0 || missingTracks.length === 0) return
+
+    abortAlbumDownloadRef.current = false
     setIsDownloadingAlbum(true)
 
     try {
       for (const track of missingTracks) {
+        if (abortAlbumDownloadRef.current) break
         const parsedSec = track.duration
           ? track.duration.split(':').reduce((total, part) => total * 60 + Number(part), 0)
           : 0
@@ -303,6 +400,17 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
   }
 
   const handleDownloadTrack = (track: AlbumTrack) => {
+    const activeTransfer = transfers.find(
+      (t) =>
+        t.title.toLowerCase() === track.title.toLowerCase() &&
+        (!track.artist || !t.artist || t.artist.toLowerCase() === track.artist.toLowerCase()) &&
+        (t.status === 'downloading' || t.status === 'queued' || t.status === 'waiting_connector')
+    )
+    if (activeTransfer) {
+      useDownloadStore.getState().setTransfersOpen(true)
+      return
+    }
+
     if (track.localSong) {
       onOpenDownloadPanel?.({
         id: track.localSong.id,
@@ -401,17 +509,21 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
               <button
                 type="button"
                 onClick={() => void handleDownloadAlbum()}
-                disabled={loading || tracks.length === 0 || isDownloadingAlbum}
+                disabled={loading || tracks.length === 0}
                 className={`flex items-center gap-2 rounded-full border px-5 py-3 text-sm font-bold transition-all hover:scale-105 cursor-pointer ${
-                  isDownloadingAlbum
-                    ? 'border-primary-amber bg-primary-amber/10 text-primary-amber'
+                  isDownloadingAlbum || albumActiveTransfers.length > 0
+                    ? 'border-primary-amber bg-primary-amber/10 text-primary-amber hover:bg-primary-amber/20'
                     : 'border-white/20 bg-white/5 text-white hover:bg-white/10'
                 } disabled:opacity-50`}
-                title="Download all missing album tracks to library"
+                title={
+                  isDownloadingAlbum || albumActiveTransfers.length > 0
+                    ? 'Click to stop downloading missing tracks'
+                    : `Download all ${missingTracks.length} missing tracks to library`
+                }
               >
-                {isDownloadingAlbum ? (
+                {isDownloadingAlbum || albumActiveTransfers.length > 0 ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Downloading missing ({missingTracks.length})...
+                    <Loader2 className="h-4 w-4 animate-spin" /> Downloading missing ({albumActiveTransfers.length || missingTracks.length})... (Click to stop)
                   </>
                 ) : (
                   <>
@@ -468,6 +580,30 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                     handlePlayTrack(track, index)
                   }
                 }}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  const song: Song = track.localSong || {
+                    id: track.id || `album-${albumArtist}-${albumTitle}-${index}`,
+                    title: track.title,
+                    artist: track.artist,
+                    album: track.album || albumTitle,
+                    duration: track.duration
+                      ? track.duration.split(':').reduce((total, part) => total * 60 + Number(part), 0)
+                      : 0,
+                    artworkUrl: track.thumbnail || artwork,
+                    filePath: `virtual:${track.title} - ${track.artist || albumArtist}`,
+                    isOnline: true
+                  }
+                  const menuWidth = 220
+                  const menuHeight = 220
+                  setActiveMenu({
+                    track,
+                    song,
+                    x: Math.min(e.clientX, window.innerWidth - menuWidth - 12),
+                    y: Math.min(e.clientY, window.innerHeight - menuHeight - 12)
+                  })
+                }}
                 className="group grid h-16 grid-cols-[40px_48px_minmax(0,1fr)_120px] items-center gap-3 rounded-md px-3 text-left hover:bg-white/10 transition-colors cursor-pointer"
               >
                 <div className="flex items-center justify-center">
@@ -523,7 +659,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                   </div>
                 </span>
 
-                <div className="flex items-center justify-end gap-3 text-sm text-[#a7a7a7]">
+                <div className="flex items-center justify-end gap-2 text-sm text-[#a7a7a7]">
                   <span>{parseDuration(track.duration)}</span>
                   <button
                     type="button"
@@ -533,7 +669,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                     }}
                     title={
                       isDownloading
-                        ? `Downloading (${transfer?.progress || 0}%)...`
+                        ? `Downloading (${transfer?.progress || 0}%) - click to view in Transfers`
                         : track.localSong
                           ? 'In your library (Click to choose source or replace)'
                           : 'Download track to library'
@@ -554,12 +690,183 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                       <Download className="h-4 w-4" />
                     )}
                   </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const song: Song = track.localSong || {
+                        id: track.id || `album-${albumArtist}-${albumTitle}-${index}`,
+                        title: track.title,
+                        artist: track.artist,
+                        album: track.album || albumTitle,
+                        duration: track.duration
+                          ? track.duration.split(':').reduce((total, part) => total * 60 + Number(part), 0)
+                          : 0,
+                        artworkUrl: track.thumbnail || artwork,
+                        filePath: `virtual:${track.title} - ${track.artist || albumArtist}`,
+                        isOnline: true
+                      }
+                      const rect = e.currentTarget.getBoundingClientRect()
+                      const menuWidth = 220
+                      const menuHeight = 220
+                      setActiveMenu((curr) =>
+                        curr?.track.id === track.id
+                          ? null
+                          : {
+                              track,
+                              song,
+                              x: Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12),
+                              y: Math.min(rect.bottom + 8, window.innerHeight - menuHeight - 12)
+                            }
+                      )
+                    }}
+                    title="More options"
+                    className={`h-7 w-7 flex items-center justify-center rounded-full transition-all ${
+                      activeMenu?.track.id === track.id
+                        ? 'text-primary-amber bg-white/10 opacity-100'
+                        : 'opacity-0 group-hover:opacity-100 text-[#b3b3b3] hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </button>
                 </div>
               </div>
             )
           })}
         </div>
       )}
+
+      {activeMenu &&
+        createPortal(
+          <div
+            className="fixed z-[9999] w-[220px] rounded-lg border border-white/15 bg-[#1a1a1a] p-1 shadow-[0_8px_24px_rgba(0,0,0,0.8),0_2px_8px_rgba(0,0,0,0.4)]"
+            style={{ left: activeMenu.x, top: activeMenu.y }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                const trackIdx = tracks.findIndex((t) => t.id === activeMenu.track.id)
+                handlePlayTrack(activeMenu.track, trackIdx >= 0 ? trackIdx : 0)
+                setActiveMenu(null)
+              }}
+              className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+            >
+              <Play className="h-4 w-4 fill-current" />
+              Play
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                enqueueSong(activeMenu.song)
+                setActiveMenu(null)
+              }}
+              className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+            >
+              <ListPlus className="h-4 w-4" />
+              Add to Queue
+            </button>
+            {(() => {
+              const menuArtists =
+                activeMenu.song.artists && activeMenu.song.artists.length > 0
+                  ? activeMenu.song.artists
+                  : parseArtists(activeMenu.song.artist)
+
+              if (menuArtists.length <= 1) {
+                const artistName = menuArtists[0]?.name || activeMenu.song.artist || 'Unknown Artist'
+                return (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigate(`/artist/${encodeURIComponent(artistName)}`)
+                      setActiveMenu(null)
+                    }}
+                    className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+                  >
+                    <User className="h-4 w-4" />
+                    Go to Artist
+                  </button>
+                )
+              }
+
+              const isNearRightEdge = activeMenu.x > window.innerWidth - 440
+              const isNearBottomEdge = activeMenu.y > window.innerHeight - 250
+
+              return (
+                <div className="relative group/artist-sub">
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+                  >
+                    <div className="flex items-center gap-3">
+                      <User className="h-4 w-4" />
+                      <span>Go to Artist</span>
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-text-muted/60 transition-transform group-hover/artist-sub:translate-x-0.5" />
+                  </button>
+                  <div
+                    className={`absolute ${
+                      isNearRightEdge ? 'right-full mr-1' : 'left-full ml-1'
+                    } ${
+                      isNearBottomEdge ? 'bottom-0' : 'top-0'
+                    } hidden group-hover/artist-sub:flex flex-col min-w-[200px] rounded-lg border border-white/15 bg-[#1a1a1a] p-1.5 shadow-2xl backdrop-blur-md z-50`}
+                  >
+                    <div className="px-2.5 py-1 text-[10px] font-bold text-text-muted uppercase tracking-wider border-b border-white/10 mb-1">
+                      Track Artists
+                    </div>
+                    {menuArtists.map((a, i) => (
+                      <button
+                        key={`${a.name}-${i}`}
+                        type="button"
+                        onClick={() => {
+                          navigate(`/artist/${encodeURIComponent(a.name)}`)
+                          setActiveMenu(null)
+                        }}
+                        className="flex items-center justify-between rounded px-2.5 py-1.5 text-left text-xs font-medium text-text-muted hover:bg-white/10 hover:text-text transition-colors"
+                      >
+                        <span className="truncate pr-2">{a.name}</span>
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-white/5 text-text-muted/70">
+                          {i === 0 && a.role !== 'featured' ? 'Lead' : 'Feat'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+            <button
+              type="button"
+              onClick={() => {
+                setCreditsSong(activeMenu.song)
+                setActiveMenu(null)
+              }}
+              className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+            >
+              <FileText className="h-4 w-4" />
+              Show Credits
+            </button>
+            {!activeMenu.track.localSong && (
+              <button
+                type="button"
+                onClick={() => {
+                  handleDownloadTrack(activeMenu.track)
+                  setActiveMenu(null)
+                }}
+                className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+              >
+                <Download className="h-4 w-4" />
+                Download to library
+              </button>
+            )}
+          </div>,
+          document.body
+        )}
+
+      <SongCreditsModal
+        song={creditsSong}
+        isOpen={Boolean(creditsSong)}
+        onClose={() => setCreditsSong(null)}
+      />
     </div>
   )
 }

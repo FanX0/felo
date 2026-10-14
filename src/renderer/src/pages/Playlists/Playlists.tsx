@@ -18,11 +18,12 @@ import {
 import { useNavigate } from 'react-router-dom'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { toMediaUrl } from '../../lib/media'
+import HighlightMatch from '../../components/Common/HighlightMatch'
 import { Playlist } from './types'
 
 export default function Playlists() {
   const navigate = useNavigate()
-  const { setQueue } = usePlayerStore()
+  const setQueue = usePlayerStore((s) => s.setQueue)
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchOpen, setIsSearchOpen] = useState(false)
@@ -68,13 +69,16 @@ export default function Playlists() {
   }, [])
 
   const filteredPlaylists = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase()
-    if (!query) return playlists
-    return playlists.filter(
-      (playlist) =>
-        playlist.name.toLowerCase().includes(query) ||
-        playlist.description?.toLowerCase().includes(query)
-    )
+    const tokens = searchQuery
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean)
+    if (tokens.length === 0) return playlists
+    return playlists.filter((playlist) => {
+      const combined = `${playlist.name} ${playlist.description || ''}`.toLowerCase()
+      return tokens.every((token) => combined.includes(token))
+    })
   }, [playlists, searchQuery])
 
   const playPlaylist = async (playlistId: string) => {
@@ -206,7 +210,9 @@ export default function Playlists() {
                 </div>
                 <div className="flex min-w-0 items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <h2 className="truncate text-[18px] font-black leading-6">{playlist.name}</h2>
+                    <h2 className="truncate text-[18px] font-black leading-6">
+                      <HighlightMatch text={playlist.name} query={searchQuery} />
+                    </h2>
                     <p className="mt-2 truncate text-[14px] font-medium text-[#b9c4d8]">
                       {playlist.songCount} {playlist.songCount === 1 ? 'song' : 'songs'}
                     </p>

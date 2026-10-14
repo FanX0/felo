@@ -26,6 +26,7 @@ import OnlineGate from '../../components/Online/OnlineGate'
 import { useListeningStore } from '../../hooks/useListeningStore'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { useShallow } from 'zustand/react/shallow'
 import { useRoomChatStore } from '../../hooks/useRoomChatStore'
 import RoomChat from '../../components/RoomChat/RoomChat'
 import RoomMemberProfileModal from '../../components/Online/RoomMemberProfileModal'
@@ -72,7 +73,15 @@ function getSongKey(song?: any): string {
 function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProps): ReactElement {
   const { user } = useOnlineStore()
   const [searchParams, setSearchParams] = useSearchParams()
-  const { isPlaying, currentTime, queue, currentSongIndex, playSong } = usePlayerStore()
+  const { isPlaying, currentTime, queue, currentSongIndex, playSong } = usePlayerStore(
+    useShallow((s) => ({
+      isPlaying: s.isPlaying,
+      currentTime: s.currentTime,
+      queue: s.queue,
+      currentSongIndex: s.currentSongIndex,
+      playSong: s.playSong
+    }))
+  )
 
   const hostRoom = useListeningStore((state) => state.hostRoom)
   const joinedRoom = useListeningStore((state) => state.joinedRoom)

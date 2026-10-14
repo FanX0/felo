@@ -697,7 +697,7 @@ export default function LyricsPage() {
 
     // Immediately sync to the latest position
     const liveTime = getActiveAudioTime()
-    const initialMs = (liveTime > 0 ? liveTime : currentTime) * 1000
+    const initialMs = (liveTime > 0 ? liveTime : usePlayerStore.getState().currentTime) * 1000
     element.currentTime = initialMs
 
     if (!isPlaying) return
@@ -723,7 +723,15 @@ export default function LyricsPage() {
     return () => {
       cancelAnimationFrame(rafId)
     }
-  }, [lyricsEngine, isPlaying, currentTime])
+  }, [lyricsEngine, isPlaying])
+
+  useEffect(() => {
+    if (isPlaying || lyricsEngine !== 'am') return
+    const element = amLyricsRef.current
+    if (element) {
+      element.currentTime = currentTime * 1000
+    }
+  }, [currentTime, isPlaying, lyricsEngine])
 
   const handleAmLineClick = useCallback(
     (event: Event) => {

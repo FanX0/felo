@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  ChevronRight,
   Clock3,
   CloudUpload,
+  Disc3,
   Download,
+  FileText,
+  ListPlus,
   Loader2,
   Music2,
   MoreVertical,
@@ -14,12 +18,14 @@ import {
   Search,
   Shuffle,
   Trash2,
+  User,
   UserPlus,
   X
 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { useShallow } from 'zustand/react/shallow'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
 import { toMediaUrl } from '../../lib/media'
 import { publishLocalPlaylist } from '../../lib/onlinePlaylists'
@@ -27,7 +33,10 @@ import { getSupabase } from '../../lib/supabase'
 import { downloadTrackInBackground } from '../../lib/backgroundDownloader'
 import { Song } from '../Library/Library'
 import { Playlist } from './types'
+import { ArtworkImage } from '../Home/components/ArtworkImage'
 import ArtistLinks from '../../components/Common/ArtistLinks'
+import SongCreditsModal from '../../components/Common/SongCreditsModal'
+import { parseArtists } from '../../lib/artistParser'
 
 function formatDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return '0:00'
@@ -91,8 +100,21 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     setQueue,
     enqueueSong,
     togglePlay,
-    toggleShuffle
-  } = usePlayerStore()
+    toggleShuffle,
+    playbackContext
+  } = usePlayerStore(
+    useShallow((s) => ({
+      queue: s.queue,
+      currentSongIndex: s.currentSongIndex,
+      isPlaying: s.isPlaying,
+      isShuffle: s.isShuffle,
+      setQueue: s.setQueue,
+      enqueueSong: s.enqueueSong,
+      togglePlay: s.togglePlay,
+      toggleShuffle: s.toggleShuffle,
+      playbackContext: s.playbackContext
+    }))
+  )
   const { transfers } = useDownloadStore()
   const { configured, initialized, user } = useOnlineStore()
   const [playlist, setPlaylist] = useState<Playlist | null>(null)
@@ -115,6 +137,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     x: number
     y: number
   } | null>(null)
+  const [creditsSong, setCreditsSong] = useState<Song | null>(null)
   const [isDownloadingMissing, setIsDownloadingMissing] = useState(false)
   const downloadMissingPlaylistRef = useRef(false)
   const failedSongIdsRef = useRef<Set<string>>(new Set())
@@ -355,10 +378,26 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
       return
     }
 
-    setQueue(allPlaylistSongs, effectiveIndex, playlistContext)
-    if (!song.filePath || song.filePath.startsWith('virtual:')) {
-      usePlayerStore.getState().setIsBuffering(true)
+    // Same-context stability: if this playlist is already playing, jump to the track in queue
+    // to preserve shuffle order and playback history
+    const isSamePlaylistContext =
+      playbackContext?.type === 'playlist' &&
+      playbackContext.id === id
+
+    if (isSamePlaylistContext) {
+      const existingQueueIndex = queue.findIndex(
+        (item) =>
+          item.id === song.id ||
+          (item.title.toLowerCase() === song.title.toLowerCase() &&
+            item.artist?.toLowerCase() === song.artist?.toLowerCase())
+      )
+      if (existingQueueIndex >= 0) {
+        usePlayerStore.getState().playSong(existingQueueIndex)
+        return
+      }
     }
+
+    setQueue(allPlaylistSongs, effectiveIndex, playlistContext)
   }
 
   const handleDownloadTrack = (song: Song, autoPlay = false) => {
@@ -770,12 +809,23 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
               const isDownloaded = Boolean(song.filePath && !song.filePath.startsWith('virtual:'))
               const isCurrent = isDownloaded && currentSong?.id === song.id
               const isPlayingSong = isCurrent && isPlaying
-              const songArtwork = toMediaUrl(song.artworkPath)
+              const songArtwork = toMediaUrl(song.artworkPath) || song.artworkUrl
               return (
                 <div
                   key={song.id}
                   onClick={() => handleTrackClick(song)}
                   onDoubleClick={(event) => event.preventDefault()}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    const menuWidth = 220
+                    const menuHeight = 260
+                    setActiveSongMenu({
+                      song,
+                      x: Math.min(e.clientX, window.innerWidth - menuWidth - 12),
+                      y: Math.min(e.clientY, window.innerHeight - menuHeight - 12)
+                    })
+                  }}
                   className={`group grid h-16 w-full min-w-0 grid-cols-[32px_minmax(0,1fr)_64px] items-center gap-2 rounded px-2 text-sm hover:bg-white/10 md:grid-cols-[32px_minmax(0,2fr)_minmax(0,1fr)_64px] md:gap-3 xl:grid-cols-[32px_minmax(0,2.2fr)_minmax(0,1.2fr)_110px_minmax(0,1.1fr)_64px] xl:gap-4 xl:px-4 ${
                     isCurrent ? 'bg-white/10' : !isDownloaded ? 'opacity-75 hover:opacity-100' : ''
                   }`}
@@ -807,12 +857,13 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
                     )}
                   </button>
                   <div className="flex min-w-0 items-center gap-3">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded bg-[#282828]">
-                      {songArtwork ? (
-                        <img src={songArtwork} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        <Music2 className="h-5 w-5 text-[#666]" />
-                      )}
+                    <div className="relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded bg-[#282828]">
+                      <ArtworkImage
+                        src={songArtwork}
+                        title={song.title}
+                        artist={song.artist}
+                        className="h-full w-full object-cover"
+                      />
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
@@ -971,6 +1022,109 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
               <Play className="h-4 w-4 fill-current" />
               Play
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                enqueueSong(activeSongMenu.song)
+                setActiveSongMenu(null)
+              }}
+              className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+            >
+              <ListPlus className="h-4 w-4" />
+              Add to Queue
+            </button>
+            {activeSongMenu.song.album && (
+              <button
+                type="button"
+                onClick={() => {
+                  navigate(`/album/${encodeURIComponent(activeSongMenu.song.album || '')}`)
+                  setActiveSongMenu(null)
+                }}
+                className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+              >
+                <Disc3 className="h-4 w-4" />
+                Go to Album
+              </button>
+            )}
+            {(() => {
+              const menuArtists =
+                activeSongMenu.song.artists && activeSongMenu.song.artists.length > 0
+                  ? activeSongMenu.song.artists
+                  : parseArtists(activeSongMenu.song.artist)
+
+              if (menuArtists.length <= 1) {
+                const artistName = menuArtists[0]?.name || activeSongMenu.song.artist || 'Unknown Artist'
+                return (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigate(`/artist/${encodeURIComponent(artistName)}`)
+                      setActiveSongMenu(null)
+                    }}
+                    className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+                  >
+                    <User className="h-4 w-4" />
+                    Go to Artist
+                  </button>
+                )
+              }
+
+              const isNearRightEdge = activeSongMenu.x > window.innerWidth - 440
+              const isNearBottomEdge = activeSongMenu.y > window.innerHeight - 250
+
+              return (
+                <div className="relative group/artist-sub">
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+                  >
+                    <div className="flex items-center gap-3">
+                      <User className="h-4 w-4" />
+                      <span>Go to Artist</span>
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-text-muted/60 transition-transform group-hover/artist-sub:translate-x-0.5" />
+                  </button>
+                  <div
+                    className={`absolute ${
+                      isNearRightEdge ? 'right-full mr-1' : 'left-full ml-1'
+                    } ${
+                      isNearBottomEdge ? 'bottom-0' : 'top-0'
+                    } hidden group-hover/artist-sub:flex flex-col min-w-[200px] rounded-lg border border-white/15 bg-[#1a1a1a] p-1.5 shadow-2xl backdrop-blur-md z-50`}
+                  >
+                    <div className="px-2.5 py-1 text-[10px] font-bold text-text-muted uppercase tracking-wider border-b border-white/10 mb-1">
+                      Track Artists
+                    </div>
+                    {menuArtists.map((a, i) => (
+                      <button
+                        key={`${a.name}-${i}`}
+                        type="button"
+                        onClick={() => {
+                          navigate(`/artist/${encodeURIComponent(a.name)}`)
+                          setActiveSongMenu(null)
+                        }}
+                        className="flex items-center justify-between rounded px-2.5 py-1.5 text-left text-xs font-medium text-text-muted hover:bg-white/10 hover:text-text transition-colors"
+                      >
+                        <span className="truncate pr-2">{a.name}</span>
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-white/5 text-text-muted/70">
+                          {i === 0 && a.role !== 'featured' ? 'Lead' : 'Feat'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+            <button
+              type="button"
+              onClick={() => {
+                setCreditsSong(activeSongMenu.song)
+                setActiveSongMenu(null)
+              }}
+              className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+            >
+              <FileText className="h-4 w-4" />
+              Show Credits
+            </button>
             {(!activeSongMenu.song.filePath || activeSongMenu.song.filePath.startsWith('virtual:')) && (
               <button
                 type="button"
@@ -995,6 +1149,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
               <Download className="h-4 w-4" />
               Choose download source...
             </button>
+            <div className="mx-2 my-1 h-px bg-white/10" />
             <button
               type="button"
               onClick={() => {
@@ -1018,6 +1173,12 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
           onUpdated={setPlaylist}
         />
       )}
+
+      <SongCreditsModal
+        song={creditsSong}
+        isOpen={Boolean(creditsSong)}
+        onClose={() => setCreditsSong(null)}
+      />
     </div>
   )
 }
@@ -1098,18 +1259,19 @@ function AddSongsModal({
         <div className="flex-1 overflow-y-auto px-3 pb-4">
           {availableSongs.length ? (
             availableSongs.map((song) => {
-              const artwork = toMediaUrl(song.artworkPath)
+              const artwork = toMediaUrl(song.artworkPath) || song.artworkUrl
               return (
                 <div
                   key={song.id}
                   className="flex h-16 items-center gap-3 rounded px-3 hover:bg-white/10"
                 >
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded bg-[#282828]">
-                    {artwork ? (
-                      <img src={artwork} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <Music2 className="h-5 w-5 text-[#666]" />
-                    )}
+                  <div className="relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded bg-[#282828]">
+                    <ArtworkImage
+                      src={artwork}
+                      title={song.title}
+                      artist={song.artist}
+                      className="h-full w-full object-cover"
+                    />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-semibold">{song.title}</div>

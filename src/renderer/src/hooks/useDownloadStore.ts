@@ -18,6 +18,8 @@ export interface TransferItem {
   createdAt: number
   message?: string
   autoPlay?: boolean
+  playAction?: 'play_now' | 'play_next' | 'enqueue'
+  requestedBy?: string
   resultId?: string
   song?: Song
 }

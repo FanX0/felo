@@ -3,6 +3,7 @@ import { useListeningStore } from '../hooks/useListeningStore'
 import { useOnlineStore } from '../hooks/useOnlineStore'
 import { usePlayerStore } from '../hooks/usePlayerStore'
 import { getSupabase } from '../lib/supabase'
+import { downloadTrackInBackground } from '../lib/backgroundDownloader'
 
 interface ListeningPresenceBridgeProps {
   enabled: boolean
@@ -143,6 +144,15 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
                       player.enqueueSongNext(match)
                       player.playNext(true)
                     }
+                  } else {
+                    void downloadTrackInBackground(
+                      { title: query },
+                      {
+                        playAction: action,
+                        autoPlay: action === 'play_now',
+                        conflictMode: 'keep_both'
+                      }
+                    )
                   }
                 }
                 break

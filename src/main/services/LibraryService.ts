@@ -709,24 +709,39 @@ export class LibraryService {
     if (!songs || songs.length === 0) return songs
     const db = getDb()
     try {
-      const rows = db
-        .prepare(
-          `
-        SELECT sa.songId, sa.artistId as id, sa.role, sa.sortOrder, a.name
-        FROM song_artists sa
-        JOIN artists a ON sa.artistId = a.id
-        ORDER BY sa.sortOrder ASC
-      `
-        )
-        .all() as Array<{
+      const artistMap = new Map<string, Array<{ id: string; name: string; role: 'primary' | 'featured' }>>()
+      const songIds = songs
+        .map((s) => s?.id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+
+      let rows: Array<{
         songId: string
         id: string
         role: 'primary' | 'featured'
         sortOrder: number
         name: string
-      }>
+      }> = []
 
-      const artistMap = new Map<string, Array<{ id: string; name: string; role: 'primary' | 'featured' }>>()
+      if (songIds.length > 0) {
+        const CHUNK_SIZE = 400
+        for (let i = 0; i < songIds.length; i += CHUNK_SIZE) {
+          const chunk = songIds.slice(i, i + CHUNK_SIZE)
+          const placeholders = chunk.map(() => '?').join(',')
+          const chunkRows = db
+            .prepare(
+              `
+            SELECT sa.songId, sa.artistId as id, sa.role, sa.sortOrder, a.name
+            FROM song_artists sa
+            JOIN artists a ON sa.artistId = a.id
+            WHERE sa.songId IN (${placeholders})
+            ORDER BY sa.sortOrder ASC
+          `
+            )
+            .all(...chunk) as any[]
+          rows.push(...chunkRows)
+        }
+      }
+
       for (const row of rows) {
         let list = artistMap.get(row.songId)
         if (!list) {
@@ -737,7 +752,8 @@ export class LibraryService {
       }
 
       for (const song of songs) {
-        const directArtists = artistMap.get(song.id)
+        if (!song) continue
+        const directArtists = song.id ? artistMap.get(song.id) : undefined
         if (directArtists && directArtists.length > 0) {
           song.artists = directArtists
         } else if (song.artist) {
@@ -754,7 +770,7 @@ export class LibraryService {
     } catch (err) {
       console.warn('Error attaching song artists:', err)
       for (const song of songs) {
-        if (!song.artists && song.artist) {
+        if (song && !song.artists && song.artist) {
           song.artists = [{ id: song.artistId, name: song.artist, role: 'primary' }]
         }
       }
@@ -779,8 +795,8 @@ export class LibraryService {
         `
       SELECT a.*, COUNT(DISTINCT s.id) as songCount
       FROM artists a
-      LEFT JOIN song_artists sa ON sa.artistId = a.id
-      LEFT JOIN songs s ON (s.id = sa.songId OR s.artistId = a.id) AND s.filePath NOT LIKE 'virtual:%'
+      JOIN song_artists sa ON sa.artistId = a.id
+      JOIN songs s ON s.id = sa.songId AND s.filePath NOT LIKE 'virtual:%'
       GROUP BY a.id
       HAVING songCount > 0
       ORDER BY a.name ASC
@@ -828,7 +844,7 @@ export class LibraryService {
       db.prepare('DELETE FROM library_roots WHERE id = ?').run(rootId)
       // Clean up orphaned artists and albums
       db.prepare(
-        'DELETE FROM artists WHERE id NOT IN (SELECT DISTINCT artistId FROM songs WHERE artistId IS NOT NULL)'
+        'DELETE FROM artists WHERE id NOT IN (SELECT DISTINCT artistId FROM songs WHERE artistId IS NOT NULL) AND id NOT IN (SELECT DISTINCT artistId FROM song_artists)'
       ).run()
       db.prepare(
         'DELETE FROM albums WHERE id NOT IN (SELECT DISTINCT albumId FROM songs WHERE albumId IS NOT NULL)'
@@ -862,7 +878,7 @@ export class LibraryService {
       db.prepare('DELETE FROM play_events WHERE songId = ?').run(songId)
       db.prepare('DELETE FROM songs WHERE id = ?').run(songId)
       db.prepare(
-        'DELETE FROM artists WHERE id NOT IN (SELECT DISTINCT artistId FROM songs WHERE artistId IS NOT NULL)'
+        'DELETE FROM artists WHERE id NOT IN (SELECT DISTINCT artistId FROM songs WHERE artistId IS NOT NULL) AND id NOT IN (SELECT DISTINCT artistId FROM song_artists)'
       ).run()
       db.prepare(
         'DELETE FROM albums WHERE id NOT IN (SELECT DISTINCT albumId FROM songs WHERE albumId IS NOT NULL)'
@@ -944,6 +960,7 @@ export class LibraryService {
       prefixPattern,
       exact,
       prefixPattern,
+      prefixPattern,
       exact,
       prefixPattern
     )
@@ -962,15 +979,32 @@ export class LibraryService {
     const pattern = `%${trimmed}%`
     const prefixPattern = `${trimmed}%`
     const exact = trimmed.toLowerCase()
+    const tokens = trimmed.split(/\s+/).filter(Boolean)
 
-    return db
-      .prepare(
-        `
-      SELECT a.*, COUNT(DISTINCT s.id) as songCount
+    let sql = `
+      SELECT a.*, COUNT(DISTINCT s.id) as songCount,
+        (
+          SELECT s2.artworkPath
+          FROM songs s2
+          JOIN song_artists sa2 ON sa2.songId = s2.id
+          WHERE sa2.artistId = a.id AND s2.artworkPath IS NOT NULL AND s2.artworkPath != ''
+          LIMIT 1
+        ) as artworkPath
       FROM artists a
       LEFT JOIN song_artists sa ON sa.artistId = a.id
-      LEFT JOIN songs s ON (s.id = sa.songId OR s.artistId = a.id) AND s.filePath NOT LIKE 'virtual:%'
-      WHERE a.name LIKE ?
+      LEFT JOIN songs s ON s.id = sa.songId AND s.filePath NOT LIKE 'virtual:%'
+      WHERE (a.name LIKE ?
+    `
+    const params: any[] = [pattern]
+
+    if (tokens.length > 1) {
+      sql += ` OR (`
+      sql += tokens.map(() => `a.name LIKE ?`).join(' AND ')
+      sql += `)`
+      tokens.forEach((t) => params.push(`%${t}%`))
+    }
+
+    sql += `)
       GROUP BY a.id
       ORDER BY
         CASE
@@ -982,8 +1016,9 @@ export class LibraryService {
         a.name ASC
       LIMIT 30
     `
-      )
-      .all(pattern, exact, prefixPattern)
+    params.push(exact, prefixPattern)
+
+    return db.prepare(sql).all(...params)
   }
 
   static searchAlbums(query: string) {
@@ -997,7 +1032,14 @@ export class LibraryService {
     const tokens = trimmed.split(/\s+/).filter(Boolean)
 
     let sql = `
-      SELECT al.*, ar.name as artistName, COUNT(s.id) as songCount
+      SELECT al.*,
+        COALESCE(al.artworkPath, (
+          SELECT s2.artworkPath
+          FROM songs s2
+          WHERE s2.albumId = al.id AND s2.artworkPath IS NOT NULL AND s2.artworkPath != ''
+          LIMIT 1
+        )) as artworkPath,
+        ar.name as artistName, COUNT(s.id) as songCount
       FROM albums al
       LEFT JOIN artists ar ON al.artistId = ar.id
       LEFT JOIN songs s ON s.albumId = al.id AND s.filePath NOT LIKE 'virtual:%'

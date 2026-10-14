@@ -13,6 +13,7 @@ import FriendActivityPanel from './components/FriendActivity/FriendActivityPanel
 import ListeningPresenceBridge from './components/ListeningPresenceBridge'
 import PlaybackControlBridge from './components/PlaybackControlBridge'
 import PlaybackStreamBridge from './components/PlaybackStreamBridge'
+import PlaybackNoticeToast from './components/PlaybackNoticeToast'
 import QueueDrawer from './components/Queue/QueueDrawer'
 import RemotePhoneView from './pages/Remote/RemotePhoneView'
 
@@ -685,6 +686,7 @@ function App() {
         )}
         <QueueDrawer isOpen={isQueueOpen} onClose={() => setIsQueueOpen(false)} />
         <LibraryScanPill />
+        <PlaybackNoticeToast />
       </div>
 
       <div className="px-2 pb-2">

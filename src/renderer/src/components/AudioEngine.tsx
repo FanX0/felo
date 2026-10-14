@@ -105,18 +105,16 @@ export default function AudioEngine() {
     registerActiveAudioElement(audioRef.current)
     return () => registerActiveAudioElement(null)
   }, [])
-  const {
-    volume,
-    playNext,
-    playPrevious,
-    setCurrentTime,
-    setDuration,
-    setIsPlaying,
-    setIsBuffering,
-    seek,
-    seekRequest,
-    clearSeekRequest
-  } = usePlayerStore()
+  const volume = usePlayerStore((s) => s.volume)
+  const seekRequest = usePlayerStore((s) => s.seekRequest)
+  const playNext = usePlayerStore((s) => s.playNext)
+  const playPrevious = usePlayerStore((s) => s.playPrevious)
+  const setCurrentTime = usePlayerStore((s) => s.setCurrentTime)
+  const setDuration = usePlayerStore((s) => s.setDuration)
+  const setIsPlaying = usePlayerStore((s) => s.setIsPlaying)
+  const setIsBuffering = usePlayerStore((s) => s.setIsBuffering)
+  const seek = usePlayerStore((s) => s.seek)
+  const clearSeekRequest = usePlayerStore((s) => s.clearSeekRequest)
 
   const applySeek = useCallback(
     (time: number) => {
@@ -428,15 +426,17 @@ export default function AudioEngine() {
         if (retryCountRef.current < 1 && audioRef.current?.src) {
           retryCountRef.current += 1
           console.log('Retrying audio playback once...')
+          isChangingSourceRef.current = true
           audioRef.current.load()
-          if (usePlayerStore.getState().isPlaying) {
-            audioRef.current.play().catch(() => {
-              setIsPlaying(false)
-            })
-          }
           return
         }
-        setIsPlaying(false)
+        console.warn('Audio playback unrecoverable for track, advancing to next:', activeSong?.title)
+        setIsBuffering(false)
+        if (storeState.queue.length > 1) {
+          playNext()
+        } else {
+          setIsPlaying(false)
+        }
       }}
       onSeeked={(e) => {
         const shouldResume = resumeAfterSeekRef.current

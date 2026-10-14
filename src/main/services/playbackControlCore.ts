@@ -1,3 +1,5 @@
+import { parseSmartQuery } from '../../shared/songMatching'
+
 export type LibraryTrack = {
   id: string
   title: string
@@ -5,6 +7,7 @@ export type LibraryTrack = {
   album: string
   duration: number
   filePath: string
+  allArtists?: string
 }
 
 export function safeSong(song: Omit<LibraryTrack, 'filePath'>) {
@@ -28,6 +31,10 @@ export function normalizeSearch(value: string): string {
 }
 
 function tokenMatches(token: string, word: string): boolean {
+  if (word === token) return true
+  // Short tokens (length <= 2, e.g. "in", "on", "a", "of") MUST match exactly to prevent false substring collisions
+  if (token.length <= 2) return false
+
   if (word.includes(token)) return true
   // Transliteration collapse (e.g. double consonants "hussein" -> "husein", "connor" -> "conor")
   const cToken = token.replace(/(.)\1+/g, '$1')
@@ -43,24 +50,26 @@ export function searchLibrary(
   limit: number,
   available: (path: string) => boolean
 ) {
-  const q = normalizeSearch(query)
-  const a = normalizeSearch(artist)
+  const parsed = parseSmartQuery(query, artist)
+  const q = normalizeSearch(parsed.cleanQuery || query)
+  const a = normalizeSearch(parsed.artist || artist)
   const tokens = q.split(' ').filter(Boolean)
   const matches = songs
     .flatMap((song) => {
       const title = normalizeSearch(song.title || '')
       const performer = normalizeSearch(song.artist || '')
-      const combined = `${title} ${performer}`
+      const extraArtists = normalizeSearch(song.allArtists || '')
+      const combined = `${title} ${performer} ${extraArtists}`.trim()
       const text = `${combined} ${normalizeSearch(song.album || '')}`
       const textWords = text.split(' ').filter(Boolean)
 
-      if (a && !tokenMatches(a, performer)) return []
+      if (a && !performer.includes(a) && !extraArtists.includes(a) && !tokenMatches(a, performer)) return []
       const allTokensMatch = tokens.every((token) =>
         textWords.some((word) => tokenMatches(token, word))
       )
       if (!allTokensMatch) return []
 
-      const exact = Boolean(q) && (q === title || q === combined || q === `${performer} ${title}`)
+      const exact = Boolean(q) && (q === title || q === combined || q === `${performer} ${title}` || q === `${title} ${performer}`)
       const score = exact ? 100 : q && title.includes(q) ? 80 : 50
       return [
         {

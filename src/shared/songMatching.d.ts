@@ -75,3 +75,10 @@ export declare function validateTrackIdentity(target: {
     score: number;
     reason?: string;
 };
+export interface SmartParsedQuery {
+    title: string;
+    artist: string;
+    cleanQuery: string;
+    isCollaboration: boolean;
+}
+export declare function parseSmartQuery(raw: string, explicitArtist?: string): SmartParsedQuery;

@@ -10,6 +10,7 @@ export interface ArtistLinksProps {
   separatorClassName?: string
   onClickArtist?: (artistName: string, artistId?: string) => void
   navigateOnClick?: boolean
+  wrap?: boolean
 }
 
 export default function ArtistLinks({
@@ -19,7 +20,8 @@ export default function ArtistLinks({
   linkClassName = '',
   separatorClassName = '',
   onClickArtist,
-  navigateOnClick = true
+  navigateOnClick = true,
+  wrap = false
 }: ArtistLinksProps) {
   const navigate = useNavigate()
 
@@ -46,7 +48,11 @@ export default function ArtistLinks({
   }
 
   return (
-    <span className={`inline-flex items-center flex-wrap max-w-full ${className}`}>
+    <span
+      className={`inline-flex items-center max-w-full ${
+        wrap ? 'flex-wrap' : 'flex-nowrap truncate'
+      } ${className}`}
+    >
       {normalizedArtists.map((item, idx) => {
         const isLast = idx === normalizedArtists.length - 1
         const isClickable = item.name !== 'Unknown Artist'

@@ -4,6 +4,7 @@ import { useRoomChatStore } from '../../hooks/useRoomChatStore'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { useListeningStore } from '../../hooks/useListeningStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { downloadTrackInBackground } from '../../lib/backgroundDownloader'
 
 interface RoomChatProps {
   roomId: string
@@ -154,6 +155,20 @@ export default function RoomChat({
             if (match) {
               player.enqueueSong(match)
               await sendMessage(roomId, `🎶 Queued: **${match.title}** by **${match.artist}**`)
+              return
+            } else {
+              void downloadTrackInBackground(
+                { title: query },
+                {
+                  playAction: 'enqueue',
+                  autoPlay: player.queue.length === 0,
+                  conflictMode: 'keep_both'
+                }
+              )
+              await sendMessage(
+                roomId,
+                `📥 Song not in library. Downloading **"${query}"** via your prioritized providers...`
+              )
               return
             }
           } catch {

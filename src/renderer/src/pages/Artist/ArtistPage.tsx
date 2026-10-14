@@ -1,25 +1,36 @@
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   CheckCircle2,
+  ChevronRight,
   Clock,
+  Disc3,
   Download,
   FileText,
   Globe2,
+  ListPlus,
   Loader2,
   MoreHorizontal,
+  MoreVertical,
   Music2,
   Pause,
   Play,
-  Shuffle
+  Radio,
+  Shuffle,
+  User
 } from 'lucide-react'
 import { Song } from '../Library/Library'
 import { toMediaUrl } from '../../lib/media'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { useShallow } from 'zustand/react/shallow'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
 import type { DownloadTarget } from '../../components/DownloadPanel/DownloadPanel'
 import ArtistLinks from '../../components/Common/ArtistLinks'
 import SongCreditsModal from '../../components/Common/SongCreditsModal'
+import { PersonalizationService } from '../../services/PersonalizationService'
+import { parseArtists } from '../../lib/artistParser'
+import { ArtworkImage } from '../Home/components/ArtworkImage'
 
 type ArtistPageTrack = {
   id: string
@@ -118,6 +129,7 @@ function isLeadTrackForArtist(track: ArtistPageTrack, targetArtist: string): boo
 }
 
 export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
+  const navigate = useNavigate()
   const { name } = useParams<{ name: string }>()
   const decodedName = name ? decodeURIComponent(name) : 'Unknown Artist'
   const [songs, setSongs] = useState<Song[]>([])
@@ -127,8 +139,35 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
   const [onlineError, setOnlineError] = useState('')
   const [isFollowing, setIsFollowing] = useState(false)
   const [creditsSong, setCreditsSong] = useState<Song | null>(null)
-  const { setQueue, togglePlay, queue, currentSongIndex, isPlaying, isShuffle, toggleShuffle } =
-    usePlayerStore()
+  const [activeMenu, setActiveMenu] = useState<{
+    song: ArtistPageTrack
+    x: number
+    y: number
+    flyoutArtist: boolean
+  } | null>(null)
+  const {
+    setQueue,
+    togglePlay,
+    enqueueSong,
+    queue,
+    currentSongIndex,
+    isPlaying,
+    isShuffle,
+    toggleShuffle,
+    playbackContext
+  } = usePlayerStore(
+    useShallow((s) => ({
+      setQueue: s.setQueue,
+      togglePlay: s.togglePlay,
+      enqueueSong: s.enqueueSong,
+      queue: s.queue,
+      currentSongIndex: s.currentSongIndex,
+      isPlaying: s.isPlaying,
+      isShuffle: s.isShuffle,
+      toggleShuffle: s.toggleShuffle,
+      playbackContext: s.playbackContext
+    }))
+  )
   const { transfers } = useDownloadStore()
 
   useEffect(() => {
@@ -189,7 +228,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
               artist,
               album: item.album || localSong?.album || '',
               duration: parseDuration(item.duration) || localSong?.duration || 0,
-              artworkUrl: item.thumbnail || toMediaUrl(localSong?.artworkPath) || '',
+              artworkUrl: item.thumbnail || toMediaUrl(localSong?.artworkPath) || localSong?.artworkUrl || '',
               isLocal: Boolean(localSong),
               source: artistSource,
               localSong,
@@ -242,6 +281,16 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
     }
   }, [artistSource, decodedName])
 
+  useEffect(() => {
+    const closeMenu = () => setActiveMenu(null)
+    window.addEventListener('click', closeMenu)
+    window.addEventListener('resize', closeMenu)
+    return () => {
+      window.removeEventListener('click', closeMenu)
+      window.removeEventListener('resize', closeMenu)
+    }
+  }, [])
+
   const artistSongs = useMemo(() => {
     const targetNorm = normalizeArtistName(decodedName)
     return songs.filter((song) => {
@@ -278,7 +327,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
       artist: song.artist,
       album: song.album || '',
       duration: song.duration || 0,
-      artworkUrl: toMediaUrl(song.artworkPath) || '',
+      artworkUrl: toMediaUrl(song.artworkPath) || song.artworkUrl || '',
       isLocal: true,
       localSong: song
     }))
@@ -298,7 +347,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
 
   const currentSongArtwork =
     currentSong && artistNameMatches(currentSong.artist || '', decodedName)
-      ? toMediaUrl(currentSong.artworkPath)
+      ? toMediaUrl(currentSong.artworkPath) || currentSong.artworkUrl || ''
       : ''
   const heroArtworkUrl =
     artistTracks.find((track) => track.artworkUrl)?.artworkUrl || currentSongArtwork || ''
@@ -373,6 +422,37 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
     }
   }
 
+  const [isGeneratingRadio, setIsGeneratingRadio] = useState(false)
+
+  const handleStartArtistRadio = async () => {
+    if (!decodedName || isGeneratingRadio) return
+    setIsGeneratingRadio(true)
+    try {
+      let localSongs: Song[] = []
+      if (window.api?.getSongs) {
+        localSongs = (await window.api.getSongs()) || []
+      }
+      const radioStation = await PersonalizationService.generateRadioStation(
+        {
+          artist: decodedName,
+          artworkUrl: heroArtworkUrl || undefined
+        },
+        localSongs
+      )
+      if (radioStation.length > 0) {
+        setQueue(radioStation, 0, {
+          type: 'radio' as const,
+          title: `${decodedName} Radio`,
+          route: `/artist/${encodeURIComponent(decodedName)}`
+        })
+      }
+    } catch (err) {
+      console.warn('Failed to start artist radio:', err)
+    } finally {
+      setIsGeneratingRadio(false)
+    }
+  }
+
   const handlePlayTrack = (track: ArtistPageTrack) => {
     if (!track || allArtistSongs.length === 0) return
 
@@ -389,6 +469,25 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
       return
     }
 
+    // Same-context stability: if this artist page is already playing, jump to the track in queue
+    // to preserve shuffle order and playback history
+    const isSameArtistContext =
+      playbackContext?.type === 'artist' &&
+      playbackContext.title.toLowerCase() === decodedName.toLowerCase()
+
+    if (isSameArtistContext) {
+      const existingQueueIndex = queue.findIndex(
+        (item) =>
+          item.id === (track.localSong?.id || track.id) ||
+          (normalizeTrackTitle(item.title) === normalizeTrackTitle(track.title) &&
+            artistNameMatches(item.artist, track.artist))
+      )
+      if (existingQueueIndex >= 0) {
+        usePlayerStore.getState().playSong(existingQueueIndex)
+        return
+      }
+    }
+
     const artistContext = {
       type: 'artist' as const,
       title: decodedName,
@@ -396,13 +495,21 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
     }
 
     setQueue(allArtistSongs, effectiveIndex, artistContext)
-    if (!track.localSong) {
-      usePlayerStore.getState().setIsBuffering(true)
-    }
   }
 
   const handleDownloadTrack = (track: ArtistPageTrack) => {
     if (!track) return
+
+    const activeTransfer = transfers.find(
+      (t) =>
+        t.title.toLowerCase() === track.title.toLowerCase() &&
+        (!track.artist || !t.artist || t.artist.toLowerCase() === track.artist.toLowerCase()) &&
+        (t.status === 'downloading' || t.status === 'queued' || t.status === 'waiting_connector')
+    )
+    if (activeTransfer) {
+      useDownloadStore.getState().setTransfersOpen(true)
+      return
+    }
 
     if (track.localSong) {
       onOpenDownloadPanel?.({
@@ -466,7 +573,17 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
         key={song.id}
         type="button"
         onClick={() => handlePlayTrack(song)}
-        className={`group grid h-[58px] grid-cols-[36px_48px_minmax(180px,1fr)_minmax(110px,0.7fr)_110px] items-center gap-3 rounded px-3 text-left transition-colors hover:bg-white/10 ${
+        onContextMenu={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setActiveMenu({
+            song,
+            x: Math.min(e.clientX, window.innerWidth - 232),
+            y: Math.min(e.clientY, window.innerHeight - 260),
+            flyoutArtist: false
+          })
+        }}
+        className={`group grid h-[58px] grid-cols-[36px_48px_minmax(180px,1fr)_minmax(110px,0.7fr)_138px] items-center gap-3 rounded px-3 text-left transition-colors hover:bg-white/10 ${
           isCurrent ? 'bg-white/15' : ''
         }`}
       >
@@ -493,19 +610,14 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
           </span>
         </span>
 
-        <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded bg-[#282828] text-[#777]">
-          {artworkUrl ? (
-            <img
-              src={artworkUrl}
-              alt=""
-              onError={(event) => {
-                event.currentTarget.style.display = 'none'
-              }}
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            <Music2 className="h-5 w-5" />
-          )}
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded bg-[#282828] text-[#777]">
+          <ArtworkImage
+            src={artworkUrl}
+            title={song.title}
+            artist={song.artist}
+            className="h-full w-full object-cover"
+            fallbackIcon={<Music2 className="h-5 w-5 text-[#777]" />}
+          />
         </span>
 
         <span className="min-w-0">
@@ -578,7 +690,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
             }}
             title={
               isDownloading
-                ? `Downloading (${transfer?.progress || 0}%)...`
+                ? `Downloading (${transfer?.progress || 0}%) - click to view in Transfers`
                 : song.isLocal
                   ? 'In your library (Click to choose source or replace)'
                   : 'Download track to library'
@@ -598,6 +710,32 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
             ) : (
               <Download className="h-4 w-4" />
             )}
+          </span>
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation()
+              const rect = e.currentTarget.getBoundingClientRect()
+              setActiveMenu((curr) =>
+                curr?.song.id === song.id
+                  ? null
+                  : {
+                      song,
+                      x: Math.min(rect.right - 220, window.innerWidth - 232),
+                      y: Math.min(rect.bottom + 8, window.innerHeight - 260),
+                      flyoutArtist: false
+                    }
+              )
+            }}
+            title="More options"
+            className={`h-7 w-7 flex items-center justify-center rounded-full transition-all cursor-pointer ${
+              activeMenu?.song.id === song.id
+                ? 'text-primary-amber bg-white/10 opacity-100'
+                : 'opacity-0 group-hover:opacity-100 text-[#b3b3b3] hover:text-white hover:bg-white/10'
+            }`}
+          >
+            <MoreVertical className="h-4 w-4" />
           </span>
         </span>
       </button>
@@ -648,14 +786,14 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
         </button>
 
         {heroArtworkUrl && (
-          <img
-            src={heroArtworkUrl}
-            alt=""
-            onError={(event) => {
-              event.currentTarget.style.display = 'none'
-            }}
-            className="h-12 w-12 rounded-md border-2 border-white/20 object-cover"
-          />
+          <div className="h-12 w-12 shrink-0 overflow-hidden rounded-md border-2 border-white/20">
+            <ArtworkImage
+              src={heroArtworkUrl}
+              title={decodedName}
+              artist={decodedName}
+              className="h-full w-full object-cover"
+            />
+          </div>
         )}
 
         <button
@@ -667,6 +805,21 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
           }`}
         >
           <Shuffle className="h-6 w-6" />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => void handleStartArtistRadio()}
+          disabled={isGeneratingRadio}
+          title={`Start ${decodedName} Radio station`}
+          className="flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-4 py-2 text-[14px] font-bold text-white transition-all hover:scale-105 hover:border-white/40 hover:bg-white/10 disabled:opacity-50"
+        >
+          {isGeneratingRadio ? (
+            <Loader2 className="h-4 w-4 animate-spin text-primary-amber" />
+          ) : (
+            <Radio className="h-4 w-4 text-primary-amber" />
+          )}
+          <span>Artist Radio</span>
         </button>
 
         <button
@@ -778,18 +931,13 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
             className="flex w-full items-center gap-4 rounded-lg bg-[#181818] p-4 text-left shadow-[0_10px_28px_rgba(0,0,0,0.35)] transition-all hover:-translate-y-0.5 hover:bg-[#242424] disabled:cursor-default disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:bg-[#181818]"
           >
             <span className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded bg-[#282828] text-[#777]">
-              {heroArtworkUrl ? (
-                <img
-                  src={heroArtworkUrl}
-                  alt=""
-                  onError={(event) => {
-                    event.currentTarget.style.display = 'none'
-                  }}
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <Music2 className="h-8 w-8" />
-              )}
+              <ArtworkImage
+                src={heroArtworkUrl}
+                title={artistPick?.title || decodedName}
+                artist={decodedName}
+                className="h-full w-full object-cover"
+                fallbackIcon={<Music2 className="h-8 w-8 text-[#777]" />}
+              />
             </span>
             <span className="min-w-0">
               <span className="mb-2 flex items-center gap-2 text-[13px] font-bold text-[#b3b3b3]">
@@ -828,6 +976,157 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
           </div>
         </aside>
       </main>
+      {activeMenu &&
+        createPortal(
+          <div
+            className="fixed z-[9999] min-w-[220px] rounded-lg bg-[#282828] py-1 shadow-[0_8px_24px_rgba(0,0,0,0.5)] border border-white/10"
+            style={{ left: activeMenu.x, top: activeMenu.y }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Play */}
+            <button
+              className="flex w-full items-center gap-3 px-4 py-2.5 text-[14px] text-white hover:bg-white/10 transition-colors"
+              onClick={() => {
+                handlePlayTrack(activeMenu.song)
+                setActiveMenu(null)
+              }}
+            >
+              <Play className="h-4 w-4" /> Play
+            </button>
+
+            {/* Add to Queue */}
+            {activeMenu.song.localSong && (
+              <button
+                className="flex w-full items-center gap-3 px-4 py-2.5 text-[14px] text-white hover:bg-white/10 transition-colors"
+                onClick={() => {
+                  if (activeMenu.song.localSong) enqueueSong(activeMenu.song.localSong)
+                  setActiveMenu(null)
+                }}
+              >
+                <ListPlus className="h-4 w-4" /> Add to queue
+              </button>
+            )}
+
+            <div className="my-1 border-t border-white/10" />
+
+            {/* Go to Album */}
+            {activeMenu.song.album && (
+              <button
+                className="flex w-full items-center gap-3 px-4 py-2.5 text-[14px] text-white hover:bg-white/10 transition-colors"
+                onClick={() => {
+                  navigate(`/album/${encodeURIComponent(activeMenu.song.album)}`)
+                  setActiveMenu(null)
+                }}
+              >
+                <Disc3 className="h-4 w-4" /> Go to album
+              </button>
+            )}
+
+            {/* Go to Artist — single or flyout */}
+            {(() => {
+              const songForArtists = activeMenu.song.localSong
+              const parsedArtists = songForArtists
+                ? parseArtists(
+                    songForArtists.artist || '',
+                    songForArtists.artists?.map((a) => a.name)
+                  )
+                : parseArtists(activeMenu.song.artist || '')
+              if (parsedArtists.length <= 1) {
+                const artistName = parsedArtists[0]?.name || activeMenu.song.artist
+                return artistName ? (
+                  <button
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-[14px] text-white hover:bg-white/10 transition-colors"
+                    onClick={() => {
+                      navigate(`/artist/${encodeURIComponent(artistName)}`)
+                      setActiveMenu(null)
+                    }}
+                  >
+                    <User className="h-4 w-4" /> Go to artist
+                  </button>
+                ) : null
+              }
+              // Multi-artist flyout
+              return (
+                <div className="group/artist relative">
+                  <button
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-[14px] text-white hover:bg-white/10 transition-colors"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setActiveMenu((m) => m ? { ...m, flyoutArtist: !m.flyoutArtist } : m)
+                    }}
+                  >
+                    <User className="h-4 w-4" />
+                    <span className="flex-1 text-left">Go to artist</span>
+                    <ChevronRight className="h-4 w-4 text-[#b3b3b3]" />
+                  </button>
+                  {activeMenu.flyoutArtist && (
+                    <div
+                      className={`absolute top-0 min-w-[180px] rounded-lg bg-[#3e3e3e] py-1 shadow-[0_8px_24px_rgba(0,0,0,0.5)] border border-white/10 ${
+                        activeMenu.x + 220 + 180 > window.innerWidth ? 'right-full mr-1' : 'left-full ml-1'
+                      }`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {parsedArtists.map((a) => (
+                        <button
+                          key={a.name}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-white hover:bg-white/10 transition-colors"
+                          onClick={() => {
+                            navigate(`/artist/${encodeURIComponent(a.name)}`)
+                            setActiveMenu(null)
+                          }}
+                        >
+                          <User className="h-3.5 w-3.5 shrink-0 text-[#b3b3b3]" />
+                          <span className="flex-1 truncate">{a.name}</span>
+                          {a.role === 'primary' && (
+                            <span className="shrink-0 rounded bg-primary-amber/20 px-1.5 py-0.5 text-[10px] font-bold text-primary-amber">
+                              Lead
+                            </span>
+                          )}
+                          {a.role === 'featured' && (
+                            <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold text-[#b3b3b3]">
+                              Feat
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+
+            <div className="my-1 border-t border-white/10" />
+
+            {/* Show Credits */}
+            {activeMenu.song.localSong && (
+              <button
+                className="flex w-full items-center gap-3 px-4 py-2.5 text-[14px] text-white hover:bg-white/10 transition-colors"
+                onClick={() => {
+                  setCreditsSong(activeMenu.song.localSong || null)
+                  setActiveMenu(null)
+                }}
+              >
+                <FileText className="h-4 w-4" /> Show credits
+              </button>
+            )}
+
+            {/* Download */}
+            <button
+              className="flex w-full items-center gap-3 px-4 py-2.5 text-[14px] text-white hover:bg-white/10 transition-colors"
+              onClick={() => {
+                handleDownloadTrack(activeMenu.song)
+                setActiveMenu(null)
+              }}
+            >
+              {activeMenu.song.isLocal ? (
+                <><CheckCircle2 className="h-4 w-4 text-primary-amber" /> In your library</>
+              ) : (
+                <><Download className="h-4 w-4" /> Download to library</>
+              )}
+            </button>
+          </div>,
+          document.body
+        )}
       <SongCreditsModal
         song={creditsSong}
         isOpen={Boolean(creditsSong)}

@@ -108,7 +108,7 @@ export default function SongCreditsModal({ song, isOpen, onClose }: SongCreditsM
               </p>
             </div>
             {isLossless && (
-              <span className="shrink-0 rounded bg-primary-amber/15 px-2 py-0.5 text-[11px] font-bold text-primary-amber border border-primary-amber/30">
+              <span className="shrink-0 font-mono text-xs font-semibold text-text-muted">
                 {isHiRes ? 'Hi-Res Lossless' : 'Lossless'}
               </span>
             )}
@@ -145,13 +145,7 @@ export default function SongCreditsModal({ song, isOpen, onClose }: SongCreditsM
                         {isLead ? 'Main Artist / Lead Performer' : 'Featured Artist / Collaborator'}
                       </span>
                     </div>
-                    <span
-                      className={`shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-bold tracking-wide uppercase ${
-                        isLead
-                          ? 'bg-white/10 text-white'
-                          : 'bg-primary-amber/10 text-primary-amber border border-primary-amber/20'
-                      }`}
-                    >
+                    <span className="shrink-0 font-mono text-[11px] text-text-muted uppercase">
                       {isLead ? 'Lead' : 'Featured'}
                     </span>
                   </div>

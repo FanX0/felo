@@ -110,6 +110,7 @@ export const StartDownloadRequestSchema = z.object({
     accounts: StreamingAccountsSchema.optional().default({}),
     storageMode: DownloadStorageModeSchema,
     skipIfExists: z.boolean().optional(),
+    autoPlay: z.boolean().optional(),
     artworkUrl: z.string().url().max(2048).optional(),
     album: z.string().max(300).optional()
 });

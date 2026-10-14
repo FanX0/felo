@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import {
   Search,
@@ -8,6 +9,7 @@ import {
   MoreVertical,
   Play,
   Pause,
+  Radio,
   FolderOpen,
   RotateCcw,
   Trash2,
@@ -32,6 +34,9 @@ import ArtistLinks from '../../components/Common/ArtistLinks'
 import SongCreditsModal from '../../components/Common/SongCreditsModal'
 import { parseArtists } from '../../lib/artistParser'
 import { cn } from '../../lib/utils'
+import { PersonalizationService } from '../../services/PersonalizationService'
+import { ArtworkImage } from '../Home/components/ArtworkImage'
+import { HighlightMatch } from '../../components/Common/HighlightMatch'
 
 export interface SongArtist {
   id?: string
@@ -104,7 +109,7 @@ function QualityPill({ song }: { song: Song }) {
     return (
       <span
         title={`Hi-Res Audio: ${song.bitDepth || 24}-bit / ${song.sampleRate ? `${(song.sampleRate / 1000).toFixed(1)} kHz` : ''}`}
-        className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold uppercase tracking-wider bg-primary-amber/15 text-primary-amber border border-primary-amber/30"
+        className="shrink-0 font-mono text-[11px] font-medium uppercase tracking-wider text-text-muted"
       >
         Hi-Res{rateKhz ? ` ${rateKhz}` : ''}
       </span>
@@ -115,7 +120,7 @@ function QualityPill({ song }: { song: Song }) {
     return (
       <span
         title="Lossless CD Quality Audio"
-        className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold uppercase tracking-wider bg-surface-elevated text-text-muted border border-border/60"
+        className="shrink-0 font-mono text-[11px] font-medium uppercase tracking-wider text-text-muted"
       >
         Lossless
       </span>
@@ -137,7 +142,7 @@ function QualityPill({ song }: { song: Song }) {
   const kbps = song.bitrate ? `${Math.round(song.bitrate / 1000)}k` : ''
 
   return (
-    <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono text-text-muted/70 bg-surface-elevated/60 border border-border/30">
+    <span className="shrink-0 font-mono text-[11px] font-medium uppercase tracking-wider text-text-muted/70">
       {format}{kbps ? ` ${kbps}` : ''}
     </span>
   )
@@ -163,7 +168,16 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     y: number
   } | null>(null)
   const [creditsSong, setCreditsSong] = useState<Song | null>(null)
-  const { setQueue, togglePlay, currentSongIndex, queue, isPlaying, enqueueSong } = usePlayerStore()
+  const { setQueue, togglePlay, currentSongIndex, queue, isPlaying, enqueueSong } = usePlayerStore(
+    useShallow((s) => ({
+      setQueue: s.setQueue,
+      togglePlay: s.togglePlay,
+      currentSongIndex: s.currentSongIndex,
+      queue: s.queue,
+      isPlaying: s.isPlaying,
+      enqueueSong: s.enqueueSong
+    }))
+  )
   const navigate = useNavigate()
 
   const parentRef = useRef<HTMLDivElement>(null)
@@ -182,13 +196,18 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
 
   const filteredSongs = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
-    const searchedSongs = !query
-      ? songs
-      : songs.filter((song) =>
-          [song.title, song.artist, song.album, song.genre]
-            .filter(Boolean)
-            .some((value) => value?.toLowerCase().includes(query))
-        )
+    let searchedSongs: Song[] = songs
+
+    if (query) {
+      const tokens = query.split(/\s+/).filter(Boolean)
+      searchedSongs = songs.filter((song) => {
+        const combined = [song.title, song.artist, song.album, song.genre]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+        return tokens.every((token) => combined.includes(token))
+      })
+    }
 
     if (sortKey === 'default') {
       return sortDirection === 'asc' ? searchedSongs : [...searchedSongs].reverse()
@@ -230,6 +249,51 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     }
   }
 
+  const handleStartSongRadio = async (song: Song) => {
+    try {
+      const station = await PersonalizationService.generateRadioStation(
+        {
+          id: song.id,
+          title: song.title,
+          artist: song.artist,
+          album: song.album,
+          artworkUrl: song.artworkPath,
+          filePath: song.filePath
+        },
+        songs
+      )
+      if (station.length > 0) {
+        usePlayerStore.getState().setQueue(station, 0, {
+          type: 'radio' as const,
+          title: `${song.title} Radio`,
+          route: `/artist/${encodeURIComponent(song.artist)}`
+        })
+      }
+    } catch (err) {
+      console.warn('Failed to start song radio:', err)
+    }
+  }
+
+  const handleStartArtistRadio = async (artistName: string) => {
+    try {
+      const station = await PersonalizationService.generateRadioStation(
+        {
+          artist: artistName
+        },
+        songs
+      )
+      if (station.length > 0) {
+        usePlayerStore.getState().setQueue(station, 0, {
+          type: 'radio' as const,
+          title: `${artistName} Radio`,
+          route: `/artist/${encodeURIComponent(artistName)}`
+        })
+      }
+    } catch (err) {
+      console.warn('Failed to start artist radio:', err)
+    }
+  }
+
   useEffect(() => {
     loadSongs()
     const handleLibraryUpdate = () => loadSongs()
@@ -260,35 +324,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     }
   }, [])
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const activeEl = document.activeElement
-      const isInput =
-        activeEl instanceof HTMLInputElement ||
-        activeEl instanceof HTMLTextAreaElement ||
-        activeEl?.getAttribute('contenteditable') === 'true'
 
-      if (isInput) return
-
-      // Select all visible songs: Ctrl+A or Cmd+A
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
-        e.preventDefault()
-        if (filteredSongs.length > 0) {
-          setSelectedSongIds(new Set(filteredSongs.map((s) => s.id)))
-        }
-        return
-      }
-
-      // Deselect all: Escape
-      if (e.key === 'Escape' && selectedSongIds.size > 0) {
-        e.preventDefault()
-        setSelectedSongIds(new Set())
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [filteredSongs, selectedSongIds.size])
 
   const handleAddFolder = async () => {
     try {
@@ -332,17 +368,44 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     }
 
     if (selectedSongIds.size > 0) {
-      // Clear multi-selection on normal click
-      setSelectedSongIds(new Set())
+      // In multi-selection mode, clicking a row toggles its selection
+      setSelectedSongIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(song.id)) {
+          next.delete(song.id)
+        } else {
+          next.add(song.id)
+        }
+        return next
+      })
+      setLastSelectedIndex(index)
+      return
     }
 
     handlePlaySong(index)
   }
 
   const handlePlaySong = (index: number) => {
-    if (queue[currentSongIndex]?.id === filteredSongs[index]?.id) {
+    const targetSong = filteredSongs[index]
+    if (!targetSong) return
+
+    if (queue[currentSongIndex]?.id === targetSong.id) {
       togglePlay()
       return
+    }
+
+    const playbackContext = usePlayerStore.getState().playbackContext
+    const isSameLibraryContext =
+      playbackContext?.type === 'library' &&
+      playbackContext.title === 'Your Library' &&
+      !searchQuery.trim()
+
+    if (isSameLibraryContext) {
+      const existingIdx = queue.findIndex((s) => s.id === targetSong.id)
+      if (existingIdx >= 0) {
+        usePlayerStore.getState().playSong(existingIdx)
+        return
+      }
     }
 
     setQueue(filteredSongs, index, {
@@ -378,7 +441,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
         artist: song.artist,
         album: song.album,
         duration: song.duration,
-        artworkUrl: toMediaUrl(song.artworkPath)
+        artworkUrl: toMediaUrl(song.artworkPath) || song.artworkUrl
       })
     )
     navigate('/chat')
@@ -464,6 +527,101 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
   useEffect(() => {
     virtualizer.measure()
   }, [viewMode, virtualizer])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement
+      const isInput =
+        activeEl instanceof HTMLInputElement ||
+        activeEl instanceof HTMLTextAreaElement ||
+        activeEl?.getAttribute('contenteditable') === 'true'
+
+      if (isInput) return
+
+      // Select all visible songs: Ctrl+A or Cmd+A
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+        e.preventDefault()
+        if (filteredSongs.length > 0) {
+          setSelectedSongIds(new Set(filteredSongs.map((s) => s.id)))
+        }
+        return
+      }
+
+      // Deselect all: Escape
+      if (e.key === 'Escape' && selectedSongIds.size > 0) {
+        e.preventDefault()
+        setSelectedSongIds(new Set())
+        setLastSelectedIndex(null)
+        return
+      }
+
+      // Toggle Play/Pause on Space
+      if (e.key === ' ' || e.code === 'Space') {
+        e.preventDefault()
+        togglePlay()
+        return
+      }
+
+      // Play selected song on Enter
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        if (lastSelectedIndex !== null && filteredSongs[lastSelectedIndex]) {
+          handlePlaySong(lastSelectedIndex)
+        } else if (selectedSongIds.size > 0) {
+          const firstIndex = filteredSongs.findIndex((s) => selectedSongIds.has(s.id))
+          if (firstIndex >= 0) handlePlaySong(firstIndex)
+        }
+        return
+      }
+
+      // Arrow Down: move active selection down and scroll into view
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        if (filteredSongs.length === 0) return
+        const nextIndex =
+          lastSelectedIndex === null
+            ? 0
+            : Math.min(filteredSongs.length - 1, lastSelectedIndex + 1)
+
+        if (e.shiftKey && lastSelectedIndex !== null) {
+          const start = Math.min(lastSelectedIndex, nextIndex)
+          const end = Math.max(lastSelectedIndex, nextIndex)
+          const range = filteredSongs.slice(start, end + 1).map((s) => s.id)
+          setSelectedSongIds(new Set(range))
+        } else {
+          setSelectedSongIds(new Set([filteredSongs[nextIndex].id]))
+          setLastSelectedIndex(nextIndex)
+        }
+        virtualizer.scrollToIndex(nextIndex, { align: 'auto' })
+        return
+      }
+
+      // Arrow Up: move active selection up and scroll into view
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        if (filteredSongs.length === 0) return
+        const prevIndex =
+          lastSelectedIndex === null
+            ? filteredSongs.length - 1
+            : Math.max(0, lastSelectedIndex - 1)
+
+        if (e.shiftKey && lastSelectedIndex !== null) {
+          const start = Math.min(lastSelectedIndex, prevIndex)
+          const end = Math.max(lastSelectedIndex, prevIndex)
+          const range = filteredSongs.slice(start, end + 1).map((s) => s.id)
+          setSelectedSongIds(new Set(range))
+        } else {
+          setSelectedSongIds(new Set([filteredSongs[prevIndex].id]))
+          setLastSelectedIndex(prevIndex)
+        }
+        virtualizer.scrollToIndex(prevIndex, { align: 'auto' })
+        return
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [filteredSongs, lastSelectedIndex, selectedSongIds, virtualizer, togglePlay])
 
   return (
     <div className="h-full flex flex-col pt-8 px-6 pb-6 select-none relative">
@@ -565,14 +723,14 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
                       onClick={() => handleSort(key)}
                       className={cn(
                         'flex w-full items-center justify-between px-3 py-1.5 text-left font-medium transition-colors hover:bg-white/10',
-                        sortKey === key ? 'text-primary-amber font-bold' : 'text-text-muted'
+                        sortKey === key ? 'text-white font-bold' : 'text-text-muted'
                       )}
                     >
                       <span>{sortLabels[key]}</span>
                       {sortKey === key && (
                         <ArrowUp
                           className={cn(
-                            'h-3.5 w-3.5 transition-transform',
+                            'h-3.5 w-3.5 transition-transform text-white',
                             sortDirection === 'desc' && 'rotate-180'
                           )}
                         />
@@ -747,14 +905,14 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
               title="Sort by original order"
               className={cn(
                 'text-center hover:text-text transition-colors flex items-center justify-center gap-1',
-                sortKey === 'default' && 'text-primary-amber'
+                sortKey === 'default' ? 'text-white font-bold' : 'text-text-muted'
               )}
             >
               <span>#</span>
               {sortKey === 'default' && (
                 <ArrowUp
                   className={cn(
-                    'w-3 h-3 transition-transform',
+                    'w-3 h-3 transition-transform text-white',
                     sortDirection === 'desc' && 'rotate-180'
                   )}
                 />
@@ -767,14 +925,14 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
               title="Sort by Title"
               className={cn(
                 'flex items-center gap-1.5 hover:text-text transition-colors text-left',
-                sortKey === 'title' && 'text-primary-amber font-bold'
+                sortKey === 'title' ? 'text-white font-bold' : 'text-text-muted'
               )}
             >
               <span>Title</span>
               {sortKey === 'title' && (
                 <ArrowUp
                   className={cn(
-                    'w-3 h-3 transition-transform',
+                    'w-3 h-3 transition-transform text-white',
                     sortDirection === 'desc' && 'rotate-180'
                   )}
                 />
@@ -787,14 +945,14 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
               title="Sort by Album"
               className={cn(
                 'hidden min-w-0 md:flex items-center gap-1.5 hover:text-text transition-colors text-left',
-                sortKey === 'album' && 'text-primary-amber font-bold'
+                sortKey === 'album' ? 'text-white font-bold' : 'text-text-muted'
               )}
             >
               <span>Album</span>
               {sortKey === 'album' && (
                 <ArrowUp
                   className={cn(
-                    'w-3 h-3 transition-transform',
+                    'w-3 h-3 transition-transform text-white',
                     sortDirection === 'desc' && 'rotate-180'
                   )}
                 />
@@ -807,14 +965,14 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
               title="Sort by Date added"
               className={cn(
                 'hidden min-w-0 items-center gap-1.5 hover:text-text transition-colors text-left xl:flex',
-                sortKey === 'dateAdded' && 'text-primary-amber font-bold'
+                sortKey === 'dateAdded' ? 'text-white font-bold' : 'text-text-muted'
               )}
             >
               <span>Date added</span>
               {sortKey === 'dateAdded' && (
                 <ArrowUp
                   className={cn(
-                    'w-3 h-3 transition-transform',
+                    'w-3 h-3 transition-transform text-white',
                     sortDirection === 'desc' && 'rotate-180'
                   )}
                 />
@@ -827,14 +985,14 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
               title="Sort by Duration"
               className={cn(
                 'flex items-center justify-end gap-1.5 pr-8 hover:text-text transition-colors ml-auto',
-                sortKey === 'duration' && 'text-primary-amber font-bold'
+                sortKey === 'duration' ? 'text-white font-bold' : 'text-text-muted'
               )}
             >
               <Clock className="w-3.5 h-3.5" />
               {sortKey === 'duration' && (
                 <ArrowUp
                   className={cn(
-                    'w-3 h-3 transition-transform',
+                    'w-3 h-3 transition-transform text-white',
                     sortDirection === 'desc' && 'rotate-180'
                   )}
                 />
@@ -856,7 +1014,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
                 const song = filteredSongs[index]
                 const isActive = queue[currentSongIndex]?.id === song.id
                 const isSelected = selectedSongIds.has(song.id)
-                const artworkUrl = toMediaUrl(song.artworkPath)
+                const artworkUrl = toMediaUrl(song.artworkPath) || song.artworkUrl
 
                 return (
                   <div
@@ -865,7 +1023,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
                     className={cn(
                       'absolute top-0 left-0 grid w-full grid-cols-[36px_minmax(0,1fr)_140px] items-center gap-2 rounded-lg px-2 text-[13px] group cursor-pointer transition-colors md:grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_160px] md:gap-3 md:px-3 xl:grid-cols-[40px_minmax(0,2.2fr)_minmax(0,1.25fr)_minmax(110px,0.8fr)_minmax(180px,1fr)] xl:gap-4 xl:px-4',
                       isSelected
-                        ? 'bg-primary-amber/15 border border-primary-amber/30 text-white'
+                        ? 'bg-white/10 border border-white/20 text-white'
                         : isActive
                           ? 'bg-hover'
                           : 'hover:bg-hover/50'
@@ -875,9 +1033,15 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
                       transform: `translateY(${virtualRow.start}px)`
                     }}
                   >
-                    {/* Index / Animated Soundwave / Play-Pause Icon */}
+                    {/* Index / Animated Soundwave / Checkmark / Play-Pause Icon */}
                     <div className="relative flex h-5 items-center justify-center text-center font-medium">
-                      {isActive && isPlaying ? (
+                      {isSelected ? (
+                        <div className="flex items-center justify-center text-primary-amber">
+                          <Check className="h-4 w-4 stroke-[2.5]" />
+                        </div>
+                      ) : selectedSongIds.size > 0 ? (
+                        <div className="h-3.5 w-3.5 rounded border border-border/70 group-hover:border-primary-amber flex items-center justify-center transition-colors" />
+                      ) : isActive && isPlaying ? (
                         <>
                           <span className="group-hover:hidden">
                             <AnimatedPlayingWave />
@@ -913,18 +1077,13 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
                           viewMode === 'compact' ? 'h-8 w-8' : 'h-10 w-10'
                         )}
                       >
-                        <span className="text-[8px] text-text-muted">Art</span>
-                        {artworkUrl && (
-                          <img
-                            src={artworkUrl}
-                            alt=""
-                            className="absolute inset-0 h-full w-full object-cover"
-                            loading="lazy"
-                            onError={(event) => {
-                              event.currentTarget.hidden = true
-                            }}
-                          />
-                        )}
+                        <ArtworkImage
+                          src={artworkUrl}
+                          title={song.title}
+                          artist={song.artist}
+                          className="absolute inset-0 h-full w-full object-cover"
+                          fallbackIcon={<span className="text-[8px] text-text-muted font-bold">Art</span>}
+                        />
                       </div>
                       <div className="flex flex-col overflow-hidden">
                         <span
@@ -933,7 +1092,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
                             isActive ? 'text-primary-amber' : 'text-text'
                           )}
                         >
-                          {song.title}
+                          <HighlightMatch text={song.title} query={searchQuery} />
                         </span>
                         <div className="text-[12px] truncate max-w-full text-text-muted">
                           <ArtistLinks
@@ -951,7 +1110,11 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
                       title={song.album ? `Go to album: ${song.album}` : undefined}
                       className="hidden min-w-0 truncate text-xs text-text-muted hover:underline hover:text-text md:block cursor-pointer"
                     >
-                      {song.album || '-'}
+                      {song.album ? (
+                        <HighlightMatch text={song.album} query={searchQuery} />
+                      ) : (
+                        '-'
+                      )}
                     </div>
 
                     {/* Date Added Column */}
@@ -1002,10 +1165,10 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
       )}
 
       {/* Floating Multi-Select Batch Actions Toolbar */}
-      {selectedSongIds.size > 1 && (
+      {selectedSongIds.size > 0 && (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-surface-elevated/95 border border-border/80 px-5 py-2.5 rounded-full shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-2">
           <span className="text-xs font-bold text-text tabular-nums">
-            {selectedSongIds.size} songs selected
+            {selectedSongIds.size} {selectedSongIds.size === 1 ? 'song' : 'songs'} selected
           </span>
           <div className="h-4 w-[1px] bg-border/60" />
           <button
@@ -1020,7 +1183,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
                 })
               }
             }}
-            className="flex items-center gap-1.5 text-xs font-bold text-primary-amber hover:text-white transition-colors"
+            className="flex items-center gap-1.5 text-xs font-bold text-white hover:text-white/80 transition-colors"
           >
             <Play className="w-3.5 h-3.5 fill-current" /> Play Selected
           </button>
@@ -1035,10 +1198,24 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
           >
             <ListPlus className="w-3.5 h-3.5" /> Add to Queue
           </button>
+          <div className="h-4 w-[1px] bg-border/60" />
+          <button
+            type="button"
+            onClick={() => {
+              if (selectedSongIds.size === filteredSongs.length) {
+                setSelectedSongIds(new Set())
+              } else {
+                setSelectedSongIds(new Set(filteredSongs.map((s) => s.id)))
+              }
+            }}
+            className="text-xs font-semibold text-text-muted hover:text-text transition-colors"
+          >
+            {selectedSongIds.size === filteredSongs.length ? 'Deselect All' : 'Select All'}
+          </button>
           <button
             type="button"
             onClick={() => setSelectedSongIds(new Set())}
-            title="Clear selection"
+            title="Clear selection (Esc)"
             className="p-1 rounded-full text-text-muted hover:text-text hover:bg-hover transition-colors ml-1"
           >
             <X className="w-3.5 h-3.5" />
@@ -1075,6 +1252,30 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
             <ListPlus className="h-3.5 w-3.5" />
             Add to Queue
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              void handleStartSongRadio(activeMenu.song)
+              setActiveMenu(null)
+            }}
+            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+          >
+            <Radio className="h-3.5 w-3.5 text-primary-amber" />
+            Start Song Radio
+          </button>
+          {activeMenu.song.artist && (
+            <button
+              type="button"
+              onClick={() => {
+                void handleStartArtistRadio(activeMenu.song.artist || '')
+                setActiveMenu(null)
+              }}
+              className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+            >
+              <Radio className="h-3.5 w-3.5 text-primary-amber" />
+              Start Artist Radio
+            </button>
+          )}
           {activeMenu.song.album && (
             <button
               type="button"
@@ -1112,6 +1313,9 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
               )
             }
 
+            const isNearRightEdge = activeMenu.x > window.innerWidth - 440
+            const isNearBottomEdge = activeMenu.y > window.innerHeight - 250
+
             return (
               <div className="relative group/artist-sub">
                 <button
@@ -1124,7 +1328,13 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
                   </div>
                   <ChevronRight className="h-3.5 w-3.5 text-text-muted/60 transition-transform group-hover/artist-sub:translate-x-0.5" />
                 </button>
-                <div className="absolute left-full top-0 ml-1 hidden group-hover/artist-sub:flex flex-col min-w-[200px] rounded-lg border border-border/80 bg-surface-elevated/95 p-1.5 shadow-2xl backdrop-blur-md z-50">
+                <div
+                  className={`absolute ${
+                    isNearRightEdge ? 'right-full mr-1' : 'left-full ml-1'
+                  } ${
+                    isNearBottomEdge ? 'bottom-0' : 'top-0'
+                  } hidden group-hover/artist-sub:flex flex-col min-w-[200px] rounded-lg border border-border/80 bg-surface-elevated/95 p-1.5 shadow-2xl backdrop-blur-md z-50`}
+                >
                   <div className="px-2.5 py-1 text-[10px] font-bold text-text-muted uppercase tracking-wider border-b border-border/40 mb-1">
                     Track Artists
                   </div>

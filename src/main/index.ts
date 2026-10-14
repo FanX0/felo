@@ -693,6 +693,23 @@ async function coverArtArchiveThumbnail(
   }
 }
 
+async function onlineFallbackThumbnail(title?: string, artist?: string): Promise<string> {
+  const cleanTitle = (title || '').trim()
+  const cleanArtist = (artist || '').trim()
+  if (!cleanTitle && !cleanArtist) return ''
+  try {
+    const q = [cleanArtist, cleanTitle].filter(Boolean).join(' ')
+    const response = await fetchItunesJson(
+      `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=1&country=US`
+    )
+    const raw = response?.results?.[0]?.artworkUrl100
+    if (typeof raw === 'string' && raw) {
+      return raw.replace('100x100bb', '600x600bb')
+    }
+  } catch {}
+  return ''
+}
+
 async function enrichMusicBrainzArtwork<T extends MusicBrainzMappedItem>(
   items: T[],
   entity: 'release' | 'release-group',
@@ -704,13 +721,22 @@ async function enrichMusicBrainzArtwork<T extends MusicBrainzMappedItem>(
   for (const item of items) {
     if (item.thumbnail || lookups >= limit) continue
     const mbid = entity === 'release' ? item.releaseId : item.releaseGroupId
-    if (!mbid) continue
-
-    if (!cache.has(mbid)) {
-      lookups++
-      cache.set(mbid, await coverArtArchiveThumbnail(entity, mbid))
+    if (mbid) {
+      if (!cache.has(mbid)) {
+        lookups++
+        cache.set(mbid, await coverArtArchiveThumbnail(entity, mbid))
+      }
+      item.thumbnail = cache.get(mbid) || ''
     }
-    item.thumbnail = cache.get(mbid) || ''
+
+    if (!item.thumbnail && (item.title || item.artist)) {
+      const fallbackKey = `${item.artist}:::${item.title}`
+      if (!cache.has(fallbackKey)) {
+        lookups++
+        cache.set(fallbackKey, await onlineFallbackThumbnail(item.title, item.artist))
+      }
+      item.thumbnail = cache.get(fallbackKey) || ''
+    }
   }
 
   return items

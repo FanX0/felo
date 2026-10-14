@@ -8,6 +8,7 @@ import {
   Repeat,
   Repeat1,
   Shuffle,
+  Infinity as InfinityIcon,
   PlusCircle,
   Mic2,
   ListVideo,
@@ -26,6 +27,7 @@ import { useListeningStore } from '../../hooks/useListeningStore'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toMediaUrl } from '../../lib/media'
+import { ArtworkImage } from '../../pages/Home/components/ArtworkImage'
 import type { DownloadTarget } from '../DownloadPanel/DownloadPanel'
 
 interface FooterProps {
@@ -182,6 +184,8 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
   const setVolume = usePlayerStore((state) => state.setVolume)
   const toggleShuffle = usePlayerStore((state) => state.toggleShuffle)
   const toggleRepeat = usePlayerStore((state) => state.toggleRepeat)
+  const isAutoplay = usePlayerStore((state) => state.isAutoplay)
+  const toggleAutoplay = usePlayerStore((state) => state.toggleAutoplay)
   const seek = usePlayerStore((state) => state.seek)
   const playbackContext = usePlayerStore((state) => state.playbackContext)
   const transfers = useDownloadStore((state) => state.transfers)
@@ -293,9 +297,17 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
           className="relative h-[64px] w-[64px] bg-surface-elevated rounded-md shrink-0 flex items-center justify-center shadow-md overflow-hidden border border-border/10 cursor-pointer hover:border-white/30"
         >
           {currentSong ? (
-            <div className="w-full h-full bg-gradient-to-br from-indigo-900/60 to-purple-900/60 flex items-center justify-center text-[10px] font-bold text-text-muted uppercase">
-              {currentSong.album ? currentSong.album.slice(0, 3) : 'Felo'}
-            </div>
+            <ArtworkImage
+              src={artworkUrl}
+              title={currentSong.title}
+              artist={currentSong.artist}
+              className="absolute inset-0 h-full w-full object-cover"
+              fallbackIcon={
+                <div className="w-full h-full bg-gradient-to-br from-indigo-900/60 to-purple-900/60 flex items-center justify-center text-[10px] font-bold text-text-muted uppercase">
+                  {currentSong.album && currentSong.album !== 'UNKNOWN' ? currentSong.album.slice(0, 3) : 'Felo'}
+                </div>
+              }
+            />
           ) : (
             <svg
               width="24"
@@ -310,16 +322,6 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
               <circle cx="6" cy="18" r="3"></circle>
               <circle cx="18" cy="16" r="3"></circle>
             </svg>
-          )}
-          {artworkUrl && (
-            <img
-              src={artworkUrl}
-              alt=""
-              className="absolute inset-0 h-full w-full object-cover"
-              onError={(event) => {
-                event.currentTarget.hidden = true
-              }}
-            />
           )}
         </div>
 
@@ -475,6 +477,18 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
               <Repeat className="w-[17px] h-[17px]" />
             )}
             {repeatMode !== 'off' && (
+              <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary-amber" />
+            )}
+          </button>
+
+          {/* Autoplay / Infinity */}
+          <button
+            onClick={toggleAutoplay}
+            title={`Autoplay similar songs when music ends: ${isAutoplay ? 'On' : 'Off'}`}
+            className={`transition-colors relative ${isAutoplay ? 'text-primary-amber' : 'text-text-muted hover:text-text'}`}
+          >
+            <InfinityIcon className="w-[17px] h-[17px]" />
+            {isAutoplay && (
               <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary-amber" />
             )}
           </button>
