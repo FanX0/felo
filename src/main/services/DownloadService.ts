@@ -265,26 +265,37 @@ function findYtDlp(): CommandResolution {
   return { command: 'yt-dlp', prefixArgs: [] }
 }
 
+let cachedFfmpegLocation: string | undefined = undefined
+
 function findFfmpegLocation(): string | undefined {
+  if (cachedFfmpegLocation !== undefined) return cachedFfmpegLocation
+
   const homeDir = app.getPath('home')
-  const candidates = [
+  const bundled = existingFile(
     resourcePath('downloader', 'bin', 'ffmpeg.exe'),
     resourcePath('downloader', 'ffmpeg.exe'),
     resourcePath('downloader', 'ffmpeg', 'bin', 'ffmpeg.exe'),
+    path.join(homeDir, 'AppData', 'Local', 'Microsoft', 'WinGet', 'Links', 'ffmpeg.exe')
+  )
+  if (bundled) {
+    cachedFfmpegLocation = bundled
+    return bundled
+  }
+
+  const dirCandidates = [
     resourcePath('downloader', 'ffmpeg', 'bin'),
-    path.join(homeDir, 'AppData', 'Local', 'Microsoft', 'WinGet', 'Links', 'ffmpeg.exe'),
     path.join(homeDir, 'AppData', 'Local', 'Microsoft', 'WinGet', 'Links')
   ]
-  for (const candidate of candidates) {
-    if (path.isAbsolute(candidate)) {
-      if (fs.existsSync(candidate)) {
-        return candidate
-      }
-    } else {
-      return candidate
+  for (const dir of dirCandidates) {
+    const exePath = path.join(dir, 'ffmpeg.exe')
+    if (existingFile(exePath)) {
+      cachedFfmpegLocation = exePath
+      return exePath
     }
   }
-  return 'ffmpeg'
+
+  cachedFfmpegLocation = 'ffmpeg'
+  return cachedFfmpegLocation
 }
 
 async function embedCleanAudioTags(

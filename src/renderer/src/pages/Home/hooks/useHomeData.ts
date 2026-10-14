@@ -229,7 +229,11 @@ export function useHomeData() {
   useEffect(() => {
     const handleHistoryUpdated = () => void loadPersonalizedMixes(true)
     window.addEventListener('felo:recently-played-updated', handleHistoryUpdated)
-    return () => window.removeEventListener('felo:recently-played-updated', handleHistoryUpdated)
+    window.addEventListener('fanxmusic:recently-played-updated', handleHistoryUpdated)
+    return () => {
+      window.removeEventListener('felo:recently-played-updated', handleHistoryUpdated)
+      window.removeEventListener('fanxmusic:recently-played-updated', handleHistoryUpdated)
+    }
   }, [loadPersonalizedMixes])
 
   // Persist recommendations

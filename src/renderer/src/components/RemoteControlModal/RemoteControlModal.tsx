@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Copy,
   Check,
@@ -9,9 +10,16 @@ import {
   Radio,
   Download,
   Globe,
-  Laptop2
+  Laptop2,
+  Sparkles,
+  User,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react'
 import { remoteClient, type PlaybackTarget } from '../../pages/Remote/remoteClient'
+import { useOnlineStore } from '../../hooks/useOnlineStore'
+import { getSupabase, isSupabaseConfigured } from '../../lib/supabase'
+import type { UserConnectedDevice } from '../../online/types'
 
 interface RemoteControlModalProps {
   isOpen: boolean
@@ -32,6 +40,8 @@ interface RemoteInfo {
 }
 
 export default function RemoteControlModal({ isOpen, onClose }: RemoteControlModalProps) {
+  const navigate = useNavigate()
+  const user = useOnlineStore((s) => s.user)
   const isElectron = typeof window !== 'undefined' && Boolean((window as any).electron)
   const [info, setInfo] = useState<RemoteInfo | null>(null)
   const [copied, setCopied] = useState(false)
@@ -44,6 +54,11 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
   const [webTokenInput, setWebTokenInput] = useState(() => remoteClient.getToken())
   const [currentTarget, setCurrentTarget] = useState<PlaybackTarget>(() => remoteClient.getTargetDevice())
   const [isWebConnected, setIsWebConnected] = useState(() => remoteClient.getIsConnected())
+
+  // Discovered devices in Web mode
+  const [discoveredDevices, setDiscoveredDevices] = useState<UserConnectedDevice[]>([])
+  const [isLoadingDiscovered, setIsLoadingDiscovered] = useState(false)
+  const [showManualLAN, setShowManualLAN] = useState(false)
 
   const loadInfo = async () => {
     if (!window.api?.getRemoteControlInfo) return
@@ -75,6 +90,59 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
       }
     }
   }, [isOpen, isElectron])
+
+  // Fetch active discovered devices from Supabase in Web mode
+  useEffect(() => {
+    if (!isOpen || isElectron || !user?.id || !isSupabaseConfigured) return undefined
+
+    const fetchDevices = async () => {
+      setIsLoadingDiscovered(true)
+      try {
+        const supabase = getSupabase()
+        const { data, error } = await supabase
+          .from('user_devices')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('is_active', true)
+          .order('last_seen_at', { ascending: false })
+
+        if (!error && Array.isArray(data)) {
+          const now = Date.now()
+          const active = data.filter((d: any) => now - new Date(d.last_seen_at).getTime() < 180_000)
+          setDiscoveredDevices(active)
+        }
+      } catch (err) {
+        console.warn('[RemoteControlModal] Failed to fetch devices:', err)
+      } finally {
+        setIsLoadingDiscovered(false)
+      }
+    }
+
+    void fetchDevices()
+    const pollInterval = setInterval(fetchDevices, 15_000)
+
+    const supabase = getSupabase()
+    const channel = supabase
+      .channel(`modal_devices_${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'user_devices',
+          filter: `user_id=eq.${user.id}`
+        },
+        () => {
+          void fetchDevices()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      clearInterval(pollInterval)
+      void supabase.removeChannel(channel)
+    }
+  }, [isOpen, isElectron, user?.id])
 
   if (!isOpen) return null
 

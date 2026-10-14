@@ -273,6 +273,7 @@ export class CommandScheduler {
   reset(): void {
     this.generation++
     this.entries.clear()
+    this.waiting = 0
   }
 
   run(
