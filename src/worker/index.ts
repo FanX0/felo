@@ -239,6 +239,10 @@ export const SLASH_COMMANDS = [
     description: 'Show room code and 1-click join links for friends'
   },
   {
+    name: 'join',
+    description: '1-click web player link and step-by-step guide to join the room'
+  },
+  {
     name: 'volume',
     description: 'Set playback volume (0 - 100)',
     options: [
@@ -371,6 +375,27 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
               color: 0x10b981,
               footer: { text: `Connected by @${username} • Lossless Synchronized Audio` }
             }
+          ],
+          components: [
+            {
+              type: 1,
+              components: [
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Join in Web Player (Instant)',
+                  emoji: { name: '🌐' },
+                  url: `https://felo.feloapp.workers.dev/#/online/listen?code=${code}`
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Download Desktop App',
+                  emoji: { name: '📥' },
+                  url: 'https://bit.ly/47iv3PK'
+                }
+              ]
+            }
           ]
         }
       })
@@ -475,7 +500,8 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 `• \`/nowplaying\` — Show currently playing song & live progress\n` +
                 `• \`/queue [page]\` — View active session queue & upcoming tracks\n` +
                 `• \`/volume <0-100>\` — Adjust room volume\n` +
-                `• \`/invite\` — Get 1-click web join link for friends\n` +
+                `• \`/invite\` — Room code & invite link\n` +
+                `• \`/join\` — 1-click web player link & easy guide to join\n` +
                 `• \`/disconnect\` — Unlink this channel`,
               color: 0x10b981,
               footer: {
@@ -854,6 +880,20 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 `🔑 **Room Code:** \`${roomCode}\``,
               color: room.is_playing ? 0x10b981 : 0xf59e0b
             }
+          ],
+          components: [
+            {
+              type: 1,
+              components: [
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Join in Web Player',
+                  emoji: { name: '🎧' },
+                  url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+                }
+              ]
+            }
           ]
         }
       })
@@ -959,6 +999,11 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
 
     // 12. /invite
     if (name === 'invite') {
+      const room = await supabase.getRoom(roomCode)
+      const currentTrack = room?.song
+        ? `🎶 **Now Playing:** **${room.song.title}** by **${room.song.artist}**\n\n`
+        : ''
+
       return jsonResponse({
         type: 4,
         data: {
@@ -966,13 +1011,18 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
             {
               title: '🎧 Live Listen Together Invitation',
               description:
-                `Join our live synchronized music session!\n\n` +
+                `You're invited to listen along live with synchronized lossless audio!\n\n` +
+                currentTrack +
                 `🔑 **Room Code:**\n\`\`\`${roomCode}\`\`\`\n` +
-                `**How to Join:**\n` +
-                `1. Open **Felo** on your computer.\n` +
-                `2. Click **Listen Together** in the sidebar.\n` +
-                `3. Enter code \`${roomCode}\` to listen along live in lossless quality!`,
-              color: 0x10b981
+                `👉 **Choose How to Join:**\n\n` +
+                `**🌐 Option 1: Instant Web Player (No Download Needed)**\n` +
+                `• Click **\`[🌐 1-Click Join in Web Browser]\`** below.\n` +
+                `• Works immediately in Chrome, Safari, Edge, or on your phone!\n\n` +
+                `**💻 Option 2: Felo Desktop App (PC / Mac / Linux)**\n` +
+                `• Open Felo → Click **Listen Together** in the sidebar.\n` +
+                `• Enter code **\`${roomCode}\`** and click Join!`,
+              color: 0x10b981,
+              footer: { text: `Room: ${roomCode} • Lossless Synchronized Audio` }
             }
           ],
           components: [
@@ -982,8 +1032,69 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 {
                   type: 2,
                   style: 5,
-                  label: 'Download Felo App',
-                  emoji: { name: '📥' },
+                  label: '1-Click Join in Web Browser',
+                  emoji: { name: '🌐' },
+                  url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Download Desktop App',
+                  emoji: { name: '💻' },
+                  url: 'https://bit.ly/47iv3PK'
+                }
+              ]
+            }
+          ]
+        }
+      })
+    }
+
+    // 13. /join
+    if (name === 'join') {
+      const room = await supabase.getRoom(roomCode)
+      const isPlaying = Boolean(room?.is_playing && room?.song)
+
+      return jsonResponse({
+        type: 4,
+        data: {
+          embeds: [
+            {
+              title: '🚀 How to Join as a New User',
+              description:
+                `Joining this session is super fast and requires **no installation** if you use the web player!\n\n` +
+                `🔑 **Room Code:** \`${roomCode}\`\n\n` +
+                (isPlaying ? `🎶 **Now Playing:** **${room.song.title}** by **${room.song.artist}**\n\n` : '') +
+                `### 📖 Step-by-Step Guide:\n\n` +
+                `**1️⃣ Step 1: Open the Player**\n` +
+                `• **In Browser:** Click the **\`[🌐 1-Click Join in Web Browser]\`** button below.\n` +
+                `• **In Desktop App:** Open Felo and click **Listen Together** in the sidebar.\n\n` +
+                `**2️⃣ Step 2: Connect to Room**\n` +
+                `• With the web button below, you're connected automatically!\n` +
+                `• In the app, type code **\`${roomCode}\`** into the box and click **Join Session**.\n\n` +
+                `**3️⃣ Step 3: Listen in Sync**\n` +
+                `• You'll immediately hear the music synchronized to the second in studio lossless quality.\n` +
+                `• Chat with everyone in the room and use \`/play\` right here to request songs!`,
+              color: 0x10b981,
+              footer: { text: `Room: ${roomCode} • Compatible with PC, Mac, Linux & Mobile` }
+            }
+          ],
+          components: [
+            {
+              type: 1,
+              components: [
+                {
+                  type: 2,
+                  style: 5,
+                  label: '1-Click Join in Web Browser',
+                  emoji: { name: '🌐' },
+                  url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Download Desktop App',
+                  emoji: { name: '💻' },
                   url: 'https://bit.ly/47iv3PK'
                 }
               ]

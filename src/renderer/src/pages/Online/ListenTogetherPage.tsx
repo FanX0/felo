@@ -149,6 +149,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   const [message, setMessage] = useState('')
   const [copied, setCopied] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
+  const [copiedDiscord, setCopiedDiscord] = useState(false)
   const [qrDataUrl, setQrDataUrl] = useState('')
 
   const directJoinAttempt = useRef<string | null>(null)
@@ -1395,6 +1396,56 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
         </section>
       )}
 
+      {/* New User Guide: 3 Easy Steps to Join */}
+      {!hostRoom?.code && !joinedRoom && (
+        <section className="mt-8 rounded-2xl border border-border/60 bg-surface-elevated/40 p-5 sm:p-6 backdrop-blur-sm animate-fade-in">
+          <div className="flex items-center gap-2 mb-4">
+            <Sparkles className="h-4 w-4 text-emerald-400" />
+            <h3 className="text-xs font-black uppercase tracking-wider text-text">
+              How to Join as a New User • 3 Quick Steps
+            </h3>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+            <div className="rounded-xl border border-border/40 bg-surface/60 p-4 transition-all hover:border-white/20">
+              <div className="flex items-center gap-2.5 mb-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-400 font-mono text-xs font-black">
+                  1
+                </span>
+                <h4 className="text-xs font-bold text-text">Get Your 6-Letter Code</h4>
+              </div>
+              <p className="text-[11px] text-text-muted leading-relaxed">
+                Ask your friend for their code (e.g. <strong className="text-text font-mono">XKFRM5</strong>), or type <span className="font-mono text-text bg-white/5 px-1 py-0.5 rounded">/invite</span> or <span className="font-mono text-text bg-white/5 px-1 py-0.5 rounded">/join</span> in Discord.
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-border/40 bg-surface/60 p-4 transition-all hover:border-white/20">
+              <div className="flex items-center gap-2.5 mb-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-primary-amber/20 text-primary-amber font-mono text-xs font-black">
+                  2
+                </span>
+                <h4 className="text-xs font-bold text-text">Enter Code or Click Link</h4>
+              </div>
+              <p className="text-[11px] text-text-muted leading-relaxed">
+                Paste the code into the box above and hit <strong>Join Session</strong>, or click any direct 1-click web invite link to connect instantly.
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-border/40 bg-surface/60 p-4 transition-all hover:border-white/20">
+              <div className="flex items-center gap-2.5 mb-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-secondary-cyan/20 text-secondary-cyan font-mono text-xs font-black">
+                  3
+                </span>
+                <h4 className="text-xs font-bold text-text">Lossless Stereo Playback</h4>
+              </div>
+              <p className="text-[11px] text-text-muted leading-relaxed">
+                You're in! You will immediately hear the host's queue in real-time. Missing tracks stream in lossless quality directly in RAM.
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* Active Host Session Details & Live Member Roster */}
       {hostRoom?.code && (
         <section className="mt-6 rounded-2xl border border-border/60 bg-surface-elevated/80 p-5 shadow-lg backdrop-blur-sm animate-fade-in">
@@ -1879,6 +1930,20 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                 <span>{copiedLink ? 'Copied Link!' : 'Copy Link'}</span>
               </button>
             </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                const discordMsg = `🎵 **Listen together with me on Felo!**\n🔑 **Room Code:** \`${hostRoom.code}\`\n🎧 **1-Click Web Join:** ${shareUrl}`
+                void navigator.clipboard.writeText(discordMsg)
+                setCopiedDiscord(true)
+                setTimeout(() => setCopiedDiscord(false), 2500)
+              }}
+              className="mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-border/80 bg-surface-elevated/70 text-xs font-bold text-text hover:bg-hover transition-all cursor-pointer"
+            >
+              {copiedDiscord ? <Check className="h-3.5 w-3.5 text-success" /> : <MessageSquare className="h-3.5 w-3.5 text-secondary-cyan" />}
+              <span>{copiedDiscord ? 'Copied Discord Invite!' : 'Copy Formatted Discord Invite'}</span>
+            </button>
 
             {/* QR Code Section */}
             {qrDataUrl && (

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Cloud, Loader2, LogIn } from 'lucide-react'
+import { Cloud, Loader2, LogIn, Radio } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 
@@ -35,23 +35,31 @@ export default function OnlineGate({ children }: { children: ReactNode }): React
   if (!user) {
     return (
       <div className="flex min-h-[60vh] w-full flex-col items-center justify-center p-6 text-center select-none">
-        <div className="w-full max-w-sm text-center">
-          <LogIn className="mx-auto h-9 w-9 text-text-muted" />
-          <h1 className="mt-4 text-xl font-bold text-text">
-            {roomCode ? `Sign in to join session ${roomCode}` : 'Sign in for online features'}
+        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-surface-elevated/70 p-6 sm:p-8 shadow-2xl backdrop-blur-md text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
+            {roomCode ? <Radio className="h-7 w-7 animate-pulse" /> : <LogIn className="h-7 w-7" />}
+          </div>
+          <h1 className="mt-4 text-xl sm:text-2xl font-black text-text tracking-tight">
+            {roomCode ? `You're Invited to Session ${roomCode}!` : 'Sign In for Online Features'}
           </h1>
-          <p className="mt-2 text-sm text-text-muted">
+          <p className="mt-2 text-xs sm:text-sm text-text-muted leading-relaxed">
             {roomCode
-              ? 'An account is required to participate in live synchronized listening rooms.'
-              : 'Your local library stays available without an account.'}
+              ? 'Join your friend in synchronized lossless audio with real-time queue & chat.'
+              : 'Sign in to access Listen Together, cloud profile, and social playback.'}
           </p>
+
           <Link
             to="/account"
             state={{ returnTo: location.pathname + location.search }}
-            className="mt-5 inline-flex rounded-full bg-text px-5 py-2.5 text-sm font-bold text-canvas hover:opacity-90"
+            className="mt-6 flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-white px-6 py-2.5 text-xs font-black text-black hover:bg-white/90 transition-all shadow-md cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
           >
-            Sign in or register
+            <LogIn className="h-4 w-4" />
+            <span>Sign In or Register (Takes 10s)</span>
           </Link>
+
+          <div className="mt-4 text-[11px] text-text-muted/80">
+            💡 Supports Google & Discord 1-click social sign-in.
+          </div>
         </div>
       </div>
     )
