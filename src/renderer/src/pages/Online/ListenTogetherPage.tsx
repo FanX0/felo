@@ -18,7 +18,10 @@ import {
   SlidersHorizontal,
   Users,
   X,
-  Link2
+  Link2,
+  Activity,
+  MicOff,
+  Volume2
 } from 'lucide-react'
 import QRCode from 'qrcode'
 import { useSearchParams, NavLink } from 'react-router-dom'
@@ -101,6 +104,13 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   const handleHostPauseResume = useListeningStore((state) => state.handleHostPauseResume)
   const handleHostDisconnect = useListeningStore((state) => state.handleHostDisconnect)
   const refreshMemberCount = useListeningStore((state) => state.refreshMemberCount)
+  const isDeviceAudioSharing = useListeningStore((state) => state.isDeviceAudioSharing)
+  const isReceivingDeviceStream = useListeningStore((state) => state.isReceivingDeviceStream)
+  const deviceAudioLevel = useListeningStore((state) => state.deviceAudioLevel)
+  const deviceAudioPeerCount = useListeningStore((state) => state.deviceAudioPeerCount)
+  const deviceAudioClientState = useListeningStore((state) => state.deviceAudioClientState)
+  const startDeviceAudioSharing = useListeningStore((state) => state.startDeviceAudioSharing)
+  const stopDeviceAudioSharing = useListeningStore((state) => state.stopDeviceAudioSharing)
 
   const loadMessages = useRoomChatStore((state) => state.loadMessages)
   const addIncoming = useRoomChatStore((state) => state.addIncoming)
@@ -487,6 +497,33 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
     }
   }
 
+  const handleToggleDeviceAudio = async () => {
+    if (busy) return
+    setBusy(true)
+    setMessage('')
+    try {
+      if (isDeviceAudioSharing) {
+        await stopDeviceAudioSharing()
+        setMessage('Stopped device audio sharing.')
+      } else {
+        setMessage('Capturing system audio (WASAPI loopback)...')
+        await startDeviceAudioSharing()
+        setMessage('Broadcasting system audio live to session!')
+      }
+    } catch (err: any) {
+      console.error('Device audio share toggle failed:', err)
+      const errText = err?.message || 'Failed to toggle device audio sharing.'
+      setMessage(
+        errText.includes('NotAllowedError') || errText.includes('Permission')
+          ? 'Audio capture was cancelled or not permitted.'
+          : errText
+      )
+    } finally {
+      setBusy(false)
+      setTimeout(() => setMessage(''), 4000)
+    }
+  }
+
   const handleJoinWithCode = async (event: FormEvent) => {
     event.preventDefault()
     if (!joinCodeInput.trim()) return
@@ -655,8 +692,36 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
           </div>
         </div>
 
+        {/* Live Device / System Audio Stream Status Banner */}
+        {(isReceivingDeviceStream || joinedRoom.song?.isDeviceStream || joinedRoom.is_device_stream) && (
+          <div className="mt-4 rounded-xl border border-primary-amber/40 bg-gradient-to-r from-primary-amber/15 via-surface-elevated to-surface p-4 shadow-lg flex flex-col sm:flex-row items-center justify-between gap-3 animate-fade-in">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-amber/20 text-primary-amber border border-primary-amber/30">
+                <Volume2 className="h-6 w-6 animate-pulse" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-black text-white">Live System Audio Stream</span>
+                  <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-mono font-bold text-emerald-300 flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    {deviceAudioClientState === 'connected' ? '320 kbps Opus Stereo' : deviceAudioClientState}
+                  </span>
+                </div>
+                <p className="text-xs text-text-muted mt-0.5">
+                  Listening live to {hostName}'s computer audio (Spotify, games, browser) via ultra-low latency WebRTC.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-emerald-400/90 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                Mode A: RAM Stream
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Missing Song Alert Banner */}
-        {syncStatus === 'missing_song' && missingSong && !activeSubstitute && (
+        {syncStatus === 'missing_song' && missingSong && !activeSubstitute && !isReceivingDeviceStream && !joinedRoom.song?.isDeviceStream && (
           <div className="mt-6 flex items-center justify-between rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 animate-fade-in shadow-lg">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-400">
@@ -999,6 +1064,34 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
         <div className="flex items-center gap-2.5">
           <button
             type="button"
+            onClick={handleToggleDeviceAudio}
+            disabled={busy}
+            className={`flex items-center gap-2 rounded-full px-4 py-2 text-xs font-bold transition-all shadow-sm ${
+              isDeviceAudioSharing
+                ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse'
+                : 'border border-primary-amber/40 bg-primary-amber/15 text-primary-amber hover:bg-primary-amber/25'
+            }`}
+            title={
+              isDeviceAudioSharing
+                ? 'Stop streaming system/device audio'
+                : 'Stream any audio playing on your PC (Spotify, YouTube, games, browser) live to listeners'
+            }
+          >
+            {isDeviceAudioSharing ? (
+              <>
+                <MicOff className="h-3.5 w-3.5" />
+                <span>Stop Audio Sharing</span>
+              </>
+            ) : (
+              <>
+                <Volume2 className="h-3.5 w-3.5" />
+                <span>Share Device Sound</span>
+              </>
+            )}
+          </button>
+
+          <button
+            type="button"
             onClick={() => setShowJoinModal(true)}
             className="flex items-center gap-2 rounded-full border border-border bg-surface-elevated px-4 py-2 text-xs font-bold text-text hover:bg-hover hover:border-text-muted transition-all"
           >
@@ -1128,6 +1221,59 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
               </button>
             </div>
           </div>
+
+          {/* Live System Audio Broadcast VU Meter Card */}
+          {isDeviceAudioSharing && (
+            <div className="mt-4 rounded-xl border border-primary-amber/40 bg-gradient-to-r from-primary-amber/10 via-surface-elevated to-surface p-4 animate-fade-in shadow-inner">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-amber/20 text-primary-amber border border-primary-amber/30">
+                    <Activity className="h-5 w-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-black uppercase tracking-wider text-text">
+                        Broadcasting Device Sound Live
+                      </span>
+                      <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-mono font-bold text-emerald-300">
+                        320 kbps Opus Stereo (48kHz)
+                      </span>
+                    </div>
+                    <p className="text-xs text-text-muted mt-0.5">
+                      All audio from your computer is streaming in real-time to {deviceAudioPeerCount} listener{deviceAudioPeerCount === 1 ? '' : 's'}.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleToggleDeviceAudio}
+                    className="flex items-center gap-1.5 rounded-full bg-red-500 hover:bg-red-600 px-3.5 py-1.5 text-xs font-bold text-white transition-all shadow-sm"
+                  >
+                    <MicOff className="h-3.5 w-3.5" />
+                    <span>Stop Sharing</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Real-time VU Level Meter Bar */}
+              <div className="mt-3">
+                <div className="flex items-center justify-between text-[11px] font-mono text-text-muted mb-1">
+                  <span className="flex items-center gap-1 text-[10px] font-bold text-text-muted">
+                    <Volume2 className="h-3 w-3 text-primary-amber" /> VU OUTPUT LEVEL
+                  </span>
+                  <span>{Math.round(deviceAudioLevel)}%</span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-surface border border-border/60">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-primary-amber to-red-500 transition-all duration-75 ease-out"
+                    style={{ width: `${Math.min(100, Math.max(2, deviceAudioLevel))}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Active Participants in Host Room */}
           <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">

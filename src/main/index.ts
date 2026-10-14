@@ -5,17 +5,20 @@ import icon from '../../resources/icon.png?asset'
 import { getDb, recordPlayEvent, getListeningHistory } from './database'
 import { LibraryService } from './services/LibraryService'
 import { PlaylistService } from './services/PlaylistService'
+import { DownloadService } from './services/DownloadService'
 import {
   startMusicPresenceIntegrationWatcher,
   runMusicPresenceSetupScript,
   getMusicPresenceStatus,
   launchMusicPresence
 } from './services/MusicPresenceService'
+import { PlaybackControlService } from './services/PlaybackControlService'
 import { RemoteControlService } from './services/RemoteControlService'
 import { DiscordBotService } from './services/DiscordBotService'
 import fs from 'fs'
 import { Readable } from 'stream'
 import * as mm from 'music-metadata'
+import { sanitizeTrackMetadata } from '../shared/songMatching'
 import {
   validateWith,
   AllowedSettingsKeySchema,
@@ -1652,12 +1655,13 @@ async function fetchPlaylistImportMetadata(url: string): Promise<{
 
 function cleanLyricsMetadata(value: string): string {
   if (!value) return ''
-  let cleaned = value
+  const sanitized = sanitizeTrackMetadata({ title: value, artist: '' })
+  let cleaned = (sanitized.title || value)
     .normalize('NFKC')
     .replace(/\.[a-zA-Z0-9]{2,4}$/, '')
     .replace(/^\s*\d{1,3}[.\-_)]+\s*/, '')
     .replace(
-      /\s*[\(\[]\s*(?:youtube|explicit|official(?:\s*(?:music|lyric|lyrics)?\s*(?:video|audio|mv)?)?|lyrics?(?:\s*video)?|remaster(?:ed)?(?:\s*[\d\w]+)?|hq|hd|4k|visualizer|audio|video|mv|copyright[\s-]*free|feat\.?.*?|ft\.?.*?|prod\.?.*?|produced\s+by.*?|single\s*version|bonus\s*track|deluxe(?:\s*edition)?|live(?:\s*at\s*.*)?|\d+)\s*[\)\]]\s*/gi,
+      /\s*[\(\[]\s*(?:youtube|qobuz|qobus|deezer|soulseek|tidal|spotify|apple\s*music|explicit|official(?:\s*(?:music|lyric|lyrics)?\s*(?:video|audio|mv)?)?|lyrics?(?:\s*video)?|remaster(?:ed)?(?:\s*[\d\w]+)?|hq|hd|4k|visualizer|audio|video|mv|copyright[\s-]*free|feat\.?.*?|ft\.?.*?|prod\.?.*?|produced\s+by.*?|single\s*version|bonus\s*track|deluxe(?:\s*edition)?|live(?:\s*at\s*.*)?|\d+)\s*[\)\]]\s*/gi,
       ' '
     )
     .replace(/\s*[-|]\s*(?:official\s*(?:music\s*)?(?:video|audio|mv)|lyrics?(?:\s*video)?|audio|visualizer|mv|hd|4k)\s*$/gi, '')
@@ -1672,7 +1676,7 @@ function cleanLyricsMetadata(value: string): string {
   while (cleaned !== previous) {
     previous = cleaned
     cleaned = cleaned
-      .replace(/\s*[\(\[]\s*(?:youtube|\d+)\s*[\)\]]\s*$/gi, '')
+      .replace(/\s*[\(\[]\s*(?:youtube|qobuz|qobus|deezer|soulseek|\d+)\s*[\)\]]\s*$/gi, '')
       .replace(/\s*[-|]\s*$/gi, '')
       .trim()
   }
@@ -3391,16 +3395,13 @@ app.whenReady().then(() => {
     BrowserWindow.getFocusedWindow()?.close()
   })
   // Music Presence: Setup & Status integration IPC
-  ipcMain.handle('system:setupMusicPresence', async () => {
-    const { runMusicPresenceSetupScript } = await import('./services/MusicPresenceService')
+  ipcMain.handle('system:setupMusicPresence', () => {
     return runMusicPresenceSetupScript()
   })
-  ipcMain.handle('system:getMusicPresenceStatus', async () => {
-    const { getMusicPresenceStatus } = await import('./services/MusicPresenceService')
+  ipcMain.handle('system:getMusicPresenceStatus', () => {
     return getMusicPresenceStatus()
   })
-  ipcMain.handle('system:launchMusicPresence', async () => {
-    const { launchMusicPresence } = await import('./services/MusicPresenceService')
+  ipcMain.handle('system:launchMusicPresence', () => {
     return launchMusicPresence()
   })
 

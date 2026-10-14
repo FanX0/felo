@@ -9,6 +9,7 @@ import {
   UploadCloud
 } from 'lucide-react'
 import { Song } from '../Library/Library'
+import { AppCapabilities, isPublicMode } from '../../lib/appConfig'
 import { Playlist } from './types'
 import {
   acceptedExtensions,
@@ -140,7 +141,7 @@ export default function CreatePlaylistModal({
 
   return (
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 p-4"
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/80 p-4"
       onMouseDown={onClose}
     >
       <form
@@ -243,7 +244,7 @@ export default function CreatePlaylistModal({
             </span>
           </div>
 
-          {activeFormat === 'CSV' && (
+          {activeFormat === 'CSV' && AppCapabilities.onlineDiscovery && !isPublicMode && (
             <div className="mt-4 flex gap-3">
               <input
                 value={url}

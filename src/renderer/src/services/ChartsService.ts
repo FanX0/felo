@@ -234,10 +234,11 @@ export const CHART_CATEGORIES: ChartCategory[] = [
 ]
 
 /** Source suffixes that may appear in track titles downloaded via streaming services. */
-const SOURCE_SUFFIX_RE = /\s*\(\s*(?:qobuz|deezer|tidal|youtube|youtube music|soundcloud|spotify|apple music)\s*\)\s*$/i
+const SOURCE_SUFFIX_RE =
+  /\s*[[({]\s*(?:qobuz|qobus|deezer|tidal|youtube(?:\s*music)?|soundcloud|spotify|apple\s*music)\s*[\])}]\s*$/i
 
 /**
- * Strip known source suffixes like "(Qobuz)" or "(Deezer)" from a title string.
+ * Strip known source suffixes like "(Qobuz)", "[Qobuz]", "(Qobus)", or "(Deezer)" from a title string.
  */
 export function stripSourceSuffix(str: string): string {
   return str.replace(SOURCE_SUFFIX_RE, '').trim()

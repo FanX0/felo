@@ -97,7 +97,7 @@ export function QuickAccessGrid({
 
             {/* Title & subtitle */}
             <div className="min-w-0 flex-1 py-1">
-              <h4 className="truncate text-xs sm:text-sm font-bold text-white group-hover:text-primary-amber transition-colors">
+              <h4 className="truncate text-xs sm:text-sm font-bold text-white transition-colors">
                 {item.title}
               </h4>
               <p className="truncate text-[11px] text-text-muted mt-0.5">

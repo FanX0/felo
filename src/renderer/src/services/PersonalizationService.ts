@@ -4,7 +4,7 @@ import {
   PLAYED_SONGS_STORAGE_KEY,
   PLAY_STATS_STORAGE_KEY,
   RECENTLY_PLAYED_STORAGE_KEY
-} from '../hooks/usePlayerStore'
+} from '../lib/playbackConstants'
 import { normalizeForMatching, findMatchingLibrarySong } from '../lib/songMatching'
 
 export interface PersonalizedMix {

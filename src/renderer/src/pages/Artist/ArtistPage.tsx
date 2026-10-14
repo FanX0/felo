@@ -191,9 +191,10 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
   }, [])
 
   useEffect(() => {
-    if (artistSource === 'library') {
+    if (!AppCapabilities.onlineSearch || artistSource === 'library') {
       setOnlineTracks([])
       setOnlineError('')
+      setIsOnlineLoading(false)
       return
     }
 
@@ -851,22 +852,26 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
           <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <h2 className="text-3xl font-black tracking-normal text-white">Popular</h2>
-              <label className="flex items-center gap-2 text-xs text-[#b3b3b3]">
-                <Globe2 className="h-4 w-4" />
-                <select
-                  value={artistSource}
-                  onChange={(event) => setArtistSource(event.target.value as ArtistSource)}
-                  className="rounded-md border border-white/15 bg-[#282828] px-3 py-2 text-sm text-white outline-none"
-                >
-                  <option value="library">Library</option>
-                  <option value="apple_music">Apple Music</option>
-                  <option value="lastfm">Last.fm</option>
-                  <option value="musicbrainz">MusicBrainz</option>
-                </select>
-              </label>
+              {AppCapabilities.onlineSearch && (
+                <label className="flex items-center gap-2 text-xs text-[#b3b3b3]">
+                  <Globe2 className="h-4 w-4" />
+                  <select
+                    value={artistSource}
+                    onChange={(event) => setArtistSource(event.target.value as ArtistSource)}
+                    className="rounded-md border border-white/15 bg-[#282828] px-3 py-2 text-sm text-white outline-none"
+                  >
+                    <option value="library">Library</option>
+                    <option value="apple_music">Apple Music</option>
+                    <option value="lastfm">Last.fm</option>
+                    <option value="musicbrainz">MusicBrainz</option>
+                  </select>
+                </label>
+              )}
             </div>
             <span className="text-[14px] text-[#b3b3b3]">
-              {artistSource === 'library' ? `${artistSongs.length} local tracks` : `${onlineTracks.length} ${artistSource.replace('_', ' ')} tracks`}
+              {!AppCapabilities.onlineSearch || artistSource === 'library'
+                ? `${artistSongs.length} local tracks`
+                : `${onlineTracks.length} ${artistSource.replace('_', ' ')} tracks`}
             </span>
           </div>
 

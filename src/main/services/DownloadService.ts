@@ -7,7 +7,14 @@ import path from 'path'
 import { getDb } from '../database'
 import { LibraryService } from './LibraryService'
 import { ArtworkService } from './ArtworkService'
-import { scoreProviderMatch, cleanSearchQuery, parseAudioFilePath, parseSmartQuery } from '../../shared/songMatching'
+import {
+  scoreProviderMatch,
+  cleanSearchQuery,
+  parseAudioFilePath,
+  parseSmartQuery,
+  sanitizeTrackMetadata,
+  DUMMY_PROVIDER_ALBUMS
+} from '../../shared/songMatching'
 
 interface ExternalProviders {
   QobuzClient?: any
@@ -269,11 +276,67 @@ function findFfmpegLocation(): string | undefined {
     path.join(homeDir, 'AppData', 'Local', 'Microsoft', 'WinGet', 'Links')
   ]
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
+    if (path.isAbsolute(candidate)) {
+      if (fs.existsSync(candidate)) {
+        return candidate
+      }
+    } else {
       return candidate
     }
   }
-  return undefined
+  return 'ffmpeg'
+}
+
+async function embedCleanAudioTags(
+  filePath: string,
+  tags: { title: string; artist: string; album?: string }
+): Promise<void> {
+  const ffmpegLoc = findFfmpegLocation()
+  if (!ffmpegLoc) return
+  if (!fs.existsSync(filePath)) return
+
+  const ext = path.extname(filePath).toLowerCase()
+  const dir = path.dirname(filePath)
+  const tempTaggedPath = path.join(dir, `tagged_${crypto.randomUUID()}${ext}`)
+
+  const ffmpegArgs: string[] = [
+    '-y',
+    '-i',
+    filePath,
+    '-c',
+    'copy',
+    '-map',
+    '0',
+    '-metadata',
+    `title=${tags.title}`,
+    '-metadata',
+    `artist=${tags.artist}`
+  ]
+
+  if (tags.album) {
+    ffmpegArgs.push('-metadata', `album=${tags.album}`)
+  }
+
+  ffmpegArgs.push(tempTaggedPath)
+
+  try {
+    await runCommand(ffmpegLoc, ffmpegArgs, undefined, 15000)
+    if (fs.existsSync(tempTaggedPath) && fs.statSync(tempTaggedPath).size > 1000) {
+      fs.unlinkSync(filePath)
+      fs.renameSync(tempTaggedPath, filePath)
+    } else if (fs.existsSync(tempTaggedPath)) {
+      try {
+        fs.unlinkSync(tempTaggedPath)
+      } catch {}
+    }
+  } catch (err) {
+    console.warn('[DownloadService] embedCleanAudioTags non-fatal warning:', err)
+    if (fs.existsSync(tempTaggedPath)) {
+      try {
+        fs.unlinkSync(tempTaggedPath)
+      } catch {}
+    }
+  }
 }
 
 function getCustomDownloadDirectory(): string {
@@ -307,20 +370,6 @@ function getAudioFiles(root: string): string[] {
     else if (AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) files.push(fullPath)
   }
   return files
-}
-
-function cleanYoutubeTitle(value: string): string {
-  return value
-    .replace(/\bunknown\s+artist\b/gi, '')
-    .replace(/\s*\(\d+\)\s*$/i, '')
-    .replace(/\s*\((?:youtube|official)\)\s*$/i, '')
-    .replace(
-      /\s+(?:official\s+(?:music\s+)?video|official\s+mv|official\s+audio|lyrics?\s+video|music\s+video)\s*$/i,
-      ''
-    )
-    .replace(/[‘’“”]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
 }
 
 function uniquePath(candidate: string): string {
@@ -446,14 +495,6 @@ function moveCompletedFile(
   requestTitle?: string,
   requestArtist?: string
 ): { filePath: string; replaced: boolean; oldPath?: string } {
-  const sourceLabel =
-    source === 'qobuz'
-      ? 'Qobuz'
-      : source === 'deezer'
-        ? 'Deezer'
-        : source === 'soulseek'
-          ? 'Soulseek'
-          : 'YouTube'
   const downloadedExtension = path.extname(downloadedPath).toLowerCase()
   const customDownloadDir = getCustomDownloadDirectory()
   const isVirtual = !song?.filePath || String(song.filePath).startsWith('virtual:')
@@ -466,12 +507,21 @@ function moveCompletedFile(
   fs.mkdirSync(targetDirectory, { recursive: true })
 
   const downloadedBase = path.basename(downloadedPath, downloadedExtension)
-  const cleanBase = source === 'youtube' ? cleanYoutubeTitle(downloadedBase) : downloadedBase
+  const cleanBase =
+    sanitizeTrackMetadata({ title: downloadedBase, artist: '' }, source).title || downloadedBase
+
+  const sanitizedReq = sanitizeTrackMetadata(
+    { title: requestTitle || '', artist: requestArtist || '' },
+    source
+  )
+  const cleanReqTitle = sanitizedReq.title
+  const cleanReqArtist = sanitizedReq.artist
+
   const preferredName =
-    requestTitle && requestTitle.trim()
-      ? requestArtist && requestArtist.trim() && requestArtist.toLowerCase() !== 'unknown artist'
-        ? `${requestArtist.trim()} - ${requestTitle.trim()}`
-        : requestTitle.trim()
+    cleanReqTitle && cleanReqTitle.trim()
+      ? cleanReqArtist && cleanReqArtist.trim() && cleanReqArtist.toLowerCase() !== 'unknown artist'
+        ? `${cleanReqArtist.trim()} - ${cleanReqTitle.trim()}`
+        : cleanReqTitle.trim()
       : cleanBase
 
   if (conflictMode === 'replace' && !isVirtual && song?.filePath) {
@@ -488,7 +538,7 @@ function moveCompletedFile(
         : uniquePath(
             path.join(
               targetDirectory,
-              `${safeTargetBase} (${sourceLabel})${downloadedExtension}`
+              `${safeTargetBase}${downloadedExtension}`
             )
           )
     const incomingPath = `${targetPath}.felo-incoming`
@@ -513,9 +563,8 @@ function moveCompletedFile(
   }
 
   const safePreferred = preferredName.replace(/[<>:"/\\|?*]/g, '_').slice(0, 180)
-  const sourceSuffix = source === 'youtube' ? '' : ` (${sourceLabel})`
   const targetPath = uniquePath(
-    path.join(targetDirectory, `${safePreferred}${sourceSuffix}${downloadedExtension}`)
+    path.join(targetDirectory, `${safePreferred}${downloadedExtension}`)
   )
   fs.copyFileSync(downloadedPath, targetPath)
   return { filePath: targetPath, replaced: false }
@@ -527,14 +576,39 @@ async function finalizeDownloadedFile(
   song: any,
   stagingDirectory?: string
 ): Promise<{ filePath: string; updatedSong: any; replaced: boolean; oldPath?: string }> {
+  const sanitized = sanitizeTrackMetadata(
+    {
+      title: request.title,
+      artist: request.artist,
+      album: request.album || song?.album
+    },
+    request.source
+  )
+  const cleanTitle = sanitized.title || request.title
+  const cleanArtist = sanitized.artist || request.artist
+  const cleanAlbum = sanitized.album
+
+  // Embed clean canonical tags into the physical audio file before caching or moving
+  await embedCleanAudioTags(downloadedPath, {
+    title: cleanTitle,
+    artist: cleanArtist,
+    album: cleanAlbum
+  })
+
   if (request.storageMode === 'stream') {
-    const updatedSong = cacheDownloadedFile(downloadedPath, request, song)
+    const streamRequest: StartDownloadRequest = {
+      ...request,
+      title: cleanTitle,
+      artist: cleanArtist,
+      album: cleanAlbum
+    }
+    const updatedSong = cacheDownloadedFile(downloadedPath, streamRequest, song)
     const verifiedArtwork = await ArtworkService.verifyAndEnrichTrackArtwork({
       filePath: updatedSong.filePath,
       stagingDirectory,
-      title: request.title,
-      artist: request.artist,
-      album: request.album || song?.album,
+      title: cleanTitle,
+      artist: cleanArtist,
+      album: cleanAlbum || song?.album,
       source: request.source,
       resultId: request.resultId,
       hintArtworkUrl: request.artworkUrl || song?.artworkUrl,
@@ -551,20 +625,20 @@ async function finalizeDownloadedFile(
     request.source,
     song,
     request.conflictMode,
-    request.title,
-    request.artist
+    cleanTitle,
+    cleanArtist
   )
   const updatedSong = completed.replaced
     ? await LibraryService.replaceSongFile(request.songId, completed.filePath, {
-        title: request.title,
-        artist: request.artist,
-        album: request.album || song?.album,
+        title: cleanTitle,
+        artist: cleanArtist,
+        album: cleanAlbum || song?.album,
         artworkUrl: request.artworkUrl || song?.artworkUrl
       })
     : await LibraryService.importDownloadedFile(completed.filePath, song?.rootId, {
-        title: request.title,
-        artist: request.artist,
-        album: request.album || song?.album,
+        title: cleanTitle,
+        artist: cleanArtist,
+        album: cleanAlbum || song?.album,
         artworkUrl: request.artworkUrl || song?.artworkUrl
       })
 
@@ -966,22 +1040,28 @@ export class DownloadService {
       for (const item of contents) {
         const vr = item.videoRenderer
         if (vr && vr.videoId) {
-          const title =
+          const rawTitle =
             vr.title?.runs?.map((r: any) => r.text).join('') ||
             vr.title?.simpleText ||
             'YouTube Track'
-          const owner =
+          const rawOwner =
             vr.ownerText?.runs?.map((r: any) => r.text).join('') || 'YouTube'
           const duration = vr.lengthText?.simpleText || ''
+          const sanitized = sanitizeTrackMetadata(
+            { title: rawTitle, artist: rawOwner },
+            'youtube'
+          )
+          const cleanTitle = sanitized.title || rawTitle
+          const cleanArtist = sanitized.artist || rawOwner
           results.push({
             id: vr.videoId,
             source: 'youtube',
             mediaType: 'track',
-            title,
-            artist: owner,
-            album: 'YouTube Music',
+            title: cleanTitle,
+            artist: cleanArtist,
+            album: undefined,
             quality: 'Opus / MP3 256k',
-            description: `${owner}${duration ? ` · ${duration}` : ''}`,
+            description: `${cleanArtist}${duration ? ` · ${duration}` : ''}`,
             size: 'Standard Audio',
             meta: duration ? `${duration} · YouTube Audio` : 'YouTube Audio',
             artworkUrl: `https://i.ytimg.com/vi/${vr.videoId}/hqdefault.jpg`
@@ -1228,9 +1308,22 @@ export class DownloadService {
               : 'Unknown size'
             const speedKB = item.speed ? `${Math.round(item.speed / 1024)} KB/s` : ''
 
-            const finalTitle = cand.parsed.title || cleanTitle || fileName
-            const finalArtist =
+            const rawTitleCand = cand.parsed.title || cleanTitle || fileName
+            const rawArtistCand =
               cand.parsed.artist || (queryArtist ? queryArtist : item.user ? `Peer: ${item.user}` : 'Soulseek Peer')
+            const cleanFolderAlbum =
+              folderName && !DUMMY_PROVIDER_ALBUMS.has(folderName.toLowerCase())
+                ? folderName
+                : undefined
+            const rawAlbumCand = cand.parsed.album || cleanFolderAlbum
+
+            const sanitized = sanitizeTrackMetadata(
+              { title: rawTitleCand, artist: rawArtistCand, album: rawAlbumCand },
+              'soulseek'
+            )
+            const finalTitle = sanitized.title || rawTitleCand
+            const finalArtist = sanitized.artist || rawArtistCand
+            const finalAlbum = sanitized.album
 
             return {
               id: JSON.stringify({ user: item.user, file: item.file, size: item.size }),
@@ -1238,7 +1331,7 @@ export class DownloadService {
               mediaType: 'track',
               title: finalTitle,
               artist: finalArtist,
-              album: cand.parsed.album || folderName || 'Soulseek P2P',
+              album: finalAlbum,
               quality: qualityBadge,
               description: `${item.user} · ${item.slots ? 'Free slot' : 'Queued'} · ${sizeMB}${speedKB ? ` · ${speedKB}` : ''}`,
               size: sizeMB,
@@ -1306,15 +1399,22 @@ export class DownloadService {
       const durStr = formatDur(item.duration)
       const baseMeta = item.hires ? 'Hi-Res Lossless' : 'CD Lossless'
       const meta = durStr ? `${durStr} · ${baseMeta}` : baseMeta
+      const sanitized = sanitizeTrackMetadata(
+        { title: item.title, artist: item.artist, album: item.album },
+        'qobuz'
+      )
+      const cleanTitle = sanitized.title || item.title
+      const cleanArtist = sanitized.artist || item.artist
+      const cleanAlbum = sanitized.album
 
       return {
         id: item.id,
         source: 'qobuz',
         mediaType: 'track',
-        title: item.title,
-        artist: item.artist,
-        album: item.album || 'Qobuz Hi-Res',
-        description: `${item.artist} · ${item.album || 'Qobuz'}${durStr ? ` · ${durStr}` : ''}`,
+        title: cleanTitle,
+        artist: cleanArtist,
+        album: cleanAlbum,
+        description: `${cleanArtist}${cleanAlbum ? ` · ${cleanAlbum}` : ''}${durStr ? ` · ${durStr}` : ''}`,
         quality: item.quality,
         meta,
         artworkUrl: item.artworkUrl,
@@ -1357,15 +1457,22 @@ export class DownloadService {
     return scored.map(({ item }) => {
       const durStr = formatDur(item.duration)
       const meta = durStr ? `${durStr} · FLAC / 320k Lossless` : 'FLAC / 320k Lossless'
+      const sanitized = sanitizeTrackMetadata(
+        { title: item.title, artist: item.artist, album: item.album },
+        'deezer'
+      )
+      const cleanTitle = sanitized.title || item.title
+      const cleanArtist = sanitized.artist || item.artist
+      const cleanAlbum = sanitized.album
 
       return {
         id: item.id,
         source: 'deezer',
         mediaType: 'track',
-        title: item.title,
-        artist: item.artist,
-        album: item.album || 'Deezer',
-        description: `${item.artist} · ${item.album || 'Deezer'}${durStr ? ` · ${durStr}` : ''}`,
+        title: cleanTitle,
+        artist: cleanArtist,
+        album: cleanAlbum,
+        description: `${cleanArtist}${cleanAlbum ? ` · ${cleanAlbum}` : ''}${durStr ? ` · ${durStr}` : ''}`,
         quality: item.quality,
         meta,
         duration: item.duration

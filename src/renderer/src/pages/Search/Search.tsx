@@ -780,7 +780,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
           <section>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-lg font-bold text-text flex items-center gap-2">
-                <History className="w-4 h-4 text-primary-amber" /> Recent Searches
+                <History className="w-4 h-4 text-text-muted" /> Recent Searches
               </h2>
               <button
                 type="button"
@@ -800,9 +800,9 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') setSearchQuery(query)
                   }}
-                  className="group flex items-center gap-2 rounded-full bg-surface-elevated pl-4 pr-2 py-1.5 text-sm text-text hover:bg-hover hover:text-primary-amber transition-colors cursor-pointer border border-border/50 shadow-sm"
+                  className="group flex items-center gap-2 rounded-full bg-surface-elevated pl-4 pr-2 py-1.5 text-sm text-text hover:bg-hover hover:text-primary transition-colors cursor-pointer border border-border/50 shadow-sm"
                 >
-                  <History className="w-3.5 h-3.5 text-text-muted group-hover:text-primary-amber" />
+                  <History className="w-3.5 h-3.5 text-text-muted group-hover:text-primary" />
                   <span className="font-medium">{query}</span>
                   <button
                     type="button"
@@ -907,7 +907,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
           <section>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-lg font-bold text-text flex items-center gap-2">
-                <Flame className="w-4 h-4 text-primary-amber" /> Recently Played
+                <Flame className="w-4 h-4 text-text-muted" /> Recently Played
               </h2>
               <button
                 type="button"
@@ -1082,7 +1082,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
                     className="w-24 h-24 rounded-lg shadow-lg mb-4"
                   />
                   <div className="mt-auto min-w-0 w-full pr-14">
-                    <h3 className="text-2xl font-bold text-text truncate group-hover:text-primary-amber transition-colors">
+                    <h3 className="text-2xl font-bold text-text truncate group-hover:text-primary transition-colors">
                       <HighlightMatch text={topResult.title} query={searchQuery} />
                     </h3>
                     <div className="flex items-center gap-2 mt-2 text-xs text-text-muted min-w-0">
@@ -1141,7 +1141,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
                           }
                           className={`h-10 w-10 rounded-full flex items-center justify-center transition-all ${
                             isTopDownloading
-                              ? 'bg-white/10 text-primary-amber'
+                              ? 'bg-white/10 text-primary'
                               : 'bg-white/10 hover:bg-white/20 text-white opacity-0 group-hover:opacity-100'
                           }`}
                         >
@@ -1281,7 +1281,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
                   onClick={() => setSearchMode('local')}
                   className="px-3.5 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
                 >
-                  <HardDrive className="w-3.5 h-3.5 text-primary-amber" /> Search Local Library
+                  <HardDrive className="w-3.5 h-3.5 text-text-muted" /> Search Local Library
                 </button>
               )}
               {searchMode !== 'apple_music' && (
@@ -1290,7 +1290,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
                   onClick={() => setSearchMode('apple_music')}
                   className="px-3.5 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
                 >
-                  <Globe className="w-3.5 h-3.5 text-primary-amber" /> Search Apple Music
+                  <Globe className="w-3.5 h-3.5 text-text-muted" /> Search Apple Music
                 </button>
               )}
               {searchMode !== 'lastfm' && (
@@ -1299,7 +1299,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
                   onClick={() => setSearchMode('lastfm')}
                   className="px-3.5 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
                 >
-                  <Radio className="w-3.5 h-3.5 text-primary-amber" /> Search Last.fm
+                  <Radio className="w-3.5 h-3.5 text-text-muted" /> Search Last.fm
                 </button>
               )}
               {searchMode !== 'musicbrainz' && (
@@ -1308,7 +1308,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
                   onClick={() => setSearchMode('musicbrainz')}
                   className="px-3.5 py-1.5 rounded-full bg-surface-elevated hover:bg-hover border border-border/50 text-xs font-semibold text-text transition-colors flex items-center gap-1.5"
                 >
-                  <Database className="w-3.5 h-3.5 text-primary-amber" /> Search MusicBrainz
+                  <Database className="w-3.5 h-3.5 text-text-muted" /> Search MusicBrainz
                 </button>
               )}
             </div>
@@ -1346,12 +1346,12 @@ function RecentlyPlayedList({
             <span className="text-center text-text-muted tabular-nums group-hover:hidden">
               {index + 1}
             </span>
-            <span className="hidden group-hover:flex items-center justify-center text-primary-amber">
+            <span className="hidden group-hover:flex items-center justify-center text-primary">
               <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
             </span>
             <div className="flex items-center gap-3 min-w-0">
               <Artwork item={song} className="w-8 h-8 rounded shrink-0" />
-              <span className="min-w-0 truncate font-semibold text-text group-hover:text-primary-amber transition-colors">
+              <span className="min-w-0 truncate font-semibold text-text group-hover:text-primary transition-colors">
                 {song.title}
               </span>
             </div>
@@ -1477,7 +1477,7 @@ function SongList({
                   <span
                     className={cn(
                       'text-sm font-semibold truncate',
-                      isCurrentSong ? 'text-primary-amber' : 'text-text'
+                      isCurrentSong ? 'text-primary' : 'text-text'
                     )}
                   >
                     <HighlightMatch text={song.title} query={query} />
@@ -1538,7 +1538,7 @@ function SongList({
                   className={cn(
                     'h-8 w-8 flex items-center justify-center rounded-full transition-all',
                     isDownloading
-                      ? 'text-primary-amber'
+                      ? 'text-primary'
                       : localSong
                         ? 'text-text-muted hover:text-white hover:bg-white/10'
                         : 'text-text-muted opacity-0 group-hover:opacity-100 hover:text-white hover:bg-white/10'
@@ -1634,7 +1634,7 @@ function ResultGrid({
                 </button>
               )}
             </div>
-            <div className="font-bold text-sm text-text group-hover:text-primary-amber transition-colors truncate">
+            <div className="font-bold text-sm text-text group-hover:text-primary transition-colors truncate">
               <HighlightMatch text={item.title} query={query} />
             </div>
             <div className="text-xs text-text-muted mt-0.5 truncate">

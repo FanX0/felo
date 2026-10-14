@@ -1230,9 +1230,9 @@ function AddSongsModal({
     }
   }
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/75 p-6"
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/75 p-6"
       onMouseDown={onClose}
     >
       <div
@@ -1304,6 +1304,7 @@ function AddSongsModal({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

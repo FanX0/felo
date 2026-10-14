@@ -19,6 +19,7 @@ import { useNavigate } from 'react-router-dom'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { toMediaUrl } from '../../lib/media'
 import HighlightMatch from '../../components/Common/HighlightMatch'
+import { AppCapabilities, isPublicMode } from '../../lib/appConfig'
 import { Playlist } from './types'
 
 export default function Playlists() {
@@ -759,25 +760,27 @@ function CreatePlaylistModal({
                 </span>
               </div>
 
-              <div className="mt-4 flex gap-3">
-                <div className="relative flex-1">
-                  <Link className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9ca3af]" />
-                  <input
-                    value={urlInput}
-                    onChange={(event) => setUrlInput(event.target.value)}
-                    className="h-12 w-full rounded-lg border border-white/15 bg-white/[0.06] pl-11 pr-4 text-white outline-none focus:border-white/40"
-                    placeholder="Paste Spotify playlist URL..."
-                  />
+              {AppCapabilities.onlineDiscovery && !isPublicMode && (
+                <div className="mt-4 flex gap-3">
+                  <div className="relative flex-1">
+                    <Link className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9ca3af]" />
+                    <input
+                      value={urlInput}
+                      onChange={(event) => setUrlInput(event.target.value)}
+                      className="h-12 w-full rounded-lg border border-white/15 bg-white/[0.06] pl-11 pr-4 text-white outline-none focus:border-white/40"
+                      placeholder="Paste Spotify playlist URL..."
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={fetchUrl}
+                    disabled={!urlInput.trim() || isFetchingUrl}
+                    className="rounded-lg bg-white px-5 font-black text-black hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isFetchingUrl ? 'Fetching...' : 'Fetch'}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={fetchUrl}
-                  disabled={!urlInput.trim() || isFetchingUrl}
-                  className="rounded-lg bg-white px-5 font-black text-black hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {isFetchingUrl ? 'Fetching...' : 'Fetch'}
-                </button>
-              </div>
+              )}
             </>
           )}
 

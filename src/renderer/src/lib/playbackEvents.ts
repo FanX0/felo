@@ -6,7 +6,7 @@ import {
   PLAYED_SONGS_STORAGE_KEY,
   PLAY_STATS_STORAGE_KEY,
   RECENTLY_PLAYED_STORAGE_KEY
-} from '../hooks/usePlayerStore'
+} from './playbackConstants'
 
 interface StoredPlayStats {
   playCount: number

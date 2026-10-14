@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { X, User, Disc3, Info, Sparkles, Music2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toMediaUrl } from '../../lib/media'
@@ -57,12 +58,12 @@ export default function SongCreditsModal({ song, isOpen, onClose }: SongCreditsM
 
   const isHiRes = (song.sampleRate && song.sampleRate >= 88200) || (song.bitDepth && song.bitDepth > 16)
 
-  return (
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-150"
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-150"
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -243,6 +244,7 @@ export default function SongCreditsModal({ song, isOpen, onClose }: SongCreditsM
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

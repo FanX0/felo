@@ -13,6 +13,8 @@ import {
   UserTasteMetrics
 } from '../../../services/PersonalizationService'
 import { findMatchingLibrarySong, normalizeForMatching } from '../../../lib/songMatching'
+import { toMediaUrl } from '../../../lib/media'
+import { AppCapabilities } from '../../../lib/appConfig'
 
 const LIKED_SONGS_KEY = 'felo_home_liked_songs'
 
@@ -51,10 +53,14 @@ function readCachedAlbums(key: string, fallback: HomeAlbumItem[]): HomeAlbumItem
 
 export function useHomeData() {
   const [recommendedSongs, setRecommendedSongs] = useState<HomeSongItem[]>(() =>
-    readCachedList(HOME_RECOMMENDED_SONGS_KEY, CURATED_DEFAULT_SONGS)
+    AppCapabilities.onlineDiscovery
+      ? readCachedList(HOME_RECOMMENDED_SONGS_KEY, CURATED_DEFAULT_SONGS)
+      : []
   )
   const [recommendedAlbums, setRecommendedAlbums] = useState<HomeAlbumItem[]>(() =>
-    readCachedAlbums(HOME_RECOMMENDED_ALBUMS_KEY, CURATED_DEFAULT_ALBUMS)
+    AppCapabilities.onlineDiscovery
+      ? readCachedAlbums(HOME_RECOMMENDED_ALBUMS_KEY, CURATED_DEFAULT_ALBUMS)
+      : []
   )
   const [hotSongs, setHotSongs] = useState<HomeSongItem[]>([])
   const [hotNewAlbums, setHotNewAlbums] = useState<HomeAlbumItem[]>([])
@@ -133,6 +139,10 @@ export function useHomeData() {
 
   // Fetch explore feed (Monochrome-style)
   const fetchFeed = useCallback(async () => {
+    if (!AppCapabilities.onlineDiscovery) {
+      setIsRefreshing(false)
+      return
+    }
     setIsRefreshing(true)
     try {
       if (window.api?.fetchExploreFeed) {
@@ -162,6 +172,37 @@ export function useHomeData() {
   useEffect(() => {
     void fetchFeed()
   }, [fetchFeed])
+
+  // When online discovery is disabled, populate recommended songs & albums directly from local library
+  useEffect(() => {
+    if (!AppCapabilities.onlineDiscovery && librarySongs.length > 0) {
+      const valid = librarySongs.filter(
+        (s) => s.filePath && !String(s.filePath).startsWith('virtual:')
+      )
+      const localRecommendations: HomeSongItem[] = valid.slice(0, 30).map((s) => ({
+        id: s.id,
+        title: s.title,
+        artist: s.artist,
+        album: s.album,
+        duration: s.duration,
+        artworkUrl: (toMediaUrl(s.artworkPath) || undefined) as string | undefined
+      }))
+      setRecommendedSongs(localRecommendations)
+
+      const albumMap = new Map<string, HomeAlbumItem>()
+      for (const song of valid) {
+        if (!song.album || albumMap.has(song.album)) continue
+        albumMap.set(song.album, {
+          id: `local-album-${song.album}`,
+          title: song.album,
+          artist: song.artist || 'Various Artists',
+          artworkUrl: (toMediaUrl(song.artworkPath) || undefined) as string | undefined,
+          songCount: 1
+        })
+      }
+      setRecommendedAlbums(Array.from(albumMap.values()).slice(0, 12))
+    }
+  }, [librarySongs])
 
   // Load personalized mixes and taste metrics
   const loadPersonalizedMixes = useCallback(
@@ -193,8 +234,10 @@ export function useHomeData() {
 
   // Persist recommendations
   useEffect(() => {
-    localStorage.setItem(HOME_RECOMMENDED_SONGS_KEY, JSON.stringify(recommendedSongs))
-    localStorage.setItem(HOME_RECOMMENDED_ALBUMS_KEY, JSON.stringify(recommendedAlbums))
+    if (AppCapabilities.onlineDiscovery) {
+      localStorage.setItem(HOME_RECOMMENDED_SONGS_KEY, JSON.stringify(recommendedSongs))
+      localStorage.setItem(HOME_RECOMMENDED_ALBUMS_KEY, JSON.stringify(recommendedAlbums))
+    }
   }, [recommendedSongs, recommendedAlbums])
 
   // Toggle like

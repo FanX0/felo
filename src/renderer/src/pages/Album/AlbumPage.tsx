@@ -195,6 +195,14 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
         setLoading(true)
       }
 
+      if (!AppCapabilities.onlineSearch || !window.api?.searchAppleMusic) {
+        if (!cancelled && localAlbumSongs.length === 0) {
+          setError('Album not found in your local library.')
+        }
+        if (!cancelled) setLoading(false)
+        return
+      }
+
       setError('')
       try {
         const results = await window.api.searchAppleMusic(`${albumArtist} ${albumTitle}`)

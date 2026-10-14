@@ -29,9 +29,9 @@ function formatDuration(seconds: number): string {
 function PlayingEqualizer() {
   return (
     <div className="flex items-end justify-center gap-0.5 h-3.5 w-3.5" aria-label="Playing">
-      <span className="w-0.5 bg-primary-amber rounded-full animate-bounce [animation-duration:0.6s]" style={{ height: '60%' }} />
-      <span className="w-0.5 bg-primary-amber rounded-full animate-bounce [animation-duration:0.8s] [animation-delay:0.2s]" style={{ height: '100%' }} />
-      <span className="w-0.5 bg-primary-amber rounded-full animate-bounce [animation-duration:0.7s] [animation-delay:0.4s]" style={{ height: '75%' }} />
+      <span className="w-0.5 bg-white rounded-full animate-bounce [animation-duration:0.6s]" style={{ height: '60%' }} />
+      <span className="w-0.5 bg-white rounded-full animate-bounce [animation-duration:0.8s] [animation-delay:0.2s]" style={{ height: '100%' }} />
+      <span className="w-0.5 bg-white rounded-full animate-bounce [animation-duration:0.7s] [animation-delay:0.4s]" style={{ height: '75%' }} />
     </div>
   )
 }
@@ -69,11 +69,11 @@ export function HomeSongSection({
             onClick={onStartRadio}
             className={`inline-flex h-8 items-center gap-2 rounded-full border px-4 text-xs font-bold transition-all duration-200 hover:scale-105 active:scale-95 ${
               isRadioActive
-                ? 'border-primary-amber bg-primary-amber/20 text-white'
+                ? 'border-emerald-500/40 bg-emerald-500/20 text-emerald-400'
                 : 'border-white/10 bg-surface-elevated text-text-muted hover:text-white hover:bg-hover'
             }`}
           >
-            <Radio className={`h-3.5 w-3.5 ${isRadioActive ? 'animate-pulse text-primary-amber' : ''}`} />
+            <Radio className={`h-3.5 w-3.5 ${isRadioActive ? 'animate-pulse text-emerald-400' : ''}`} />
             <span>{isRadioActive ? 'Radio Streaming' : 'Start Infinite Radio'}</span>
           </button>
         )}
@@ -101,7 +101,7 @@ export function HomeSongSection({
               key={song.id}
               className={`group flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 transition-all duration-200 ${
                 isThisTrack
-                  ? 'bg-surface-elevated/90 border border-primary-amber/30 shadow-md'
+                  ? 'bg-surface-elevated/90 border border-white/30 shadow-md'
                   : 'hover:bg-hover border border-transparent'
               }`}
             >
@@ -130,7 +130,7 @@ export function HomeSongSection({
                     <p
                       onClick={() => onPlaySong(song)}
                       className={`truncate text-sm font-bold cursor-pointer transition-colors ${
-                        isThisTrack ? 'text-primary-amber font-black' : 'text-white hover:underline'
+                        isThisTrack ? 'text-white font-black' : 'text-white hover:underline'
                       }`}
                       title={song.title}
                     >
@@ -165,7 +165,7 @@ export function HomeSongSection({
                   }}
                   className={`text-xs transition-colors ${
                     isLiked
-                      ? 'text-primary-amber'
+                      ? 'text-rose-500'
                       : 'text-text-muted opacity-0 group-hover:opacity-100 hover:text-white'
                   }`}
                   title={isLiked ? 'Unlike track' : 'Like track'}
@@ -194,7 +194,7 @@ export function HomeSongSection({
                     }
                     className={`h-7 w-7 flex items-center justify-center rounded-full transition-all ${
                       isDownloading
-                        ? 'text-primary-amber'
+                        ? 'text-white'
                         : isInLibrary
                           ? 'text-text-muted hover:text-white hover:bg-white/10'
                           : 'text-text-muted opacity-0 group-hover:opacity-100 hover:text-white hover:bg-white/10'

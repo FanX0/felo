@@ -35,6 +35,208 @@ export const UNWANTED_VERSION_KEYWORDS = [
 ]
 
 /**
+ * Regex matching source platform tags inside parentheses, brackets, or braces.
+ * Handles variations like: (YouTube), [YouTube], (YouTube Music), (Qobuz), [Qobuz],
+ * (Qobus), [Qobus], (Deezer), (Soulseek), [Tidal], (Spotify), (SoundCloud), (Apple Music).
+ */
+export const SOURCE_TAG_REGEX =
+  /\s*[[({]\s*(?:qobuz|qobus|deezer|tidal|youtube(?:\s*music)?|soulseek|slsk|spotify|apple\s*music|soundcloud)\s*[\])}]/gi
+
+/**
+ * Regex matching video or promotional noise tags.
+ * Preserves musical tags like (Live), (Remix), (Acoustic), (Extended Mix), (feat. X).
+ */
+export const VIDEO_PROMO_TAG_REGEX =
+  /\s*[[({]\s*(?:official\s+(?:music\s+)?video|official\s+mv|official\s+audio|lyrics?\s+video|music\s+video|visualizer|audio\s+track|official|video|mv|hd|hq|4k|1080p|720p|explicit|clean)\s*[\])}]/gi
+
+/**
+ * Regex matching remaster/release year junk tags like [2021 Remaster], (Remastered), etc.
+ */
+export const REMASTER_TAG_REGEX =
+  /\s*[[({]\s*(?:remaster(?:ed)?|digitally\s+remastered|\b(?:19|20)\d{2}\s+remaster(?:ed)?)\s*[\])}]/gi
+
+/**
+ * Trailing noise at the end of a title string (without brackets).
+ */
+export const TRAILING_VIDEO_NOISE_REGEX =
+  /\s+(?:official\s+(?:music\s+)?video|official\s+mv|official\s+audio|lyrics?\s+video|music\s+video|visualizer|hd|4k|hq)\s*$/gi
+
+/**
+ * Channel noise suffixes commonly found in YouTube owner names or metadata.
+ * e.g. "Coldplay - Topic", "ColdplayVEVO", "Ed Sheeran Official", "Marshmello Music"
+ */
+export const YOUTUBE_CHANNEL_SUFFIX_REGEX =
+  /(?:\s*-\s*Topic|\s+(?:VEVO|Official|Music|TV|Records|Channel|Media)|VEVO)$/i
+
+/**
+ * Provider-specific dummy album names that should not be used as actual album titles.
+ */
+export const DUMMY_PROVIDER_ALBUMS = new Set([
+  'youtube music',
+  'youtube',
+  'qobuz hi-res',
+  'qobuz',
+  'qobus',
+  'deezer',
+  'soulseek',
+  'unknown album',
+  'various artists'
+])
+
+const MINOR_WORDS = new Set([
+  'a', 'an', 'the', 'and', 'but', 'or', 'nor', 'for', 'yet', 'so',
+  'at', 'by', 'in', 'of', 'on', 'to', 'with', 'from', 'into', 'over'
+])
+
+const PRESERVED_ACRONYMS = new Set([
+  'VIP', 'DJ', 'EDM', 'OST', 'EP', 'LP', 'BBC', 'USA', 'UK', 'NYC', 'FM', 'AM', 'CD',
+  'II', 'III', 'IV', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII',
+  'HQ', 'HD', '4K', 'TV', 'ID'
+])
+
+/**
+ * Normalizes text to standard Title Case if it is detected as all-uppercase or all-lowercase.
+ * Preserves recognized acronyms (VIP, DJ, EP, Roman numerals).
+ */
+export function normalizeTitleCase(input: string): string {
+  if (!input) return ''
+  const trimmed = input.trim()
+  if (trimmed.length <= 2) return trimmed
+
+  const letters = trimmed.replace(/[^\p{L}]/gu, '')
+  const isAllUpper = letters.length >= 3 && letters === letters.toUpperCase()
+  const isAllLower = letters.length >= 3 && letters === letters.toLowerCase()
+
+  if (!isAllUpper && !isAllLower) {
+    return trimmed
+  }
+
+  return trimmed.replace(
+    /([^\s\-_/[\]()]+)/gu,
+    (word, _p1, offset) => {
+      const upperWord = word.toUpperCase()
+      if (PRESERVED_ACRONYMS.has(upperWord)) {
+        return upperWord
+      }
+
+      const lowerWord = word.toLowerCase()
+      if (offset > 0 && MINOR_WORDS.has(lowerWord)) {
+        return lowerWord
+      }
+
+      return lowerWord.charAt(0).toUpperCase() + lowerWord.slice(1)
+    }
+  )
+}
+
+export interface TrackMetadata {
+  title: string
+  artist: string
+  album?: string
+}
+
+/**
+ * Sanitizes and normalizes track metadata (title, artist, album) to industry standards.
+ * Strips provider tags like (YouTube), (Qobuz), [Qobus], video promo junk, VEVO suffixes,
+ * and splits "Artist - Title" embedded in titles when artist is unknown or redundant.
+ */
+export function sanitizeTrackMetadata(raw: TrackMetadata, _source?: string): TrackMetadata {
+  let title = (raw.title || '').trim()
+  let artist = (raw.artist || '').trim()
+  let album = raw.album !== undefined ? raw.album.trim() : undefined
+
+  // 1. Strip provider source tags (e.g. (YouTube), (Qobuz), [Qobus]) and video junk from title
+  title = title
+    .replace(SOURCE_TAG_REGEX, '')
+    .replace(VIDEO_PROMO_TAG_REGEX, '')
+    .replace(REMASTER_TAG_REGEX, '')
+    .replace(TRAILING_VIDEO_NOISE_REGEX, '')
+    .replace(TRACK_NUM_PREFIX_REGEX, '')
+    .replace(/\s*\(\d+\)\s*$/g, '') // remove duplicate suffixes like (1), (2)
+    .replace(/[‘’“”]/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  // 2. Clean artist string (remove YouTube channel noise, provider tags, etc.)
+  if (artist) {
+    artist = artist
+      .replace(SOURCE_TAG_REGEX, '')
+      .replace(YOUTUBE_CHANNEL_SUFFIX_REGEX, '')
+      .replace(/[‘’“”]/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
+
+  const isGenericArtist =
+    !artist ||
+    /^(?:unknown\s+artist|unknown|various\s+artists|youtube|youtube\s+music|-)$/i.test(artist)
+
+  // 3. Intelligently handle "Artist - Title" inside the title string
+  if (title.includes(' - ')) {
+    const parts = title.split(' - ').map((s) => s.trim()).filter(Boolean)
+    if (parts.length >= 2) {
+      const candidateArtist = parts[0]
+      const candidateTitle = parts.slice(1).join(' - ')
+
+      if (isGenericArtist && candidateArtist.length > 0 && candidateArtist.length <= 80) {
+        // If artist was unknown or generic channel, extract artist from title
+        artist = candidateArtist
+          .replace(YOUTUBE_CHANNEL_SUFFIX_REGEX, '')
+          .replace(SOURCE_TAG_REGEX, '')
+          .trim()
+        title = candidateTitle
+      } else if (!isGenericArtist) {
+        // If artist is already known, check if title starts with the artist name
+        const normCand = candidateArtist.toLowerCase()
+        const normArt = artist.toLowerCase()
+        if (normCand === normArt || normArt.startsWith(normCand) || normCand.startsWith(normArt)) {
+          // Remove the duplicate artist prefix from title
+          title = candidateTitle
+        }
+      }
+    }
+  }
+
+  // 4. Secondary cleanup of title after possible splitting
+  title = title
+    .replace(SOURCE_TAG_REGEX, '')
+    .replace(VIDEO_PROMO_TAG_REGEX, '')
+    .replace(TRAILING_VIDEO_NOISE_REGEX, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  // Remove empty dangling parentheses or brackets like "Song ()" or "Song []"
+  title = title.replace(/\s*\(\s*\)/g, '').replace(/\s*\[\s*\]/g, '').trim()
+
+  // 5. Apply Title Casing if all-caps or all-lowercase
+  title = normalizeTitleCase(title)
+  if (artist && !isGenericArtist) {
+    artist = normalizeTitleCase(artist)
+  }
+
+  // 6. Clean album
+  if (album) {
+    album = album
+      .replace(SOURCE_TAG_REGEX, '')
+      .replace(/\s*\[(?:flac|mp3|wav|24bit|16bit|lossless|cd|web)[^\]]*\]/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    if (DUMMY_PROVIDER_ALBUMS.has(album.toLowerCase()) || album === '') {
+      album = undefined
+    } else {
+      album = normalizeTitleCase(album)
+    }
+  }
+
+  return {
+    title: title || raw.title?.trim() || '',
+    artist: isGenericArtist && !artist ? (artist || raw.artist?.trim() || '') : artist,
+    album
+  }
+}
+
+/**
  * Strips bracketed and parenthesized junk (e.g. [Official Video 4K], (Lyrics))
  * while carefully preserving version tags like (Live), (Remix), (Acoustic).
  */
@@ -48,9 +250,9 @@ export function stripJunkTags(text: string): string {
       if (hasVersionKeyword) {
         return match
       }
-      // If it contains video/tag noise or remaster/year info, STRIP it
+      // If it contains video/tag noise, provider tags, or remaster/year info, STRIP it
       const isJunk =
-        /(?:official|video|audio|visualizer|lyrics?|4k|hd|hq|explicit|clean|mv|clip|remaster|\b(?:19|20)\d{2}\b)/i.test(
+        /(?:official|video|audio|visualizer|lyrics?|4k|hd|hq|explicit|clean|mv|clip|remaster|youtube|qobuz|qobus|deezer|tidal|spotify|apple\s*music|soundcloud|soulseek|\b(?:19|20)\d{2}\b)/i.test(
           lower
         )
       if (isJunk) {
@@ -256,7 +458,12 @@ export function parseAudioFilePath(rawPath: string): { title: string; artist: st
   title = title.replace(/\s*\[(?:flac|mp3|wav|24bit|16bit|lossless|cd|web)[^\]]*\]/gi, '').trim()
   album = album.replace(/\s*\[(?:flac|mp3|wav|24bit|16bit|lossless|cd|web)[^\]]*\]/gi, '').trim()
 
-  return { title: title || cleanBase, artist, album }
+  const sanitized = sanitizeTrackMetadata({ title: title || cleanBase, artist, album })
+  return {
+    title: sanitized.title || cleanBase,
+    artist: sanitized.artist,
+    album: sanitized.album || ''
+  }
 }
 
 function getWordTokens(text: string): Set<string> {

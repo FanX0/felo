@@ -16,6 +16,14 @@ import PlaybackStreamBridge from './components/PlaybackStreamBridge'
 import PlaybackNoticeToast from './components/PlaybackNoticeToast'
 import QueueDrawer from './components/Queue/QueueDrawer'
 import RemotePhoneView from './pages/Remote/RemotePhoneView'
+import OfflineNoticeToast from './components/OfflineNoticeToast'
+import MobileNavBar from './components/MobileNavBar'
+import MobileDockedPlayer from './components/MobileDockedPlayer'
+import MobileNowPlaying from './pages/Remote/MobileNowPlaying'
+import MobileDeviceSheet from './pages/Remote/MobileDeviceSheet'
+import DevicePresenceBridge from './components/DevicePresenceBridge'
+import { remoteClient, type RemotePlayerState } from './pages/Remote/remoteClient'
+import { toMediaUrl } from './lib/media'
 import { AppCapabilities } from './lib/appConfig'
 
 import Home from './pages/Home/Home'
@@ -76,6 +84,58 @@ function App() {
     () => localStorage.getItem('felo_sidebar_open') !== 'false'
   )
   const { configured, initialized, user, profile, initialize, signOut } = useOnlineStore()
+
+  // Mobile & Remote Player State
+  const [isMobileNowPlayingOpen, setIsMobileNowPlayingOpen] = useState(false)
+  const [isMobileDeviceSheetOpen, setIsMobileDeviceSheetOpen] = useState(false)
+  const [remoteState, setRemoteState] = useState<RemotePlayerState>(() => remoteClient.getState())
+  const [isRemoteConnected, setIsRemoteConnected] = useState(() => remoteClient.getIsConnected())
+
+  const localQueue = usePlayerStore((s) => s.queue)
+  const localIndex = usePlayerStore((s) => s.currentSongIndex)
+  const localIsPlaying = usePlayerStore((s) => s.isPlaying)
+  const localCurrentTime = usePlayerStore((s) => s.currentTime)
+  const localDuration = usePlayerStore((s) => s.duration)
+  const localVolume = usePlayerStore((s) => s.volume)
+  const localShuffle = usePlayerStore((s) => s.isShuffle)
+  const localRepeat = usePlayerStore((s) => s.repeatMode)
+  const localSong = localQueue[localIndex]
+
+  useEffect(() => {
+    const unsubState = remoteClient.subscribe(setRemoteState)
+    const unsubConn = remoteClient.subscribeConnection(setIsRemoteConnected)
+    return () => {
+      unsubState()
+      unsubConn()
+    }
+  }, [])
+
+  const activePlayerState: RemotePlayerState =
+    isRemoteConnected && remoteState.song
+      ? remoteState
+      : {
+          ready: true,
+          playbackState: localIsPlaying ? 'playing' : 'paused',
+          isPlaying: localIsPlaying,
+          position: localCurrentTime,
+          duration: localDuration,
+          volume: localVolume,
+          volumePercent: Math.round(localVolume * 100),
+          shuffle: localShuffle,
+          repeat: localRepeat,
+          targetDevice: 'mobile',
+          deviceName: 'This Device',
+          song: localSong
+            ? {
+                id: localSong.id,
+                title: localSong.title || 'Unknown Title',
+                artist: localSong.artist || 'Unknown Artist',
+                album: localSong.album || 'Unknown Album',
+                duration: localSong.duration || localDuration,
+                artworkUrl: toMediaUrl(localSong.artworkPath) || localSong.artworkUrl || ''
+              }
+            : null
+        }
 
   const topSearchInputRef = useRef<HTMLInputElement>(null)
   const searchModeRef = useRef<HTMLDivElement>(null)
@@ -214,13 +274,11 @@ function App() {
     (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
       window.innerWidth <= 768 ||
       isCapacitor)
-  const isElectron = typeof window !== 'undefined' && Boolean((window as any).electron)
 
   const isRemoteMode =
-    location.pathname.includes('remote') ||
+    location.pathname.startsWith('/remote') ||
     window.location.hash.toLowerCase().includes('remote') ||
-    window.location.pathname.toLowerCase().includes('remote') ||
-    (!isElectron && isMobileScreen)
+    window.location.search.toLowerCase().includes('mode=remote')
 
   if (isRemoteMode) {
     return <RemotePhoneView />
@@ -233,14 +291,54 @@ function App() {
       )}
     >
       <AudioEngine />
+      <OfflineNoticeToast />
       <PlaybackControlBridge />
       <PlaybackStreamBridge />
       {AppCapabilities.downloads && <DownloadEventBridge />}
       <LibraryScanEventBridge />
       <ListeningPresenceBridge enabled={!isPrivateSession} />
+      <DevicePresenceBridge />
 
-      {/* Top Application Bar (Draggable) */}
-      <header className="absolute top-0 left-0 right-0 h-16 draggable-header flex items-center justify-between px-4 z-50 pointer-events-none">
+      {/* Top Application Bar */}
+      {isMobileScreen ? (
+        <header className="fixed top-0 left-0 right-0 h-14 bg-canvas/95 backdrop-blur-md flex items-center justify-between px-4 z-50 border-b border-border-subtle/40">
+          <button
+            type="button"
+            onClick={() => navigate('/')}
+            title="Felo Home"
+            className="flex items-center gap-2.5 text-text cursor-pointer select-none"
+          >
+            <FeloMark className="h-6 w-6 text-emerald-400" />
+            <span className="font-bold text-base tracking-tight">Felo</span>
+          </button>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setIsMobileDeviceSheetOpen(true)}
+              title="Connect Device"
+              className={cn(
+                'h-9 px-3 rounded-full flex items-center gap-1.5 transition text-xs font-semibold cursor-pointer',
+                isRemoteConnected
+                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                  : 'text-text-muted hover:text-text hover:bg-hover'
+              )}
+            >
+              <Radio className="w-4 h-4" />
+              <span className="text-[11px]">{isRemoteConnected ? 'Connected' : 'Devices'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/account')}
+              title="Account"
+              className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition cursor-pointer"
+            >
+              <User className="w-5 h-5" />
+            </button>
+          </div>
+        </header>
+      ) : (
+        <header className="absolute top-0 left-0 right-0 h-16 draggable-header flex items-center justify-between px-4 z-50 pointer-events-none">
         <div className="w-[min(20vw,450px)] flex items-center gap-2 pointer-events-auto">
           <button
             type="button"
@@ -483,6 +581,16 @@ function App() {
                     Settings
                   </button>
                   <button
+                    onClick={() => {
+                      setIsProfileOpen(false)
+                      navigate('/remote')
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-text-muted hover:bg-hover hover:text-text transition-colors"
+                  >
+                    <Radio className="w-4 h-4" />
+                    Remote control (PC)
+                  </button>
+                  <button
                     onClick={() => setIsPrivateSession(!isPrivateSession)}
                     className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-text-muted hover:bg-hover hover:text-text transition-colors"
                   >
@@ -545,31 +653,44 @@ function App() {
           </div>
         </div>
       </header>
+      )}
 
       {/* Main Layout Container */}
-      <div className="flex-1 flex overflow-hidden pt-[64px] pb-2 px-2 gap-2 relative z-0">
-        {/* Left Sidebar */}
-        <div
-          className={`h-full shrink-0 transition-[width] duration-300 ease-out ${
-            isSidebarOpen ? 'w-[min(20vw,500px)]' : 'w-[72px]'
-          }`}
-        >
-          <div className="relative h-full w-full overflow-visible rounded-lg bg-canvas">
-            <Sidebar
-              isOpen={isSidebarOpen}
-              onToggle={toggleSidebar}
-              onOpenDownloadPanel={(target) => {
-                setDownloadTarget(target)
-                setIsFriendActivityOpen(false)
-                setIsDownloadPanelOpen(true)
-              }}
-            />
+      <div
+        className={cn(
+          'flex-1 flex overflow-hidden pb-2 px-2 gap-2 relative z-0',
+          isMobileScreen ? 'pt-14 px-0 pb-0' : 'pt-[64px]'
+        )}
+      >
+        {/* Left Sidebar (Desktop Only) */}
+        {!isMobileScreen && (
+          <div
+            className={`h-full shrink-0 transition-[width] duration-300 ease-out ${
+              isSidebarOpen ? 'w-[min(20vw,500px)]' : 'w-[72px]'
+            }`}
+          >
+            <div className="relative h-full w-full overflow-visible rounded-lg bg-canvas">
+              <Sidebar
+                isOpen={isSidebarOpen}
+                onToggle={toggleSidebar}
+                onOpenDownloadPanel={(target) => {
+                  setDownloadTarget(target)
+                  setIsFriendActivityOpen(false)
+                  setIsDownloadPanelOpen(true)
+                }}
+              />
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Main Content Area */}
-        <main className="flex-1 flex flex-col h-full overflow-hidden bg-surface rounded-xl relative z-10 shadow-lg">
-          <section className="flex-1 overflow-y-auto relative no-drag">
+        <main
+          className={cn(
+            'flex-1 flex flex-col h-full overflow-hidden bg-surface relative z-10 shadow-lg',
+            isMobileScreen ? 'rounded-none' : 'rounded-xl'
+          )}
+        >
+          <section className={`flex-1 overflow-y-auto relative no-drag ${isMobileScreen ? 'pb-32' : ''}`}>
             <div className="h-full">
               <Routes>
                 <Route
@@ -696,24 +817,65 @@ function App() {
         <PlaybackNoticeToast />
       </div>
 
-      <div className="px-2 pb-2">
-        <Footer
-          isQueueOpen={isQueueOpen}
-          onToggleQueue={() => setIsQueueOpen((open) => !open)}
-          onOpenDownloadPanel={(target) => {
-            if (!AppCapabilities.downloads) return
-            if (target) {
-              setDownloadTarget(target)
-              setIsFriendActivityOpen(false)
-              setIsDownloadPanelOpen(true)
-            } else {
-              setDownloadTarget(null)
-              setIsFriendActivityOpen(false)
-              setIsDownloadPanelOpen((isOpen) => !isOpen)
-            }
-          }}
-        />
-      </div>
+      {isMobileScreen ? (
+        <>
+          <MobileDockedPlayer
+            onExpand={() => setIsMobileNowPlayingOpen(true)}
+            onOpenDevices={() => setIsMobileDeviceSheetOpen(true)}
+          />
+          <MobileNavBar />
+          {isMobileNowPlayingOpen && (
+            <div className="fixed inset-0 z-50 bg-black animate-in fade-in duration-200">
+              <MobileNowPlaying
+                state={activePlayerState}
+                isConnected={isRemoteConnected}
+                onClose={() => setIsMobileNowPlayingOpen(false)}
+                onOpenQueue={() => {
+                  setIsMobileNowPlayingOpen(false)
+                  setIsQueueOpen(true)
+                }}
+                onOpenSearch={() => {
+                  setIsMobileNowPlayingOpen(false)
+                  navigate('/search')
+                }}
+                onOpenDevices={() => setIsMobileDeviceSheetOpen(true)}
+                onOpenLyrics={() => {
+                  setIsMobileNowPlayingOpen(false)
+                  navigate('/lyrics')
+                }}
+                onOpenSleepTimer={() => {
+                  // Sleep timer trigger if needed
+                }}
+              />
+            </div>
+          )}
+          <MobileDeviceSheet
+            state={activePlayerState}
+            isConnected={isRemoteConnected}
+            isOpen={isMobileDeviceSheetOpen}
+            onClose={() => setIsMobileDeviceSheetOpen(false)}
+          />
+        </>
+      ) : (
+        <div className="px-2 pb-2">
+          <Footer
+            isQueueOpen={isQueueOpen}
+            onToggleQueue={() => setIsQueueOpen((open) => !open)}
+            onOpenDownloadPanel={(target) => {
+              if (!AppCapabilities.downloads) return
+              if (target) {
+                setDownloadTarget(target)
+                setIsFriendActivityOpen(false)
+                setIsDownloadPanelOpen(true)
+              } else {
+                setDownloadTarget(null)
+                setIsFriendActivityOpen(false)
+                setIsDownloadPanelOpen((isOpen) => !isOpen)
+              }
+            }}
+          />
+        </div>
+      )}
     </div>
   )
 }

@@ -210,6 +210,13 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
   autoDownloadMissing: localStorage.getItem(AUTO_DOWNLOAD_STORAGE_KEY) === 'true',
   substitutes: readInitialSubstitutes(),
 
+  // Device audio streaming state
+  isDeviceAudioSharing: false,
+  isReceivingDeviceStream: false,
+  deviceAudioLevel: 0,
+  deviceAudioPeerCount: 0,
+  deviceAudioClientState: 'idle',
+
   setHostRoom: (hostRoom) => set({ hostRoom }),
   setJoinedRoom: (joinedRoom) => set({ joinedRoom }),
   setMemberCount: (memberCount) => set({ memberCount }),
@@ -294,13 +301,23 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         .slice(playerState.currentSongIndex, playerState.currentSongIndex + 40)
         .map(toSharedSong)
 
+      const isDeviceSharing = get().isDeviceAudioSharing
+      const deviceSong: SharedSong = {
+        title: 'Live System Audio',
+        artist: profile?.display_name || user.email?.split('@')[0] || 'Host',
+        album: 'Device Audio Stream',
+        isDeviceStream: true,
+        streamType: 'device_audio'
+      }
+
       const roomPayload = {
         name: `${profile?.display_name || user.email?.split('@')[0] || 'Friend'}'s session`,
-        song: currentSong ? toSharedSong(currentSong) : null,
-        queue: upcomingQueue,
+        song: isDeviceSharing ? deviceSong : currentSong ? toSharedSong(currentSong) : null,
+        queue: isDeviceSharing ? [] : upcomingQueue,
         position_seconds: Math.round(playerState.currentTime || 0),
-        is_playing: Boolean(playerState.isPlaying && currentSong),
+        is_playing: isDeviceSharing ? true : Boolean(playerState.isPlaying && currentSong),
         is_active: true,
+        is_device_stream: isDeviceSharing,
         updated_at: new Date().toISOString()
       }
 
@@ -547,6 +564,11 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
 
   deactivateHostRoom: async () => {
     const user = useOnlineStore.getState().user
+    if (_activeAudioHost) {
+      _activeAudioHost.stop()
+      _activeAudioHost = null
+    }
+    set({ isDeviceAudioSharing: false, deviceAudioLevel: 0, deviceAudioPeerCount: 0 })
     if (!user) return
 
     try {
@@ -564,6 +586,12 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
     const user = useOnlineStore.getState().user
     const hostRoom = get().hostRoom
     const roomId = hostRoom?.id
+
+    if (_activeAudioHost) {
+      _activeAudioHost.stop()
+      _activeAudioHost = null
+    }
+    set({ isDeviceAudioSharing: false, deviceAudioLevel: 0, deviceAudioPeerCount: 0 })
 
     // Immediately update local state so UI responds in 0ms
     set({ hostRoom: null, hostRoomStopped: true })
@@ -602,6 +630,16 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
     set({ syncStatus: 'buffering', lastHostUpdate: Date.now() })
 
     try {
+      // Step 0: Check if host is broadcasting live device / system audio
+      if (room.song?.isDeviceStream || room.is_device_stream) {
+        usePlayerStore.getState().setIsPlaying(false)
+        await get().connectToDeviceStream(room)
+        set({ syncStatus: 'synced', missingSong: null })
+        return
+      } else if (get().isReceivingDeviceStream) {
+        get().disconnectFromDeviceStream()
+      }
+
       const playerState = usePlayerStore.getState()
       const songKey = getSongKey(room.song)
 
@@ -910,6 +948,11 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
 
     set({ lastHostUpdate: Date.now() })
 
+    // If host is streaming device audio, WebRTC handles real-time audio playback directly
+    if (room.song?.isDeviceStream || room.is_device_stream || get().isReceivingDeviceStream) {
+      return
+    }
+
     const currentStatus = get().syncStatus
     if (currentStatus === 'missing_song') return
 
@@ -982,7 +1025,188 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
     })
   },
 
+  startDeviceAudioSharing: async () => {
+    const user = useOnlineStore.getState().user
+    if (!user) throw new Error('You must be logged in to share audio.')
+
+    // 1. Ensure host room exists
+    const room = await get().ensureHostRoom(true)
+    if (!room) throw new Error('Could not create or retrieve host room.')
+
+    // 2. Pause local file player so sound doesn't echo/conflict
+    usePlayerStore.getState().setIsPlaying(false)
+
+    // 3. Stop existing audio host if any
+    if (_activeAudioHost) {
+      _activeAudioHost.stop()
+      _activeAudioHost = null
+    }
+
+    try {
+      set({
+        isDeviceAudioSharing: true,
+        deviceAudioLevel: 0,
+        deviceAudioPeerCount: 0
+      })
+
+      const audioHost = new WebRTCAudioHost(room.code, user.id)
+      audioHost.onPeerCountChange = (count) => {
+        set({ deviceAudioPeerCount: count })
+      }
+      audioHost.onLevelChange = (level) => {
+        set({ deviceAudioLevel: level })
+      }
+      audioHost.onError = (err) => {
+        console.error('[WebRTCAudioHost] Error:', err)
+        set({ error: err.message })
+      }
+
+      await audioHost.start()
+      _activeAudioHost = audioHost
+
+      // 4. Broadcast to listening_rooms that host is now streaming device audio
+      const deviceSong: SharedSong = {
+        title: 'System / Device Audio',
+        artist: user.user_metadata?.display_name || user.email || 'Host',
+        album: 'Live Stream',
+        duration: 0,
+        isDeviceStream: true,
+        streamType: 'device_audio'
+      }
+
+      await getSupabase()
+        .from('listening_rooms')
+        .update({
+          song: deviceSong,
+          is_device_stream: true,
+          is_playing: true,
+          position_seconds: 0,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', room.id)
+
+      set((prev) => ({
+        hostRoom: prev.hostRoom
+          ? {
+              ...prev.hostRoom,
+              song: deviceSong,
+              is_device_stream: true,
+              is_playing: true
+            }
+          : null
+      }))
+    } catch (err: any) {
+      if (_activeAudioHost) {
+        _activeAudioHost.stop()
+        _activeAudioHost = null
+      }
+      set({
+        isDeviceAudioSharing: false,
+        deviceAudioLevel: 0,
+        deviceAudioPeerCount: 0
+      })
+      throw err
+    }
+  },
+
+  stopDeviceAudioSharing: async () => {
+    if (_activeAudioHost) {
+      _activeAudioHost.stop()
+      _activeAudioHost = null
+    }
+    set({
+      isDeviceAudioSharing: false,
+      deviceAudioLevel: 0,
+      deviceAudioPeerCount: 0
+    })
+
+    const hostRoom = get().hostRoom
+    const user = useOnlineStore.getState().user
+    if (hostRoom && user) {
+      const playerState = usePlayerStore.getState()
+      const currentTrack = playerState.queue[playerState.currentSongIndex]
+      const normalSong = currentTrack ? toSharedSong(currentTrack) : null
+
+      await getSupabase()
+        .from('listening_rooms')
+        .update({
+          song: normalSong,
+          is_device_stream: false,
+          is_playing: playerState.isPlaying,
+          position_seconds: Math.round(playerState.currentTime || 0),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', hostRoom.id)
+
+      set((prev) => ({
+        hostRoom: prev.hostRoom
+          ? {
+              ...prev.hostRoom,
+              song: normalSong,
+              is_device_stream: false,
+              is_playing: playerState.isPlaying,
+              position_seconds: Math.round(playerState.currentTime || 0)
+            }
+          : null
+      }))
+    }
+  },
+
+  connectToDeviceStream: async (room: ListeningRoom) => {
+    const user = useOnlineStore.getState().user
+    if (!user) return
+
+    // Stop local playback so we only hear the remote stream
+    usePlayerStore.getState().setIsPlaying(false)
+
+    if (_activeAudioClient) {
+      _activeAudioClient.disconnect()
+      _activeAudioClient = null
+    }
+
+    set({
+      isReceivingDeviceStream: true,
+      deviceAudioClientState: 'connecting'
+    })
+
+    try {
+      const client = new WebRTCAudioClient(room.code, user.id, room.host_id)
+      client.onStateChange = (state) => {
+        set({ deviceAudioClientState: state })
+      }
+      client.onError = (err) => {
+        console.error('[WebRTCAudioClient] Error:', err)
+        set({ error: err.message, deviceAudioClientState: 'disconnected' })
+      }
+
+      await client.connect()
+      _activeAudioClient = client
+    } catch (err: any) {
+      if (_activeAudioClient) {
+        _activeAudioClient.disconnect()
+        _activeAudioClient = null
+      }
+      set({
+        isReceivingDeviceStream: false,
+        deviceAudioClientState: 'disconnected'
+      })
+      throw err
+    }
+  },
+
+  disconnectFromDeviceStream: () => {
+    if (_activeAudioClient) {
+      _activeAudioClient.disconnect()
+      _activeAudioClient = null
+    }
+    set({
+      isReceivingDeviceStream: false,
+      deviceAudioClientState: 'idle'
+    })
+  },
+
   cleanupOnLeave: () => {
+    get().disconnectFromDeviceStream()
     _lastSyncedSongId = null
     set({
       joinedRoom: null,
@@ -1014,9 +1238,9 @@ if (typeof window !== 'undefined') {
   let _leaving = false
 
   usePlayerStore.subscribe((playerState, prevPlayerState) => {
-    if (_isSessionSyncing) return
-
     const state = useListeningStore.getState()
+    if (_isSessionSyncing || state.isReceivingDeviceStream) return
+
     const joined = state.joinedRoom
     if (!joined) {
       _lastSyncedSongId = null

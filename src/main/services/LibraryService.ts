@@ -5,6 +5,7 @@ import { getDb } from '../database'
 import crypto from 'crypto'
 import { ArtworkService } from './ArtworkService'
 import { parseArtists, formatArtistsDisplay, getArtistId } from '../../shared/artistParser'
+import { sanitizeTrackMetadata, DUMMY_PROVIDER_ALBUMS } from '../../shared/songMatching'
 
 const SUPPORTED_EXTENSIONS = ['.mp3', '.flac', '.m4a', '.wav', '.ogg', '.opus', '.aac', '.wma']
 
@@ -82,10 +83,25 @@ export class LibraryService {
     const rawArtist = metadataOverrides?.artist || metadata.common.artist || 'Unknown Artist'
     const songTitle =
       metadataOverrides?.title || metadata.common.title || path.basename(resolvedPath, path.extname(resolvedPath))
-    const parsedArtists = parseArtists(rawArtist, metadata.common.artists, songTitle)
-    const primaryArtist = parsedArtists[0]?.name || rawArtist
+    const rawAlbum = metadataOverrides?.album || metadata.common.album || 'Unknown Album'
+
+    const sanitized = sanitizeTrackMetadata({
+      title: songTitle,
+      artist: rawArtist,
+      album: rawAlbum
+    })
+    const finalTitle = sanitized.title || songTitle
+    const finalArtist = sanitized.artist || rawArtist
+    const finalAlbum =
+      sanitized.album ||
+      (rawAlbum && rawAlbum !== 'Unknown Album' && !DUMMY_PROVIDER_ALBUMS.has(rawAlbum.toLowerCase())
+        ? rawAlbum
+        : `${finalTitle} - Single`)
+
+    const parsedArtists = parseArtists(finalArtist, metadata.common.artists, finalTitle)
+    const primaryArtist = parsedArtists[0]?.name || finalArtist
     const displayArtist = formatArtistsDisplay(parsedArtists)
-    const albumTitle = metadataOverrides?.album || metadata.common.album || 'Unknown Album'
+    const albumTitle = finalAlbum
     const albumArtist = metadata.common.albumartist || primaryArtist
     const artistId = getArtistId(primaryArtist)
     const albumId = crypto
@@ -123,7 +139,7 @@ export class LibraryService {
     `
     ).run(
       songId,
-      songTitle,
+      finalTitle,
       displayArtist,
       artistId,
       albumTitle,
@@ -226,15 +242,28 @@ export class LibraryService {
       'Unknown Album'
     const albumTitle = rawAlbum.trim()
 
-    const parsedArtists = parseArtists(artistName, metadata.common.artists, title)
-    const primaryArtist = parsedArtists[0]?.name || artistName
+    const sanitized = sanitizeTrackMetadata({
+      title,
+      artist: artistName,
+      album: albumTitle
+    })
+    const finalTitle = sanitized.title || title
+    const finalArtist = sanitized.artist || artistName
+    const finalAlbum =
+      sanitized.album ||
+      (albumTitle && albumTitle !== 'Unknown Album' && !DUMMY_PROVIDER_ALBUMS.has(albumTitle.toLowerCase())
+        ? albumTitle
+        : `${finalTitle} - Single`)
+
+    const parsedArtists = parseArtists(finalArtist, metadata.common.artists, finalTitle)
+    const primaryArtist = parsedArtists[0]?.name || finalArtist
     const displayArtist = formatArtistsDisplay(parsedArtists)
 
     const albumArtist = metadata.common.albumartist || primaryArtist
     const artistId = getArtistId(primaryArtist)
     const albumId = crypto
       .createHash('md5')
-      .update(`${albumArtist.toLowerCase()}::${albumTitle.toLowerCase()}`)
+      .update(`${albumArtist.toLowerCase()}::${finalAlbum.toLowerCase()}`)
       .digest('hex')
 
     let artworkPath = await ArtworkService.extractFromAudioFile(resolvedPath)
@@ -256,7 +285,7 @@ export class LibraryService {
       }
       db.prepare(
         'INSERT OR IGNORE INTO albums (id, title, artistId, year) VALUES (?, ?, ?, ?)'
-      ).run(albumId, albumTitle, artistId, metadata.common.year || null)
+      ).run(albumId, finalAlbum, artistId, metadata.common.year || null)
       if (artworkPath) {
         db.prepare('UPDATE albums SET artworkPath = COALESCE(artworkPath, ?) WHERE id = ?').run(
           artworkPath,
@@ -272,10 +301,10 @@ export class LibraryService {
         WHERE id = ?
       `
       ).run(
-        title,
+        finalTitle,
         displayArtist,
         artistId,
-        albumTitle,
+        finalAlbum,
         albumId,
         metadata.common.track?.no || existing.trackNumber,
         metadata.common.disk?.no || existing.discNumber,
@@ -587,11 +616,25 @@ export class LibraryService {
           const songId = existing?.id || crypto.createHash('md5').update(resolvedFilePath).digest('hex')
 
           const rawArtist = (metadata.common.artist || 'Unknown Artist').trim()
-          const title = (metadata.common.title || path.basename(file, path.extname(file))).trim()
-          const parsedArtists = parseArtists(rawArtist, metadata.common.artists, title)
-          const primaryArtist = parsedArtists[0]?.name || rawArtist
+          const rawTitle = (metadata.common.title || path.basename(file, path.extname(file))).trim()
+          const rawAlbum = (metadata.common.album || 'Unknown Album').trim()
+
+          const sanitized = sanitizeTrackMetadata({
+            title: rawTitle,
+            artist: rawArtist,
+            album: rawAlbum
+          })
+          const title = sanitized.title || rawTitle
+          const artistName = sanitized.artist || rawArtist
+          const albumTitle =
+            sanitized.album ||
+            (rawAlbum && rawAlbum !== 'Unknown Album' && !DUMMY_PROVIDER_ALBUMS.has(rawAlbum.toLowerCase())
+              ? rawAlbum
+              : `${title} - Single`)
+
+          const parsedArtists = parseArtists(artistName, metadata.common.artists, title)
+          const primaryArtist = parsedArtists[0]?.name || artistName
           const displayArtist = formatArtistsDisplay(parsedArtists)
-          const albumTitle = (metadata.common.album || 'Unknown Album').trim()
           const albumArtist = (metadata.common.albumartist || primaryArtist).trim()
           const year = metadata.common.year || null
 

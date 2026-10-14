@@ -155,7 +155,8 @@ export default function AudioEngine() {
   }
 
   const resumePendingPlayback = (audio: HTMLAudioElement) => {
-    if (!usePlayerStore.getState().isPlaying || !audio.paused) return
+    const state = usePlayerStore.getState()
+    if (!state.isPlaying || !state.isAudioActive || !audio.paused) return
     startPlayback(audio)
   }
 
@@ -179,7 +180,7 @@ export default function AudioEngine() {
               album: song.album || 'Felo',
               artwork: []
             })
-            navigator.mediaSession.playbackState = state.isPlaying || state.isBuffering ? 'playing' : 'paused'
+            navigator.mediaSession.playbackState = (state.isPlaying && state.isAudioActive) || state.isBuffering ? 'playing' : 'paused'
             void getArtworkSource(song).then((artwork) => {
               if (!artwork) return
               navigator.mediaSession.metadata = new MediaMetadata({
@@ -224,7 +225,7 @@ export default function AudioEngine() {
           album: song.album || 'Felo',
           artwork: []
         })
-        navigator.mediaSession.playbackState = state.isPlaying ? 'playing' : 'paused'
+        navigator.mediaSession.playbackState = state.isPlaying && state.isAudioActive ? 'playing' : 'paused'
         updateMediaPosition(audio)
 
         void getArtworkSource(song).then((artwork) => {
@@ -235,12 +236,13 @@ export default function AudioEngine() {
             album: song.album || 'Felo',
             artwork: artwork ? getArtworkEntries(artwork.srcs, artwork.type) : []
           })
-          navigator.mediaSession.playbackState = usePlayerStore.getState().isPlaying ? 'playing' : 'paused'
+          navigator.mediaSession.playbackState = usePlayerStore.getState().isPlaying && usePlayerStore.getState().isAudioActive ? 'playing' : 'paused'
           updateMediaPosition(audio)
         })
       }
 
-      if (state.isPlaying) {
+      // ONLY play audio if this tab is the designated active audio instance
+      if (state.isPlaying && state.isAudioActive) {
         startPlayback(audio)
       } else {
         audio.pause()
@@ -253,6 +255,7 @@ export default function AudioEngine() {
       const previousSong = previousState.queue[previousState.currentSongIndex]
       if (
         state.isPlaying !== previousState.isPlaying ||
+        state.isAudioActive !== previousState.isAudioActive ||
         song?.id !== previousSong?.id ||
         song?.filePath !== previousSong?.filePath
       ) {
@@ -354,11 +357,13 @@ export default function AudioEngine() {
         }
         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
         // Synchronize store if paused externally (Bluetooth, OS controls, etc.)
+        // ONLY if this tab is the active audio owner!
         if (
           !isChangingSourceRef.current &&
           !resumeAfterSeekRef.current &&
           !isVirtual &&
           storeState.isPlaying &&
+          storeState.isAudioActive &&
           !storeState.isBuffering &&
           event.currentTarget.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
         ) {
@@ -366,6 +371,9 @@ export default function AudioEngine() {
         }
       }}
       onTimeUpdate={(e) => {
+        const storeState = usePlayerStore.getState()
+        if (!storeState.isAudioActive) return
+
         const currentTime = e.currentTarget.currentTime
         setCurrentTime(currentTime)
 
@@ -382,7 +390,6 @@ export default function AudioEngine() {
         lastPlayTickRef.current = nowPerf
 
         // Check scrobble threshold (>= 30s or >= 50% completion)
-        const storeState = usePlayerStore.getState()
         const activeSong = storeState.queue[storeState.currentSongIndex]
         if (activeSong && scrobbledSongIdRef.current !== activeSong.id) {
           const songDur = e.currentTarget.duration || activeSong.duration || 0
@@ -409,11 +416,14 @@ export default function AudioEngine() {
         }
       }}
       onDurationChange={(e) => {
+        const storeState = usePlayerStore.getState()
+        if (!storeState.isAudioActive) return
         setDuration(e.currentTarget.duration || 0)
         updateMediaPosition(e.currentTarget)
       }}
       onError={(event) => {
         const storeState = usePlayerStore.getState()
+        if (!storeState.isAudioActive) return
         const activeSong = storeState.queue[storeState.currentSongIndex]
         const isVirtual = !activeSong?.filePath || activeSong.filePath.startsWith('virtual:')
         if (isVirtual || !event.currentTarget.src) {
@@ -439,12 +449,14 @@ export default function AudioEngine() {
         }
       }}
       onSeeked={(e) => {
+        const storeState = usePlayerStore.getState()
+        if (!storeState.isAudioActive) return
         const shouldResume = resumeAfterSeekRef.current
         resumeAfterSeekRef.current = false
         setCurrentTime(e.currentTarget.currentTime)
         updateMediaPosition(e.currentTarget)
 
-        if (shouldResume && usePlayerStore.getState().isPlaying && e.currentTarget.paused) {
+        if (shouldResume && storeState.isPlaying && e.currentTarget.paused) {
           e.currentTarget.play().catch((err) => {
             console.warn('Playback failed after seek:', err)
           })
@@ -452,6 +464,7 @@ export default function AudioEngine() {
       }}
       onEnded={() => {
         const storeState = usePlayerStore.getState()
+        if (!storeState.isAudioActive) return
         const activeSong = storeState.queue[storeState.currentSongIndex]
         if (activeSong && scrobbledSongIdRef.current !== activeSong.id) {
           scrobbledSongIdRef.current = activeSong.id

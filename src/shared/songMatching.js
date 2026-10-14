@@ -26,6 +26,145 @@ const UNWANTED_VERSION_KEYWORDS = [
   "hour loop",
   "10 hours"
 ];
+const SOURCE_TAG_REGEX = /\s*[[({]\s*(?:qobuz|qobus|deezer|tidal|youtube(?:\s*music)?|soulseek|slsk|spotify|apple\s*music|soundcloud)\s*[\])}]/gi;
+const VIDEO_PROMO_TAG_REGEX = /\s*[[({]\s*(?:official\s+(?:music\s+)?video|official\s+mv|official\s+audio|lyrics?\s+video|music\s+video|visualizer|audio\s+track|official|video|mv|hd|hq|4k|1080p|720p|explicit|clean)\s*[\])}]/gi;
+const REMASTER_TAG_REGEX = /\s*[[({]\s*(?:remaster(?:ed)?|digitally\s+remastered|\b(?:19|20)\d{2}\s+remaster(?:ed)?)\s*[\])}]/gi;
+const TRAILING_VIDEO_NOISE_REGEX = /\s+(?:official\s+(?:music\s+)?video|official\s+mv|official\s+audio|lyrics?\s+video|music\s+video|visualizer|hd|4k|hq)\s*$/gi;
+const YOUTUBE_CHANNEL_SUFFIX_REGEX = /(?:\s*-\s*Topic|\s+(?:VEVO|Official|Music|TV|Records|Channel|Media)|VEVO)$/i;
+const DUMMY_PROVIDER_ALBUMS = /* @__PURE__ */ new Set([
+  "youtube music",
+  "youtube",
+  "qobuz hi-res",
+  "qobuz",
+  "qobus",
+  "deezer",
+  "soulseek",
+  "unknown album",
+  "various artists"
+]);
+const MINOR_WORDS = /* @__PURE__ */ new Set([
+  "a",
+  "an",
+  "the",
+  "and",
+  "but",
+  "or",
+  "nor",
+  "for",
+  "yet",
+  "so",
+  "at",
+  "by",
+  "in",
+  "of",
+  "on",
+  "to",
+  "with",
+  "from",
+  "into",
+  "over"
+]);
+const PRESERVED_ACRONYMS = /* @__PURE__ */ new Set([
+  "VIP",
+  "DJ",
+  "EDM",
+  "OST",
+  "EP",
+  "LP",
+  "BBC",
+  "USA",
+  "UK",
+  "NYC",
+  "FM",
+  "AM",
+  "CD",
+  "II",
+  "III",
+  "IV",
+  "VI",
+  "VII",
+  "VIII",
+  "IX",
+  "X",
+  "XI",
+  "XII",
+  "HQ",
+  "HD",
+  "4K",
+  "TV",
+  "ID"
+]);
+function normalizeTitleCase(input) {
+  if (!input) return "";
+  const trimmed = input.trim();
+  if (trimmed.length <= 2) return trimmed;
+  const letters = trimmed.replace(/[^\p{L}]/gu, "");
+  const isAllUpper = letters.length >= 3 && letters === letters.toUpperCase();
+  const isAllLower = letters.length >= 3 && letters === letters.toLowerCase();
+  if (!isAllUpper && !isAllLower) {
+    return trimmed;
+  }
+  return trimmed.replace(
+    /([^\s\-_/[\]()]+)/gu,
+    (word, _p1, offset) => {
+      const upperWord = word.toUpperCase();
+      if (PRESERVED_ACRONYMS.has(upperWord)) {
+        return upperWord;
+      }
+      const lowerWord = word.toLowerCase();
+      if (offset > 0 && MINOR_WORDS.has(lowerWord)) {
+        return lowerWord;
+      }
+      return lowerWord.charAt(0).toUpperCase() + lowerWord.slice(1);
+    }
+  );
+}
+function sanitizeTrackMetadata(raw, _source) {
+  let title = (raw.title || "").trim();
+  let artist = (raw.artist || "").trim();
+  let album = raw.album !== void 0 ? raw.album.trim() : void 0;
+  title = title.replace(SOURCE_TAG_REGEX, "").replace(VIDEO_PROMO_TAG_REGEX, "").replace(REMASTER_TAG_REGEX, "").replace(TRAILING_VIDEO_NOISE_REGEX, "").replace(TRACK_NUM_PREFIX_REGEX, "").replace(/\s*\(\d+\)\s*$/g, "").replace(/[‘’“”]/g, "'").replace(/\s+/g, " ").trim();
+  if (artist) {
+    artist = artist.replace(SOURCE_TAG_REGEX, "").replace(YOUTUBE_CHANNEL_SUFFIX_REGEX, "").replace(/[‘’“”]/g, "'").replace(/\s+/g, " ").trim();
+  }
+  const isGenericArtist = !artist || /^(?:unknown\s+artist|unknown|various\s+artists|youtube|youtube\s+music|-)$/i.test(artist);
+  if (title.includes(" - ")) {
+    const parts = title.split(" - ").map((s) => s.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      const candidateArtist = parts[0];
+      const candidateTitle = parts.slice(1).join(" - ");
+      if (isGenericArtist && candidateArtist.length > 0 && candidateArtist.length <= 80) {
+        artist = candidateArtist.replace(YOUTUBE_CHANNEL_SUFFIX_REGEX, "").replace(SOURCE_TAG_REGEX, "").trim();
+        title = candidateTitle;
+      } else if (!isGenericArtist) {
+        const normCand = candidateArtist.toLowerCase();
+        const normArt = artist.toLowerCase();
+        if (normCand === normArt || normArt.startsWith(normCand) || normCand.startsWith(normArt)) {
+          title = candidateTitle;
+        }
+      }
+    }
+  }
+  title = title.replace(SOURCE_TAG_REGEX, "").replace(VIDEO_PROMO_TAG_REGEX, "").replace(TRAILING_VIDEO_NOISE_REGEX, "").replace(/\s+/g, " ").trim();
+  title = title.replace(/\s*\(\s*\)/g, "").replace(/\s*\[\s*\]/g, "").trim();
+  title = normalizeTitleCase(title);
+  if (artist && !isGenericArtist) {
+    artist = normalizeTitleCase(artist);
+  }
+  if (album) {
+    album = album.replace(SOURCE_TAG_REGEX, "").replace(/\s*\[(?:flac|mp3|wav|24bit|16bit|lossless|cd|web)[^\]]*\]/gi, "").replace(/\s+/g, " ").trim();
+    if (DUMMY_PROVIDER_ALBUMS.has(album.toLowerCase()) || album === "") {
+      album = void 0;
+    } else {
+      album = normalizeTitleCase(album);
+    }
+  }
+  return {
+    title: title || raw.title?.trim() || "",
+    artist: isGenericArtist && !artist ? artist || raw.artist?.trim() || "" : artist,
+    album
+  };
+}
 function stripJunkTags(text) {
   if (!text) return "";
   return text.replace(/\s*([[(][^\])]*[\])])\s*/g, (match, inner) => {
@@ -34,7 +173,7 @@ function stripJunkTags(text) {
     if (hasVersionKeyword) {
       return match;
     }
-    const isJunk = /(?:official|video|audio|visualizer|lyrics?|4k|hd|hq|explicit|clean|mv|clip|remaster|\b(?:19|20)\d{2}\b)/i.test(
+    const isJunk = /(?:official|video|audio|visualizer|lyrics?|4k|hd|hq|explicit|clean|mv|clip|remaster|youtube|qobuz|qobus|deezer|tidal|spotify|apple\s*music|soundcloud|soulseek|\b(?:19|20)\d{2}\b)/i.test(
       lower
     );
     if (isJunk) {
@@ -73,13 +212,7 @@ function parseSmartQuery(raw, explicitArtist) {
   if (!raw) {
     return { title: "", artist: explicitArtist?.trim() || "", cleanQuery: "", isCollaboration: false };
   }
-  let text = stripJunkTags(raw)
-    .replace(/^(?:play|putar|dengarkan|listen to|put on)\s+(?:this|that|the|a|song|track|lagu)?\s*/i, "")
-    .replace(/^(?:play|putar|dengarkan|listen to|put on)\s+/i, "")
-    .replace(/^(?:this|that)\s+/i, "")
-    .replace(TRACK_NUM_PREFIX_REGEX, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  let text = stripJunkTags(raw).replace(/^(?:play|putar|dengarkan|listen to|put on)\s+(?:this|that|the|a|song|track|lagu)?\s*/i, "").replace(/^(?:play|putar|dengarkan|listen to|put on)\s+/i, "").replace(/^(?:this|that)\s+/i, "").replace(TRACK_NUM_PREFIX_REGEX, "").replace(/\s+/g, " ").trim();
   const cleanQuery = text.replace(/\b(?:song|songs|lagu|track|audio|music)\b/gi, "").replace(/\s+/g, " ").trim();
   if (explicitArtist && explicitArtist.trim()) {
     const artist = explicitArtist.trim();
@@ -160,7 +293,12 @@ function parseAudioFilePath(rawPath) {
   }
   title = title.replace(/\s*\[(?:flac|mp3|wav|24bit|16bit|lossless|cd|web)[^\]]*\]/gi, "").trim();
   album = album.replace(/\s*\[(?:flac|mp3|wav|24bit|16bit|lossless|cd|web)[^\]]*\]/gi, "").trim();
-  return { title: title || cleanBase, artist, album };
+  const sanitized = sanitizeTrackMetadata({ title: title || cleanBase, artist, album });
+  return {
+    title: sanitized.title || cleanBase,
+    artist: sanitized.artist,
+    album: sanitized.album || ""
+  };
 }
 function getWordTokens(text) {
   const norm = normalizeForMatching(text);
@@ -446,15 +584,23 @@ function validateTrackIdentity(target, candidate) {
   };
 }
 export {
+  DUMMY_PROVIDER_ALBUMS,
+  REMASTER_TAG_REGEX,
+  SOURCE_TAG_REGEX,
+  TRAILING_VIDEO_NOISE_REGEX,
   UNWANTED_VERSION_KEYWORDS,
+  VIDEO_PROMO_TAG_REGEX,
+  YOUTUBE_CHANNEL_SUFFIX_REGEX,
   cleanProviderArtist,
   cleanSearchQuery,
   findMatchingLibrarySong,
   isSongInLibrary,
   normalizeForMatching,
+  normalizeTitleCase,
   parseAudioFilePath,
   parseDurationToSeconds,
   parseSmartQuery,
+  sanitizeTrackMetadata,
   scoreProviderMatch,
   stringSimilarity,
   stripJunkTags,

@@ -18,7 +18,8 @@ import {
   Download,
   Check,
   Moon,
-  Mic2
+  Mic2,
+  ChevronDown
 } from 'lucide-react'
 import {
   remoteClient,
@@ -34,6 +35,7 @@ interface MobileNowPlayingProps {
   onOpenLyrics: () => void
   onOpenSleepTimer: () => void
   sleepTimerBadge?: string | null
+  onClose?: () => void
 }
 
 const triggerHaptic = (ms = 12) => {
@@ -54,7 +56,8 @@ export default function MobileNowPlaying({
   onOpenDevices,
   onOpenLyrics,
   onOpenSleepTimer,
-  sleepTimerBadge
+  sleepTimerBadge,
+  onClose
 }: MobileNowPlayingProps) {
   const song = state.song
   const isPlaying = state.isPlaying
@@ -219,17 +222,31 @@ export default function MobileNowPlaying({
 
       {/* Top Header */}
       <header className="relative z-10 flex items-center justify-between pt-2 pb-4">
-        <button
-          type="button"
-          onClick={() => {
-            triggerHaptic(10)
-            onOpenSearch()
-          }}
-          className="w-10 h-10 rounded-full flex items-center justify-center text-zinc-300 hover:text-white active:bg-white/10 transition cursor-pointer"
-          title="Search Library"
-        >
-          <Search className="w-5 h-5" />
-        </button>
+        {onClose ? (
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic(10)
+              onClose()
+            }}
+            className="w-10 h-10 rounded-full flex items-center justify-center text-zinc-300 hover:text-white active:bg-white/10 transition cursor-pointer"
+            title="Minimize"
+          >
+            <ChevronDown className="w-6 h-6" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic(10)
+              onOpenSearch()
+            }}
+            className="w-10 h-10 rounded-full flex items-center justify-center text-zinc-300 hover:text-white active:bg-white/10 transition cursor-pointer"
+            title="Search Library"
+          >
+            <Search className="w-5 h-5" />
+          </button>
+        )}
 
         <div className="flex flex-col items-center text-center">
           <span className="text-[10px] font-bold tracking-widest text-zinc-400 uppercase">

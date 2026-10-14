@@ -13,16 +13,19 @@
   --color-text: #ffffff;
   --color-text-muted: #b3b3b3;
   
-  /* Accents */
-  --color-primary-amber: #f59e0b;
-  --color-primary-amber-hover: #fbbf24;
+  /* Accents - Dynamic Accent with Convention Theme (#ffffff) default */
+  --color-primary: var(--app-accent, #ffffff);
+  --color-primary-hover: var(--app-accent-hover, #e5e5e5);
+  --color-primary-foreground: var(--app-accent-foreground, #000000);
+  --color-primary-amber: var(--app-accent, #ffffff);
+  --color-primary-amber-hover: var(--app-accent-hover, #e5e5e5);
   --color-secondary-cyan: #7dd3fc;
   
   /* States */
   --color-success: #22c55e;
   --color-warning: #facc15;
   --color-danger: #ef4444;
-  --color-focus: #3b82f6;
+  --color-focus: var(--app-accent, #ffffff);
   
   /* UI Element States */
   --color-hover: rgba(255, 255, 255, 0.1);
@@ -37,9 +40,6 @@
   
   --color-popover: var(--color-surface-elevated);
   --color-popover-foreground: var(--color-text);
-  
-  --color-primary: var(--color-primary-amber);
-  --color-primary-foreground: #ffffff;
   
   --color-secondary: var(--color-secondary-cyan);
   --color-secondary-foreground: #ffffff;
@@ -58,6 +58,9 @@
 
 @layer base {
   :root {
+    --app-accent: #ffffff;
+    --app-accent-hover: #e5e5e5;
+    --app-accent-foreground: #000000;
     scroll-behavior: smooth;
     -webkit-font-smoothing: antialiased;
     font-synthesis: none;

@@ -222,6 +222,15 @@ export class AudioLevelMonitor {
  * Host manager for WebRTC loopback system audio broadcast.
  * Accepts multiple listeners, manages peer connections, and signals over Supabase Realtime.
  */
+export interface WebRTCAudioHostOptions {
+  onPeerConnected?: (peerId: string, count: number) => void
+  onPeerDisconnected?: (peerId: string, count: number) => void
+  onAudioLevel?: (level: number) => void
+  onLevelChange?: (level: number) => void
+  onError?: (err: Error) => void
+  onEnded?: () => void
+}
+
 export class WebRTCAudioHost {
   private roomCode: string
   private userId: string
@@ -237,9 +246,20 @@ export class WebRTCAudioHost {
   public onError?: (err: Error) => void
   public onEnded?: () => void
 
-  constructor(roomCode: string, userId: string) {
+  constructor(roomCode: string, userId: string, options?: WebRTCAudioHostOptions) {
     this.roomCode = roomCode
     this.userId = userId
+    if (options) {
+      if (options.onLevelChange) this.onLevelChange = options.onLevelChange
+      if (options.onAudioLevel) this.onLevelChange = options.onAudioLevel
+      if (options.onPeerConnected || options.onPeerDisconnected) {
+        this.onPeerCountChange = (count) => {
+          options.onPeerConnected?.('', count)
+        }
+      }
+      if (options.onError) this.onError = options.onError
+      if (options.onEnded) this.onEnded = options.onEnded
+    }
   }
 
   async start(): Promise<void> {
@@ -432,6 +452,13 @@ export class WebRTCAudioHost {
  * Listener client for receiving host's WebRTC device audio stream.
  * Plays incoming audio through an ephemeral HTML5 MediaStream in RAM (Mode A compliant).
  */
+export interface WebRTCAudioClientOptions {
+  onLevelChange?: (level: number) => void
+  onStateChange?: (state: 'connecting' | 'connected' | 'disconnected' | 'stopped') => void
+  onConnectionStateChange?: (state: 'connecting' | 'connected' | 'disconnected' | 'stopped') => void
+  onError?: (err: Error) => void
+}
+
 export class WebRTCAudioClient {
   private roomCode: string
   private userId: string
@@ -445,10 +472,16 @@ export class WebRTCAudioClient {
   public onStateChange?: (state: 'connecting' | 'connected' | 'disconnected' | 'stopped') => void
   public onError?: (err: Error) => void
 
-  constructor(roomCode: string, userId: string, hostId: string) {
+  constructor(roomCode: string, userId: string, hostId: string, options?: WebRTCAudioClientOptions) {
     this.roomCode = roomCode
     this.userId = userId
     this.hostId = hostId
+    if (options) {
+      if (options.onLevelChange) this.onLevelChange = options.onLevelChange
+      if (options.onStateChange) this.onStateChange = options.onStateChange
+      if (options.onConnectionStateChange) this.onStateChange = options.onConnectionStateChange
+      if (options.onError) this.onError = options.onError
+    }
   }
 
   async connect(): Promise<void> {

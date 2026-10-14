@@ -220,13 +220,15 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                 />
 
                 {/* Featured spotlight hero banner */}
-                <HeroSpotlight
-                  topMix={personalizedMixes[0]}
-                  onPlayMix={handlePlayMix}
-                  onSelectMix={setSelectedMix}
-                  onStartRadio={() => startInfiniteRadio(recommendedSongs)}
-                  isInfiniteRadioActive={isInfiniteRadio}
-                />
+                {personalizedMixes[0]?.tracks?.length > 0 && (
+                  <HeroSpotlight
+                    topMix={personalizedMixes[0]}
+                    onPlayMix={handlePlayMix}
+                    onSelectMix={setSelectedMix}
+                    onStartRadio={() => startInfiniteRadio(recommendedSongs)}
+                    isInfiniteRadioActive={isInfiniteRadio}
+                  />
+                )}
 
                 {/* Made For You personalized mixes carousel / grid */}
                 <PersonalizedMixesSection
@@ -242,26 +244,47 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                 />
 
                 {/* Recommended tracks with live equalizer on playing song */}
-                <HomeSongSection
-                  songs={recommendedSongs}
-                  title="Recommended Tracks"
-                  subtitle="Curated audio tailored to your library and listening flow"
-                  likedSongIds={likedSongIds}
-                  onToggleLike={toggleLike}
-                  onPlaySong={handlePlaySong}
-                  onDownloadSong={handleDownloadSong}
-                  onChooseSourceOrReplace={handleChooseSourceOrReplace}
-                  libraryIndex={libraryIndex}
-                  onStartRadio={() => startInfiniteRadio(recommendedSongs)}
-                  isRadioActive={isInfiniteRadio}
-                />
+                {recommendedSongs.length > 0 ? (
+                  <HomeSongSection
+                    songs={recommendedSongs}
+                    title={AppCapabilities.onlineDiscovery ? 'Recommended Tracks' : 'Your Library Tracks'}
+                    subtitle={
+                      AppCapabilities.onlineDiscovery
+                        ? 'Curated audio tailored to your library and listening flow'
+                        : 'Offline tracks available in your music library'
+                    }
+                    likedSongIds={likedSongIds}
+                    onToggleLike={toggleLike}
+                    onPlaySong={handlePlaySong}
+                    onDownloadSong={handleDownloadSong}
+                    onChooseSourceOrReplace={handleChooseSourceOrReplace}
+                    libraryIndex={libraryIndex}
+                    onStartRadio={() => startInfiniteRadio(recommendedSongs)}
+                    isRadioActive={isInfiniteRadio}
+                  />
+                ) : (
+                  !AppCapabilities.onlineDiscovery && (
+                    <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-8 text-center text-sm text-zinc-400">
+                      <p className="font-semibold text-white">No local songs in your library yet</p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        Scan local folders or import audio in the Library tab to listen offline.
+                      </p>
+                    </div>
+                  )
+                )}
 
                 {/* Recommended Albums */}
-                <AlbumsGridSection
-                  albums={recommendedAlbums}
-                  title="Recommended Albums & EPs"
-                  subtitle="Trending full-length releases and essential records"
-                />
+                {recommendedAlbums.length > 0 && (
+                  <AlbumsGridSection
+                    albums={recommendedAlbums}
+                    title={AppCapabilities.onlineDiscovery ? 'Recommended Albums & EPs' : 'Your Library Albums'}
+                    subtitle={
+                      AppCapabilities.onlineDiscovery
+                        ? 'Trending full-length releases and essential records'
+                        : 'Albums discovered across your offline files'
+                    }
+                  />
+                )}
               </>
             )}
           </>

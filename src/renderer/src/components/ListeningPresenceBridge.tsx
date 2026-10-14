@@ -23,6 +23,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
   const isJoiningRoom = useListeningStore((state) => state.isJoiningRoom)
   const hostRoom = useListeningStore((state) => state.hostRoom)
   const hostRoomStopped = useListeningStore((state) => state.hostRoomStopped)
+  const isDeviceAudioSharing = useListeningStore((state) => state.isDeviceAudioSharing)
   const ensureHostRoom = useListeningStore((state) => state.ensureHostRoom)
   const deactivateHostRoom = useListeningStore((state) => state.deactivateHostRoom)
 
@@ -33,7 +34,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
 
   // 1. Immediate Broadcast on Playback State Change (Song Change, Queue/Playlist Change, or Play/Pause)
   useEffect(() => {
-    if (!user || !enabled || isJoiningRoom || hostRoomStopped || joinedRoom !== null) return
+    if (!user || !enabled || isJoiningRoom || hostRoomStopped || joinedRoom !== null || isDeviceAudioSharing) return
 
     const songChanged = prevSongIdRef.current !== currentSongId
     const queueChanged = prevQueueKeyRef.current !== queueKey

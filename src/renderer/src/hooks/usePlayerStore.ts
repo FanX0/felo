@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import { Song } from '../pages/Library/Library'
 import { markSongAsStarted } from '../lib/playbackEvents'
 import { findMatchingLibrarySong } from '../lib/songMatching'
+import { PersonalizationService } from '../services/PersonalizationService'
+import { getTabInstanceId, type PlayerSyncSnapshot } from '../lib/crossTabSync'
 
 export type RepeatMode = 'off' | 'all' | 'one'
 
@@ -30,7 +32,14 @@ interface PlayerState {
   seekRequest: number | null // used by AudioEngine to jump to a specific time
   playbackContext: PlaybackContext | null
 
+  // Cross-tab single playback sync
+  isAudioActive: boolean
+  activeInstanceId: string | null
+
   // Actions
+  setIsAudioActive: (isAudioActive: boolean, activeInstanceId?: string | null) => void
+  claimAudioOwnership: () => void
+  syncFromExternal: (snapshot: Partial<PlayerSyncSnapshot>) => void
   setQueue: (queue: Song[], startPlayingIndex?: number, context?: PlaybackContext | null) => void
   setPlaybackContext: (context: PlaybackContext | null) => void
   enqueueSong: (song: Song) => void
@@ -70,9 +79,11 @@ function shuffleArray<T>(array: T[]): T[] {
   return shuffled
 }
 
-export const RECENTLY_PLAYED_STORAGE_KEY = 'felo_recently_played'
-export const PLAY_STATS_STORAGE_KEY = 'felo_play_stats'
-export const PLAYED_SONGS_STORAGE_KEY = 'felo_played_songs'
+export {
+  RECENTLY_PLAYED_STORAGE_KEY,
+  PLAY_STATS_STORAGE_KEY,
+  PLAYED_SONGS_STORAGE_KEY
+} from '../lib/playbackConstants'
 
 let persistTimeout: ReturnType<typeof setTimeout> | null = null
 let pendingSongToRemember: Song | null = null
@@ -124,6 +135,47 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   playbackContext: null,
   seekRequest: null,
 
+  isAudioActive: true,
+  activeInstanceId: typeof window !== 'undefined' ? getTabInstanceId() : null,
+
+  setIsAudioActive: (isAudioActive, activeInstanceId) => {
+    set({
+      isAudioActive,
+      activeInstanceId: activeInstanceId !== undefined ? activeInstanceId : get().activeInstanceId
+    })
+  },
+
+  claimAudioOwnership: () => {
+    const tabId = typeof window !== 'undefined' ? getTabInstanceId() : null
+    set({ isAudioActive: true, activeInstanceId: tabId })
+  },
+
+  syncFromExternal: (snapshot) => {
+    const current = get()
+    const updates: Partial<PlayerState> = {}
+
+    if (snapshot.activeInstanceId !== undefined) {
+      updates.activeInstanceId = snapshot.activeInstanceId
+      updates.isAudioActive = snapshot.activeInstanceId === getTabInstanceId()
+    }
+    if (snapshot.queue !== undefined) updates.queue = snapshot.queue
+    if (snapshot.originalQueue !== undefined) updates.originalQueue = snapshot.originalQueue
+    if (snapshot.currentSongIndex !== undefined) updates.currentSongIndex = snapshot.currentSongIndex
+    if (snapshot.isPlaying !== undefined) updates.isPlaying = snapshot.isPlaying
+    if (snapshot.isBuffering !== undefined) updates.isBuffering = snapshot.isBuffering
+    if (snapshot.volume !== undefined && Math.abs(snapshot.volume - current.volume) > 0.001) {
+      updates.volume = snapshot.volume
+      localStorage.setItem('felo_volume', snapshot.volume.toString())
+    }
+    if (snapshot.currentTime !== undefined) updates.currentTime = snapshot.currentTime
+    if (snapshot.duration !== undefined) updates.duration = snapshot.duration
+    if (snapshot.isShuffle !== undefined) updates.isShuffle = snapshot.isShuffle
+    if (snapshot.repeatMode !== undefined) updates.repeatMode = snapshot.repeatMode
+    if (snapshot.playbackContext !== undefined) updates.playbackContext = snapshot.playbackContext
+
+    set(updates)
+  },
+
   setPlaybackContext: (playbackContext) => set({ playbackContext }),
   setIsBuffering: (isBuffering) => set({ isBuffering }),
 
@@ -133,6 +185,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const contextToSet = context !== undefined ? context : get().playbackContext
     const selectedSong = newQueue[startPlayingIndex] || newQueue[0]
     const isVirtual = !selectedSong?.filePath || selectedSong.filePath.startsWith('virtual:')
+    const tabId = typeof window !== 'undefined' ? getTabInstanceId() : null
     if (isShuffle && newQueue.length > 0) {
       const remaining = newQueue.filter((_, idx) => idx !== startPlayingIndex)
       const shuffled = [selectedSong, ...shuffleArray(remaining)]
@@ -144,7 +197,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         isBuffering: isVirtual,
         currentTime: 0,
         seekRequest: 0,
-        playbackContext: contextToSet
+        playbackContext: contextToSet,
+        isAudioActive: true,
+        activeInstanceId: tabId
       })
     } else {
       set({
@@ -155,7 +210,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         isBuffering: isVirtual,
         currentTime: 0,
         seekRequest: 0,
-        playbackContext: contextToSet
+        playbackContext: contextToSet,
+        isAudioActive: true,
+        activeInstanceId: tabId
       })
     }
   },
@@ -208,12 +265,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const song = get().queue[index]
     rememberPlayedSong(song)
     const isVirtual = !song?.filePath || song.filePath.startsWith('virtual:')
+    const tabId = typeof window !== 'undefined' ? getTabInstanceId() : null
     set({
       currentSongIndex: index,
       isPlaying: true,
       isBuffering: isVirtual,
       currentTime: 0,
-      seekRequest: 0
+      seekRequest: 0,
+      isAudioActive: true,
+      activeInstanceId: tabId
     })
   },
 
@@ -230,12 +290,19 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
       return
     }
-    set({ isPlaying: !isPlaying })
+    const tabId = typeof window !== 'undefined' ? getTabInstanceId() : null
+    if (!isPlaying) {
+      set({ isPlaying: true, isAudioActive: true, activeInstanceId: tabId })
+    } else {
+      set({ isPlaying: false })
+    }
   },
 
   playNext: (manual = false) => {
     const { currentSongIndex, queue, originalQueue, repeatMode, isShuffle } = get()
     if (queue.length === 0) return
+    const tabId = typeof window !== 'undefined' ? getTabInstanceId() : null
+    const audioActiveUpdates = manual ? { isAudioActive: true, activeInstanceId: tabId } : {}
 
     // If auto-advancing from track end and repeat mode is 'one', repeat the current track
     if (repeatMode === 'one' && !manual) {
@@ -253,7 +320,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         isPlaying: true,
         isBuffering: isVirtual,
         currentTime: 0,
-        seekRequest: 0
+        seekRequest: 0,
+        ...audioActiveUpdates
       })
     } else if (repeatMode === 'all') {
       if (isShuffle && originalQueue.length > 1) {
@@ -268,7 +336,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           isPlaying: true,
           isBuffering: isVirtual,
           currentTime: 0,
-          seekRequest: 0
+          seekRequest: 0,
+          ...audioActiveUpdates
         })
       } else {
         const firstSong = queue[0]
@@ -279,7 +348,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           isPlaying: true,
           isBuffering: isVirtual,
           currentTime: 0,
-          seekRequest: 0
+          seekRequest: 0,
+          ...audioActiveUpdates
         })
       }
     } else if (get().isAutoplay) {
@@ -293,7 +363,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
             if (window.api?.getSongs) {
               libSongs = (await window.api.getSongs()) || []
             }
-            const { PersonalizationService } = await import('../services/PersonalizationService')
             const recommendations = await PersonalizationService.generateRadioStation(
               {
                 title: lastSong.title,
@@ -345,9 +414,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   playPrevious: () => {
     const { currentSongIndex, queue, currentTime, repeatMode } = get()
+    const tabId = typeof window !== 'undefined' ? getTabInstanceId() : null
     // If we're more than 3 seconds into the song, restart it instead of going to previous
     if (currentTime > 3) {
-      set({ seekRequest: 0, currentTime: 0 })
+      set({ seekRequest: 0, currentTime: 0, isAudioActive: true, activeInstanceId: tabId })
       return
     }
 
@@ -359,7 +429,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         isPlaying: true,
         isBuffering: isVirtual,
         currentTime: 0,
-        seekRequest: 0
+        seekRequest: 0,
+        isAudioActive: true,
+        activeInstanceId: tabId
       })
     } else if (queue.length > 0) {
       if (repeatMode === 'all' && queue.length > 1) {
@@ -373,10 +445,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           isPlaying: true,
           isBuffering: isVirtual,
           currentTime: 0,
-          seekRequest: 0
+          seekRequest: 0,
+          isAudioActive: true,
+          activeInstanceId: tabId
         })
       } else {
-        set({ seekRequest: 0, currentTime: 0 })
+        set({ seekRequest: 0, currentTime: 0, isAudioActive: true, activeInstanceId: tabId })
       }
     }
   },

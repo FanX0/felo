@@ -344,6 +344,14 @@ class RemoteClient {
     this.reconnect()
   }
 
+  public configure(url: string, token: string) {
+    this.baseUrl = url.replace(/\/+$/, '')
+    this.token = token.trim()
+    localStorage.setItem('felo_remote_base_url', this.baseUrl)
+    localStorage.setItem('felo_remote_token', this.token)
+    this.reconnect()
+  }
+
   public getToken(): string {
     return this.token
   }
