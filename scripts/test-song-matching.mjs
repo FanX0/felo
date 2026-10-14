@@ -181,7 +181,22 @@ console.log('--- Running Song Matching Test Suite ---')
   const p4 = parseSmartQuery('Prince Husein feat. Feby Putri - Walau Berantakan')
   assert.strictEqual(p4.isCollaboration, true)
   assert.strictEqual(p4.title, 'Walau Berantakan')
+
+  const p5 = parseSmartQuery('play this made for you by renforshort')
+  assert.strictEqual(p5.title, 'made for you')
+  assert.strictEqual(p5.artist, 'renforshort')
+
+  const p6 = parseSmartQuery('put on walau berantakan from prince husein')
+  assert.strictEqual(p6.title, 'walau berantakan')
+  assert.strictEqual(p6.artist, 'prince husein')
+
+  const p7 = parseSmartQuery('lagu feby putri runtuh')
+  assert.strictEqual(p7.cleanQuery, 'feby putri runtuh')
+
+  const p8 = parseSmartQuery('play that made for you renforshort')
+  assert.strictEqual(p8.cleanQuery, 'made for you renforshort')
+
   console.log('✓ parseSmartQuery accurately decomposes connectors, artists, and collaborations')
 }
 
-console.log('\n--- All 11 Song Matching Verification Tests Passed Successfully! ---')
+console.log('\n--- All Song Matching Verification Tests Passed Successfully! ---')

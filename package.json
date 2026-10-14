@@ -35,7 +35,9 @@
     "mobile:ios": "npx cap open ios",
     "sync:private": "node scripts/repo-sync.mjs private",
     "sync:public": "node scripts/repo-sync.mjs public",
-    "sync:status": "node scripts/repo-sync.mjs status"
+    "sync:status": "node scripts/repo-sync.mjs status",
+    "deploy:cf": "npm run build:web && npx wrangler pages deploy out/renderer --project-name=felo",
+    "deploy:cf:preview": "npm run build:web && npx wrangler pages deploy out/renderer --project-name=felo --branch=preview"
   },
   "dependencies": {
     "@capacitor/core": "^8.5.3",

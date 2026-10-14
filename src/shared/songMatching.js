@@ -73,7 +73,13 @@ function parseSmartQuery(raw, explicitArtist) {
   if (!raw) {
     return { title: "", artist: explicitArtist?.trim() || "", cleanQuery: "", isCollaboration: false };
   }
-  let text = stripJunkTags(raw).replace(/^(?:play|putar|dengarkan|listen to)\s+/i, "").replace(TRACK_NUM_PREFIX_REGEX, "").replace(/\s+/g, " ").trim();
+  let text = stripJunkTags(raw)
+    .replace(/^(?:play|putar|dengarkan|listen to|put on)\s+(?:this|that|the|a|song|track|lagu)?\s*/i, "")
+    .replace(/^(?:play|putar|dengarkan|listen to|put on)\s+/i, "")
+    .replace(/^(?:this|that)\s+/i, "")
+    .replace(TRACK_NUM_PREFIX_REGEX, "")
+    .replace(/\s+/g, " ")
+    .trim();
   const cleanQuery = text.replace(/\b(?:song|songs|lagu|track|audio|music)\b/gi, "").replace(/\s+/g, " ").trim();
   if (explicitArtist && explicitArtist.trim()) {
     const artist = explicitArtist.trim();
@@ -85,7 +91,7 @@ function parseSmartQuery(raw, explicitArtist) {
       isCollaboration: /\b(?:feat\.?|ft\.?|&|\bwith\b|\bvs\.?\b)\b/i.test(artist)
     };
   }
-  const byMatch = cleanQuery.match(/^(.+?)\s+by\s+(.+)$/i);
+  const byMatch = cleanQuery.match(/^(.+?)\s+(?:by|from)\s+(.+)$/i);
   if (byMatch) {
     const title = byMatch[1].trim();
     const artist = byMatch[2].trim();

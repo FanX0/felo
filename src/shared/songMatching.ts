@@ -144,7 +144,9 @@ export function parseSmartQuery(raw: string, explicitArtist?: string): SmartPars
   }
 
   let text = stripJunkTags(raw)
-    .replace(/^(?:play|putar|dengarkan|listen to)\s+/i, '')
+    .replace(/^(?:play|putar|dengarkan|listen to|put on)\s+(?:this|that|the|a|song|track|lagu)?\s*/i, '')
+    .replace(/^(?:play|putar|dengarkan|listen to|put on)\s+/i, '')
+    .replace(/^(?:this|that)\s+/i, '')
     .replace(TRACK_NUM_PREFIX_REGEX, '')
     .replace(/\s+/g, ' ')
     .trim()
@@ -165,8 +167,8 @@ export function parseSmartQuery(raw: string, explicitArtist?: string): SmartPars
     }
   }
 
-  // 1. Connector: "Title by Artist" (e.g. "Shape of You by Ed Sheeran")
-  const byMatch = cleanQuery.match(/^(.+?)\s+by\s+(.+)$/i)
+  // 1. Connector: "Title by/from Artist" (e.g. "Shape of You by Ed Sheeran", "Yellow from Coldplay")
+  const byMatch = cleanQuery.match(/^(.+?)\s+(?:by|from)\s+(.+)$/i)
   if (byMatch) {
     const title = byMatch[1].trim()
     const artist = byMatch[2].trim()
