@@ -14,6 +14,7 @@ import type { Song } from '../pages/Library/Library'
 export default function PlaybackStreamBridge(): null {
   const isPlaying = usePlayerStore((s) => s.isPlaying)
   const isBuffering = usePlayerStore((s) => s.isBuffering)
+  const isAudioActive = usePlayerStore((s) => s.isAudioActive)
   const isShuffle = usePlayerStore((s) => s.isShuffle)
   const currentSongIndex = usePlayerStore((s) => s.currentSongIndex)
   const queue = usePlayerStore((s) => s.queue)
@@ -32,8 +33,8 @@ export default function PlaybackStreamBridge(): null {
   useEffect(() => {
     let isCancelled = false
 
-    if (currentSongIndex < 0 || currentSongIndex >= queue.length) {
-      if (isBuffering) usePlayerStore.getState().setIsBuffering(false)
+    if (!isAudioActive || currentSongIndex < 0 || currentSongIndex >= queue.length) {
+      if (isBuffering && isAudioActive) usePlayerStore.getState().setIsBuffering(false)
       return () => {
         isCancelled = true
       }
@@ -344,7 +345,7 @@ export default function PlaybackStreamBridge(): null {
       isCancelled = true
       activeInFlightRef.current = false
     }
-  }, [currentSongIndex, queue, isPlaying, isBuffering])
+  }, [currentSongIndex, queue, isPlaying, isBuffering, isAudioActive])
 
   // -------------------------------------------------------------
   // 2. PREDICTIVE LOOKAHEAD PREFETCH (NEXT UPCOMING TRACK)
@@ -352,8 +353,8 @@ export default function PlaybackStreamBridge(): null {
   useEffect(() => {
     let isCancelled = false
 
-    // Only prefetch if currently playing audio stably
-    if (!isPlaying || queue.length === 0 || currentSongIndex < 0) return
+    // Only prefetch if this tab is the active audio owner and currently playing audio stably
+    if (!isAudioActive || !isPlaying || queue.length === 0 || currentSongIndex < 0) return
 
     // Do NOT prefetch if an active track is buffering (preemption)
     if (isBuffering || activeInFlightRef.current) return
