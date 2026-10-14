@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Felo Remote</string>
+    <string name="title_activity_main">Felo Remote</string>
+    <string name="package_name">com.felo.remote</string>
+    <string name="custom_url_scheme">com.felo.remote</string>
+</resources>
