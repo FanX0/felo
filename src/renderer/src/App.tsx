@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
+import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom'
 import { cn } from './lib/utils'
 import Sidebar from './components/Sidebar/Sidebar'
 import Footer from './components/Footer/Footer'
@@ -18,6 +18,7 @@ import PlaybackNoticeToast from './components/PlaybackNoticeToast'
 import QueueDrawer from './components/Queue/QueueDrawer'
 import RemotePhoneView from './pages/Remote/RemotePhoneView'
 import OfflineNoticeToast from './components/OfflineNoticeToast'
+import ErrorBoundary from './components/ErrorBoundary'
 import MobileNavBar from './components/MobileNavBar'
 import MobileDockedPlayer from './components/MobileDockedPlayer'
 import MobileNowPlaying from './pages/Remote/MobileNowPlaying'
@@ -345,7 +346,10 @@ function App() {
     location.pathname === '/lyrics' ||
     location.pathname === '/settings' ||
     location.pathname === '/chat' ||
-    location.pathname.startsWith('/profile')
+    location.pathname.startsWith('/profile') ||
+    location.pathname.startsWith('/online/listen') ||
+    location.pathname === '/listen' ||
+    location.pathname === '/together'
 
   const getSubPageTitle = () => {
     if (location.pathname.startsWith('/album/')) return 'Album'
@@ -355,6 +359,12 @@ function App() {
     if (location.pathname === '/settings') return 'Settings'
     if (location.pathname === '/chat') return 'Direct Messages'
     if (location.pathname.startsWith('/profile')) return 'Profile'
+    if (
+      location.pathname.startsWith('/online/listen') ||
+      location.pathname === '/listen' ||
+      location.pathname === '/together'
+    )
+      return 'Listen Together'
     return 'Back'
   }
 
@@ -873,112 +883,154 @@ function App() {
           )}
         >
           <section className={`flex-1 overflow-y-auto relative no-drag ${isMobileScreen ? 'pb-36' : ''}`}>
-            <div className="h-full">
-              <Routes>
-                <Route
-                  path="/"
-                  element={
-                    <Home
-                      onOpenDownloadPanel={(target) => {
-                        setDownloadTarget(target)
-                        setIsFriendActivityOpen(false)
-                        setIsDownloadPanelOpen(true)
-                      }}
-                    />
-                  }
-                />
-                <Route
-                  path="/library"
-                  element={
-                    <Library
-                      onOpenDownloadPanel={(target) => {
-                        setDownloadTarget(target)
-                        setIsFriendActivityOpen(false)
-                        setIsDownloadPanelOpen(true)
-                      }}
-                    />
-                  }
-                />
-                <Route
-                  path="/search"
-                  element={
-                    <Search
-                      onOpenDownloadPanel={(target) => {
-                        setDownloadTarget(target)
-                        setIsFriendActivityOpen(false)
-                        setIsDownloadPanelOpen(true)
-                      }}
-                    />
-                  }
-                />
-                <Route path="/playlists" element={<Playlists />} />
-                <Route
-                  path="/playlists/:id"
-                  element={
-                    <PlaylistDetail
-                      onOpenDownloadPanel={(target) => {
-                        setDownloadTarget(target)
-                        setIsFriendActivityOpen(false)
-                        setIsDownloadPanelOpen(true)
-                      }}
-                    />
-                  }
-                />
-                <Route
-                  path="/artist/:name"
-                  element={
-                    <ArtistPage
-                      onOpenDownloadPanel={(target) => {
-                        setDownloadTarget(target)
-                        setIsFriendActivityOpen(false)
-                        setIsDownloadPanelOpen(true)
-                      }}
-                    />
-                  }
-                />
-                <Route
-                  path="/album/:artist/:title"
-                  element={
-                    <AlbumPage
-                      onOpenDownloadPanel={(target) => {
-                        setDownloadTarget(target)
-                        setIsFriendActivityOpen(false)
-                        setIsDownloadPanelOpen(true)
-                      }}
-                    />
-                  }
-                />
-                <Route path="/lyrics" element={<LyricsPage />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="/account" element={<AccountPage />} />
-                <Route path="/profile" element={<ProfilePage />} />
-                <Route path="/profile/:username" element={<ProfilePage />} />
-                <Route
-                  path="/chat"
-                  element={
-                    <ChatPage
-                      onOpenDownloadPanel={(target) => {
-                        setDownloadTarget(target)
-                        setIsFriendActivityOpen(false)
-                        setIsDownloadPanelOpen(true)
-                      }}
-                    />
-                  }
-                />
+            <div className="min-h-full w-full flex flex-col">
+              <ErrorBoundary>
+                <Routes>
+                  <Route
+                    path="/"
+                    element={
+                      <Home
+                        onOpenDownloadPanel={(target) => {
+                          setDownloadTarget(target)
+                          setIsFriendActivityOpen(false)
+                          setIsDownloadPanelOpen(true)
+                        }}
+                      />
+                    }
+                  />
+                  <Route
+                    path="/library"
+                    element={
+                      <Library
+                        onOpenDownloadPanel={(target) => {
+                          setDownloadTarget(target)
+                          setIsFriendActivityOpen(false)
+                          setIsDownloadPanelOpen(true)
+                        }}
+                      />
+                    }
+                  />
+                  <Route
+                    path="/search"
+                    element={
+                      <Search
+                        onOpenDownloadPanel={(target) => {
+                          setDownloadTarget(target)
+                          setIsFriendActivityOpen(false)
+                          setIsDownloadPanelOpen(true)
+                        }}
+                      />
+                    }
+                  />
+                  <Route path="/playlists" element={<Playlists />} />
+                  <Route
+                    path="/playlists/:id"
+                    element={
+                      <PlaylistDetail
+                        onOpenDownloadPanel={(target) => {
+                          setDownloadTarget(target)
+                          setIsFriendActivityOpen(false)
+                          setIsDownloadPanelOpen(true)
+                        }}
+                      />
+                    }
+                  />
+                  <Route
+                    path="/artist/:name"
+                    element={
+                      <ArtistPage
+                        onOpenDownloadPanel={(target) => {
+                          setDownloadTarget(target)
+                          setIsFriendActivityOpen(false)
+                          setIsDownloadPanelOpen(true)
+                        }}
+                      />
+                    }
+                  />
+                  <Route
+                    path="/album/:artist/:title"
+                    element={
+                      <AlbumPage
+                        onOpenDownloadPanel={(target) => {
+                          setDownloadTarget(target)
+                          setIsFriendActivityOpen(false)
+                          setIsDownloadPanelOpen(true)
+                        }}
+                      />
+                    }
+                  />
+                  <Route path="/lyrics" element={<LyricsPage />} />
+                  <Route path="/settings" element={<Settings />} />
+                  <Route path="/account" element={<AccountPage />} />
+                  <Route path="/profile" element={<ProfilePage />} />
+                  <Route path="/profile/:username" element={<ProfilePage />} />
+                  <Route
+                    path="/chat"
+                    element={
+                      <ChatPage
+                        onOpenDownloadPanel={(target) => {
+                          setDownloadTarget(target)
+                          setIsFriendActivityOpen(false)
+                          setIsDownloadPanelOpen(true)
+                        }}
+                      />
+                    }
+                  />
 
-                <Route
-                  path="/listen-together"
-                  element={
-                    <ListenTogetherPage
-                      onOpenDownloadPanel={(target) => {
-                        setDownloadTarget(target)
-                        setIsFriendActivityOpen(false)
-                        setIsDownloadPanelOpen(true)
-                      }}
-                    />
-                  }
-                />
-              </Routes>
+                  {/* Listen Together Routes & Aliases */}
+                  <Route
+                    path="/listen-together"
+                    element={
+                      <ListenTogetherPage
+                        onOpenDownloadPanel={(target) => {
+                          setDownloadTarget(target)
+                          setIsFriendActivityOpen(false)
+                          setIsDownloadPanelOpen(true)
+                        }}
+                      />
+                    }
+                  />
+                  <Route
+                    path="/online/listen"
+                    element={
+                      <ListenTogetherPage
+                        onOpenDownloadPanel={(target) => {
+                          setDownloadTarget(target)
+                          setIsFriendActivityOpen(false)
+                          setIsDownloadPanelOpen(true)
+                        }}
+                      />
+                    }
+                  />
+                  <Route
+                    path="/listen"
+                    element={
+                      <ListenTogetherPage
+                        onOpenDownloadPanel={(target) => {
+                          setDownloadTarget(target)
+                          setIsFriendActivityOpen(false)
+                          setIsDownloadPanelOpen(true)
+                        }}
+                      />
+                    }
+                  />
+                  <Route
+                    path="/together"
+                    element={
+                      <ListenTogetherPage
+                        onOpenDownloadPanel={(target) => {
+                          setDownloadTarget(target)
+                          setIsFriendActivityOpen(false)
+                          setIsDownloadPanelOpen(true)
+                        }}
+                      />
+                    }
+                  />
+
+                  {/* Fallback Catch-All Route: Redirect to Home on unknown routes to prevent black screen */}
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </ErrorBoundary>
             </div>
           </section>
         </main>

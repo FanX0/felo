@@ -4,6 +4,7 @@ import { useOnlineStore } from '../hooks/useOnlineStore'
 import { usePlayerStore } from '../hooks/usePlayerStore'
 import { getSupabase } from '../lib/supabase'
 import { downloadTrackInBackground } from '../lib/backgroundDownloader'
+import type { Song } from '../pages/Library/Library'
 
 interface ListeningPresenceBridgeProps {
   enabled: boolean
@@ -92,12 +93,149 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
     return () => window.clearInterval(interval)
   }, [user?.id, enabled, isAudioActive, isJoiningRoom, hostRoomStopped, joinedRoom, ensureHostRoom, deactivateHostRoom])
 
-  // 3. Listen for incoming Universal Bot commands via Supabase Realtime
+  // 3. Listen for incoming Universal Bot commands via Supabase Realtime + Active Polling Fallback
   useEffect(() => {
     if (!hostRoom?.code || !enabled) return
     const roomCode = hostRoom.code
     const supabase = getSupabase()
+    const processedIds = new Set<string>()
 
+    const processCommand = async (record: any) => {
+      if (!record?.id || record.status !== 'pending' || processedIds.has(record.id)) return
+      processedIds.add(record.id)
+
+      // Mark processed immediately in database to prevent double-processing
+      void supabase
+        .from('listening_room_commands')
+        .update({ status: 'processed' })
+        .eq('id', record.id)
+
+      const player = usePlayerStore.getState()
+      const { command, payload: cmdPayload } = record
+
+      try {
+        switch (command) {
+          case 'play': {
+            const query = (cmdPayload?.query || '').trim()
+            const action = cmdPayload?.action || 'play_now'
+            if (!query) {
+              player.setIsPlaying(true)
+              break
+            }
+
+            const cleanQ = query.toLowerCase()
+
+            // 1. Check if the song is already in active player queue
+            const queueMatchIndex = player.queue.findIndex(
+              (s) =>
+                s.title?.toLowerCase().includes(cleanQ) ||
+                (s.artist && s.artist.toLowerCase().includes(cleanQ))
+            )
+
+            if (queueMatchIndex >= 0) {
+              if (action === 'play_now') {
+                player.playSong(queueMatchIndex)
+              } else if (action === 'play_next') {
+                const song = player.queue[queueMatchIndex]
+                player.enqueueSongNext(song)
+              }
+              break
+            }
+
+            // 2. Check local library if available
+            let libraryMatch: Song | undefined
+            try {
+              const songs = (await window.api?.getSongs?.()) || []
+              libraryMatch = songs.find(
+                (s: any) =>
+                  s.title?.toLowerCase().includes(cleanQ) ||
+                  (s.artist && s.artist.toLowerCase().includes(cleanQ))
+              )
+            } catch {}
+
+            if (libraryMatch) {
+              if (action === 'enqueue') {
+                player.enqueueSong(libraryMatch)
+              } else if (action === 'play_next') {
+                player.enqueueSongNext(libraryMatch)
+              } else {
+                player.enqueueSongNext(libraryMatch)
+                player.playNext(true)
+              }
+              break
+            }
+
+            // 3. Fallback: Create instant virtual track so UI & audio switch in 0ms
+            const virtualSong: Song = {
+              id: `discord-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              title: query,
+              artist: cmdPayload?.artist || 'Discord Request',
+              album: '',
+              duration: 0,
+              artworkPath: '',
+              filePath: `virtual:${query}`
+            }
+
+            if (action === 'enqueue') {
+              player.enqueueSong(virtualSong)
+            } else if (action === 'play_next') {
+              player.enqueueSongNext(virtualSong)
+            } else {
+              player.enqueueSongNext(virtualSong)
+              player.playNext(true)
+            }
+
+            // Also trigger desktop background downloader if capabilities allow
+            void downloadTrackInBackground(
+              { title: query },
+              {
+                playAction: action,
+                autoPlay: action === 'play_now',
+                conflictMode: 'keep_both'
+              }
+            ).catch(() => undefined)
+
+            break
+          }
+          case 'skip':
+          case 'next':
+            player.playNext(true)
+            break
+          case 'prev':
+          case 'previous':
+            player.playPrevious()
+            break
+          case 'stop':
+            player.setIsPlaying(false)
+            player.seek(0)
+            break
+          case 'pause':
+            player.setIsPlaying(false)
+            break
+          case 'resume':
+            player.setIsPlaying(true)
+            break
+          case 'seek': {
+            const seconds = Number(cmdPayload?.seconds)
+            if (!isNaN(seconds) && seconds >= 0) {
+              player.seek(seconds)
+            }
+            break
+          }
+          case 'volume': {
+            const percent = Number(cmdPayload?.percent)
+            if (!isNaN(percent) && percent >= 0 && percent <= 100) {
+              player.setVolume(percent / 100)
+            }
+            break
+          }
+        }
+      } catch (err) {
+        console.warn('[RoomCommands] Error executing command:', err)
+      }
+    }
+
+    // 1. Supabase Realtime WebSocket listener
     const channel = supabase
       .channel(`room-cmd-${roomCode}`)
       .on(
@@ -111,97 +249,37 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
         async (payload) => {
           const record = payload.new as any
           if (!record || record.status !== 'pending') return
-
-          // Mark processed
-          void supabase
-            .from('listening_room_commands')
-            .update({ status: 'processed' })
-            .eq('id', record.id)
-
-          const player = usePlayerStore.getState()
-          const { command, payload: cmdPayload } = record
-
-          try {
-            switch (command) {
-              case 'play': {
-                const query = (cmdPayload?.query || '').trim()
-                const action = cmdPayload?.action || 'play_now'
-                if (!query) {
-                  player.setIsPlaying(true)
-                  break
-                }
-
-                if (window.api?.getSongs) {
-                  const songs = await window.api.getSongs()
-                  const cleanQ = query.toLowerCase()
-                  const match = songs.find(
-                    (s: any) =>
-                      s.title?.toLowerCase().includes(cleanQ) ||
-                      s.artist?.toLowerCase().includes(cleanQ)
-                  )
-                  if (match) {
-                    if (action === 'enqueue') {
-                      player.enqueueSong(match)
-                    } else if (action === 'play_next') {
-                      player.enqueueSongNext(match)
-                    } else {
-                      player.enqueueSongNext(match)
-                      player.playNext(true)
-                    }
-                  } else {
-                    void downloadTrackInBackground(
-                      { title: query },
-                      {
-                        playAction: action,
-                        autoPlay: action === 'play_now',
-                        conflictMode: 'keep_both'
-                      }
-                    )
-                  }
-                }
-                break
-              }
-              case 'skip':
-              case 'next':
-                player.playNext(true)
-                break
-              case 'prev':
-              case 'previous':
-                player.playPrevious()
-                break
-              case 'stop':
-                player.setIsPlaying(false)
-                player.seek(0)
-                break
-              case 'pause':
-                player.setIsPlaying(false)
-                break
-              case 'resume':
-                player.setIsPlaying(true)
-                break
-              case 'seek': {
-                const seconds = Number(cmdPayload?.seconds)
-                if (!isNaN(seconds) && seconds >= 0) {
-                  player.seek(seconds)
-                }
-                break
-              }
-              case 'volume': {
-                const percent = Number(cmdPayload?.percent)
-                if (!isNaN(percent) && percent >= 0 && percent <= 100) {
-                  player.setVolume(percent / 100)
-                }
-                break
-              }
-            }
-          } catch (err) {
-            console.warn('[RoomCommands] Error executing command:', err)
-          }
+          await processCommand(record)
         }
       )
       .subscribe()
 
+    // 2. High-reliability polling fallback (every 2.5s) to guarantee zero dropped commands
+    const pollPendingCommands = async () => {
+      try {
+        const { data: pendingRows } = await supabase
+          .from('listening_room_commands')
+          .select('*')
+          .eq('room_code', roomCode)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: true })
+
+        if (Array.isArray(pendingRows) && pendingRows.length > 0) {
+          for (const cmd of pendingRows) {
+            await processCommand(cmd)
+          }
+        }
+      } catch (err) {
+        // best effort polling
+      }
+    }
+
+    // Immediate initial check on room mount
+    void pollPendingCommands()
+    const pollInterval = window.setInterval(pollPendingCommands, 2500)
+
     return () => {
+      window.clearInterval(pollInterval)
       void supabase.removeChannel(channel)
     }
   }, [hostRoom?.code, enabled])

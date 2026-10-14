@@ -1,6 +1,6 @@
 import { FormEvent, type ReactElement, useState } from 'react'
 import { Loader2, LockKeyhole, MessageCircle, UserPlus } from 'lucide-react'
-import { Navigate, useNavigate } from 'react-router-dom'
+import { Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 
 export default function AccountPage(): ReactElement {
@@ -15,8 +15,10 @@ export default function AccountPage(): ReactElement {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const navigate = useNavigate()
+  const location = useLocation()
+  const returnTo = (location.state as any)?.returnTo || '/profile'
 
-  if (user) return <Navigate to="/profile" replace />
+  if (user) return <Navigate to={returnTo} replace />
 
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault()
@@ -26,10 +28,10 @@ export default function AccountPage(): ReactElement {
     try {
       if (mode === 'login') {
         await signIn(email, password)
-        navigate('/profile')
+        navigate(returnTo)
       } else {
         const signedIn = await signUp(email, password, username.trim(), displayName.trim())
-        if (signedIn) navigate('/profile')
+        if (signedIn) navigate(returnTo)
         else setMessage('Check your email to confirm the account, then sign in.')
       }
     } catch (cause) {
