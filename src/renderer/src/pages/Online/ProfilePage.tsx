@@ -1052,18 +1052,18 @@ function ProfileWorkspace(): ReactElement {
 
   return (
     <div className="h-full overflow-y-auto bg-canvas">
-      <header className="flex min-h-[300px] items-end bg-gradient-to-b from-surface-elevated/80 to-canvas px-6 pb-7 pt-12 sm:px-10">
-        <div className="flex min-w-0 flex-col items-center gap-6 sm:flex-row sm:items-end">
+      <header className="flex min-h-[240px] sm:min-h-[300px] items-end bg-gradient-to-b from-surface-elevated/80 to-canvas px-4 sm:px-10 pb-6 sm:pb-7 pt-6 sm:pt-12">
+        <div className="flex min-w-0 flex-col items-center gap-4 sm:gap-6 sm:flex-row sm:items-end w-full sm:w-auto">
           <ProfileAvatar profile={viewedProfile} large />
           <div className="min-w-0 pb-2 text-center sm:text-left">
-            <p className="text-sm font-black text-white">Profile</p>
-            <h1 className="mt-1 max-w-full break-words text-4xl font-black text-white sm:text-6xl lg:text-7xl">
+            <p className="text-xs sm:text-sm font-black text-white">Profile</p>
+            <h1 className="mt-1 max-w-full break-words text-2xl sm:text-4xl md:text-6xl lg:text-7xl font-black text-white leading-tight tracking-tight">
               {viewedProfile.display_name}
             </h1>
             {viewedProfile.bio && (
-              <p className="mt-3 max-w-2xl text-sm text-white/75">{viewedProfile.bio}</p>
+              <p className="mt-2 sm:mt-3 max-w-2xl text-xs sm:text-sm text-white/75">{viewedProfile.bio}</p>
             )}
-            <p className="mt-4 text-sm font-bold text-white/80">
+            <p className="mt-3 sm:mt-4 text-xs sm:text-sm font-bold text-white/80">
               @{viewedProfile.username} <span className="mx-1 text-white/40">•</span>{' '}
               {playlists.length} online {playlists.length === 1 ? 'playlist' : 'playlists'}
               <span className="mx-1 text-white/40">•</span>
@@ -1075,7 +1075,7 @@ function ProfileWorkspace(): ReactElement {
         </div>
       </header>
 
-      <main className="min-h-[420px] px-6 py-6 sm:px-10">
+      <main className="min-h-[420px] px-4 sm:px-10 py-4 sm:py-6 pb-36 sm:pb-12">
         <div className="flex min-h-12 items-center gap-3">
           {isOwnProfile ? (
             <>

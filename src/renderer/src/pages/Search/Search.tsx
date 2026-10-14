@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   CheckCircle2,
@@ -15,12 +15,14 @@ import {
   Pause,
   Play,
   Radio,
+  Search as SearchIcon,
   User as UserIcon,
   X
 } from 'lucide-react'
 import { usePlayerStore, RECENTLY_PLAYED_STORAGE_KEY } from '../../hooks/usePlayerStore'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
 import { useAppStore } from '../../hooks/useAppStore'
+import { useIsMobile } from '../../hooks/useIsMobile'
 import { Song } from '../Library/Library'
 import { cn } from '../../lib/utils'
 import { toMediaUrl } from '../../lib/media'
@@ -211,6 +213,7 @@ function Artwork({
 }
 
 export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode {
+  const isMobile = useIsMobile()
   const { searchQuery, setSearchQuery, searchMode, setSearchMode } = useAppStore()
   const { setQueue, queue, playSong, playbackContext } = usePlayerStore()
   const { transfers } = useDownloadStore()
@@ -747,9 +750,10 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
     [results]
   )
 
-  // Zero-Query / Browse View
-  if (!searchQuery.trim()) {
-    const playedItems: SearchItem[] = recentlyPlayed
+  const mobileSearchInputRef = useRef<HTMLInputElement>(null)
+
+  const playedItems: SearchItem[] = useMemo(() => {
+    return recentlyPlayed
       .filter((song) => librarySongs.some((librarySong) => librarySong.id === song.id))
       .slice(0, 6)
       .map((song) => ({
@@ -763,12 +767,81 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
         thumbnail: toMediaUrl(song.artworkPath) || song.artworkUrl || '',
         localSong: song
       }))
+  }, [recentlyPlayed, librarySongs])
 
-    return (
-      <div className="h-full flex flex-col pt-6 px-8 pb-12 overflow-y-auto select-none space-y-10">
+  const handleMobileSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const trimmed = searchQuery.trim()
+    if (trimmed) {
+      saveRecentSearch(trimmed)
+      mobileSearchInputRef.current?.blur()
+    }
+  }
+
+  const handleClearMobileSearch = () => {
+    setSearchQuery('')
+    mobileSearchInputRef.current?.focus()
+  }
+
+  const isZeroQuery = !searchQuery.trim()
+
+  return (
+    <div className="h-full flex flex-col select-none overflow-hidden">
+      {/* Mobile-Only Persistent Sticky Search Input Bar */}
+      <div
+        className={cn(
+          'shrink-0 px-4 pt-3 pb-2.5 bg-canvas/95 backdrop-blur-md border-b border-border-subtle/40 z-20',
+          isMobile ? 'block' : 'md:hidden'
+        )}
+      >
+        <form
+          onSubmit={handleMobileSearchSubmit}
+          className="flex items-center bg-surface-elevated rounded-full pl-4 pr-2 py-2 w-full border border-border/60 shadow-md focus-within:border-white/40 focus-within:ring-1 focus-within:ring-white/20 transition-all"
+        >
+          <SearchIcon className="w-4 h-4 text-text-muted shrink-0 mr-2.5" />
+          <input
+            ref={mobileSearchInputRef}
+            type="search"
+            inputMode="search"
+            enterKeyHint="search"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={
+              AppCapabilities.onlineSearch
+                ? 'Search songs, artists, albums...'
+                : 'Search local library...'
+            }
+            className="bg-transparent border-none outline-none text-sm font-medium text-text placeholder:text-text-muted w-full"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={handleClearMobileSearch}
+              title="Clear search"
+              className="p-1.5 rounded-full text-text-muted hover:text-text hover:bg-hover transition-colors shrink-0"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </form>
+      </div>
+
+      {/* Main Scrollable View */}
+      <div
+        className={cn(
+          'flex-1 overflow-y-auto select-none px-4 sm:px-8 pb-14',
+          isZeroQuery ? 'pt-4 sm:pt-6 space-y-6 sm:space-y-10' : 'pt-4 sm:pt-6 space-y-4 sm:space-y-6'
+        )}
+      >
+        {isZeroQuery ? (
+          <>
+
         <div>
-          <h1 className="text-3xl font-extrabold text-text tracking-tight">Search & Browse</h1>
-          <p className="text-sm text-text-muted mt-1">
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-text tracking-tight">Search & Browse</h1>
+          <p className="text-xs sm:text-sm text-text-muted mt-1">
             {AppCapabilities.onlineSearch
               ? 'Explore your library or search across global catalog streaming sources.'
               : 'Search and explore your local music library.'}
@@ -924,12 +997,10 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
             <RecentlyPlayedList songs={playedItems} onPlay={handlePlayItem} />
           </section>
         )}
-      </div>
-    )
-  }
+          </>
+        ) : (
+          <>
 
-  return (
-    <div className="h-full overflow-y-auto select-none px-8 pt-6 pb-14 space-y-6">
       {/* Source Switcher & Filter Tabs Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-border/40">
         {/* Category Tabs: All, Songs, Artists, Albums, Playlists */}
@@ -1315,6 +1386,9 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
           )}
         </div>
       )}
+          </>
+        )}
+      </div>
     </div>
   )
 }

@@ -83,6 +83,7 @@
     -ms-user-select: none;
     user-select: none;
     cursor: default;
+    -webkit-tap-highlight-color: transparent;
   }
 
   /* Make header elements draggable */
@@ -94,6 +95,10 @@
   button, a, input, [role='button'], .no-drag {
     -webkit-app-region: no-drag !important;
     cursor: pointer;
+  }
+
+  button:focus:not(:focus-visible) {
+    outline: none;
   }
 
   input {

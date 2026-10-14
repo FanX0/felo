@@ -25,3 +25,4 @@ resources/hermes/
 .vscode/
 *.tsbuildinfo
 scripts/*.cjs
+README.private.md

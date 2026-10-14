@@ -16,10 +16,18 @@ import {
   Radio,
   LogOut,
   ListMusic,
-  Loader2
+  Loader2,
+  Smartphone,
+  Laptop2
 } from 'lucide-react'
 import RemoteControlModal from '../RemoteControlModal/RemoteControlModal'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { useOnlineStore } from '../../hooks/useOnlineStore'
+import {
+  useConnectedDeviceStore,
+  sendDeviceCommand,
+  getInterpolatedPosition
+} from '../../hooks/useConnectedDeviceStore'
 import ArtistLinks from '../Common/ArtistLinks'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
 import { useListeningStore } from '../../hooks/useListeningStore'
@@ -39,12 +47,14 @@ interface FooterProps {
 interface ProgressBarProps {
   duration: number
   seek: (time: number) => void
+  currentTime?: number
   disabled?: boolean
   disabledTitle?: string
 }
 
-function ProgressBar({ duration, seek, disabled, disabledTitle }: ProgressBarProps) {
-  const currentTime = usePlayerStore((state) => state.currentTime)
+function ProgressBar({ duration, seek, currentTime: propCurrentTime, disabled, disabledTitle }: ProgressBarProps) {
+  const storeCurrentTime = usePlayerStore((state) => state.currentTime)
+  const currentTime = propCurrentTime !== undefined ? propCurrentTime : storeCurrentTime
   const [isSeeking, setIsSeeking] = useState(false)
   const [previewTime, setPreviewTime] = useState(0)
   const progressRef = useRef<HTMLDivElement>(null)
@@ -177,6 +187,35 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
   const queueLength = usePlayerStore((state) => state.queue.length)
   const currentSongIndex = usePlayerStore((state) => state.currentSongIndex)
 
+  const user = useOnlineStore((state) => state.user)
+  const activeRemote = useConnectedDeviceStore((state) => state.activePlayback)
+  const myDeviceId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : null
+  const isRemoteActive = Boolean(
+    !isPlaying &&
+      activeRemote &&
+      activeRemote.activeDeviceId !== myDeviceId &&
+      activeRemote.song &&
+      (activeRemote.isPlaying || activeRemote.position > 0)
+  )
+
+  const [remotePos, setRemotePos] = useState(0)
+
+  useEffect(() => {
+    if (!isRemoteActive || !activeRemote) return
+    setRemotePos(getInterpolatedPosition(activeRemote))
+    if (!activeRemote.isPlaying) return
+
+    const timer = setInterval(() => {
+      setRemotePos(getInterpolatedPosition(activeRemote))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [isRemoteActive, activeRemote?.timestamp, activeRemote?.isPlaying, activeRemote?.position])
+
+  const displaySong = isRemoteActive && activeRemote?.song ? activeRemote.song : currentSong
+  const displayIsPlaying = isRemoteActive && activeRemote ? activeRemote.isPlaying : isPlaying
+  const displayDuration = isRemoteActive && activeRemote ? activeRemote.duration : duration
+  const displayCurrentTime = isRemoteActive ? remotePos : undefined
+
   const setQueue = usePlayerStore((state) => state.setQueue)
   const togglePlay = usePlayerStore((state) => state.togglePlay)
   const playNext = usePlayerStore((state) => state.playNext)
@@ -226,7 +265,10 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
   const leaveJoinedRoom = useListeningStore((state) => state.leaveJoinedRoom)
 
   const isLyricsActive = location.pathname === '/lyrics'
-  const artworkUrl = toMediaUrl(currentSong?.artworkPath) || currentSong?.artworkUrl
+  const artworkUrl =
+    isRemoteActive && activeRemote?.song?.artworkUrl
+      ? activeRemote.song.artworkUrl
+      : toMediaUrl(currentSong?.artworkPath) || currentSong?.artworkUrl
 
   const toggleLyrics = () => {
     if (isLyricsActive) {
@@ -240,26 +282,50 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
     e.currentTarget.setPointerCapture(e.pointerId)
     const rect = e.currentTarget.getBoundingClientRect()
     const clickX = Math.max(0, Math.min(e.clientX - rect.left, rect.width))
-    setVolume(clickX / rect.width)
+    const newVol = clickX / rect.width
+    setVolume(newVol)
+    if (isRemoteActive && activeRemote && user?.id) {
+      void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'volume', { volume: newVol })
+    }
   }
 
   const handleVolumePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.buttons !== 1) return
     const rect = e.currentTarget.getBoundingClientRect()
     const clickX = Math.max(0, Math.min(e.clientX - rect.left, rect.width))
-    setVolume(clickX / rect.width)
+    const newVol = clickX / rect.width
+    setVolume(newVol)
+    if (isRemoteActive && activeRemote && user?.id) {
+      void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'volume', { volume: newVol })
+    }
   }
 
   const toggleMute = () => {
     if (volume > 0) {
       setPrevVolume(volume)
       setVolume(0)
+      if (isRemoteActive && activeRemote && user?.id) {
+        void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'volume', { volume: 0 })
+      }
     } else {
-      setVolume(prevVolume || 0.5)
+      const restored = prevVolume || 0.5
+      setVolume(restored)
+      if (isRemoteActive && activeRemote && user?.id) {
+        void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'volume', { volume: restored })
+      }
     }
   }
 
   const handlePlayClick = async () => {
+    if (isRemoteActive && activeRemote && user?.id) {
+      await sendDeviceCommand(
+        user.id,
+        activeRemote.activeDeviceId,
+        activeRemote.isPlaying ? 'pause' : 'play'
+      )
+      return
+    }
+
     if (queueLength > 0 && currentSongIndex >= 0 && currentSongIndex < queueLength) {
       togglePlay()
       return
@@ -278,7 +344,37 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
     }
   }
 
+  const handleNextClick = async () => {
+    if (isRemoteActive && activeRemote && user?.id) {
+      await sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'next')
+      return
+    }
+    playNext(true)
+  }
+
+  const handlePreviousClick = async () => {
+    if (isRemoteActive && activeRemote && user?.id) {
+      await sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'previous')
+      return
+    }
+    playPrevious()
+  }
+
+  const handleSeek = (time: number) => {
+    if (isRemoteActive && activeRemote && user?.id) {
+      void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'seek', { seconds: time })
+      useConnectedDeviceStore.getState().updateRemotePosition(time)
+      setRemotePos(time)
+      return
+    }
+    seek(time)
+  }
+
   const handleTitleClick = () => {
+    if (isRemoteActive) {
+      setIsRemoteModalOpen(true)
+      return
+    }
     if (!currentSong) {
       void handlePlayClick()
       return
@@ -294,25 +390,27 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
       <div className="flex items-center gap-4 w-[30%] min-w-[200px]">
         {/* Cover Art */}
         <div
-          onClick={currentSong ? handleTitleClick : () => void handlePlayClick()}
+          onClick={displaySong ? handleTitleClick : () => void handlePlayClick()}
           title={
-            currentSong
-              ? AppCapabilities.downloads
-                ? `Open download sources for "${currentSong.title}"`
-                : currentSong.title
+            displaySong
+              ? isRemoteActive
+                ? `Playing on ${activeRemote?.activeDeviceName}`
+                : AppCapabilities.downloads
+                  ? `Open download sources for "${displaySong.title}"`
+                  : displaySong.title
               : 'Click play to start recently added'
           }
           className="relative h-[64px] w-[64px] bg-surface-elevated rounded-md shrink-0 flex items-center justify-center shadow-md overflow-hidden border border-border/10 cursor-pointer hover:border-white/30"
         >
-          {currentSong ? (
+          {displaySong ? (
             <ArtworkImage
               src={artworkUrl}
-              title={currentSong.title}
-              artist={currentSong.artist}
+              title={displaySong.title}
+              artist={displaySong.artist}
               className="absolute inset-0 h-full w-full object-cover"
               fallbackIcon={
                 <div className="w-full h-full bg-gradient-to-br from-indigo-900/60 to-purple-900/60 flex items-center justify-center text-[10px] font-bold text-text-muted uppercase">
-                  {currentSong.album && currentSong.album !== 'UNKNOWN' ? currentSong.album.slice(0, 3) : 'Felo'}
+                  {displaySong.album && displaySong.album !== 'UNKNOWN' ? displaySong.album.slice(0, 3) : 'Felo'}
                 </div>
               }
             />
@@ -335,7 +433,16 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
 
         {/* Title & Artist & Context */}
         <div className="flex flex-col overflow-hidden mr-2">
-          {(playbackContext || prefetchingTransfer) && (
+          {isRemoteActive && activeRemote ? (
+            <button
+              type="button"
+              onClick={() => setIsRemoteModalOpen(true)}
+              className="flex items-center gap-1.5 mb-0.5 text-[11px] font-bold text-emerald-400 hover:text-emerald-300 transition text-left cursor-pointer no-drag group"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+              <span className="truncate">Listening on {activeRemote.activeDeviceName}</span>
+            </button>
+          ) : (playbackContext || prefetchingTransfer) ? (
             <div className="flex items-center gap-2 mb-0.5">
               {playbackContext && (
                 <button
@@ -359,25 +466,28 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
                 </span>
               )}
             </div>
-          )}
+          ) : null}
+
           <p
             onClick={handleTitleClick}
             title={
-              currentSong
-                ? AppCapabilities.downloads
-                  ? `Open download sources for "${currentSong.title}"`
-                  : currentSong.title
+              displaySong
+                ? isRemoteActive
+                  ? `Playing on ${activeRemote?.activeDeviceName}`
+                  : AppCapabilities.downloads
+                    ? `Open download sources for "${displaySong.title}"`
+                    : displaySong.title
                 : 'Click play to start recently added'
             }
             className="text-[14px] font-medium text-text truncate hover:underline cursor-pointer no-drag"
           >
-            {currentSong ? currentSong.title : 'No track selected'}
+            {displaySong ? displaySong.title : 'No track selected'}
           </p>
-          {currentSong ? (
+          {displaySong ? (
             <div className="text-[12px] truncate no-drag">
               <ArtistLinks
-                artist={currentSong.artist}
-                artists={currentSong.artists}
+                artist={displaySong.artist}
+                artists={displaySong.artists}
                 linkClassName="text-text-muted hover:text-text hover:underline text-[12px]"
                 separatorClassName="text-text-muted/60"
               />
@@ -394,7 +504,7 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
         </div>
 
         {/* Add to Liked */}
-        {currentSong && (
+        {displaySong && (
           <button className="text-text-muted hover:text-text transition-colors no-drag shrink-0 p-1">
             <PlusCircle className="w-4 h-4" />
           </button>
@@ -448,7 +558,7 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
 
           {/* Previous */}
           <button
-            onClick={playPrevious}
+            onClick={handlePreviousClick}
             title="Previous"
             className="text-text-muted hover:text-text transition-colors"
           >
@@ -458,12 +568,12 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
           {/* Play/Pause */}
           <button
             onClick={handlePlayClick}
-            title={isBuffering ? 'Buffering track...' : isPlaying ? 'Pause' : 'Play'}
+            title={isBuffering ? 'Buffering track...' : displayIsPlaying ? 'Pause' : 'Play'}
             className="h-10 w-10 rounded-full bg-text text-canvas flex items-center justify-center hover:scale-105 active:scale-95 transition-transform shadow-md"
           >
             {isBuffering ? (
               <Loader2 className="w-4 h-4 animate-spin text-canvas" />
-            ) : isPlaying ? (
+            ) : displayIsPlaying ? (
               <Pause className="w-4 h-4 fill-current" />
             ) : (
               <Play className="w-4 h-4 fill-current ml-0.5" />
@@ -472,7 +582,7 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
 
           {/* Next */}
           <button
-            onClick={() => playNext(true)}
+            onClick={handleNextClick}
             title="Next"
             className="text-text-muted hover:text-text transition-colors"
           >
@@ -510,9 +620,10 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
 
         {/* Progress bar */}
         <ProgressBar
-          duration={duration}
-          seek={seek}
-          disabled={Boolean(!currentSong || duration <= 0 || joinedRoom)}
+          duration={displayDuration}
+          seek={handleSeek}
+          currentTime={displayCurrentTime}
+          disabled={Boolean(!displaySong || displayDuration <= 0 || joinedRoom)}
           disabledTitle={
             joinedRoom
               ? 'Playback position is locked to the live session host. Leave room to seek.'
@@ -579,18 +690,35 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
         </div>
 
         {/* Device Output Switcher / Remote Control */}
-        <button
-          title="Connect to a Device (Output & Remote Control)"
-          onClick={() => setIsRemoteModalOpen(true)}
-          className={`hover:text-text transition-colors p-1 relative ${
-            connectedPhones > 0 ? 'text-white' : ''
-          }`}
-        >
-          <Radio className="w-4 h-4" />
-          {connectedPhones > 0 && (
-            <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-          )}
-        </button>
+        {isRemoteActive && activeRemote ? (
+          <button
+            type="button"
+            title={`Listening on ${activeRemote.activeDeviceName} (Click to switch)`}
+            onClick={() => setIsRemoteModalOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/25 transition cursor-pointer text-xs font-semibold shrink-0"
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            {activeRemote.activeDeviceType === 'mobile' ? (
+              <Smartphone className="w-3.5 h-3.5" />
+            ) : (
+              <Laptop2 className="w-3.5 h-3.5" />
+            )}
+            <span className="truncate max-w-[120px]">{activeRemote.activeDeviceName}</span>
+          </button>
+        ) : (
+          <button
+            title="Connect to a Device (Output & Remote Control)"
+            onClick={() => setIsRemoteModalOpen(true)}
+            className={`hover:text-text transition-colors p-1 relative ${
+              connectedPhones > 0 ? 'text-white' : ''
+            }`}
+          >
+            <Radio className="w-4 h-4" />
+            {connectedPhones > 0 && (
+              <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+            )}
+          </button>
+        )}
 
         <button title="Full Screen" className="hover:text-text transition-colors ml-1 p-1">
           <Maximize2 className="w-4 h-4" />

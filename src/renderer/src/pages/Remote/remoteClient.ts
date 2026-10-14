@@ -1,3 +1,5 @@
+import { usePlayerStore } from '../../hooks/usePlayerStore'
+
 export interface RemotePlayerSong {
   id: string
   title: string
@@ -41,6 +43,7 @@ class RemoteClient {
   private connectionListeners = new Set<ConnectionListener>()
   private targetListeners = new Set<TargetListener>()
   private reconnectTimer: any = null
+  private reconnectAttempts = 0
   private isConnected = false
 
   // Playback output target: 'desktop', 'mobile', or 'both' (dual synchronized playback)
@@ -177,6 +180,11 @@ class RemoteClient {
 
     audio.addEventListener('play', () => {
       this.mobileIsPlaying = true
+      // Prevent overlapping playback: pause renderer audio engine if active
+      const playerStore = usePlayerStore.getState()
+      if (playerStore.isPlaying) {
+        playerStore.setIsPlaying(false)
+      }
       this.currentState = {
         ...this.currentState,
         isPlaying: true,
@@ -389,6 +397,27 @@ class RemoteClient {
   public connect() {
     if (this.eventSource) return
 
+    // Guard 1: Do not connect without a token configured
+    if (!this.token) {
+      this.isConnected = false
+      this.notifyConnection()
+      return
+    }
+
+    // Guard 2: If running on a remote web domain (e.g. workers.dev, vercel.app)
+    // and baseUrl points to the web domain itself (not a desktop LAN IP or tunnel),
+    // there is no desktop HTTP/SSE server running here.
+    if (
+      typeof window !== 'undefined' &&
+      window.location.hostname !== 'localhost' &&
+      window.location.hostname !== '127.0.0.1' &&
+      (!this.baseUrl || this.baseUrl === window.location.origin)
+    ) {
+      this.isConnected = false
+      this.notifyConnection()
+      return
+    }
+
     const url = `${this.getBaseUrl()}/v1/events?token=${encodeURIComponent(this.token)}`
 
     try {
@@ -396,6 +425,7 @@ class RemoteClient {
 
       this.eventSource.onopen = () => {
         this.isConnected = true
+        this.reconnectAttempts = 0
         this.notifyConnection()
       }
 
@@ -492,6 +522,7 @@ class RemoteClient {
   }
 
   public disconnect() {
+    this.reconnectAttempts = 0
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
@@ -515,10 +546,12 @@ class RemoteClient {
 
   private scheduleReconnect() {
     if (this.reconnectTimer) return
+    const delay = Math.min(30000, 3000 * Math.pow(1.5, Math.min(this.reconnectAttempts, 6)))
+    this.reconnectAttempts++
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
       this.connect()
-    }, 3000)
+    }, delay)
   }
 
   private notifyState() {
@@ -557,6 +590,24 @@ class RemoteClient {
   // --- Playback Commands ---
 
   public async play(songId?: string, volumePercent?: number) {
+    if (!this.isConnected && this.targetDevice !== 'both') {
+      const player = usePlayerStore.getState()
+      if (songId) {
+        const idx = player.queue.findIndex((s) => s.id === songId)
+        if (idx !== -1) {
+          player.playSong(idx)
+        } else {
+          player.setIsPlaying(true)
+        }
+      } else {
+        player.setIsPlaying(true)
+      }
+      if (volumePercent !== undefined) {
+        player.setVolume(Math.max(0, Math.min(100, volumePercent)) / 100)
+      }
+      return { ok: true }
+    }
+
     if (this.targetDevice === 'both') {
       // 1. Tell desktop to play
       try {
@@ -616,6 +667,11 @@ class RemoteClient {
   }
 
   public async pause() {
+    if (!this.isConnected && this.targetDevice !== 'both') {
+      usePlayerStore.getState().setIsPlaying(false)
+      return { ok: true }
+    }
+
     if (this.targetDevice === 'both') {
       try {
         await this.request('/v1/player/pause', {
@@ -652,6 +708,11 @@ class RemoteClient {
   }
 
   public async togglePlay() {
+    if (!this.isConnected && this.targetDevice !== 'both') {
+      usePlayerStore.getState().togglePlay()
+      return { ok: true }
+    }
+
     if (this.targetDevice === 'both') {
       if (this.currentState.isPlaying || this.mobileIsPlaying) {
         return this.pause()
@@ -676,6 +737,11 @@ class RemoteClient {
   }
 
   public async next() {
+    if (!this.isConnected && this.targetDevice !== 'both') {
+      usePlayerStore.getState().playNext(true)
+      return { ok: true }
+    }
+
     if (this.targetDevice === 'both') {
       return this.request('/v1/player/next', {
         method: 'POST',
@@ -707,6 +773,11 @@ class RemoteClient {
   }
 
   public async previous() {
+    if (!this.isConnected && this.targetDevice !== 'both') {
+      usePlayerStore.getState().playPrevious()
+      return { ok: true }
+    }
+
     if (this.targetDevice === 'both') {
       return this.request('/v1/player/previous', {
         method: 'POST',
@@ -739,6 +810,11 @@ class RemoteClient {
 
   public async seek(seconds: number) {
     const safeSeconds = Math.max(0, seconds)
+    if (!this.isConnected && this.targetDevice !== 'both') {
+      usePlayerStore.getState().seek(safeSeconds)
+      return { ok: true }
+    }
+
     if (this.targetDevice === 'both') {
       if (this.mobileAudio) {
         this.mobileAudio.currentTime = safeSeconds
@@ -773,6 +849,11 @@ class RemoteClient {
 
   public async setVolume(percent: number) {
     const safePercent = Math.max(0, Math.min(100, Math.round(percent)))
+    if (!this.isConnected && this.targetDevice !== 'both') {
+      usePlayerStore.getState().setVolume(safePercent / 100)
+      return { ok: true }
+    }
+
     if (this.targetDevice === 'both') {
       if (this.mobileAudio) {
         this.mobileAudio.volume = safePercent / 100
@@ -809,6 +890,20 @@ class RemoteClient {
   }
 
   public async setMode(shuffle?: boolean, repeat?: 'off' | 'all' | 'one') {
+    if (!this.isConnected && this.targetDevice !== 'both') {
+      const player = usePlayerStore.getState()
+      if (shuffle !== undefined && player.isShuffle !== shuffle) {
+        player.toggleShuffle()
+      }
+      if (repeat !== undefined && player.repeatMode !== repeat) {
+        player.toggleRepeat()
+        if (player.repeatMode !== repeat) {
+          player.toggleRepeat()
+        }
+      }
+      return { ok: true }
+    }
+
     return this.request('/v1/player/mode', {
       method: 'POST',
       body: JSON.stringify({ shuffle, repeat })
@@ -816,6 +911,11 @@ class RemoteClient {
   }
 
   public async playIndex(index: number) {
+    if (!this.isConnected && this.targetDevice !== 'both') {
+      usePlayerStore.getState().playSong(index)
+      return { ok: true }
+    }
+
     if (this.targetDevice === 'both') {
       return this.request('/v1/player/play-index', {
         method: 'POST',
@@ -894,12 +994,19 @@ class RemoteClient {
     return `${this.getBaseUrl()}/v1/download/${encodeURIComponent(songId)}?token=${encodeURIComponent(this.token)}`
   }
 
+  public pauseMobileAudio(): void {
+    if (this.mobileAudio && !this.mobileAudio.paused) {
+      this.mobileAudio.pause()
+      this.mobileIsPlaying = false
+    }
+  }
+
   public downloadSong(songId: string): void {
     const url = this.getDownloadUrl(songId)
     const a = document.createElement('a')
     a.href = url
     a.setAttribute('download', '')
-    a.target = '_blank'
+    a.rel = 'noopener'
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)

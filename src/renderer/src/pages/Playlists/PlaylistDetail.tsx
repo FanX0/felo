@@ -563,26 +563,26 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   }
 
   return (
-    <div className="relative min-h-full overflow-x-hidden bg-[#121212] text-white">
+    <div className="relative min-h-full overflow-x-hidden bg-[#121212] text-white pb-36 md:pb-12">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-[450px] bg-[linear-gradient(180deg,rgba(91,43,7,0.92)_0%,rgba(47,24,7,0.7)_55%,rgba(18,18,18,0.96)_100%)]" />
 
-      <header className="relative z-10 flex min-h-[310px] items-end gap-8 px-10 pb-8 pt-10">
-        <div className="flex h-[232px] w-[232px] shrink-0 items-center justify-center overflow-hidden rounded bg-[#222] shadow-[0_4px_60px_rgba(0,0,0,0.5)]">
+      <header className="relative z-10 flex flex-col sm:flex-row items-center sm:items-end text-center sm:text-left gap-5 sm:gap-8 px-4 sm:px-6 md:px-10 pb-6 sm:pb-8 pt-6 sm:pt-10">
+        <div className="flex h-40 w-40 sm:h-[232px] sm:w-[232px] shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[#222] shadow-[0_4px_60px_rgba(0,0,0,0.5)]">
           {artworkUrl ? (
             <img src={artworkUrl} alt="" className="h-full w-full object-cover" />
           ) : (
-            <Music2 className="h-20 w-20 fill-[#5a5a5a] text-[#5a5a5a]" />
+            <Music2 className="h-16 w-16 sm:h-20 sm:w-20 fill-[#5a5a5a] text-[#5a5a5a]" />
           )}
         </div>
         <div className="min-w-0 pb-1">
-          <div className="mb-3 text-xs font-black uppercase tracking-[1px]">Playlist</div>
-          <h1 className="max-w-full break-words text-5xl font-black leading-[0.95] tracking-normal md:text-7xl xl:text-8xl">
+          <div className="mb-2 sm:mb-3 text-xs font-black uppercase tracking-[1px]">Playlist</div>
+          <h1 className="max-w-full break-words text-2xl sm:text-4xl md:text-6xl xl:text-8xl font-black leading-tight sm:leading-[0.95] tracking-tight">
             {playlist.name}
           </h1>
           {playlist.description && (
-            <p className="mt-4 max-w-2xl text-sm text-white/70">{playlist.description}</p>
+            <p className="mt-2 sm:mt-4 max-w-2xl text-xs sm:text-sm text-white/70">{playlist.description}</p>
           )}
-          <div className="mt-5 flex flex-wrap items-center gap-2 text-sm">
+          <div className="mt-3 sm:mt-5 flex flex-wrap items-center justify-center sm:justify-start gap-2 text-xs sm:text-sm">
             <span className="font-bold">
               {songs.length} {songs.length === 1 ? 'song' : 'songs'}
             </span>
@@ -598,7 +598,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
         </div>
       </header>
 
-      <div className="relative z-30 flex items-center gap-7 px-10 py-7">
+      <div className="relative z-30 flex flex-wrap items-center gap-3 sm:gap-6 px-4 sm:px-6 md:px-10 py-4 sm:py-7">
         <button
           type="button"
           onClick={togglePlaylist}
@@ -800,7 +800,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
 
       <div className="relative z-10 w-full min-w-0 px-4 pb-28 md:px-6 xl:px-10">
         <div className="w-full min-w-0">
-          <div className="grid h-10 grid-cols-[32px_minmax(0,1fr)_64px] items-center gap-2 border-b border-white/10 px-2 text-xs uppercase tracking-[1px] text-[#a7a7a7] md:grid-cols-[32px_minmax(0,2fr)_minmax(0,1fr)_64px] md:gap-3 xl:grid-cols-[32px_minmax(0,2.2fr)_minmax(0,1.2fr)_110px_minmax(0,1.1fr)_64px] xl:gap-4 xl:px-4">
+          <div className="grid h-10 grid-cols-[32px_minmax(0,1fr)_76px] items-center gap-2 border-b border-white/10 px-2 text-xs uppercase tracking-[1px] text-[#a7a7a7] md:grid-cols-[32px_minmax(0,2fr)_minmax(0,1fr)_64px] md:gap-3 xl:grid-cols-[32px_minmax(0,2.2fr)_minmax(0,1.2fr)_110px_minmax(0,1.1fr)_64px] xl:gap-4 xl:px-4">
             <span>#</span>
             <span>Title</span>
             <span className="hidden min-w-0 md:block">Album</span>
@@ -831,7 +831,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
                       y: Math.min(e.clientY, window.innerHeight - menuHeight - 12)
                     })
                   }}
-                  className={`group grid h-16 w-full min-w-0 grid-cols-[32px_minmax(0,1fr)_64px] items-center gap-2 rounded px-2 text-sm hover:bg-white/10 md:grid-cols-[32px_minmax(0,2fr)_minmax(0,1fr)_64px] md:gap-3 xl:grid-cols-[32px_minmax(0,2.2fr)_minmax(0,1.2fr)_110px_minmax(0,1.1fr)_64px] xl:gap-4 xl:px-4 ${
+                  className={`group grid h-16 w-full min-w-0 grid-cols-[32px_minmax(0,1fr)_76px] items-center gap-2 rounded px-2 text-sm hover:bg-white/10 md:grid-cols-[32px_minmax(0,2fr)_minmax(0,1fr)_64px] md:gap-3 xl:grid-cols-[32px_minmax(0,2.2fr)_minmax(0,1.2fr)_110px_minmax(0,1.1fr)_64px] xl:gap-4 xl:px-4 ${
                     isCurrent ? 'bg-white/10' : !isDownloaded ? 'opacity-75 hover:opacity-100' : ''
                   }`}
                 >
@@ -980,7 +980,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
                       className={`h-8 w-8 shrink-0 rounded-[3px] border flex items-center justify-center transition-all ${
                         activeSongMenu?.song.id === song.id
                           ? 'border-primary-amber bg-hover text-text opacity-100'
-                          : 'border-transparent text-[#b3b3b3] opacity-0 group-hover:opacity-100 hover:border-primary-amber hover:bg-hover hover:text-white'
+                          : 'border-transparent text-[#b3b3b3] opacity-70 md:opacity-0 md:group-hover:opacity-100 hover:border-primary-amber hover:bg-hover hover:text-white'
                       }`}
                     >
                       <MoreVertical className="h-4 w-4" />

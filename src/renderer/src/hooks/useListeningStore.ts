@@ -6,8 +6,8 @@ import { useOnlineStore } from './useOnlineStore'
 import { usePlayerStore } from './usePlayerStore'
 import { useDownloadStore } from './useDownloadStore'
 import { DEFAULT_DOWNLOAD_PRIORITY, DOWNLOAD_PRIORITY_SETTING, STREAMING_ACCOUNTS_SETTING } from '../lib/downloadConfig'
+import { WebRTCAudioHost, WebRTCAudioClient, type WebRTCAudioStats } from '../lib/webrtcAudioStream'
 import { scoreProviderMatch } from '../lib/songMatching'
-import { WebRTCAudioHost, WebRTCAudioClient } from '../lib/webrtcAudioStream'
 
 let _activeAudioHost: WebRTCAudioHost | null = null
 let _activeAudioClient: WebRTCAudioClient | null = null
@@ -102,6 +102,17 @@ interface ListeningStoreState {
   deviceAudioLevel: number
   deviceAudioPeerCount: number
   deviceAudioClientState: 'idle' | 'connecting' | 'connected' | 'disconnected' | 'stopped'
+  deviceAudioBitrate: number
+  isDeviceAudioMuted: boolean
+  isAutoplayBlocked: boolean
+  deviceAudioStats: WebRTCAudioStats | null
+  deviceAudioVolume: number
+  deviceAudioClientLevel: number
+
+  setDeviceAudioBitrate: (bitrate: number) => void
+  toggleDeviceAudioMute: () => void
+  setDeviceAudioVolume: (volume: number) => void
+  unmuteDeviceStream: () => Promise<boolean>
   startDeviceAudioSharing: () => Promise<void>
   stopDeviceAudioSharing: () => Promise<void>
   connectToDeviceStream: (room: ListeningRoom) => Promise<void>
@@ -216,6 +227,46 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
   deviceAudioLevel: 0,
   deviceAudioPeerCount: 0,
   deviceAudioClientState: 'idle',
+  deviceAudioBitrate: 320000,
+  isDeviceAudioMuted: false,
+  isAutoplayBlocked: false,
+  deviceAudioStats: null,
+  deviceAudioVolume: 1.0,
+  deviceAudioClientLevel: 0,
+
+  setDeviceAudioBitrate: (bitrate: number) => {
+    set({ deviceAudioBitrate: bitrate })
+    if (_activeAudioHost) {
+      _activeAudioHost.setBitrate(bitrate)
+    }
+  },
+
+  toggleDeviceAudioMute: () => {
+    const nextMuted = !get().isDeviceAudioMuted
+    set({ isDeviceAudioMuted: nextMuted })
+    if (_activeAudioHost) {
+      _activeAudioHost.setMuted(nextMuted)
+    }
+  },
+
+  setDeviceAudioVolume: (volume: number) => {
+    const clamped = Math.max(0, Math.min(1, volume))
+    set({ deviceAudioVolume: clamped })
+    if (_activeAudioClient) {
+      _activeAudioClient.setVolume(clamped)
+    }
+  },
+
+  unmuteDeviceStream: async () => {
+    if (_activeAudioClient) {
+      const ok = await _activeAudioClient.unmuteAudio()
+      if (ok) {
+        set({ isAutoplayBlocked: false })
+      }
+      return ok
+    }
+    return false
+  },
 
   setHostRoom: (hostRoom) => set({ hostRoom }),
   setJoinedRoom: (joinedRoom) => set({ joinedRoom }),
@@ -624,7 +675,17 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
 
   handleHostSongChange: async (room: ListeningRoom): Promise<void> => {
     const user = useOnlineStore.getState().user
-    if (!room.song || room.host_id === user?.id || _isSessionSyncing) return
+    if (room.host_id === user?.id || _isSessionSyncing) return
+
+    // Clean teardown if host stopped playback or ended device stream
+    if (!room.song) {
+      if (get().isReceivingDeviceStream) {
+        get().disconnectFromDeviceStream()
+      }
+      usePlayerStore.getState().setIsPlaying(false)
+      set({ syncStatus: 'idle', missingSong: null })
+      return
+    }
 
     _isSessionSyncing = true
     set({ syncStatus: 'buffering', lastHostUpdate: Date.now() })
@@ -1042,14 +1103,17 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       _activeAudioHost = null
     }
 
+    const bitrate = get().deviceAudioBitrate || 320000
+
     try {
       set({
         isDeviceAudioSharing: true,
+        isDeviceAudioMuted: false,
         deviceAudioLevel: 0,
         deviceAudioPeerCount: 0
       })
 
-      const audioHost = new WebRTCAudioHost(room.code, user.id)
+      const audioHost = new WebRTCAudioHost(room.code, user.id, { bitrateBps: bitrate })
       audioHost.onPeerCountChange = (count) => {
         set({ deviceAudioPeerCount: count })
       }
@@ -1059,6 +1123,9 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       audioHost.onError = (err) => {
         console.error('[WebRTCAudioHost] Error:', err)
         set({ error: err.message })
+      }
+      audioHost.onEnded = () => {
+        void get().stopDeviceAudioSharing()
       }
 
       await audioHost.start()
@@ -1116,6 +1183,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
     }
     set({
       isDeviceAudioSharing: false,
+      isDeviceAudioMuted: false,
       deviceAudioLevel: 0,
       deviceAudioPeerCount: 0
     })
@@ -1166,19 +1234,33 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
 
     set({
       isReceivingDeviceStream: true,
-      deviceAudioClientState: 'connecting'
+      isAutoplayBlocked: false,
+      deviceAudioClientState: 'connecting',
+      deviceAudioStats: null,
+      deviceAudioClientLevel: 0
     })
 
     try {
-      const client = new WebRTCAudioClient(room.code, user.id, room.host_id)
-      client.onStateChange = (state) => {
-        set({ deviceAudioClientState: state })
-      }
-      client.onError = (err) => {
-        console.error('[WebRTCAudioClient] Error:', err)
-        set({ error: err.message, deviceAudioClientState: 'disconnected' })
-      }
+      const client = new WebRTCAudioClient(room.code, user.id, room.host_id, {
+        onStateChange: (state) => {
+          set({ deviceAudioClientState: state })
+        },
+        onAutoplayBlocked: (blocked) => {
+          set({ isAutoplayBlocked: blocked })
+        },
+        onStats: (stats) => {
+          set({ deviceAudioStats: stats })
+        },
+        onLevelChange: (level) => {
+          set({ deviceAudioClientLevel: level })
+        },
+        onError: (err) => {
+          console.error('[WebRTCAudioClient] Error:', err)
+          set({ error: err.message, deviceAudioClientState: 'disconnected' })
+        }
+      })
 
+      client.setVolume(get().deviceAudioVolume)
       await client.connect()
       _activeAudioClient = client
     } catch (err: any) {
@@ -1201,7 +1283,10 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
     }
     set({
       isReceivingDeviceStream: false,
-      deviceAudioClientState: 'idle'
+      isAutoplayBlocked: false,
+      deviceAudioClientState: 'idle',
+      deviceAudioStats: null,
+      deviceAudioClientLevel: 0
     })
   },
 
@@ -1212,7 +1297,10 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       joinedRoom: null,
       syncStatus: 'idle',
       missingSong: null,
-      lastHostUpdate: 0
+      lastHostUpdate: 0,
+      isAutoplayBlocked: false,
+      deviceAudioStats: null,
+      deviceAudioClientLevel: 0
     })
   }
 }))

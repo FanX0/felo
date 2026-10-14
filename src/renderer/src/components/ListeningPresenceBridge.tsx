@@ -165,12 +165,27 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
               case 'next':
                 player.playNext(true)
                 break
+              case 'prev':
+              case 'previous':
+                player.playPrevious()
+                break
+              case 'stop':
+                player.setIsPlaying(false)
+                player.seek(0)
+                break
               case 'pause':
                 player.setIsPlaying(false)
                 break
               case 'resume':
                 player.setIsPlaying(true)
                 break
+              case 'seek': {
+                const seconds = Number(cmdPayload?.seconds)
+                if (!isNaN(seconds) && seconds >= 0) {
+                  player.seek(seconds)
+                }
+                break
+              }
               case 'volume': {
                 const percent = Number(cmdPayload?.percent)
                 if (!isNaN(percent) && percent >= 0 && percent <= 100) {

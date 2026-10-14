@@ -235,7 +235,7 @@ export const CHART_CATEGORIES: ChartCategory[] = [
 
 /** Source suffixes that may appear in track titles downloaded via streaming services. */
 const SOURCE_SUFFIX_RE =
-  /\s*[[({]\s*(?:qobuz|qobus|deezer|tidal|youtube(?:\s*music)?|soundcloud|spotify|apple\s*music)\s*[\])}]\s*$/i
+  /\s*[[({]\s*(?:qobuz|qobus|deezer|tidal|youtube(?:\s*music)?|soulseek|slsk|soundcloud|spotify|apple\s*music)\s*[\])}]/gi
 
 /**
  * Strip known source suffixes like "(Qobuz)", "[Qobuz]", "(Qobus)", or "(Deezer)" from a title string.
@@ -249,7 +249,7 @@ export function stripSourceSuffix(str: string): string {
  * Returns null if no clear split is found (i.e. no " - " present).
  */
 export function parseArtistFromTitle(rawTitle: string): { artist: string; title: string } | null {
-  const clean = stripSourceSuffix(rawTitle)
+  const clean = stripSourceSuffix(rawTitle).replace(/[\u2010-\u2015\u2212\uFF0D]/g, '-')
   const separatorIdx = clean.indexOf(' - ')
   if (separatorIdx <= 0) return null
 

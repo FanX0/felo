@@ -37,6 +37,8 @@ async function verifyDiscordSignature(
 
     let key: CryptoKey
     try {
+      key = await crypto.subtle.importKey('raw', keyBytes, { name: 'Ed25519' }, false, ['verify'])
+    } catch {
       key = await crypto.subtle.importKey(
         'raw',
         keyBytes,
@@ -44,11 +46,9 @@ async function verifyDiscordSignature(
         false,
         ['verify']
       )
-    } catch {
-      key = await crypto.subtle.importKey('raw', keyBytes, { name: 'Ed25519' }, false, ['verify'])
     }
 
-    return await crypto.subtle.verify(key.algorithm.name, key, sigBytes, dataBytes)
+    return await crypto.subtle.verify(key.algorithm.name || 'Ed25519', key, sigBytes, dataBytes)
   } catch (err) {
     console.error('Signature verification error:', err)
     return false
@@ -189,12 +189,33 @@ export const SLASH_COMMANDS = [
     description: 'Skip to the next song in the connected room'
   },
   {
+    name: 'previous',
+    description: 'Play previous song in the connected room'
+  },
+  {
+    name: 'stop',
+    description: 'Stop music playback and reset position'
+  },
+  {
     name: 'pause',
     description: 'Pause playback in the connected room'
   },
   {
     name: 'resume',
     description: 'Resume playback in the connected room'
+  },
+  {
+    name: 'seek',
+    description: 'Seek to a position in seconds in the current song',
+    options: [
+      {
+        name: 'seconds',
+        description: 'Position in seconds to jump to',
+        type: 4,
+        required: true,
+        min_value: 0
+      }
+    ]
   },
   {
     name: 'nowplaying',
@@ -235,7 +256,7 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
   const timestamp = request.headers.get('x-signature-timestamp')
   const rawBody = await request.text()
 
-  // Verify signature if public key is configured
+  // Verify signature using bot's public key (Mandatory for Discord interactions verification)
   if (env.DISCORD_PUBLIC_KEY) {
     if (!signature || !timestamp) {
       return new Response('Missing Discord signature headers', { status: 401 })
@@ -249,6 +270,11 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
     if (!isValid) {
       return new Response('Invalid Discord signature', { status: 401 })
     }
+  } else {
+    // If DISCORD_PUBLIC_KEY is not configured, we MUST reject with 401.
+    // Discord sends an invalid signature test probe during verification;
+    // returning 401 is required for Discord verification handshake security.
+    return new Response('DISCORD_PUBLIC_KEY is not configured on Cloudflare Worker', { status: 401 })
   }
 
   let interaction: any
@@ -267,8 +293,10 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
 
   // Type 2: Application Slash Commands
   if (interaction.type === 2) {
-    const supabaseUrl = env.SUPABASE_URL || 'https://jhygugvczjntjffwpxej.supabase.co'
-    const supabaseKey = env.SUPABASE_KEY || ''
+    const supabaseUrl = env.SUPABASE_URL || 'https://yvmkfguclsxurlwgnvsu.supabase.co'
+    const supabaseKey =
+      env.SUPABASE_KEY ||
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl2bWtmZ3VjbHN4dXJsd2dudnN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc0MDUxNjksImV4cCI6MjEwMjk4MTE2OX0.vVF5dt1vpLseBDXd2KSIzzazOQKdb9D7RXxcs7aMnuU'
     const supabase = new SupabaseApi(supabaseUrl, supabaseKey)
 
     const name = (interaction.data?.name || '').toLowerCase()
@@ -405,27 +433,70 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
         data: {
           embeds: [
             {
-              title: '🎵 Universal Felo Music Bot Guide',
+              title: '🎵 Welcome to Felo — Music & Listen Together',
               description:
-                `Control your **Felo desktop music player** and sync lossless audio with everyone in your Discord server!\n\n` +
-                `**Step 1 — Connect your session**\n` +
-                `Type \`/connect <code>\` with your Felo room code (find it in Felo Settings → Discord).\n\n` +
-                `**Step 2 — Play any song**\n` +
-                `Type \`/play query:Song Name\` — Felo searches your local library. If not found, it downloads online in the background and plays automatically!\n\n` +
-                `**Commands:**\n` +
-                `• \`/connect <code>\` — Bind this channel to your room\n` +
-                `• \`/disconnect\` — Unbind this channel\n` +
-                `• \`/play <query> [action]\` — Play or queue music\n` +
+                `**What is Felo?**\n` +
+                `Felo is a modern music player with synchronized **Listen Together** rooms. This Discord bot connects this server to your music session so anyone can request songs, vote to skip, and listen together in real-time!\n\n` +
+                `---\n\n` +
+                `### 👉 Choose How You Want to Use Felo:\n\n` +
+                `#### 🌐 Option 1: Web Player (Instant • Zero Install)\n` +
+                `1. Click **\`[🌐 Open Web Player]\`** below to open Felo in your web browser.\n` +
+                `2. Click **Listen Together** in the sidebar to get your **6-letter Room Code** (e.g. \`AB12CD\`).\n` +
+                `3. In this Discord channel, type: **\`/connect code:AB12CD\`**.\n` +
+                `*(Great for listeners, Chromebooks, Mac, mobile, or anyone without installing software!)*\n\n` +
+                `#### 💻 Option 2: Desktop App (PC / Mac / Linux)\n` +
+                `1. Click **\`[📥 Download Desktop App]\`** below.\n` +
+                `2. Open Felo, play music, and click **Listen Together** to see your **6-letter Room Code**.\n` +
+                `3. In this Discord channel, type: **\`/connect code:AB12CD\`**.\n` +
+                `*(Best for lossless local audio, offline library management, and streaming PC sound to Discord Voice!)*\n\n` +
+                `---\n\n` +
+                `### 🎧 How Do Server Members Listen?\n` +
+                `• **In Web Browser:** Server members can click **Open Web Player** below or use \`/invite\` to listen in synchronized lossless audio directly in their browser.\n` +
+                `• **In Discord Voice:** The desktop host can join a Discord Voice Channel and use Felo's **"Share Device Sound"** to broadcast 320kbps stereo audio to the call.\n\n` +
+                `---\n\n` +
+                `### ⚡ Essential Commands\n` +
+                `• \`/connect <code>\` — Link channel to your active Felo room\n` +
+                `• \`/play <query>\` — Search & queue any song (auto-downloads if missing!)\n` +
                 `• \`/skip\` — Skip to next track\n` +
                 `• \`/pause\` & \`/resume\` — Toggle playback\n` +
-                `• \`/volume <0-100>\` — Set player volume\n` +
-                `• \`/nowplaying\` — Show current song & progress bar\n` +
-                `• \`/invite\` — Show room code for friends\n` +
-                `• \`/download\` — Download Felo desktop app`,
-              color: 0xf59e0b,
+                `• \`/nowplaying\` — Show currently playing song & live progress\n` +
+                `• \`/volume <0-100>\` — Adjust room volume\n` +
+                `• \`/invite\` — Get 1-click web join link for friends\n` +
+                `• \`/disconnect\` — Unlink this channel`,
+              color: 0x10b981,
               footer: {
-                text: boundCode ? `Currently linked to Room ${boundCode}` : 'Channel is not linked yet — use /connect <code>'
+                text: boundCode
+                  ? `Connected to Room: ${boundCode} • Ready to play!`
+                  : 'Channel status: Not connected yet • Choose Web Player or App above to start!'
               }
+            }
+          ],
+          components: [
+            {
+              type: 1,
+              components: [
+                {
+                  type: 2,
+                  style: 5,
+                  label: '1. Open Web Player (Instant)',
+                  emoji: { name: '🌐' },
+                  url: 'https://felo.feloapp.workers.dev/#/listen-together'
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: '2. Download Desktop App',
+                  emoji: { name: '📥' },
+                  url: 'https://bit.ly/47iv3PK'
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'How It Works Guide',
+                  emoji: { name: '📖' },
+                  url: 'https://github.com/FanX0/felo'
+                }
+              ]
             }
           ]
         }
@@ -439,10 +510,45 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
         type: 4,
         data: {
           flags: 64,
-          content:
-            `⚠️ **Channel Not Connected**\n` +
-            `This Discord channel is not linked to any Felo room yet.\n` +
-            `Type \`/connect <code>\` (e.g. \`/connect ABC123\`) to link your session!`
+          embeds: [
+            {
+              title: '⚠️ Choose Web Player or Desktop App to Connect',
+              description:
+                `To play or control music in this channel, link it to an active **Felo Listen Together** session.\n\n` +
+                `You can choose either option:\n\n` +
+                `🌐 **Option 1: Web Player (No Download Needed)**\n` +
+                `1. Click **Open Web Player** below.\n` +
+                `2. Go to **Listen Together** in the sidebar to get your **6-character Room Code** (e.g. \`AB12CD\`).\n` +
+                `3. Type **\`/connect code:AB12CD\`** in this channel.\n\n` +
+                `💻 **Option 2: Desktop App (PC / Mac / Linux)**\n` +
+                `1. Click **Download Desktop App** below.\n` +
+                `2. Open Felo on your computer to get your **6-character Room Code**.\n` +
+                `3. Type **\`/connect code:AB12CD\`** in this channel.\n\n` +
+                `*Once connected, everyone in this server can use \`/play\` to search & queue any song!*`,
+              color: 0xf59e0b
+            }
+          ],
+          components: [
+            {
+              type: 1,
+              components: [
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Open Web Player (No Install)',
+                  emoji: { name: '🌐' },
+                  url: 'https://felo.feloapp.workers.dev/#/listen-together'
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Download Desktop App',
+                  emoji: { name: '📥' },
+                  url: 'https://bit.ly/47iv3PK'
+                }
+              ]
+            }
+          ]
         }
       })
     }
@@ -497,6 +603,42 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
       })
     }
 
+    // /previous
+    if (name === 'previous') {
+      await supabase.insertRoomCommand(roomCode, 'previous', {}, username)
+      return jsonResponse({
+        type: 4,
+        data: {
+          embeds: [
+            {
+              title: '⏮️ Previous Track',
+              description: `Skipped to previous track in Room **\`${roomCode}\`**.`,
+              color: 0x10b981,
+              footer: { text: `Requested by @${username}` }
+            }
+          ]
+        }
+      })
+    }
+
+    // /stop
+    if (name === 'stop') {
+      await supabase.insertRoomCommand(roomCode, 'stop', {}, username)
+      return jsonResponse({
+        type: 4,
+        data: {
+          embeds: [
+            {
+              title: '⏹️ Playback Stopped',
+              description: `Stopped playback and reset track in Room **\`${roomCode}\`**.`,
+              color: 0xef4444,
+              footer: { text: `Requested by @${username}` }
+            }
+          ]
+        }
+      })
+    }
+
     // 7. /pause
     if (name === 'pause') {
       await supabase.insertRoomCommand(roomCode, 'pause', {}, username)
@@ -525,6 +667,27 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
               title: '▶️ Playback Resumed',
               description: `Resumed playback in Room **\`${roomCode}\`**.`,
               color: 0x10b981
+            }
+          ]
+        }
+      })
+    }
+
+    // /seek <seconds>
+    if (name === 'seek') {
+      const seconds = Number(options.find((o: any) => o.name === 'seconds')?.value)
+      await supabase.insertRoomCommand(roomCode, 'seek', { seconds }, username)
+      const seekMin = Math.floor(seconds / 60)
+      const seekSec = (seconds % 60).toString().padStart(2, '0')
+      return jsonResponse({
+        type: 4,
+        data: {
+          embeds: [
+            {
+              title: '⏩ Seeked Position',
+              description: `Jumped to **${seekMin}:${seekSec}** in Room **\`${roomCode}\`**.`,
+              color: 0x10b981,
+              footer: { text: `Requested by @${username}` }
             }
           ]
         }
@@ -562,6 +725,27 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 title: '🔇 Nothing is Playing',
                 description: `Room **\`${roomCode}\`** is currently idle.\nUse \`/play <song>\` to start playing!`,
                 color: 0x6b7280
+              }
+            ]
+          }
+        })
+      }
+
+      if (song.isDeviceStream || room.is_device_stream) {
+        return jsonResponse({
+          type: 4,
+          data: {
+            embeds: [
+              {
+                title: '🔴 Live System Audio Stream',
+                description:
+                  `**320 kbps Opus Full-Stereo • Studio Fidelity**\n\n` +
+                  `🎙️ **Broadcasting:** Host is streaming device loopback audio live!\n` +
+                  `📡 **Protocol:** Ephemeral WebRTC Real-Time Stream\n\n` +
+                  `🔑 **Room Code:** \`${roomCode}\`\n\n` +
+                  `*Open Felo app → Listen Together → Code to tune in live!*`,
+                color: 0xef4444,
+                footer: { text: 'Real-time Ephemeral Audio • Mode A Compliant' }
               }
             ]
           }

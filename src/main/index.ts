@@ -18,7 +18,12 @@ import { DiscordBotService } from './services/DiscordBotService'
 import fs from 'fs'
 import { Readable } from 'stream'
 import * as mm from 'music-metadata'
-import { sanitizeTrackMetadata } from '../shared/songMatching'
+import {
+  sanitizeTrackMetadata,
+  SOURCE_TAG_REGEX,
+  VIDEO_PROMO_TAG_REGEX,
+  YOUTUBE_CHANNEL_SUFFIX_REGEX
+} from '../shared/songMatching'
 import {
   validateWith,
   AllowedSettingsKeySchema,
@@ -1655,13 +1660,15 @@ async function fetchPlaylistImportMetadata(url: string): Promise<{
 
 function cleanLyricsMetadata(value: string): string {
   if (!value) return ''
-  const sanitized = sanitizeTrackMetadata({ title: value, artist: '' })
-  let cleaned = (sanitized.title || value)
+  let cleaned = value
+    .replace(SOURCE_TAG_REGEX, '')
+    .replace(VIDEO_PROMO_TAG_REGEX, '')
+    .replace(YOUTUBE_CHANNEL_SUFFIX_REGEX, '')
     .normalize('NFKC')
     .replace(/\.[a-zA-Z0-9]{2,4}$/, '')
     .replace(/^\s*\d{1,3}[.\-_)]+\s*/, '')
     .replace(
-      /\s*[\(\[]\s*(?:youtube|qobuz|qobus|deezer|soulseek|tidal|spotify|apple\s*music|explicit|official(?:\s*(?:music|lyric|lyrics)?\s*(?:video|audio|mv)?)?|lyrics?(?:\s*video)?|remaster(?:ed)?(?:\s*[\d\w]+)?|hq|hd|4k|visualizer|audio|video|mv|copyright[\s-]*free|feat\.?.*?|ft\.?.*?|prod\.?.*?|produced\s+by.*?|single\s*version|bonus\s*track|deluxe(?:\s*edition)?|live(?:\s*at\s*.*)?|\d+)\s*[\)\]]\s*/gi,
+      /\s*[\(\[]\s*(?:explicit|official(?:\s*(?:music|lyric|lyrics)?\s*(?:video|audio|mv)?)?|lyrics?(?:\s*video)?|remaster(?:ed)?(?:\s*[\d\w]+)?|hq|hd|4k|visualizer|audio|video|mv|copyright[\s-]*free|feat\.?.*?|ft\.?.*?|prod\.?.*?|produced\s+by.*?|single\s*version|bonus\s*track|deluxe(?:\s*edition)?|live(?:\s*at\s*.*)?|\d+)\s*[\)\]]\s*/gi,
       ' '
     )
     .replace(/\s*[-|]\s*(?:official\s*(?:music\s*)?(?:video|audio|mv)|lyrics?(?:\s*video)?|audio|visualizer|mv|hd|4k)\s*$/gi, '')
@@ -1676,7 +1683,7 @@ function cleanLyricsMetadata(value: string): string {
   while (cleaned !== previous) {
     previous = cleaned
     cleaned = cleaned
-      .replace(/\s*[\(\[]\s*(?:youtube|qobuz|qobus|deezer|soulseek|\d+)\s*[\)\]]\s*$/gi, '')
+      .replace(SOURCE_TAG_REGEX, '')
       .replace(/\s*[-|]\s*$/gi, '')
       .trim()
   }
@@ -1696,13 +1703,20 @@ function resolveLyricsMetadata(songInfo: {
   duration?: number
   filePath?: string
 }): { title: string; artist: string; album: string; duration?: number; filePath?: string } {
-  let title = cleanLyricsMetadata(songInfo.title || '')
-  let artist = isPlaceholderLyricsValue(songInfo.artist)
-    ? ''
-    : cleanLyricsMetadata(songInfo.artist || '')
-  const album = isPlaceholderLyricsValue(songInfo.album)
-    ? ''
-    : cleanLyricsMetadata(songInfo.album || '')
+  const rawArtist = isPlaceholderLyricsValue(songInfo.artist) ? '' : (songInfo.artist || '')
+  const rawAlbum = isPlaceholderLyricsValue(songInfo.album) ? '' : (songInfo.album || '')
+  const rawTitle = songInfo.title || ''
+
+  // 1. Sanitize together using shared track metadata intelligence
+  const sanitized = sanitizeTrackMetadata({
+    title: rawTitle,
+    artist: rawArtist,
+    album: rawAlbum
+  })
+
+  let title = cleanLyricsMetadata(sanitized.title || rawTitle)
+  let artist = cleanLyricsMetadata(sanitized.artist || rawArtist)
+  const album = cleanLyricsMetadata(sanitized.album || rawAlbum)
 
   const titleParts = title.match(/^(.+?)\s+[-\u2013\u2014|]\s+(.+)$/)
   if (titleParts) {
@@ -2775,6 +2789,9 @@ app.whenReady().then(() => {
   // Set proper app user model ID
   electronApp.setAppUserModelId('com.felo.app')
   startMusicPresenceIntegrationWatcher()
+  DownloadService.getProviderInfo().then((info) => {
+    console.log(`[Felo Engine] Mode: ${info.mode.toUpperCase()} · Sources: [${info.sources.join(' | ')}]`)
+  })
 
   if (process.defaultApp && process.argv[1]) {
     app.setAsDefaultProtocolClient('felo', process.execPath, [resolve(process.argv[1])])

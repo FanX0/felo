@@ -117,28 +117,28 @@ export default function Playlists() {
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-[#121212] px-10 py-10 text-white">
-      <header className="flex items-center justify-between gap-8 border-b border-white/10 pb-11">
-        <div className="flex min-w-0 items-baseline gap-5">
-          <h1 className="truncate text-[56px] font-black leading-none tracking-normal">
+    <div className="h-full overflow-y-auto bg-[#121212] px-4 sm:px-6 md:px-10 pt-6 sm:pt-8 md:pt-10 pb-36 md:pb-10 text-white">
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 md:gap-8 border-b border-white/10 pb-6 md:pb-11">
+        <div className="flex min-w-0 items-baseline justify-between sm:justify-start gap-3 sm:gap-5">
+          <h1 className="truncate text-2xl sm:text-4xl md:text-[56px] font-black leading-tight sm:leading-none tracking-tight">
             Your Playlists
           </h1>
-          <span className="shrink-0 text-[18px] text-[#c9d7f2]">
+          <span className="shrink-0 text-xs sm:text-base md:text-[18px] text-[#c9d7f2]">
             {filteredPlaylists.length} playlists
           </span>
         </div>
 
-        <div className="flex shrink-0 items-center gap-5">
+        <div className="flex shrink-0 items-center justify-between sm:justify-end gap-2 sm:gap-4 w-full sm:w-auto">
           <div
-            className={`flex h-[52px] origin-right items-center overflow-hidden rounded-full border border-border/60 bg-surface-elevated transition-all duration-300 ${isSearchOpen ? 'w-[315px] px-4' : 'w-[52px]'}`}
+            className={`flex h-10 sm:h-[52px] origin-right items-center overflow-hidden rounded-full border border-border/60 bg-surface-elevated transition-all duration-300 ${isSearchOpen ? 'w-full sm:w-[315px] px-3 sm:px-4' : 'w-10 sm:w-[52px]'}`}
           >
             <button
               type="button"
               title="Search playlists"
               onClick={() => setIsSearchOpen(true)}
-              className="flex h-[52px] w-[52px] shrink-0 items-center justify-center text-[#b3b3b3] hover:text-white"
+              className="flex h-10 sm:h-[52px] w-10 sm:w-[52px] shrink-0 items-center justify-center text-[#b3b3b3] hover:text-white"
             >
-              <Search className="h-5 w-5" />
+              <Search className="h-4 w-4 sm:h-5 sm:w-5" />
             </button>
             <input
               ref={searchInputRef}
@@ -146,16 +146,17 @@ export default function Playlists() {
               onChange={(event) => setSearchQuery(event.target.value)}
               onBlur={() => !searchQuery && setIsSearchOpen(false)}
               placeholder="Search playlists..."
-              className={`h-full min-w-0 flex-1 bg-transparent pr-3 text-[16px] text-white outline-none placeholder:text-[#bdbdbd] ${isSearchOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+              className={`h-full min-w-0 flex-1 bg-transparent pr-2 sm:pr-3 text-sm sm:text-[16px] text-white outline-none placeholder:text-[#bdbdbd] ${isSearchOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
             />
           </div>
 
           <button
             type="button"
             onClick={() => setIsCreateOpen(true)}
-            className="flex h-[52px] items-center gap-3 rounded-full bg-white px-7 text-[16px] font-bold text-black transition-all hover:scale-[1.02] hover:bg-white/90"
+            className="flex h-10 sm:h-[52px] shrink-0 items-center gap-2 sm:gap-3 rounded-full bg-white px-4 sm:px-7 text-xs sm:text-[16px] font-bold text-black transition-all hover:scale-[1.02] hover:bg-white/90"
           >
-            <Plus className="h-5 w-5 stroke-[3]" /> Create Playlist
+            <Plus className="h-4 w-4 sm:h-5 sm:w-5 stroke-[3]" />
+            <span>Create Playlist</span>
           </button>
         </div>
       </header>
@@ -175,7 +176,7 @@ export default function Playlists() {
           </button>
         </div>
       ) : filteredPlaylists.length ? (
-        <div className="grid grid-cols-[repeat(auto-fill,234px)] gap-x-8 gap-y-9 pt-16">
+        <div className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] md:grid-cols-[repeat(auto-fill,234px)] gap-3 sm:gap-6 md:gap-8 pt-6 sm:pt-10 md:pt-16">
           {filteredPlaylists.map((playlist) => {
             const artworkUrl = toMediaUrl(playlist.artworkPath)
             return (
@@ -187,13 +188,13 @@ export default function Playlists() {
                 onKeyDown={(event) =>
                   event.key === 'Enter' && navigate(`/playlists/${playlist.id}`)
                 }
-                className="group relative flex h-[317px] w-[234px] cursor-pointer flex-col rounded-lg bg-[#181818] p-5 text-left transition-colors hover:bg-[#282828]"
+                className="group relative flex w-full sm:w-[234px] cursor-pointer flex-col rounded-xl bg-[#181818] p-3 sm:p-5 text-left transition-all hover:bg-[#282828] active:scale-[0.98]"
               >
-                <div className="relative mb-5 flex h-[194px] w-[194px] items-center justify-center overflow-hidden rounded bg-[#242424] shadow-[0_8px_22px_rgba(0,0,0,0.35)]">
+                <div className="relative mb-3 sm:mb-5 flex aspect-square w-full sm:h-[194px] sm:w-[194px] items-center justify-center overflow-hidden rounded-lg bg-[#242424] shadow-[0_8px_22px_rgba(0,0,0,0.35)]">
                   {artworkUrl ? (
                     <img src={artworkUrl} alt="" className="h-full w-full object-cover" />
                   ) : (
-                    <Music2 className="h-16 w-16 fill-[#5f5f5f] text-[#5f5f5f]" />
+                    <Music2 className="h-10 w-10 sm:h-16 sm:w-16 fill-[#5f5f5f] text-[#5f5f5f]" />
                   )}
                   {playlist.songCount > 0 && (
                     <button
@@ -203,18 +204,18 @@ export default function Playlists() {
                         event.stopPropagation()
                         void playPlaylist(playlist.id)
                       }}
-                      className="absolute bottom-3 right-3 flex h-12 w-12 translate-y-2 items-center justify-center rounded-full bg-white text-black opacity-0 shadow-lg transition-all group-hover:translate-y-0 group-hover:opacity-100 hover:scale-105"
+                      className="absolute bottom-2 right-2 sm:bottom-3 sm:right-3 flex h-9 w-9 sm:h-12 sm:w-12 translate-y-2 items-center justify-center rounded-full bg-white text-black opacity-0 shadow-lg transition-all group-hover:translate-y-0 group-hover:opacity-100 hover:scale-105"
                     >
-                      <Play className="ml-0.5 h-5 w-5 fill-current" />
+                      <Play className="ml-0.5 h-4 w-4 sm:h-5 sm:w-5 fill-current" />
                     </button>
                   )}
                 </div>
-                <div className="flex min-w-0 items-start justify-between gap-2">
+                <div className="flex min-w-0 items-start justify-between gap-1.5 sm:gap-2">
                   <div className="min-w-0">
-                    <h2 className="truncate text-[18px] font-black leading-6">
+                    <h2 className="truncate text-sm sm:text-[18px] font-bold sm:font-black leading-tight sm:leading-6">
                       <HighlightMatch text={playlist.name} query={searchQuery} />
                     </h2>
-                    <p className="mt-2 truncate text-[14px] font-medium text-[#b9c4d8]">
+                    <p className="mt-1 sm:mt-2 truncate text-xs sm:text-[14px] font-medium text-[#b9c4d8]">
                       {playlist.songCount} {playlist.songCount === 1 ? 'song' : 'songs'}
                     </p>
                   </div>
@@ -239,13 +240,13 @@ export default function Playlists() {
                             }
                       )
                     }}
-                    className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[3px] border transition-all ${
+                    className={`mt-0.5 flex h-7 w-7 sm:h-8 sm:w-8 shrink-0 items-center justify-center rounded-[3px] border transition-all ${
                       activeMenu?.playlist.id === playlist.id
                         ? 'border-primary-amber bg-hover text-text opacity-100'
-                        : 'border-transparent text-[#b3b3b3] opacity-0 group-hover:opacity-100 hover:border-primary-amber hover:bg-hover hover:text-white'
+                        : 'border-transparent text-[#b3b3b3] opacity-70 md:opacity-0 group-hover:opacity-100 hover:border-primary-amber hover:bg-hover hover:text-white'
                     }`}
                   >
-                    <MoreVertical className="h-5 w-5" />
+                    <MoreVertical className="h-4 w-4 sm:h-5 sm:w-5" />
                   </button>
                 </div>
               </div>

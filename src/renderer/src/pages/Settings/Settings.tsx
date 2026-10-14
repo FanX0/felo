@@ -722,16 +722,16 @@ export default function Settings() {
 
   return (
     <div className="h-full overflow-y-auto select-none">
-      <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-8 pt-6 pb-10">
+      <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-4 sm:px-8 pt-4 sm:pt-6 pb-36 md:pb-12">
         <div className="mb-6">
-          <h1 className="text-3xl font-bold text-text tracking-tight mb-2">Settings</h1>
-          <p className="text-sm text-text-muted">
+          <h1 className="text-2xl sm:text-3xl font-bold text-text tracking-tight mb-1 sm:mb-2">Settings</h1>
+          <p className="text-xs sm:text-sm text-text-muted">
             Configure your music library, download paths, provider priority, audio playback, and integrations.
           </p>
         </div>
 
         {/* Category Navigation Pills */}
-        <div className="mb-6 flex flex-wrap items-center gap-2">
+        <div className="mb-6 flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden shrink-0">
           {[
             { id: 'all', label: 'All Settings' },
             { id: 'library', label: 'Library & Downloads' },
@@ -744,7 +744,7 @@ export default function Settings() {
               key={cat.id}
               type="button"
               onClick={() => setActiveCategory(cat.id as any)}
-              className={`rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
+              className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-bold transition-all cursor-pointer ${
                 activeCategory === cat.id
                   ? 'bg-text text-canvas shadow-md'
                   : 'bg-surface-elevated text-text-muted hover:bg-hover hover:text-text'
@@ -2178,20 +2178,24 @@ export default function Settings() {
                       <span>Discord Slash (/) & Prefix Commands</span>
                     </div>
                     <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-[10px] font-medium text-text-muted border border-border">
-                      Zero Port Forwarding
+                      Universal Slash Commands
                     </span>
                   </div>
+                  <p className="text-[11px] text-text-muted mb-3">
+                    Link your session by copying your Room Code from <span className="font-bold text-text">Listen Together</span> and typing <code className="font-mono text-primary-amber font-bold">/connect code:&lt;YOUR_CODE&gt;</code> in any Discord channel.
+                  </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                     {[
-                      ['/play <song>', 'Autocomplete; plays song & syncs to room'],
-                      ['/search <song>', 'Interactive dropdown + [Play Now / Next / Queue]'],
-                      ['/invite', 'Posts Room Code + 1-Click Join Link for friends'],
-                      ['/nowplaying', 'Current song, cover art, progress & room code'],
-                      ['/queue', 'Upcoming tracks in the room queue'],
+                      ['/connect <code>', 'Links Discord channel to your active Felo room'],
+                      ['/play <song>', 'Autocomplete; plays song & auto-downloads if missing'],
                       ['/skip', 'Skips to next track in queue'],
                       ['/pause & /resume', 'Pauses or resumes session across group'],
+                      ['/nowplaying', 'Current song, cover art, progress & room code'],
+                      ['/volume <0-100>', 'Adjusts host playback volume (0-100%)'],
+                      ['/invite', 'Posts Room Code + 1-Click Web Join Link for friends'],
+                      ['/disconnect', 'Unbinds this Discord channel from the room'],
                       ['/download', 'Direct link to download Felo Desktop app'],
-                      ['/volume <0-100>', 'Adjusts host playback volume']
+                      ['/help', 'Interactive beginner guide & quick-start buttons']
                     ].map(([cmd, desc]) => (
                       <div key={cmd} className="flex items-center justify-between p-2 rounded-lg bg-surface-elevated/40 border border-border/20">
                         <code className="text-text font-mono font-bold text-[11px]">{cmd}</code>

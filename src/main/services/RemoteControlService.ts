@@ -257,6 +257,7 @@ export class RemoteControlService {
     cloudflareUrl: string
     cloudflareQrDataUrl: string
     connectedClients: number
+    deviceName: string
   }> {
     this.ipAddress = getLocalIpAddress()
     const url = `http://${this.ipAddress}:${this.port}/#remote?token=${this.token}`
@@ -297,7 +298,8 @@ export class RemoteControlService {
       qrDataUrl,
       cloudflareUrl,
       cloudflareQrDataUrl,
-      connectedClients: this.sseClients.size
+      connectedClients: this.sseClients.size,
+      deviceName: os.hostname() || 'Felo Desktop'
     }
   }
 
@@ -556,6 +558,259 @@ export class RemoteControlService {
         return reply(200, {
           ...searchResult,
           results: decoratedResults
+        })
+      }
+
+      // Helper function to decorate song records with remote streaming & artwork URLs
+      const decorateSong = (song: any) => ({
+        id: song.id,
+        title: song.title || 'Unknown Title',
+        artist: song.artist || 'Unknown Artist',
+        album: song.album || 'Unknown Album',
+        duration: song.duration || 0,
+        trackNumber: song.trackNumber,
+        discNumber: song.discNumber,
+        genre: song.genre,
+        bitrate: song.bitrate,
+        sampleRate: song.sampleRate,
+        isFavorite: Boolean(song.isFavorite),
+        dateAdded: song.dateAdded,
+        artworkUrl: song.id ? `/v1/artwork/${encodeURIComponent(song.id)}?token=${this.token}` : undefined,
+        audioUrl: song.id ? `/v1/audio/${encodeURIComponent(song.id)}?token=${this.token}` : undefined,
+        downloadUrl: song.id ? `/v1/download/${encodeURIComponent(song.id)}?token=${this.token}` : undefined
+      })
+
+      // 5a. Full Paginated Songs Library
+      if (method === 'GET' && pathname === '/v1/library/songs') {
+        const offset = Math.max(0, Number(parsedUrl.searchParams.get('offset')) || 0)
+        const limit = Math.max(1, Math.min(200, Number(parsedUrl.searchParams.get('limit')) || 50))
+        const sort = parsedUrl.searchParams.get('sort') || 'dateAdded'
+        const order = (parsedUrl.searchParams.get('order') || '').toLowerCase() === 'asc' ? 'ASC' : 'DESC'
+        const search = (parsedUrl.searchParams.get('q') || '').trim()
+
+        const allowedSortCols: Record<string, string> = {
+          title: 'title COLLATE NOCASE',
+          artist: 'artist COLLATE NOCASE',
+          album: 'album COLLATE NOCASE',
+          duration: 'duration',
+          dateAdded: 'dateAdded'
+        }
+        const sortCol = allowedSortCols[sort] || 'dateAdded'
+
+        let whereClause = "WHERE filePath IS NOT NULL AND filePath != '' AND filePath NOT LIKE 'virtual:%'"
+        const params: any[] = []
+
+        if (search) {
+          whereClause += ' AND (title LIKE ? OR artist LIKE ? OR album LIKE ?)'
+          const lq = `%${search}%`
+          params.push(lq, lq, lq)
+        }
+
+        const countRow = getDb().prepare(`SELECT COUNT(*) as total FROM songs ${whereClause}`).get(...params) as { total: number }
+        const total = countRow?.total || 0
+
+        const rows = getDb()
+          .prepare(
+            `SELECT id, title, artist, album, duration, trackNumber, discNumber, genre, bitrate, sampleRate, isFavorite, dateAdded
+             FROM songs ${whereClause}
+             ORDER BY ${sortCol} ${order}
+             LIMIT ? OFFSET ?`
+          )
+          .all(...params, limit, offset) as any[]
+
+        return reply(200, {
+          total,
+          offset,
+          limit,
+          songs: rows.map(decorateSong)
+        })
+      }
+
+      // 5b. Albums Catalog
+      if (method === 'GET' && pathname === '/v1/library/albums') {
+        const offset = Math.max(0, Number(parsedUrl.searchParams.get('offset')) || 0)
+        const limit = Math.max(1, Math.min(200, Number(parsedUrl.searchParams.get('limit')) || 60))
+        const search = (parsedUrl.searchParams.get('q') || '').trim()
+
+        let whereClause = "WHERE filePath IS NOT NULL AND filePath != '' AND filePath NOT LIKE 'virtual:%' AND album IS NOT NULL AND album != ''"
+        const params: any[] = []
+
+        if (search) {
+          whereClause += ' AND (album LIKE ? OR artist LIKE ?)'
+          const lq = `%${search}%`
+          params.push(lq, lq)
+        }
+
+        const countRow = getDb().prepare(
+          `SELECT COUNT(DISTINCT album) as total FROM songs ${whereClause}`
+        ).get(...params) as { total: number }
+        const total = countRow?.total || 0
+
+        const rows = getDb()
+          .prepare(
+            `SELECT
+               album as title,
+               artist,
+               COUNT(id) as trackCount,
+               MAX(id) as sampleSongId,
+               MAX(dateAdded) as dateAdded
+             FROM songs ${whereClause}
+             GROUP BY album
+             ORDER BY dateAdded DESC
+             LIMIT ? OFFSET ?`
+          )
+          .all(...params, limit, offset) as any[]
+
+        return reply(200, {
+          total,
+          offset,
+          limit,
+          albums: rows.map((a: any) => ({
+            title: a.title,
+            artist: a.artist,
+            trackCount: a.trackCount,
+            artworkUrl: a.sampleSongId ? `/v1/artwork/${encodeURIComponent(a.sampleSongId)}?token=${this.token}` : undefined
+          }))
+        })
+      }
+
+      // 5c. Album Tracks
+      if (method === 'GET' && pathname.startsWith('/v1/library/albums/')) {
+        const albumName = decodeURIComponent(pathname.replace('/v1/library/albums/', ''))
+        const rows = getDb()
+          .prepare(
+            `SELECT id, title, artist, album, duration, trackNumber, discNumber, genre, bitrate, sampleRate, isFavorite, dateAdded
+             FROM songs
+             WHERE album = ? AND filePath IS NOT NULL AND filePath != '' AND filePath NOT LIKE 'virtual:%'
+             ORDER BY discNumber ASC, trackNumber ASC, title ASC`
+          )
+          .all(albumName) as any[]
+
+        return reply(200, {
+          album: albumName,
+          tracks: rows.map(decorateSong)
+        })
+      }
+
+      // 5d. Artists Catalog
+      if (method === 'GET' && pathname === '/v1/library/artists') {
+        const offset = Math.max(0, Number(parsedUrl.searchParams.get('offset')) || 0)
+        const limit = Math.max(1, Math.min(200, Number(parsedUrl.searchParams.get('limit')) || 60))
+        const search = (parsedUrl.searchParams.get('q') || '').trim()
+
+        let whereClause = "WHERE filePath IS NOT NULL AND filePath != '' AND filePath NOT LIKE 'virtual:%' AND artist IS NOT NULL AND artist != ''"
+        const params: any[] = []
+
+        if (search) {
+          whereClause += ' AND artist LIKE ?'
+          params.push(`%${search}%`)
+        }
+
+        const countRow = getDb().prepare(
+          `SELECT COUNT(DISTINCT artist) as total FROM songs ${whereClause}`
+        ).get(...params) as { total: number }
+        const total = countRow?.total || 0
+
+        const rows = getDb()
+          .prepare(
+            `SELECT
+               artist as name,
+               COUNT(DISTINCT album) as albumCount,
+               COUNT(id) as trackCount,
+               MAX(id) as sampleSongId
+             FROM songs ${whereClause}
+             GROUP BY artist
+             ORDER BY artist COLLATE NOCASE ASC
+             LIMIT ? OFFSET ?`
+          )
+          .all(...params, limit, offset) as any[]
+
+        return reply(200, {
+          total,
+          offset,
+          limit,
+          artists: rows.map((a: any) => ({
+            name: a.name,
+            albumCount: a.albumCount,
+            trackCount: a.trackCount,
+            artworkUrl: a.sampleSongId ? `/v1/artwork/${encodeURIComponent(a.sampleSongId)}?token=${this.token}` : undefined
+          }))
+        })
+      }
+
+      // 5e. Artist Tracks
+      if (method === 'GET' && pathname.startsWith('/v1/library/artists/')) {
+        const artistName = decodeURIComponent(pathname.replace('/v1/library/artists/', ''))
+        const rows = getDb()
+          .prepare(
+            `SELECT id, title, artist, album, duration, trackNumber, discNumber, genre, bitrate, sampleRate, isFavorite, dateAdded
+             FROM songs
+             WHERE artist = ? AND filePath IS NOT NULL AND filePath != '' AND filePath NOT LIKE 'virtual:%'
+             ORDER BY album ASC, discNumber ASC, trackNumber ASC, title ASC`
+          )
+          .all(artistName) as any[]
+
+        return reply(200, {
+          artist: artistName,
+          tracks: rows.map(decorateSong)
+        })
+      }
+
+      // 5f. Playlists List
+      if (method === 'GET' && pathname === '/v1/library/playlists') {
+        const rows = getDb()
+          .prepare(
+            `SELECT
+               p.id,
+               p.name,
+               p.description,
+               p.dateModified,
+               COUNT(pi.id) as trackCount,
+               MAX(pi.songId) as sampleSongId
+             FROM playlists p
+             LEFT JOIN playlist_items pi ON p.id = pi.playlistId
+             GROUP BY p.id
+             ORDER BY p.dateModified DESC`
+          )
+          .all() as any[]
+
+        return reply(200, {
+          playlists: rows.map((p: any) => ({
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            trackCount: p.trackCount,
+            dateModified: p.dateModified,
+            artworkUrl: p.sampleSongId ? `/v1/artwork/${encodeURIComponent(p.sampleSongId)}?token=${this.token}` : undefined
+          }))
+        })
+      }
+
+      // 5g. Playlist Tracks
+      if (method === 'GET' && pathname.startsWith('/v1/library/playlists/')) {
+        const playlistId = decodeURIComponent(pathname.replace('/v1/library/playlists/', ''))
+        const playlist = getDb().prepare('SELECT * FROM playlists WHERE id = ?').get(playlistId) as any
+        if (!playlist) {
+          return reply(404, { error: 'Playlist not found' })
+        }
+
+        const rows = getDb()
+          .prepare(
+            `SELECT s.id, s.title, s.artist, s.album, s.duration, s.trackNumber, s.discNumber, s.genre, s.bitrate, s.sampleRate, s.isFavorite, s.dateAdded, pi.position
+             FROM playlist_items pi
+             JOIN songs s ON pi.songId = s.id
+             WHERE pi.playlistId = ? AND s.filePath IS NOT NULL AND s.filePath != '' AND s.filePath NOT LIKE 'virtual:%'
+             ORDER BY pi.position ASC`
+          )
+          .all(playlistId) as any[]
+
+        return reply(200, {
+          playlist: {
+            id: playlist.id,
+            name: playlist.name,
+            description: playlist.description
+          },
+          tracks: rows.map(decorateSong)
         })
       }
 

@@ -47,7 +47,7 @@ export const SOURCE_TAG_REGEX =
  * Preserves musical tags like (Live), (Remix), (Acoustic), (Extended Mix), (feat. X).
  */
 export const VIDEO_PROMO_TAG_REGEX =
-  /\s*[[({]\s*(?:official\s+(?:music\s+)?video|official\s+mv|official\s+audio|lyrics?\s+video|music\s+video|visualizer|audio\s+track|official|video|mv|hd|hq|4k|1080p|720p|explicit|clean)\s*[\])}]/gi
+  /\s*[[({]\s*(?:(?:official|original)?\s*(?:4k\s+|hd\s+|hq\s+|music\s+|lyric\s+|lyrics\s+|visualizer\s+)*(?:video|audio|mv|visualizer|track)(?:\s*(?:hd|hq|4k|1080p|720p))?|lyrics?|letra(?:\s*[\/&]\s*lyrics?)?|audio|visualizer|official|video|mv|hd|hq|4k|1080p|720p|explicit|clean)\s*[\])}]/gi
 
 /**
  * Regex matching remaster/release year junk tags like [2021 Remaster], (Remastered), etc.
@@ -59,7 +59,7 @@ export const REMASTER_TAG_REGEX =
  * Trailing noise at the end of a title string (without brackets).
  */
 export const TRAILING_VIDEO_NOISE_REGEX =
-  /\s+(?:official\s+(?:music\s+)?video|official\s+mv|official\s+audio|lyrics?\s+video|music\s+video|visualizer|hd|4k|hq)\s*$/gi
+  /\s+(?:(?:official|original)?\s*(?:4k\s+|hd\s+|hq\s+|music\s+|lyric\s+|lyrics\s+|visualizer\s+)*(?:video|audio|mv|visualizer|track)|lyrics?|visualizer|hd|4k|hq)\s*$/gi
 
 /**
  * Channel noise suffixes commonly found in YouTube owner names or metadata.
@@ -109,24 +109,31 @@ export function normalizeTitleCase(input: string): string {
 
   if (!isAllUpper && !isAllLower) {
     return trimmed
+      .replace(/\bfeat\.?(?=\s|$|[)\]])/gi, 'feat.')
+      .replace(/\bft\.?(?=\s|$|[)\]])/gi, 'ft.')
+      .replace(/\bvs\.?(?=\s|$|[)\]])/gi, 'vs.')
   }
 
-  return trimmed.replace(
-    /([^\s\-_/[\]()]+)/gu,
-    (word, _p1, offset) => {
-      const upperWord = word.toUpperCase()
-      if (PRESERVED_ACRONYMS.has(upperWord)) {
-        return upperWord
-      }
+  return trimmed
+    .replace(
+      /([^\s\-_/[\]()]+)/gu,
+      (word, _p1, offset) => {
+        const upperWord = word.toUpperCase()
+        if (PRESERVED_ACRONYMS.has(upperWord)) {
+          return upperWord
+        }
 
-      const lowerWord = word.toLowerCase()
-      if (offset > 0 && MINOR_WORDS.has(lowerWord)) {
-        return lowerWord
-      }
+        const lowerWord = word.toLowerCase()
+        if (offset > 0 && MINOR_WORDS.has(lowerWord)) {
+          return lowerWord
+        }
 
-      return lowerWord.charAt(0).toUpperCase() + lowerWord.slice(1)
-    }
-  )
+        return lowerWord.charAt(0).toUpperCase() + lowerWord.slice(1)
+      }
+    )
+    .replace(/\bfeat\.?(?=\s|$|[)\]])/gi, 'feat.')
+    .replace(/\bft\.?(?=\s|$|[)\]])/gi, 'ft.')
+    .replace(/\bvs\.?(?=\s|$|[)\]])/gi, 'vs.')
 }
 
 export interface TrackMetadata {
@@ -145,6 +152,21 @@ export function sanitizeTrackMetadata(raw: TrackMetadata, _source?: string): Tra
   let artist = (raw.artist || '').trim()
   let album = raw.album !== undefined ? raw.album.trim() : undefined
 
+  // 0. Normalize unicode dashes and quotes
+  title = title
+    .replace(/[\u2010-\u2015\u2212\uFF0D]/g, '-')
+    .replace(/[‘’“”]/g, "'")
+  if (artist) {
+    artist = artist
+      .replace(/[\u2010-\u2015\u2212\uFF0D]/g, '-')
+      .replace(/[‘’“”]/g, "'")
+  }
+  if (album) {
+    album = album
+      .replace(/[\u2010-\u2015\u2212\uFF0D]/g, '-')
+      .replace(/[‘’“”]/g, "'")
+  }
+
   // 1. Strip provider source tags (e.g. (YouTube), (Qobuz), [Qobus]) and video junk from title
   title = title
     .replace(SOURCE_TAG_REGEX, '')
@@ -153,7 +175,9 @@ export function sanitizeTrackMetadata(raw: TrackMetadata, _source?: string): Tra
     .replace(TRAILING_VIDEO_NOISE_REGEX, '')
     .replace(TRACK_NUM_PREFIX_REGEX, '')
     .replace(/\s*\(\d+\)\s*$/g, '') // remove duplicate suffixes like (1), (2)
-    .replace(/[‘’“”]/g, "'")
+    .replace(/\bfeat\.?(?=\s|$|[)\]])/gi, 'feat.')
+    .replace(/\bft\.?(?=\s|$|[)\]])/gi, 'ft.')
+    .replace(/\bvs\.?(?=\s|$|[)\]])/gi, 'vs.')
     .replace(/\s+/g, ' ')
     .trim()
 

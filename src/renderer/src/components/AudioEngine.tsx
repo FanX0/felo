@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { registerActiveAudioElement } from '../lib/audioBridge'
 import { usePlayerStore } from '../hooks/usePlayerStore'
+import { usePrivateSessionStore } from '../hooks/usePrivateSessionStore'
 import { toMediaUrl } from '../lib/media'
 import { recordCertifiedScrobble } from '../lib/playbackEvents'
 import type { Song } from '../pages/Library/Library'
+import { remoteClient } from '../pages/Remote/remoteClient'
+
+function shouldMaskMediaSession(): boolean {
+  const { isPrivateSession, maskMediaSession } = usePrivateSessionStore.getState()
+  return isPrivateSession && maskMediaSession
+}
 
 const MEDIA_ARTWORK_SIZES = [96, 128, 192, 256, 384, 512]
 
@@ -138,6 +145,7 @@ export default function AudioEngine() {
   )
 
   const startPlayback = (audio: HTMLAudioElement) => {
+    remoteClient.pauseMobileAudio()
     audio.play().then(
       () => undefined,
       (error) => {
@@ -174,22 +182,32 @@ export default function AudioEngine() {
         retryCountRef.current = 0
         if ('mediaSession' in navigator) {
           if (song) {
-            navigator.mediaSession.metadata = new MediaMetadata({
-              title: song.title || 'Buffering Track...',
-              artist: song.artist || '',
-              album: song.album || 'Felo',
-              artwork: []
-            })
-            navigator.mediaSession.playbackState = (state.isPlaying && state.isAudioActive) || state.isBuffering ? 'playing' : 'paused'
-            void getArtworkSource(song).then((artwork) => {
-              if (!artwork) return
+            if (shouldMaskMediaSession()) {
+              navigator.mediaSession.metadata = new MediaMetadata({
+                title: 'Private Session',
+                artist: 'Felo',
+                album: 'Private Listening',
+                artwork: []
+              })
+              navigator.mediaSession.playbackState = (state.isPlaying && state.isAudioActive) || state.isBuffering ? 'playing' : 'paused'
+            } else {
               navigator.mediaSession.metadata = new MediaMetadata({
                 title: song.title || 'Buffering Track...',
                 artist: song.artist || '',
                 album: song.album || 'Felo',
-                artwork: getArtworkEntries(artwork.srcs, artwork.type)
+                artwork: []
               })
-            })
+              navigator.mediaSession.playbackState = (state.isPlaying && state.isAudioActive) || state.isBuffering ? 'playing' : 'paused'
+              void getArtworkSource(song).then((artwork) => {
+                if (!artwork || shouldMaskMediaSession()) return
+                navigator.mediaSession.metadata = new MediaMetadata({
+                  title: song.title || 'Buffering Track...',
+                  artist: song.artist || '',
+                  album: song.album || 'Felo',
+                  artwork: getArtworkEntries(artwork.srcs, artwork.type)
+                })
+              })
+            }
           } else {
             navigator.mediaSession.metadata = null
             navigator.mediaSession.playbackState = 'none'
@@ -218,27 +236,38 @@ export default function AudioEngine() {
       }
 
       if ('mediaSession' in navigator) {
-        const metadataGeneration = ++mediaMetadataGenerationRef.current
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: song.title || 'Unknown Track',
-          artist: song.artist || 'Unknown Artist',
-          album: song.album || 'Felo',
-          artwork: []
-        })
-        navigator.mediaSession.playbackState = state.isPlaying && state.isAudioActive ? 'playing' : 'paused'
-        updateMediaPosition(audio)
-
-        void getArtworkSource(song).then((artwork) => {
-          if (metadataGeneration !== mediaMetadataGenerationRef.current) return
+        if (shouldMaskMediaSession()) {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: 'Private Session',
+            artist: 'Felo',
+            album: 'Private Listening',
+            artwork: []
+          })
+          navigator.mediaSession.playbackState = state.isPlaying && state.isAudioActive ? 'playing' : 'paused'
+          updateMediaPosition(audio)
+        } else {
+          const metadataGeneration = ++mediaMetadataGenerationRef.current
           navigator.mediaSession.metadata = new MediaMetadata({
             title: song.title || 'Unknown Track',
             artist: song.artist || 'Unknown Artist',
             album: song.album || 'Felo',
-            artwork: artwork ? getArtworkEntries(artwork.srcs, artwork.type) : []
+            artwork: []
           })
-          navigator.mediaSession.playbackState = usePlayerStore.getState().isPlaying && usePlayerStore.getState().isAudioActive ? 'playing' : 'paused'
+          navigator.mediaSession.playbackState = state.isPlaying && state.isAudioActive ? 'playing' : 'paused'
           updateMediaPosition(audio)
-        })
+
+          void getArtworkSource(song).then((artwork) => {
+            if (metadataGeneration !== mediaMetadataGenerationRef.current || shouldMaskMediaSession()) return
+            navigator.mediaSession.metadata = new MediaMetadata({
+              title: song.title || 'Unknown Track',
+              artist: song.artist || 'Unknown Artist',
+              album: song.album || 'Felo',
+              artwork: artwork ? getArtworkEntries(artwork.srcs, artwork.type) : []
+            })
+            navigator.mediaSession.playbackState = usePlayerStore.getState().isPlaying && usePlayerStore.getState().isAudioActive ? 'playing' : 'paused'
+            updateMediaPosition(audio)
+          })
+        }
       }
 
       // ONLY play audio if this tab is the designated active audio instance

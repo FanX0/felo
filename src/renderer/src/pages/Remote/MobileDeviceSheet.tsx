@@ -14,7 +14,13 @@ import {
 import { useNavigate } from 'react-router-dom'
 import { remoteClient, type RemotePlayerState, type PlaybackTarget } from './remoteClient'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
+import { usePlayerStore } from '../../hooks/usePlayerStore'
+import {
+  useConnectedDeviceStore,
+  sendDeviceCommand
+} from '../../hooks/useConnectedDeviceStore'
 import { getSupabase, isSupabaseConfigured } from '../../lib/supabase'
+import { detectDeviceInfo, getDeviceDisplayName } from '../../lib/deviceInfo'
 import type { UserConnectedDevice } from '../../online/types'
 
 interface MobileDeviceSheetProps {
@@ -33,10 +39,12 @@ export default function MobileDeviceSheet({
   const navigate = useNavigate()
   const user = useOnlineStore((s) => s.user)
 
-  const [showConfig, setShowConfig] = useState(false)
-  const [tokenInput, setTokenInput] = useState(remoteClient.getToken())
-  const [serverUrl, setServerUrl] = useState(remoteClient.getBaseUrl())
   const [switching, setSwitching] = useState(false)
+  const deviceInfo = detectDeviceInfo()
+  const thisDeviceName = getDeviceDisplayName()
+
+  const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
+  const myDeviceId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : null
 
   // Discovered desktop devices from Supabase
   const [discoveredDevices, setDiscoveredDevices] = useState<UserConnectedDevice[]>([])
@@ -62,7 +70,7 @@ export default function MobileDeviceSheet({
         const now = Date.now()
         const activeList = data.filter((d: any) => {
           const age = now - new Date(d.last_seen_at).getTime()
-          return age < 180_000
+          return age < 180_000 && d.device_type === 'desktop'
         })
         setDiscoveredDevices(activeList)
       }
@@ -105,9 +113,31 @@ export default function MobileDeviceSheet({
   if (!isOpen) return null
 
   const handleSelectDevice = async (target: PlaybackTarget) => {
-    if (currentTarget === target) return
+    if (currentTarget === target && target !== 'mobile') return
     setSwitching(true)
     try {
+      if (
+        target === 'mobile' &&
+        activeRemote &&
+        activeRemote.activeDeviceId !== myDeviceId &&
+        user?.id
+      ) {
+        // Pause active remote desktop
+        await sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'pause')
+
+        // Hand over song to local mobile player
+        if (activeRemote.song) {
+          usePlayerStore.getState().setQueue([activeRemote.song], 0, {
+            type: 'library',
+            title: 'Transferred Playback'
+          })
+          if (typeof activeRemote.position === 'number' && activeRemote.position > 0) {
+            setTimeout(() => {
+              usePlayerStore.getState().seek(activeRemote.position)
+            }, 80)
+          }
+        }
+      }
       await remoteClient.setTargetDevice(target)
     } finally {
       setSwitching(false)
@@ -121,17 +151,11 @@ export default function MobileDeviceSheet({
     await handleSelectDevice('desktop')
   }
 
-  const handleSaveConfig = (e: React.FormEvent) => {
-    e.preventDefault()
-    remoteClient.configure(serverUrl, tokenInput)
-    setShowConfig(false)
-  }
-
   return (
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 bg-[#121212] flex flex-col text-white animate-in slide-in-from-bottom duration-200 select-none pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))]"
+      className="fixed inset-0 z-[60] bg-[#121212] flex flex-col text-white animate-in slide-in-from-bottom duration-200 select-none pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))]"
     >
       {/* Top Drag Handle Indicator */}
       <div className="w-10 h-1.5 rounded-full bg-white/20 mx-auto mt-2 mb-1 shrink-0" />
@@ -212,9 +236,12 @@ export default function MobileDeviceSheet({
             {discoveredDevices.length > 0 ? (
               <div className="space-y-2.5">
                 {discoveredDevices.map((device) => {
+                  const isDevicePlaying =
+                    activeRemote?.activeDeviceId === device.id && activeRemote.isPlaying
                   const isDeviceActive =
-                    currentTarget === 'desktop' &&
-                    Boolean(device.local_ip && remoteClient.getBaseUrl().includes(device.local_ip))
+                    isDevicePlaying ||
+                    (currentTarget === 'desktop' &&
+                      Boolean(device.local_ip && remoteClient.getBaseUrl().includes(device.local_ip)))
 
                   return (
                     <button
@@ -237,7 +264,7 @@ export default function MobileDeviceSheet({
                           }`}
                         >
                           <Laptop2
-                            className={`w-6 h-6 ${isDeviceActive && state.isPlaying ? 'animate-pulse' : ''}`}
+                            className={`w-6 h-6 ${isDeviceActive && (state.isPlaying || isDevicePlaying) ? 'animate-pulse' : ''}`}
                           />
                         </div>
                         <div className="min-w-0">
@@ -247,7 +274,7 @@ export default function MobileDeviceSheet({
                             </h4>
                             {isDeviceActive && (
                               <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300">
-                                Active Output
+                                {isDevicePlaying ? 'Currently Playing' : 'Active Output'}
                               </span>
                             )}
                           </div>
@@ -256,11 +283,13 @@ export default function MobileDeviceSheet({
                               isDeviceActive ? 'text-emerald-400 font-medium' : 'text-zinc-400'
                             }`}
                           >
-                            {isDeviceActive
-                              ? state.isPlaying
-                                ? 'Playing on PC speakers'
-                                : 'Desktop speakers ready'
-                              : `Wi-Fi IP: ${device.local_ip || 'Local Network'}`}
+                            {isDevicePlaying && activeRemote?.song
+                              ? `${activeRemote.song.title} • ${activeRemote.song.artist}`
+                              : isDeviceActive
+                                ? state.isPlaying || isDevicePlaying
+                                  ? 'Playing on PC speakers'
+                                  : 'Desktop speakers ready'
+                                : `Wi-Fi IP: ${device.local_ip || 'Local Network'}`}
                           </p>
                         </div>
                       </div>
@@ -275,6 +304,12 @@ export default function MobileDeviceSheet({
                     </button>
                   )
                 })}
+                {typeof window !== 'undefined' && window.location.protocol === 'https:' && (
+                  <p className="text-[10px] text-zinc-500 px-1 pt-1 leading-normal">
+                    Tip: If your browser blocks local IP connections over HTTPS, open{' '}
+                    <span className="text-zinc-400 font-mono">http://&lt;desktop-ip&gt;:4788</span> directly on your phone.
+                  </p>
+                )}
               </div>
             ) : (
               <div className="p-5 rounded-2xl bg-zinc-900/60 border border-white/5 text-center flex flex-col items-center">
@@ -322,24 +357,11 @@ export default function MobileDeviceSheet({
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <h4 className="text-sm font-bold text-white truncate">This Device</h4>
+                    <h4 className="text-sm font-bold text-white truncate">{thisDeviceName}</h4>
                     {currentTarget === 'mobile' && (
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-white" />
-                        {state.isPlaying && (
-                          <div className="flex items-end gap-0.5 h-3">
-                            <span className="w-0.5 h-full bg-white animate-pulse" />
-                            <span
-                              className="w-0.5 h-2/3 bg-white animate-pulse"
-                              style={{ animationDelay: '150ms' }}
-                            />
-                            <span
-                              className="w-0.5 h-4/5 bg-white animate-pulse"
-                              style={{ animationDelay: '300ms' }}
-                            />
-                          </div>
-                        )}
-                      </div>
+                      <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-white/20 text-white">
+                        This Device
+                      </span>
                     )}
                   </div>
                   <p
@@ -349,9 +371,9 @@ export default function MobileDeviceSheet({
                   >
                     {currentTarget === 'mobile'
                       ? state.isPlaying
-                        ? 'Streaming to phone / browser output'
-                        : 'Device output active'
-                      : 'Stream audio directly to this phone or browser'}
+                        ? `Playing on ${thisDeviceName} speakers`
+                        : `${thisDeviceName} output active`
+                      : `Stream audio directly to ${thisDeviceName}`}
                   </p>
                 </div>
               </div>
@@ -444,7 +466,7 @@ export default function MobileDeviceSheet({
         <div className="bg-white/[0.03] border border-white/5 rounded-2xl p-4 text-xs space-y-2.5 text-zinc-300">
           <div className="flex items-center gap-2.5">
             <Radio className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>Instant playback handover between PC and Phone</span>
+            <span>Instant playback handover between PC and {deviceInfo.model || 'Phone'}</span>
           </div>
           <div className="flex items-center gap-2.5">
             <Wifi className="w-4 h-4 text-zinc-400 shrink-0" />
@@ -452,59 +474,12 @@ export default function MobileDeviceSheet({
           </div>
           <div className="flex items-center gap-2.5">
             <ShieldCheck className="w-4 h-4 text-zinc-400 shrink-0" />
-            <span>Authenticated Local Session & Supabase Connect</span>
+            <span>Automatic discovery via same Felo account</span>
           </div>
-          <div className="pt-1 text-[11px] text-zinc-500 font-mono truncate">
-            Current Endpoint: {remoteClient.getBaseUrl() || 'Local Audio'}
-          </div>
-        </div>
-
-        {/* Manual Connection Config Accordion (Secondary / Fallback) */}
-        <div className="pt-2">
-          <button
-            type="button"
-            onClick={() => setShowConfig(!showConfig)}
-            className="text-xs text-zinc-400 hover:text-white underline cursor-pointer"
-          >
-            {showConfig ? 'Hide Manual Connection Settings' : 'Advanced: Manual IP / Token Entry'}
-          </button>
-
-          {showConfig && (
-            <form
-              onSubmit={handleSaveConfig}
-              className="mt-4 p-4 rounded-xl bg-black/40 border border-white/10 space-y-3 text-xs"
-            >
-              <div>
-                <label className="block text-zinc-400 mb-1 font-medium text-[11px]">
-                  Desktop Server URL
-                </label>
-                <input
-                  type="text"
-                  value={serverUrl}
-                  onChange={(e) => setServerUrl(e.target.value)}
-                  placeholder="http://192.168.1.X:4788"
-                  className="w-full bg-zinc-800 text-white p-2.5 rounded-lg border border-white/10 focus:border-white/40 outline-none font-mono text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-zinc-400 mb-1 font-medium text-[11px]">
-                  Pairing Token
-                </label>
-                <input
-                  type="text"
-                  value={tokenInput}
-                  onChange={(e) => setTokenInput(e.target.value)}
-                  placeholder="32-character token"
-                  className="w-full bg-zinc-800 text-white p-2.5 rounded-lg border border-white/10 focus:border-white/40 outline-none font-mono text-xs"
-                />
-              </div>
-              <button
-                type="submit"
-                className="w-full py-2.5 bg-white text-black font-bold rounded-lg hover:bg-white/90 transition text-xs cursor-pointer active:scale-95"
-              >
-                Save & Connect Manually
-              </button>
-            </form>
+          {user?.email && (
+            <div className="pt-1 text-[11px] text-zinc-500 font-mono truncate">
+              Connected Account: {user.email}
+            </div>
           )}
         </div>
       </div>
