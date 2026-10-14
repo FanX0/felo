@@ -1502,6 +1502,30 @@ export class DiscordBotService {
             color: 0xf59e0b
           },
           {
+            title: '🚀 Setup — How to Add This Bot to Your Server',
+            color: 0x5865f2,
+            description:
+              `Follow these steps to connect your Felo desktop app to Discord:\n\n` +
+              `**Step 1 — Create a Discord Application**\n` +
+              `Go to [discord.com/developers/applications](https://discord.com/developers/applications) → click **New Application** → give it a name (e.g. \`Felo\`).\n\n` +
+              `**Step 2 — Create a Bot User**\n` +
+              `Inside your application → open the **Bot** tab → click **Add Bot** → confirm. Under the bot's username, click **Reset Token** and **copy the token** — keep it secret!\n\n` +
+              `**Step 3 — Enable Privileged Intents**\n` +
+              `Still on the Bot tab, scroll to **Privileged Gateway Intents** and enable:\n` +
+              `　✅ Server Members Intent　✅ Message Content Intent\n\n` +
+              `**Step 4 — Paste Token into Felo**\n` +
+              `Open the **Felo desktop app** → **Settings** → **Discord** → paste your bot token → toggle **Enable Bot** on. Felo will connect instantly.\n\n` +
+              `**Step 5 — Invite the Bot to Your Server**\n` +
+              `Go to **OAuth2 → URL Generator** in your Discord application. Under *Scopes* select \`bot\` + \`applications.commands\`. Under *Bot Permissions* select:\n` +
+              `　\`Read Messages\` \`Send Messages\` \`Embed Links\` \`Use Slash Commands\`\n` +
+              `Copy the generated URL, open it in a browser, and add the bot to your server.\n\n` +
+              `**Step 6 — Done! 🎉**\n` +
+              `Type \`/help\` in any channel — the bot will respond with this guide. Use \`/play <song>\` to start playing music!`,
+            footer: {
+              text: '🔒 Never share your bot token publicly — treat it like a password.'
+            }
+          },
+          {
             title: '🎧 Playback Commands',
             color: 0x10b981,
             fields: [
