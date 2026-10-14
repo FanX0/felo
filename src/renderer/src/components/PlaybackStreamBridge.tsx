@@ -554,7 +554,7 @@ export default function PlaybackStreamBridge(): null {
       clearTimeout(timer)
       prefetchInFlightRef.current = false
     }
-  }, [isPlaying, currentSongIndex, queue, repeatMode, isShuffle, isBuffering])
+  }, [isPlaying, currentSongIndex, queue, repeatMode, isShuffle, isBuffering, isAudioActive])
 
   return null
 }
