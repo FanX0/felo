@@ -25,6 +25,8 @@ interface PlayerState {
   isShuffle: boolean
   repeatMode: RepeatMode
   isAutoplay: boolean
+  crossfadeEnabled: boolean
+  crossfadeDuration: number
   seekRequest: number | null // used by AudioEngine to jump to a specific time
   playbackContext: PlaybackContext | null
 
@@ -50,6 +52,9 @@ interface PlayerState {
   toggleShuffle: () => void
   toggleRepeat: () => void
   toggleAutoplay: () => void
+  setCrossfadeEnabled: (enabled: boolean) => void
+  setCrossfadeDuration: (duration: number) => void
+  toggleCrossfade: () => void
   seek: (time: number) => void
   clearSeekRequest: () => void
   updateSong: (song: Song, targetQueueId?: string) => void
@@ -111,6 +116,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     ? (getMigratedPreference('felo_repeat', 'fanx_repeat', 'off') as RepeatMode)
     : 'off'),
   isAutoplay: getMigratedPreference('felo_autoplay', 'fanx_autoplay', 'true') === 'true',
+  crossfadeEnabled: getMigratedPreference('felo_crossfade_enabled', 'fanx_crossfade_enabled', 'true') === 'true',
+  crossfadeDuration: Math.max(
+    1,
+    Math.min(12, parseInt(getMigratedPreference('felo_crossfade_duration', 'fanx_crossfade_duration', '4'), 10) || 4)
+  ),
   playbackContext: null,
   seekRequest: null,
 
@@ -429,6 +439,23 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const nextMode = !get().isAutoplay
     localStorage.setItem('felo_autoplay', String(nextMode))
     set({ isAutoplay: nextMode })
+  },
+
+  setCrossfadeEnabled: (crossfadeEnabled) => {
+    localStorage.setItem('felo_crossfade_enabled', String(crossfadeEnabled))
+    set({ crossfadeEnabled })
+  },
+
+  setCrossfadeDuration: (duration) => {
+    const clamped = Math.max(1, Math.min(12, duration))
+    localStorage.setItem('felo_crossfade_duration', String(clamped))
+    set({ crossfadeDuration: clamped })
+  },
+
+  toggleCrossfade: () => {
+    const next = !get().crossfadeEnabled
+    localStorage.setItem('felo_crossfade_enabled', String(next))
+    set({ crossfadeEnabled: next })
   },
 
   seek: (time) => {
