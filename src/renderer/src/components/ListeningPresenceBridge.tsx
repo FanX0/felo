@@ -257,10 +257,55 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             }
             break
           }
-          case 'volume': {
-            const percent = Number(cmdPayload?.percent)
-            if (!isNaN(percent) && percent >= 0 && percent <= 100) {
-              player.setVolume(percent / 100)
+          case 'jump':
+          case 'jumpto':
+          case 'skipto': {
+            let targetIdx = -1
+            if (typeof cmdPayload?.index === 'number') {
+              targetIdx = cmdPayload.index
+            } else if (cmdPayload?.query) {
+              const q = String(cmdPayload.query).toLowerCase()
+              targetIdx = player.queue.findIndex(
+                (s) => s.title.toLowerCase().includes(q) || (s.artist && s.artist.toLowerCase().includes(q))
+              )
+            }
+            if (targetIdx >= 0 && targetIdx < player.queue.length) {
+              player.playSong(targetIdx)
+              void ensureHostRoom(true)
+            }
+            break
+          }
+          case 'bump':
+          case 'make_priority': {
+            let targetIdx = -1
+            if (typeof cmdPayload?.index === 'number') {
+              targetIdx = cmdPayload.index
+            } else if (cmdPayload?.query) {
+              const q = String(cmdPayload.query).toLowerCase()
+              targetIdx = player.queue.findIndex(
+                (s) => s.title.toLowerCase().includes(q) || (s.artist && s.artist.toLowerCase().includes(q))
+              )
+            }
+            if (targetIdx >= 0 && targetIdx < player.queue.length) {
+              player.bumpSongToPriority(targetIdx)
+              void ensureHostRoom(true)
+            }
+            break
+          }
+          case 'remove':
+          case 'remove_queue': {
+            let targetIdx = -1
+            if (typeof cmdPayload?.index === 'number') {
+              targetIdx = cmdPayload.index
+            } else if (cmdPayload?.query) {
+              const q = String(cmdPayload.query).toLowerCase()
+              targetIdx = player.queue.findIndex(
+                (s) => s.title.toLowerCase().includes(q) || (s.artist && s.artist.toLowerCase().includes(q))
+              )
+            }
+            if (targetIdx >= 0 && targetIdx < player.queue.length) {
+              player.removeSongFromQueueByIndex(targetIdx)
+              void ensureHostRoom(true)
             }
             break
           }

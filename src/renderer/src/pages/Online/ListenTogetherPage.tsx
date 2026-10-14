@@ -26,7 +26,10 @@ import {
   Wifi,
   Plus,
   Sparkles,
-  ClipboardPaste
+  ClipboardPaste,
+  Star,
+  Trash2,
+  Zap
 } from 'lucide-react'
 import QRCode from 'qrcode'
 import { useSearchParams, NavLink } from 'react-router-dom'
@@ -81,13 +84,23 @@ function getSongKey(song?: any): string {
 function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProps): ReactElement {
   const { user } = useOnlineStore()
   const [searchParams, setSearchParams] = useSearchParams()
-  const { isPlaying, currentTime, queue, currentSongIndex, playSong } = usePlayerStore(
+  const {
+    isPlaying,
+    currentTime,
+    queue,
+    currentSongIndex,
+    playSong,
+    bumpSongToPriority,
+    removeSongFromQueueByIndex
+  } = usePlayerStore(
     useShallow((s) => ({
       isPlaying: s.isPlaying,
       currentTime: s.currentTime,
       queue: s.queue,
       currentSongIndex: s.currentSongIndex,
-      playSong: s.playSong
+      playSong: s.playSong,
+      bumpSongToPriority: s.bumpSongToPriority,
+      removeSongFromQueueByIndex: s.removeSongFromQueueByIndex
     }))
   )
 
@@ -175,9 +188,19 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
     return [...currentItem, ...priorityItems, ...backgroundItems]
   }, [queue, currentSongIndex, showAllQueue])
 
-  const shareUrl = typeof window !== 'undefined' && window.location.origin && !window.location.origin.startsWith('file:') && window.location.origin !== 'null'
-    ? `${window.location.origin}${window.location.pathname}#/online/listen?code=${hostRoom?.code || ''}`
-    : `felo://listen?code=${hostRoom?.code || ''}`
+  const shareUrl = useMemo(() => {
+    const code = hostRoom?.code || ''
+    const fallbackWebUrl = `https://felo.feloapp.workers.dev/#/online/listen?code=${code}`
+    if (typeof window === 'undefined') return fallbackWebUrl
+
+    const origin = window.location.origin || ''
+    // In Electron Desktop or local dev environments, use the public web app URL so mobile cameras can open it
+    if (!origin || origin.startsWith('file:') || origin === 'null' || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      return fallbackWebUrl
+    }
+
+    return `${origin}${window.location.pathname}#/online/listen?code=${code}`
+  }, [hostRoom?.code])
 
   useEffect(() => {
     if (showShareModal && hostRoom?.code) {
@@ -1072,12 +1095,12 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                     return (
                       <div
                         key={`${song.title}-${song.artist}-${idx}`}
-                        className={`flex items-center justify-between p-2 rounded-xl transition-all ${
+                        className={`flex items-center justify-between p-2 rounded-xl transition-all group ${
                           isNowPlaying
                             ? 'bg-white/10 text-text font-bold'
                             : isPriority
-                              ? 'border border-amber-500/35 bg-amber-500/10 text-amber-200'
-                              : 'text-text-muted hover:text-text'
+                              ? 'border border-amber-500/35 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20'
+                              : 'hover:bg-hover text-text-muted hover:text-text'
                         }`}
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -1104,9 +1127,60 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                             <p className="truncate text-[10px] opacity-70">{song.artist}</p>
                           </div>
                         </div>
-                        <span className="text-[10px] font-mono opacity-60 shrink-0 ml-2">
-                          {formatTime(song.duration || 0)}
-                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                          <span className="text-[10px] font-mono opacity-60">
+                            {formatTime(song.duration || 0)}
+                          </span>
+
+                          {!isNowPlaying && joinedRoom?.code && (
+                            <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    const supabase = getSupabase()
+                                    const sender = user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'Listener'
+                                    await supabase.from('listening_room_commands').insert({
+                                      room_code: joinedRoom.code,
+                                      command: 'jump',
+                                      payload: { index: idx, query: song.title },
+                                      sender_name: sender
+                                    })
+                                    setMessage(`Requested to play "${song.title}" now!`)
+                                    setTimeout(() => setMessage(''), 3000)
+                                  } catch {}
+                                }}
+                                title="Request to Play Now"
+                                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold bg-white/10 hover:bg-white text-white hover:text-black transition-all cursor-pointer"
+                              >
+                                <Zap className="h-3 w-3 fill-current" />
+                                <span className="hidden md:inline">Instant</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    const supabase = getSupabase()
+                                    const sender = user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'Listener'
+                                    await supabase.from('listening_room_commands').insert({
+                                      room_code: joinedRoom.code,
+                                      command: 'bump',
+                                      payload: { index: idx, query: song.title },
+                                      sender_name: sender
+                                    })
+                                    setMessage(`Requested "${song.title}" as Priority Request!`)
+                                    setTimeout(() => setMessage(''), 3000)
+                                  } catch {}
+                                }}
+                                title="Request as Important / Play Next"
+                                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 transition-all cursor-pointer"
+                              >
+                                <Star className="h-3 w-3 fill-amber-400/30" />
+                                <span className="hidden md:inline">Next</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )
                   })}
@@ -1728,10 +1802,8 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
               const isCurrent = idx === currentSongIndex
               const isPriority = Boolean(song.isPriority)
               return (
-                <button
+                <div
                   key={`${song.id}-${idx}`}
-                  type="button"
-                  onClick={() => playSong(idx)}
                   className={`w-full flex items-center justify-between p-2 rounded-xl text-left transition-all group ${
                     isCurrent
                       ? 'bg-white/10 text-white font-bold shadow-sm'
@@ -1740,7 +1812,15 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                         : 'hover:bg-hover text-text-muted hover:text-text'
                   }`}
                 >
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playSong(idx)
+                      void ensureHostRoom(true)
+                    }}
+                    className="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer"
+                    title={`Play "${song.title}" instantly`}
+                  >
                     <span className="w-5 text-center text-xs font-bold opacity-60">
                       {isCurrent ? (
                         <Radio className="h-3.5 w-3.5 animate-pulse text-text mx-auto" />
@@ -1763,14 +1843,64 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                       </div>
                       <p className="truncate text-[10px] opacity-75">{song.artist}</p>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0 ml-2">
-                    <span className="text-[10px] font-mono opacity-70">
+                  </button>
+
+                  <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                    <span className="text-[10px] font-mono opacity-70 mr-1">
                       {formatTime(song.duration || 0)}
                     </span>
-                    <Play className="h-3 w-3 opacity-0 group-hover:opacity-100 text-white transition-opacity" />
+
+                    {/* Interactive Action Choice Buttons */}
+                    {!isCurrent && (
+                      <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            playSong(idx)
+                            void ensureHostRoom(true)
+                          }}
+                          title="⚡ Play Now (Instant)"
+                          className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold bg-white/10 hover:bg-white text-white hover:text-black transition-all cursor-pointer shadow-xs"
+                        >
+                          <Zap className="h-3 w-3 fill-current" />
+                          <span className="hidden md:inline">Instant</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            bumpSongToPriority(idx)
+                            void ensureHostRoom(true)
+                          }}
+                          title={isPriority ? '🌟 Priority Request • Move to Next' : '🌟 Make Important / Play Next'}
+                          className={`flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-bold transition-all cursor-pointer shadow-xs ${
+                            isPriority
+                              ? 'bg-amber-500/25 border border-amber-400/40 text-amber-300'
+                              : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:border-amber-400/30 border border-transparent'
+                          }`}
+                        >
+                          <Star className={`h-3 w-3 ${isPriority ? 'fill-amber-400' : 'fill-transparent'}`} />
+                          <span className="hidden md:inline">Next</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            removeSongFromQueueByIndex(idx)
+                            void ensureHostRoom(true)
+                          }}
+                          title="Remove from queue"
+                          className="p-1 rounded-md text-text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    )}
                   </div>
-                </button>
+                </div>
               )
             })}
           </div>

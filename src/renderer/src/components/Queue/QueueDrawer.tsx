@@ -11,7 +11,8 @@ import {
   Disc3,
   Shuffle,
   Volume2,
-  Loader2
+  Loader2,
+  Star
 } from 'lucide-react'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
@@ -43,6 +44,7 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
   const playSong = usePlayerStore((s) => s.playSong)
   const togglePlay = usePlayerStore((s) => s.togglePlay)
   const reorderQueue = usePlayerStore((s) => s.reorderQueue)
+  const bumpSongToPriority = usePlayerStore((s) => s.bumpSongToPriority)
   const removeSongFromQueueByIndex = usePlayerStore((s) => s.removeSongFromQueueByIndex)
   const clearUpcomingQueue = usePlayerStore((s) => s.clearUpcomingQueue)
   const transfers = useDownloadStore((s) => s.transfers)
@@ -251,9 +253,16 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
                     </div>
 
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-semibold text-text group-hover:text-primary-amber transition-colors">
-                        {song.title}
-                      </p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className={`truncate text-xs font-semibold ${song.isPriority ? 'text-amber-200' : 'text-text'} group-hover:text-primary-amber transition-colors`}>
+                          {song.title}
+                        </p>
+                        {song.isPriority && (
+                          <span className="rounded-full bg-amber-400/20 border border-amber-400/30 px-1.5 py-0.2 text-[8px] font-black text-amber-300">
+                            🌟 {song.requestedBy || 'Priority'}
+                          </span>
+                        )}
+                      </div>
                       <div className="truncate text-[11px] text-text-muted">
                         <ArtistLinks
                           artist={song.artist}
@@ -275,6 +284,21 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
                     </span>
 
                     <div className="flex items-center gap-0.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          bumpSongToPriority(actualIndex)
+                        }}
+                        title={song.isPriority ? 'Priority Request • Move to Top Next' : 'Make Important / Play Next'}
+                        className={`p-1 rounded transition-all ${
+                          song.isPriority
+                            ? 'text-amber-400 bg-amber-500/20'
+                            : 'text-text-muted hover:text-amber-300 hover:bg-amber-500/10'
+                        }`}
+                      >
+                        <Star className="h-3.5 w-3.5 fill-amber-400/30" />
+                      </button>
                       {idx > 0 && (
                         <button
                           type="button"

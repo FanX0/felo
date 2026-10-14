@@ -185,6 +185,45 @@ export const SLASH_COMMANDS = [
     ]
   },
   {
+    name: 'jumpto',
+    description: 'Jump directly to a specific song number in the queue to play instantly',
+    options: [
+      {
+        name: 'position',
+        description: 'Track number in the queue to jump to (e.g. 1, 2, 5)',
+        type: 4,
+        required: true,
+        min_value: 1
+      }
+    ]
+  },
+  {
+    name: 'bump',
+    description: 'Bump a track in the queue to Priority #1 (plays immediately next)',
+    options: [
+      {
+        name: 'position',
+        description: 'Track number in the queue to make priority',
+        type: 4,
+        required: true,
+        min_value: 1
+      }
+    ]
+  },
+  {
+    name: 'remove',
+    description: 'Remove a specific track from the room queue',
+    options: [
+      {
+        name: 'position',
+        description: 'Track number in the queue to remove',
+        type: 4,
+        required: true,
+        min_value: 1
+      }
+    ]
+  },
+  {
     name: 'skip',
     description: 'Skip to the next song in the connected room'
   },
@@ -243,20 +282,6 @@ export const SLASH_COMMANDS = [
     description: '1-click web player link and step-by-step guide to join the room'
   },
   {
-    name: 'volume',
-    description: 'Set playback volume (0 - 100)',
-    options: [
-      {
-        name: 'percent',
-        description: 'Volume percentage (0 - 100)',
-        type: 4,
-        required: true,
-        min_value: 0,
-        max_value: 100
-      }
-    ]
-  },
-  {
     name: 'download',
     description: 'Get official download links for Felo Music Player'
   },
@@ -308,19 +333,87 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
     })
   }
 
+  const supabaseUrl = env.SUPABASE_URL || 'https://yvmkfguclsxurlwgnvsu.supabase.co'
+  const supabaseKey =
+    env.SUPABASE_KEY ||
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl2bWtmZ3VjbHN4dXJsd2dudnN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc0MDUxNjksImV4cCI6MjEwMjk4MTE2OX0.vVF5dt1vpLseBDXd2KSIzzazOQKdb9D7RXxcs7aMnuU'
+  const supabase = new SupabaseApi(supabaseUrl, supabaseKey)
+  const channelId = interaction.channel_id
+  const guildId = interaction.guild_id || null
+  const username = interaction.member?.user?.username || interaction.user?.username || 'Discord User'
+
+  // Type 3: Message Component Interactions (Buttons, Select Menus)
+  if (interaction.type === 3) {
+    const customId = interaction.data?.custom_id || ''
+    const roomCode = await supabase.getChannelBinding(channelId)
+    if (!roomCode) {
+      return jsonResponse({
+        type: 4,
+        data: { flags: 64, content: '❌ This channel is not connected to any room. Use `/connect <code>` first.' }
+      })
+    }
+
+    if (customId === 'queue_skip') {
+      await supabase.insertRoomCommand(roomCode, 'skip', {}, username)
+      return jsonResponse({
+        type: 4,
+        data: {
+          embeds: [
+            {
+              title: '⏭️ Track Skipped',
+              description: `Skipped to the next track in Room **\`${roomCode}\`**.`,
+              color: 0x10b981,
+              footer: { text: `Triggered by @${username}` }
+            }
+          ]
+        }
+      })
+    }
+
+    if (customId === 'queue_bump_1') {
+      const room = await supabase.getRoom(roomCode)
+      const fullQueue: any[] = Array.isArray(room?.queue) ? room.queue : []
+      const isFirstCurrent =
+        fullQueue.length > 0 &&
+        room?.song &&
+        fullQueue[0].title === room.song.title &&
+        fullQueue[0].artist === room.song.artist
+      const upcoming = isFirstCurrent ? fullQueue.slice(1) : fullQueue
+      const song = upcoming[0]
+
+      if (!song) {
+        return jsonResponse({
+          type: 4,
+          data: { flags: 64, content: 'ℹ️ No upcoming tracks to bump.' }
+        })
+      }
+
+      await supabase.insertRoomCommand(roomCode, 'bump', { index: isFirstCurrent ? 1 : 0, title: song.title }, username)
+      return jsonResponse({
+        type: 4,
+        data: {
+          embeds: [
+            {
+              title: '🌟 Promoted to Priority Request',
+              description:
+                `**Track:** **${song.title}** by **${song.artist || 'Unknown'}**\n` +
+                `**Room:** \`${roomCode}\`\n\n` +
+                `🌟 *Bumped to Priority #1 by @${username}! It will play immediately after the current song.*`,
+              color: 0xf59e0b,
+              footer: { text: `Requested by @${username} • Priority Bump` }
+            }
+          ]
+        }
+      })
+    }
+
+    return jsonResponse({ type: 6 })
+  }
+
   // Type 2: Application Slash Commands
   if (interaction.type === 2) {
-    const supabaseUrl = env.SUPABASE_URL || 'https://yvmkfguclsxurlwgnvsu.supabase.co'
-    const supabaseKey =
-      env.SUPABASE_KEY ||
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl2bWtmZ3VjbHN4dXJsd2dudnN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc0MDUxNjksImV4cCI6MjEwMjk4MTE2OX0.vVF5dt1vpLseBDXd2KSIzzazOQKdb9D7RXxcs7aMnuU'
-    const supabase = new SupabaseApi(supabaseUrl, supabaseKey)
-
     const name = (interaction.data?.name || '').toLowerCase()
     const options = interaction.data?.options || []
-    const channelId = interaction.channel_id
-    const guildId = interaction.guild_id || null
-    const username = interaction.member?.user?.username || interaction.user?.username || 'Discord User'
 
     // 1. /connect <CODE>
     if (name === 'connect') {
@@ -370,7 +463,6 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 `• \`/skip\` — Skip to next song\n` +
                 `• \`/pause\` & \`/resume\` — Pause or resume\n` +
                 `• \`/nowplaying\` — Show active track & progress bar\n` +
-                `• \`/volume <0-100>\` — Set volume\n` +
                 `• \`/invite\` — Room code & invite link`,
               color: 0x10b981,
               footer: { text: `Connected by @${username} • Lossless Synchronized Audio` }
@@ -495,11 +587,13 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 `### ⚡ Essential Commands\n` +
                 `• \`/connect <code>\` — Link channel to your active Felo room\n` +
                 `• \`/play <query>\` — Search & queue any song (auto-downloads if missing!)\n` +
+                `• \`/jumpto <pos>\` — Jump to track #N and play immediately\n` +
+                `• \`/bump <pos>\` — Bump track #N to Priority #1 (plays next)\n` +
+                `• \`/remove <pos>\` — Remove track #N from queue\n` +
                 `• \`/skip\` — Skip to next track\n` +
                 `• \`/pause\` & \`/resume\` — Toggle playback\n` +
                 `• \`/nowplaying\` — Show currently playing song & live progress\n` +
-                `• \`/queue [page]\` — View active session queue & upcoming tracks\n` +
-                `• \`/volume <0-100>\` — Adjust room volume\n` +
+                `• \`/queue [page]\` — View active session queue & interactive controls\n` +
                 `• \`/invite\` — Room code & invite link\n` +
                 `• \`/join\` — 1-click web player link & easy guide to join\n` +
                 `• \`/disconnect\` — Unlink this channel`,
@@ -680,6 +774,101 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
       })
     }
 
+    // /jumpto <position>
+    if (name === 'jumpto' || name === 'skipto') {
+      const pos = Math.max(1, Number(options.find((o: any) => o.name === 'position')?.value) || 1)
+      const room = await supabase.getRoom(roomCode)
+      const fullQueue: any[] = Array.isArray(room?.queue) ? room.queue : []
+      const song = fullQueue[pos - 1]
+
+      await supabase.insertRoomCommand(
+        roomCode,
+        'jump',
+        { index: pos - 1, title: song?.title },
+        username
+      )
+
+      return jsonResponse({
+        type: 4,
+        data: {
+          embeds: [
+            {
+              title: '⚡ Instant Jump Initiated',
+              description:
+                `Jumping directly to track **#${pos}** in Room **\`${roomCode}\`**.\n\n` +
+                (song ? `🎶 **Track:** **${song.title}** by **${song.artist || 'Unknown'}**\n\n` : '') +
+                `⚡ *Playback will interrupt and start this song right now!*`,
+              color: 0x10b981,
+              footer: { text: `Requested by @${username} • Instant Play` }
+            }
+          ]
+        }
+      })
+    }
+
+    // /bump <position>
+    if (name === 'bump') {
+      const pos = Math.max(1, Number(options.find((o: any) => o.name === 'position')?.value) || 1)
+      const room = await supabase.getRoom(roomCode)
+      const fullQueue: any[] = Array.isArray(room?.queue) ? room.queue : []
+      const song = fullQueue[pos - 1]
+
+      await supabase.insertRoomCommand(
+        roomCode,
+        'bump',
+        { index: pos - 1, title: song?.title },
+        username
+      )
+
+      return jsonResponse({
+        type: 4,
+        data: {
+          embeds: [
+            {
+              title: '🌟 Promoted to Priority Request',
+              description:
+                `Track **#${pos}** promoted to **Priority Next Up** in Room **\`${roomCode}\`**!\n\n` +
+                (song ? `🎶 **Track:** **${song.title}** by **${song.artist || 'Unknown'}**\n\n` : '') +
+                `🌟 *Marked as Priority Request! It will play immediately after the current song before background tracks.*`,
+              color: 0xf59e0b,
+              footer: { text: `Requested by @${username} • Priority Bump` }
+            }
+          ]
+        }
+      })
+    }
+
+    // /remove <position>
+    if (name === 'remove') {
+      const pos = Math.max(1, Number(options.find((o: any) => o.name === 'position')?.value) || 1)
+      const room = await supabase.getRoom(roomCode)
+      const fullQueue: any[] = Array.isArray(room?.queue) ? room.queue : []
+      const song = fullQueue[pos - 1]
+
+      await supabase.insertRoomCommand(
+        roomCode,
+        'remove',
+        { index: pos - 1, title: song?.title },
+        username
+      )
+
+      return jsonResponse({
+        type: 4,
+        data: {
+          embeds: [
+            {
+              title: '🗑️ Removed from Queue',
+              description:
+                `Removed track **#${pos}** from Room **\`${roomCode}\`** queue.\n\n` +
+                (song ? `🎶 **Track:** **${song.title}** by **${song.artist || 'Unknown'}**` : ''),
+              color: 0xef4444,
+              footer: { text: `Removed by @${username}` }
+            }
+          ]
+        }
+      })
+    }
+
     // 6. /skip
     if (name === 'skip') {
       const room = await supabase.getRoom(roomCode)
@@ -803,25 +992,7 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
       })
     }
 
-    // 9. /volume <0-100>
-    if (name === 'volume') {
-      const percent = Number(options.find((o: any) => o.name === 'percent')?.value)
-      await supabase.insertRoomCommand(roomCode, 'volume', { percent }, username)
-      return jsonResponse({
-        type: 4,
-        data: {
-          embeds: [
-            {
-              title: '🔊 Volume Adjusted',
-              description: `Set volume to **${percent}%** in Room **\`${roomCode}\`**.`,
-              color: 0x10b981
-            }
-          ]
-        }
-      })
-    }
-
-    // 10. /nowplaying
+    // /nowplaying
     if (name === 'nowplaying') {
       const room = await supabase.getRoom(roomCode)
       const song = room?.song
@@ -1006,6 +1177,34 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
         queueDescription += lines.join('\n')
       }
 
+      const queueActionButtons: any[] = [
+        {
+          type: 2,
+          style: 2,
+          custom_id: 'queue_skip',
+          label: 'Skip',
+          emoji: { name: '⏭️' }
+        }
+      ]
+
+      if (upcomingQueue.length > 0) {
+        queueActionButtons.push({
+          type: 2,
+          style: 1,
+          custom_id: 'queue_bump_1',
+          label: 'Bump #1 to Next',
+          emoji: { name: '🌟' }
+        })
+      }
+
+      queueActionButtons.push({
+        type: 2,
+        style: 5,
+        label: 'Web Player',
+        emoji: { name: '🌐' },
+        url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+      })
+
       return jsonResponse({
         type: 4,
         data: {
@@ -1017,6 +1216,12 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
               footer: {
                 text: `Page ${safePage}/${totalPages} • ${priorityTracks.length} priority request(s), ${backgroundTracks.length} background track(s) • Est. queue time: ${totalTimeStr}`
               }
+            }
+          ],
+          components: [
+            {
+              type: 1,
+              components: queueActionButtons
             }
           ]
         }
