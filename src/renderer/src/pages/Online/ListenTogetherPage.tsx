@@ -598,8 +598,19 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
 
   const handleCreateRoom = async () => {
     setBusy(true)
+    setMessage('')
     try {
-      await ensureHostRoom(true, true)
+      if (joinedRoom) {
+        await leaveJoinedRoom()
+      }
+      const room = await ensureHostRoom(true, true)
+      if (!room) {
+        const storeError = useListeningStore.getState().error
+        setMessage(storeError || 'Failed to create room. Please try again.')
+      } else {
+        setMessage(`Room created successfully! Code: ${room.code}`)
+        setTimeout(() => setMessage(''), 4000)
+      }
     } catch (err: any) {
       setMessage(err?.message || 'Failed to create room.')
     } finally {

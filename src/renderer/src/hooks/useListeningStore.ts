@@ -368,7 +368,6 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         position_seconds: Math.round(playerState.currentTime || 0),
         is_playing: isDeviceSharing ? true : Boolean(playerState.isPlaying && currentSong),
         is_active: true,
-        is_device_stream: isDeviceSharing,
         updated_at: new Date().toISOString()
       }
 
@@ -400,6 +399,11 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       }
 
       if (!activeRoom) {
+        // If not forceNew and audio is completely inactive, don't auto-create ghost rooms on page mount
+        if (!forceNew && !playerState.isAudioActive && !playerState.isPlaying && !isDeviceSharing) {
+          return null
+        }
+
         // Ensure all previous host rooms are deactivated first
         await supabase
           .from('listening_rooms')
@@ -408,6 +412,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
 
         let code = makeCode()
         let createdRoom: any = null
+        let lastError: any = null
 
         for (let i = 0; i < 3; i++) {
           const { data: created, error: createError } = await supabase
@@ -424,16 +429,23 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
             createdRoom = created
             break
           }
+          lastError = createError
+          console.warn(`[ensureHostRoom] Insert attempt ${i + 1} failed:`, createError)
           code = makeCode()
         }
 
-        if (!createdRoom) throw new Error('Failed to create host room')
+        if (!createdRoom) {
+          throw lastError || new Error('Failed to create host room')
+        }
         activeRoom = createdRoom as ListeningRoom
       }
 
       await supabase
         .from('listening_room_members')
-        .upsert({ room_id: activeRoom.id, user_id: user.id })
+        .upsert(
+          { room_id: activeRoom.id, user_id: user.id },
+          { onConflict: 'room_id,user_id', ignoreDuplicates: true }
+        )
 
       set({ hostRoom: activeRoom, hostRoomStopped: false, error: null })
       void get().refreshMemberCount(activeRoom.id)
@@ -627,7 +639,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         .from('listening_rooms')
         .update({ is_active: false, is_playing: false, updated_at: new Date().toISOString() })
         .eq('host_id', user.id)
-      set({ hostRoom: null })
+      set({ hostRoom: null, hostRoomStopped: true })
     } catch {
       // best effort cleanup during logout/unmount
     }
@@ -1145,7 +1157,6 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         .from('listening_rooms')
         .update({
           song: deviceSong,
-          is_device_stream: true,
           is_playing: true,
           position_seconds: 0,
           updated_at: new Date().toISOString()
@@ -1157,7 +1168,6 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
           ? {
               ...prev.hostRoom,
               song: deviceSong,
-              is_device_stream: true,
               is_playing: true
             }
           : null
@@ -1199,7 +1209,6 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         .from('listening_rooms')
         .update({
           song: normalSong,
-          is_device_stream: false,
           is_playing: playerState.isPlaying,
           position_seconds: Math.round(playerState.currentTime || 0),
           updated_at: new Date().toISOString()
@@ -1211,7 +1220,6 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
           ? {
               ...prev.hostRoom,
               song: normalSong,
-              is_device_stream: false,
               is_playing: playerState.isPlaying,
               position_seconds: Math.round(playerState.currentTime || 0)
             }
