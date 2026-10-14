@@ -25,6 +25,13 @@ import {
   remoteClient,
   type RemotePlayerState
 } from './remoteClient'
+import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { useOnlineStore } from '../../hooks/useOnlineStore'
+import {
+  useConnectedDeviceStore,
+  sendDeviceCommand
+} from '../../hooks/useConnectedDeviceStore'
+import { getDeviceDisplayName } from '../../lib/deviceInfo'
 
 interface MobileNowPlayingProps {
   state: RemotePlayerState
@@ -120,38 +127,64 @@ export default function MobileNowPlaying({
     setScrubPreview(localPos)
   }
 
+  const isRemoteActive = Boolean(isConnected && state.song)
+
   const handleScrubEnd = () => {
     triggerHaptic(14)
     setIsScrubbing(false)
     setLocalPos(scrubPreview)
-    void remoteClient.seek(scrubPreview)
+    if (isRemoteActive) {
+      void remoteClient.seek(scrubPreview)
+    } else {
+      usePlayerStore.getState().seek(scrubPreview)
+    }
   }
 
   const handleTogglePlay = () => {
     triggerHaptic(15)
-    void remoteClient.togglePlay()
+    if (isRemoteActive) {
+      void remoteClient.togglePlay()
+    } else {
+      usePlayerStore.getState().togglePlay()
+    }
   }
 
   const handleNext = () => {
     triggerHaptic(15)
-    void remoteClient.next()
+    if (isRemoteActive) {
+      void remoteClient.next()
+    } else {
+      usePlayerStore.getState().playNext(true)
+    }
   }
 
   const handlePrevious = () => {
     triggerHaptic(15)
-    void remoteClient.previous()
+    if (isRemoteActive) {
+      void remoteClient.previous()
+    } else {
+      usePlayerStore.getState().playPrevious()
+    }
   }
 
   const handleToggleShuffle = () => {
     triggerHaptic(10)
-    void remoteClient.setMode(!state.shuffle, undefined)
+    if (isRemoteActive) {
+      void remoteClient.setMode(!state.shuffle, undefined)
+    } else {
+      usePlayerStore.getState().toggleShuffle()
+    }
   }
 
   const handleToggleRepeat = () => {
     triggerHaptic(10)
-    const nextRepeat =
-      state.repeat === 'off' ? 'all' : state.repeat === 'all' ? 'one' : 'off'
-    void remoteClient.setMode(undefined, nextRepeat)
+    if (isRemoteActive) {
+      const nextRepeat =
+        state.repeat === 'off' ? 'all' : state.repeat === 'all' ? 'one' : 'off'
+      void remoteClient.setMode(undefined, nextRepeat)
+    } else {
+      usePlayerStore.getState().toggleRepeat()
+    }
   }
 
   const volumeTimerRef = useRef<any>(null)
@@ -159,10 +192,14 @@ export default function MobileNowPlaying({
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = Number(e.target.value)
     setVolume(val)
-    if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current)
-    volumeTimerRef.current = setTimeout(() => {
-      void remoteClient.setVolume(val)
-    }, 75)
+    if (isRemoteActive) {
+      if (volumeTimerRef.current) clearTimeout(volumeTimerRef.current)
+      volumeTimerRef.current = setTimeout(() => {
+        void remoteClient.setVolume(val)
+      }, 75)
+    } else {
+      usePlayerStore.getState().setVolume(val / 100)
+    }
   }
 
   const handleDownload = () => {
@@ -204,7 +241,9 @@ export default function MobileNowPlaying({
   }
 
   const artworkSrc = song?.artworkUrl
-    ? remoteClient.getFullArtworkUrl(song.artworkUrl)
+    ? /^(?:https?|blob|media|data):/i.test(song.artworkUrl)
+      ? song.artworkUrl
+      : remoteClient.getFullArtworkUrl(song.artworkUrl)
     : ''
 
   const isMobileTarget = state.targetDevice === 'mobile'
@@ -250,10 +289,10 @@ export default function MobileNowPlaying({
 
         <div className="flex flex-col items-center text-center">
           <span className="text-[10px] font-bold tracking-widest text-zinc-400 uppercase">
-            {isBothTarget ? 'Dual Sync Audio' : isMobileTarget ? 'Streaming on Device' : 'Playing on Desktop'}
+            {isBothTarget ? 'Dual Sync Audio' : isMobileTarget ? `Playing on ${getDeviceDisplayName()}` : 'Playing on Desktop'}
           </span>
           <span className="text-xs font-semibold text-zinc-200 truncate max-w-[200px]">
-            {song?.album || (isBothTarget ? 'PC + Phone' : isMobileTarget ? 'Device Audio' : 'Desktop Library')}
+            {song?.album || (isBothTarget ? 'PC + Phone' : isMobileTarget ? getDeviceDisplayName() : 'Desktop Library')}
           </span>
         </div>
 
@@ -388,7 +427,11 @@ export default function MobileNowPlaying({
               triggerHaptic(10)
               const nextVol = volume === 0 ? 80 : 0
               setVolume(nextVol)
-              void remoteClient.setVolume(nextVol)
+              if (isRemoteActive) {
+                void remoteClient.setVolume(nextVol)
+              } else {
+                usePlayerStore.getState().setVolume(nextVol / 100)
+              }
             }}
             className="text-zinc-400 hover:text-white cursor-pointer"
           >
@@ -523,7 +566,7 @@ export default function MobileNowPlaying({
             {isBothTarget
               ? 'Playing on Both (PC + Phone)'
               : isMobileTarget
-                ? 'Listening on This Device'
+                ? `Listening on ${getDeviceDisplayName()}`
                 : isConnected
                   ? `Listening on ${state.deviceName || 'Felo Desktop'}`
                   : 'Reconnecting...'}

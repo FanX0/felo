@@ -1,6 +1,7 @@
 import { getSupabase } from './supabase'
 import { toMediaUrl } from './media'
 import { useOnlineStore } from '../hooks/useOnlineStore'
+import { usePrivateSessionStore } from '../hooks/usePrivateSessionStore'
 import type { Song } from '../pages/Library/Library'
 import {
   PLAYED_SONGS_STORAGE_KEY,
@@ -14,11 +15,20 @@ interface StoredPlayStats {
 }
 
 /**
+ * Checks whether listening events and history recording are permitted.
+ * Returns false if Private Session is active or if Listening History is disabled in settings.
+ */
+export function isListeningHistoryAllowed(): boolean {
+  const { isPrivateSession, listenHistoryEnabled } = usePrivateSessionStore.getState()
+  return !isPrivateSession && listenHistoryEnabled
+}
+
+/**
  * Marks a song as recently played in the recent list (fires when playback starts).
  * Does NOT increment play count yet (play count requires 30s or 50% completion).
  */
 export function markSongAsStarted(song: Song): void {
-  if (!song?.id) return
+  if (!song?.id || !isListeningHistoryAllowed()) return
   try {
     const stored = JSON.parse(localStorage.getItem(RECENTLY_PLAYED_STORAGE_KEY) || '[]') as Song[]
     const next = [song, ...stored.filter((item) => item.id !== song.id)].slice(0, 500)
@@ -48,7 +58,7 @@ export async function recordCertifiedScrobble(
   completedPercent = 1.0,
   contextType = 'library'
 ): Promise<void> {
-  if (!song?.id) return
+  if (!song?.id || !isListeningHistoryAllowed()) return
 
   const now = Date.now()
 

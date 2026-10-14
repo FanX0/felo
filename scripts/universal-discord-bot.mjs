@@ -334,10 +334,45 @@ async function handleCommand(interaction) {
       type: 4,
       data: {
         flags: 64,
-        content:
-          `⚠️ **Channel Not Connected**\n` +
-          `This Discord channel is not linked to any Felo room yet.\n` +
-          `Type \`/connect <code>\` (e.g. \`/connect ABC123\`) to link your session!`
+        embeds: [
+          {
+            title: '⚠️ Choose Web Player or Desktop App to Connect',
+            description:
+              `To play or control music in this channel, link it to an active **Felo Listen Together** session.\n\n` +
+              `You can choose either option:\n\n` +
+              `🌐 **Option 1: Web Player (No Download Needed)**\n` +
+              `1. Click **Open Web Player** below.\n` +
+              `2. Go to **Listen Together** in the sidebar to get your **6-character Room Code** (e.g. \`AB12CD\`).\n` +
+              `3. Type **\`/connect code:AB12CD\`** in this channel.\n\n` +
+              `💻 **Option 2: Desktop App (PC / Mac / Linux)**\n` +
+              `1. Click **Download Desktop App** below.\n` +
+              `2. Open Felo on your computer to get your **6-character Room Code**.\n` +
+              `3. Type **\`/connect code:AB12CD\`** in this channel.\n\n` +
+              `*Once connected, everyone in this server can use \`/play\` to search & queue any song!*`,
+            color: 0xf59e0b
+          }
+        ],
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 2,
+                style: 5,
+                label: 'Open Web Player (No Install)',
+                emoji: { name: '🌐' },
+                url: 'https://felo.feloapp.workers.dev/#/listen-together'
+              },
+              {
+                type: 2,
+                style: 5,
+                label: 'Download Desktop App',
+                emoji: { name: '📥' },
+                url: 'https://bit.ly/47iv3PK'
+              }
+            ]
+          }
+        ]
       }
     })
   }
@@ -564,19 +599,70 @@ async function handleCommand(interaction) {
       data: {
         embeds: [
           {
-            title: '🎵 Universal Felo Bot Commands',
+            title: '🎵 Welcome to Felo — Music & Listen Together',
             description:
-              `**/connect \`<code>\`** — Link this Discord channel to your Felo room\n` +
-              `**/disconnect** — Unlink this channel\n` +
-              `**/play \`<song>\`** — Play or queue a song in the room\n` +
-              `**/skip** — Skip to next song\n` +
-              `**/pause** & **/resume** — Pause or resume playback\n` +
-              `**/nowplaying** — Show active track & progress\n` +
-              `**/invite** — Show room code and invite link\n` +
-              `**/download** — Direct link to download the Felo desktop app\n` +
-              `**/volume \`<0-100>\`** — Adjust volume\n\n` +
-              `*Currently connected to Room:* **\`${roomCode}\`**`,
-            color: 0x10b981
+              `**What is Felo?**\n` +
+              `Felo is a modern music player with synchronized **Listen Together** rooms. This Discord bot connects this server to your music session so anyone can request songs, vote to skip, and listen together in real-time!\n\n` +
+              `---\n\n` +
+              `### 👉 Choose How You Want to Use Felo:\n\n` +
+              `#### 🌐 Option 1: Web Player (Instant • Zero Install)\n` +
+              `1. Click **\`[🌐 Open Web Player]\`** below to open Felo in your web browser.\n` +
+              `2. Click **Listen Together** in the sidebar to get your **6-letter Room Code** (e.g. \`AB12CD\`).\n` +
+              `3. In this Discord channel, type: **\`/connect code:AB12CD\`**.\n` +
+              `*(Great for listeners, Chromebooks, Mac, mobile, or anyone without installing software!)*\n\n` +
+              `#### 💻 Option 2: Desktop App (PC / Mac / Linux)\n` +
+              `1. Click **\`[📥 Download Desktop App]\`** below.\n` +
+              `2. Open Felo, play music, and click **Listen Together** to see your **6-letter Room Code**.\n` +
+              `3. In this Discord channel, type: **\`/connect code:AB12CD\`**.\n` +
+              `*(Best for lossless local audio, offline library management, and streaming PC sound to Discord Voice!)*\n\n` +
+              `---\n\n` +
+              `### 🎧 How Do Server Members Listen?\n` +
+              `• **In Web Browser:** Server members can click **Open Web Player** below or use \`/invite\` to listen in synchronized lossless audio directly in their browser.\n` +
+              `• **In Discord Voice:** The desktop host can join a Discord Voice Channel and use Felo's **"Share Device Sound"** to broadcast 320kbps stereo audio to the call.\n\n` +
+              `---\n\n` +
+              `### ⚡ Essential Commands\n` +
+              `• \`/connect <code>\` — Link channel to your active Felo room\n` +
+              `• \`/play <query>\` — Search & queue any song (auto-downloads if missing!)\n` +
+              `• \`/skip\` — Skip to next track\n` +
+              `• \`/pause\` & \`/resume\` — Toggle playback\n` +
+              `• \`/nowplaying\` — Show currently playing song & live progress\n` +
+              `• \`/volume <0-100>\` — Adjust room volume\n` +
+              `• \`/invite\` — Get 1-click web join link for friends\n` +
+              `• \`/disconnect\` — Unlink this channel`,
+            color: 0x10b981,
+            footer: {
+              text: roomCode
+                ? `Connected to Room: ${roomCode} • Ready to play!`
+                : 'Channel status: Not connected yet • Choose Web Player or App above to start!'
+            }
+          }
+        ],
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 2,
+                style: 5,
+                label: '1. Open Web Player (Instant)',
+                emoji: { name: '🌐' },
+                url: 'https://felo.feloapp.workers.dev/#/listen-together'
+              },
+              {
+                type: 2,
+                style: 5,
+                label: '2. Download Desktop App',
+                emoji: { name: '📥' },
+                url: 'https://bit.ly/47iv3PK'
+              },
+              {
+                type: 2,
+                style: 5,
+                label: 'How It Works Guide',
+                emoji: { name: '📖' },
+                url: 'https://github.com/FanX0/felo'
+              }
+            ]
           }
         ]
       }

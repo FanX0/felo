@@ -872,7 +872,7 @@ export default function LyricsPage() {
     <div className="relative h-full overflow-hidden bg-[#101014] text-text">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_36%,rgba(255,255,255,0.08),transparent_30%),linear-gradient(to_bottom,rgba(0,0,0,0.08),rgba(0,0,0,0.2))]" />
 
-      <div className="absolute right-7 top-5 z-20 flex items-center gap-3">
+      <div className="absolute right-3 top-3 sm:right-7 sm:top-5 z-20 flex items-center gap-2 sm:gap-3">
         <div className="flex rounded-[10px] border border-white/15 bg-white/10 p-0.5 shadow-lg backdrop-blur-xl">
           <button
             type="button"

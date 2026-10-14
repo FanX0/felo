@@ -9,6 +9,7 @@ import {
   Download,
   FileText,
   Globe2,
+  Laptop2,
   ListPlus,
   Loader2,
   MoreHorizontal,
@@ -32,6 +33,8 @@ import { PersonalizationService } from '../../services/PersonalizationService'
 import { parseArtists } from '../../lib/artistParser'
 import { ArtworkImage } from '../Home/components/ArtworkImage'
 import { AppCapabilities } from '../../lib/appConfig'
+import { remoteClient } from '../Remote/remoteClient'
+import { remoteLibraryService } from '../../services/RemoteLibraryService'
 
 type ArtistPageTrack = {
   id: string
@@ -171,12 +174,51 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
   )
   const { transfers } = useDownloadStore()
 
+  const [isRemoteConnected, setIsRemoteConnected] = useState(remoteClient.getIsConnected())
+
+  useEffect(() => {
+    return remoteClient.subscribeConnection(setIsRemoteConnected)
+  }, [])
+
   useEffect(() => {
     let mounted = true
     const loadSongs = async () => {
       try {
-        const data = await window.api?.getSongs?.()
-        if (mounted) setSongs(data || [])
+        let data = (await window.api?.getSongs?.()) || []
+        const hasArtistSongs = data.some((song) => {
+          if (
+            song.artists?.some(
+              (a) =>
+                a.name.toLowerCase() === decodedName.toLowerCase() ||
+                normalizeArtistName(a.name) === normalizeArtistName(decodedName)
+            )
+          ) {
+            return true
+          }
+          return artistNameMatches(song.artist || '', decodedName)
+        })
+
+        if (!hasArtistSongs && remoteClient.getIsConnected()) {
+          const remoteTracks = await remoteLibraryService.getArtistTracks(decodedName)
+          if (remoteTracks && remoteTracks.length > 0) {
+            const mappedRemote: Song[] = remoteTracks.map((r) => ({
+              id: r.id,
+              title: r.title,
+              artist: r.artist || decodedName,
+              album: r.album || '',
+              duration: r.duration || 0,
+              filePath: remoteClient.getAudioStreamUrl(r.id),
+              artworkPath: r.artworkUrl || '',
+              artworkUrl: r.artworkUrl || '',
+              codec: r.codec || 'mp3',
+              bitrate: r.bitrate,
+              sampleRate: r.sampleRate,
+              createdAt: Date.now()
+            }))
+            data = [...data, ...mappedRemote]
+          }
+        }
+        if (mounted) setSongs(data)
       } catch (err) {
         console.error('Failed to load artist songs:', err)
       }
@@ -188,7 +230,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
       mounted = false
       window.removeEventListener('felo:library-updated', loadSongs)
     }
-  }, [])
+  }, [decodedName, isRemoteConnected])
 
   useEffect(() => {
     if (!AppCapabilities.onlineSearch || artistSource === 'library') {
@@ -585,7 +627,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
             flyoutArtist: false
           })
         }}
-        className={`group grid h-[58px] grid-cols-[36px_48px_minmax(180px,1fr)_minmax(110px,0.7fr)_138px] items-center gap-3 rounded px-3 text-left transition-colors hover:bg-white/10 ${
+        className={`group grid h-[58px] grid-cols-[32px_44px_minmax(0,1fr)_76px] md:grid-cols-[36px_48px_minmax(180px,1fr)_minmax(110px,0.7fr)_138px] items-center gap-2 sm:gap-3 rounded px-2 sm:px-3 text-left transition-colors hover:bg-white/10 ${
           isCurrent ? 'bg-white/15' : ''
         }`}
       >
@@ -656,11 +698,11 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
           </div>
         </span>
 
-        <span className="truncate text-[14px] tabular-nums text-[#b3b3b3]">
+        <span className="hidden md:inline truncate text-[14px] tabular-nums text-[#b3b3b3]">
           {formatPlays(displayIndex)}
         </span>
 
-        <span className="flex items-center justify-end gap-2 text-[14px] tabular-nums text-[#b3b3b3]">
+        <span className="flex items-center justify-end gap-1.5 sm:gap-2 text-xs sm:text-[14px] tabular-nums text-[#b3b3b3]">
           <span>{formatDuration(song.duration)}</span>
           {song.localSong && (
             <span
@@ -736,7 +778,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
             className={`h-7 w-7 flex items-center justify-center rounded-full transition-all cursor-pointer ${
               activeMenu?.song.id === song.id
                 ? 'text-primary-amber bg-white/10 opacity-100'
-                : 'opacity-0 group-hover:opacity-100 text-[#b3b3b3] hover:text-white hover:bg-white/10'
+                : 'opacity-70 md:opacity-0 text-[#b3b3b3] md:group-hover:opacity-100 hover:text-white hover:bg-white/10'
             }`}
           >
             <MoreVertical className="h-4 w-4" />
@@ -747,9 +789,9 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
   }
 
   return (
-    <div className="h-full overflow-y-auto select-none bg-[#121212] text-white">
+    <div className="h-full overflow-y-auto select-none bg-[#121212] text-white pb-36 md:pb-12">
       <section
-        className="relative flex h-[360px] flex-col justify-end overflow-hidden bg-[#242424] px-10 pb-9"
+        className="relative flex h-[260px] sm:h-[360px] flex-col justify-end overflow-hidden bg-[#242424] px-4 sm:px-10 pb-6 sm:pb-9"
         style={
           heroArtworkUrl
             ? {
@@ -761,21 +803,21 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
         }
       >
         <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.18)_0%,rgba(0,0,0,0.48)_42%,rgba(18,18,18,0.88)_82%,#121212_100%)]" />
-        <div className="relative z-10 flex flex-col gap-2">
-          <div className="flex items-center gap-2 text-[14px] font-bold text-white drop-shadow">
-            <CheckCircle2 className="h-5 w-5 rounded-full fill-[#3d91f4] text-white" />
+        <div className="relative z-10 flex flex-col gap-1.5 sm:gap-2">
+          <div className="flex items-center gap-2 text-xs sm:text-[14px] font-bold text-white drop-shadow">
+            <CheckCircle2 className="h-4 w-4 sm:h-5 sm:w-5 rounded-full fill-[#3d91f4] text-white" />
             <span>Verified Artist</span>
           </div>
-          <h1 className="max-w-full truncate text-[clamp(4rem,9vw,7.5rem)] font-black leading-none tracking-normal text-white drop-shadow-[0_6px_20px_rgba(0,0,0,0.7)]">
+          <h1 className="max-w-full truncate text-[clamp(2.5rem,7vw,7.5rem)] font-black leading-tight sm:leading-none tracking-tight text-white drop-shadow-[0_6px_20px_rgba(0,0,0,0.7)]">
             {decodedName}
           </h1>
-          <p className="text-[16px] font-bold text-white drop-shadow">
+          <p className="text-xs sm:text-[16px] font-bold text-white/90 drop-shadow">
             {Math.max(42810495, artistSongs.length * 912348).toLocaleString()} monthly listeners
           </p>
         </div>
       </section>
 
-      <div className="flex items-center gap-6 px-10 py-6">
+      <div className="flex flex-wrap items-center gap-3 sm:gap-6 px-4 sm:px-10 py-4 sm:py-6">
         <button
           onClick={handlePlayAll}
           disabled={!artistTracks.length}
@@ -847,7 +889,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
         </button>
       </div>
 
-      <main className="grid grid-cols-[minmax(0,1.9fr)_minmax(300px,1fr)] gap-10 px-10 pb-14 max-[960px]:grid-cols-1">
+      <main className="grid grid-cols-[minmax(0,1.9fr)_minmax(300px,1fr)] gap-6 sm:gap-10 px-4 sm:px-10 pb-36 md:pb-14 max-[960px]:grid-cols-1">
         <section className="min-w-0">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-4">
@@ -991,6 +1033,32 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
             style={{ left: activeMenu.x, top: activeMenu.y }}
             onClick={(e) => e.stopPropagation()}
           >
+            {isRemoteConnected && (
+              <>
+                <button
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-[14px] font-semibold text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+                  onClick={() => {
+                    const targetId = activeMenu.song.localSong?.id || activeMenu.song.id
+                    void remoteClient.play(targetId)
+                    setActiveMenu(null)
+                  }}
+                >
+                  <Laptop2 className="h-4 w-4" /> Play on PC
+                </button>
+                <button
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-[14px] text-white hover:bg-white/10 transition-colors"
+                  onClick={() => {
+                    const targetId = activeMenu.song.localSong?.id || activeMenu.song.id
+                    remoteClient.downloadSong(targetId)
+                    setActiveMenu(null)
+                  }}
+                >
+                  <Download className="h-4 w-4" /> Transfer / Download to Phone
+                </button>
+                <div className="my-1 border-t border-white/10" />
+              </>
+            )}
+
             {/* Play */}
             <button
               className="flex w-full items-center gap-3 px-4 py-2.5 text-[14px] text-white hover:bg-white/10 transition-colors"

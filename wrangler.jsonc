@@ -5,6 +5,12 @@
   "compatibility_date": "2026-10-14",
   "assets": {
     "directory": "./out/renderer",
-    "not_found_handling": "single-page-application"
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  "vars": {
+    "SUPABASE_URL": "https://yvmkfguclsxurlwgnvsu.supabase.co",
+    "SUPABASE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl2bWtmZ3VjbHN4dXJsd2dudnN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc0MDUxNjksImV4cCI6MjEwMjk4MTE2OX0.vVF5dt1vpLseBDXd2KSIzzazOQKdb9D7RXxcs7aMnuU"
   }
 }

@@ -44,6 +44,7 @@ const api = {
     cloudflareUrl: string
     cloudflareQrDataUrl: string
     connectedClients: number
+    deviceName?: string
   }> => ipcRenderer.invoke('remote-control:get-info'),
   setRemoteControlEnabled: (enabled: boolean): Promise<any> =>
     ipcRenderer.invoke('remote-control:set-enabled', enabled),

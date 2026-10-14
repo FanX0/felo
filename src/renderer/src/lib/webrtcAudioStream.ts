@@ -22,10 +22,16 @@ const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun3.l.google.com:19302' }
 ]
 
+export interface WebRTCAudioStats {
+  rttMs: number
+  bitrateKbps: number
+  packetLoss: number
+}
+
 /**
  * Modifies an SDP description to set the Opus codec parameters for studio music quality:
  * - Full stereo (stereo=1, sprop-stereo=1)
- * - 320 kbps constant bitrate (maxaveragebitrate=320000, cbr=1)
+ * - Configurable bitrate (default 320 kbps CBR)
  * - In-band Forward Error Correction (useinbandfec=1)
  */
 export function enhanceOpusSdp(sdp: string, bitrateBps = 320000): string {
@@ -72,6 +78,7 @@ export async function captureSystemAudioStream(): Promise<{
   audioOnlyStream: MediaStream
 }> {
   let rawStream: MediaStream | null = null
+  let captureError: any = null
 
   // 1. First attempt: standard getDisplayMedia with studio audio constraints
   try {
@@ -85,7 +92,8 @@ export async function captureSystemAudioStream(): Promise<{
       } as any,
       video: true
     })
-  } catch (displayErr) {
+  } catch (displayErr: any) {
+    captureError = displayErr
     console.warn('[WebRTC] getDisplayMedia capture failed or cancelled, trying getUserMedia desktop fallback:', displayErr)
   }
 
@@ -112,6 +120,7 @@ export async function captureSystemAudioStream(): Promise<{
           rawStream.getTracks().forEach((t) => t.stop())
         }
         rawStream = desktopStream
+        captureError = null
       }
     } catch (fallbackErr) {
       console.warn('[WebRTC] getUserMedia desktop fallback also failed:', fallbackErr)
@@ -119,13 +128,16 @@ export async function captureSystemAudioStream(): Promise<{
   }
 
   if (!rawStream) {
-    throw new Error('Device audio capture was cancelled or could not be initialized.')
+    if (captureError?.name === 'NotAllowedError' || captureError?.message?.includes('Permission denied')) {
+      throw new Error('Screen/audio capture was cancelled by user.')
+    }
+    throw new Error('Device audio capture could not be initialized.')
   }
 
   const audioTracks = rawStream.getAudioTracks()
   if (audioTracks.length === 0) {
     rawStream.getTracks().forEach((t) => t.stop())
-    throw new Error('No system audio track was captured. Please ensure "Share audio" is checked in the system dialog.')
+    throw new Error('No system audio track was captured. When prompted, make sure to check "Also share system audio" in the browser popup.')
   }
 
   // Disable video track without stopping it to prevent stream termination on some Chromium builds
@@ -223,6 +235,7 @@ export class AudioLevelMonitor {
  * Accepts multiple listeners, manages peer connections, and signals over Supabase Realtime.
  */
 export interface WebRTCAudioHostOptions {
+  bitrateBps?: number
   onPeerConnected?: (peerId: string, count: number) => void
   onPeerDisconnected?: (peerId: string, count: number) => void
   onAudioLevel?: (level: number) => void
@@ -234,10 +247,13 @@ export interface WebRTCAudioHostOptions {
 export class WebRTCAudioHost {
   private roomCode: string
   private userId: string
+  private bitrateBps = 320000
+  private isMuted = false
   private rawStream: MediaStream | null = null
   private audioTrack: MediaStreamTrack | null = null
   private audioOnlyStream: MediaStream | null = null
   private peers = new Map<string, RTCPeerConnection>()
+  private peerPendingCandidates = new Map<string, RTCIceCandidateInit[]>()
   private channel: RealtimeChannel | null = null
   private levelMonitor: AudioLevelMonitor | null = null
 
@@ -249,6 +265,9 @@ export class WebRTCAudioHost {
   constructor(roomCode: string, userId: string, options?: WebRTCAudioHostOptions) {
     this.roomCode = roomCode
     this.userId = userId
+    if (options?.bitrateBps) {
+      this.bitrateBps = options.bitrateBps
+    }
     if (options) {
       if (options.onLevelChange) this.onLevelChange = options.onLevelChange
       if (options.onAudioLevel) this.onLevelChange = options.onAudioLevel
@@ -260,6 +279,25 @@ export class WebRTCAudioHost {
       if (options.onError) this.onError = options.onError
       if (options.onEnded) this.onEnded = options.onEnded
     }
+  }
+
+  setBitrate(bitrateBps: number): void {
+    this.bitrateBps = bitrateBps
+  }
+
+  getBitrate(): number {
+    return this.bitrateBps
+  }
+
+  setMuted(muted: boolean): void {
+    this.isMuted = muted
+    if (this.audioTrack) {
+      this.audioTrack.enabled = !muted
+    }
+  }
+
+  getIsMuted(): boolean {
+    return this.isMuted
   }
 
   async start(): Promise<void> {
@@ -315,7 +353,7 @@ export class WebRTCAudioHost {
       payload: {
         type: 'stream-started',
         senderId: this.userId,
-        metadata: { bitrate: 320000 }
+        metadata: { bitrate: this.bitrateBps }
       } satisfies WebRTCSignalMessage
     })
   }
@@ -356,9 +394,9 @@ export class WebRTCAudioHost {
 
     // Create offer
     const offer = await pc.createOffer()
-    // Enhance SDP for 320kbps fullband stereo Opus
+    // Enhance SDP for fullband stereo Opus at configured bitrate
     if (offer.sdp) {
-      offer.sdp = enhanceOpusSdp(offer.sdp, 320000)
+      offer.sdp = enhanceOpusSdp(offer.sdp, this.bitrateBps)
     }
     await pc.setLocalDescription(offer)
 
@@ -385,12 +423,26 @@ export class WebRTCAudioHost {
 
     if (pc.signalingState === 'have-local-offer') {
       await pc.setRemoteDescription(new RTCSessionDescription(answer))
+      const pending = this.peerPendingCandidates.get(peerId) || []
+      this.peerPendingCandidates.delete(peerId)
+      for (const cand of pending) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(cand))
+        } catch (err) {
+          console.warn(`[WebRTCHost] Error adding drained candidate for ${peerId}:`, err)
+        }
+      }
     }
   }
 
   private async handlePeerCandidate(peerId: string, candidate: RTCIceCandidateInit): Promise<void> {
     const pc = this.peers.get(peerId)
-    if (!pc) return
+    if (!pc || !pc.remoteDescription) {
+      const pending = this.peerPendingCandidates.get(peerId) || []
+      pending.push(candidate)
+      this.peerPendingCandidates.set(peerId, pending)
+      return
+    }
 
     try {
       await pc.addIceCandidate(new RTCIceCandidate(candidate))
@@ -400,6 +452,7 @@ export class WebRTCAudioHost {
   }
 
   private removePeer(peerId: string): void {
+    this.peerPendingCandidates.delete(peerId)
     const pc = this.peers.get(peerId)
     if (pc) {
       try {
@@ -456,6 +509,8 @@ export interface WebRTCAudioClientOptions {
   onLevelChange?: (level: number) => void
   onStateChange?: (state: 'connecting' | 'connected' | 'disconnected' | 'stopped') => void
   onConnectionStateChange?: (state: 'connecting' | 'connected' | 'disconnected' | 'stopped') => void
+  onAutoplayBlocked?: (blocked: boolean) => void
+  onStats?: (stats: WebRTCAudioStats) => void
   onError?: (err: Error) => void
 }
 
@@ -467,9 +522,15 @@ export class WebRTCAudioClient {
   private channel: RealtimeChannel | null = null
   private audioElement: HTMLAudioElement | null = null
   private levelMonitor: AudioLevelMonitor | null = null
+  private pendingCandidates: RTCIceCandidateInit[] = []
+  private statsTimer: any = null
+  private prevBytesReceived = 0
+  private prevTimestamp = 0
 
   public onLevelChange?: (level: number) => void
   public onStateChange?: (state: 'connecting' | 'connected' | 'disconnected' | 'stopped') => void
+  public onAutoplayBlocked?: (blocked: boolean) => void
+  public onStats?: (stats: WebRTCAudioStats) => void
   public onError?: (err: Error) => void
 
   constructor(roomCode: string, userId: string, hostId: string, options?: WebRTCAudioClientOptions) {
@@ -480,6 +541,8 @@ export class WebRTCAudioClient {
       if (options.onLevelChange) this.onLevelChange = options.onLevelChange
       if (options.onStateChange) this.onStateChange = options.onStateChange
       if (options.onConnectionStateChange) this.onStateChange = options.onConnectionStateChange
+      if (options.onAutoplayBlocked) this.onAutoplayBlocked = options.onAutoplayBlocked
+      if (options.onStats) this.onStats = options.onStats
       if (options.onError) this.onError = options.onError
     }
   }
@@ -505,8 +568,14 @@ export class WebRTCAudioClient {
         if (msg.type === 'offer' && msg.targetId === this.userId && msg.offer && msg.senderId === this.hostId) {
           await this.handleOffer(msg.offer)
         } else if (msg.type === 'ice-candidate' && msg.targetId === this.userId && msg.candidate && msg.senderId === this.hostId) {
-          if (this.pc) {
-            await this.pc.addIceCandidate(new RTCIceCandidate(msg.candidate))
+          if (this.pc && this.pc.remoteDescription) {
+            try {
+              await this.pc.addIceCandidate(new RTCIceCandidate(msg.candidate))
+            } catch (err) {
+              console.warn('[WebRTCClient] Error adding candidate:', err)
+            }
+          } else {
+            this.pendingCandidates.push(msg.candidate)
           }
         } else if (msg.type === 'stream-stopped' && msg.senderId === this.hostId) {
           this.disconnect()
@@ -561,9 +630,15 @@ export class WebRTCAudioClient {
       const stream = event.streams[0] || new MediaStream([event.track])
       if (this.audioElement) {
         this.audioElement.srcObject = stream
-        this.audioElement.play().catch((err) => {
-          console.warn('[WebRTCClient] Audio auto-play prevented:', err)
-        })
+        this.audioElement
+          .play()
+          .then(() => {
+            this.onAutoplayBlocked?.(false)
+          })
+          .catch((err) => {
+            console.warn('[WebRTCClient] Audio auto-play prevented by browser:', err)
+            this.onAutoplayBlocked?.(true)
+          })
       }
 
       if (this.onLevelChange) {
@@ -572,6 +647,7 @@ export class WebRTCAudioClient {
         this.levelMonitor.start(stream)
       }
 
+      this.startStatsMonitoring()
       this.onStateChange?.('connected')
     }
 
@@ -588,6 +664,16 @@ export class WebRTCAudioClient {
     }
 
     await this.pc.setRemoteDescription(new RTCSessionDescription(offer))
+    const queuedCandidates = [...this.pendingCandidates]
+    this.pendingCandidates = []
+    for (const cand of queuedCandidates) {
+      try {
+        await this.pc.addIceCandidate(new RTCIceCandidate(cand))
+      } catch (err) {
+        console.warn('[WebRTCClient] Error adding buffered candidate:', err)
+      }
+    }
+
     const answer = await this.pc.createAnswer()
     await this.pc.setLocalDescription(answer)
 
@@ -608,13 +694,78 @@ export class WebRTCAudioClient {
     }
   }
 
+  async unmuteAudio(): Promise<boolean> {
+    if (!this.audioElement) return false
+    try {
+      await this.audioElement.play()
+      this.onAutoplayBlocked?.(false)
+      return true
+    } catch (err) {
+      console.warn('[WebRTCClient] Manual unmute/play failed:', err)
+      return false
+    }
+  }
+
   setVolume(vol: number): void {
     if (this.audioElement) {
       this.audioElement.volume = Math.max(0, Math.min(1, vol))
     }
   }
 
+  private startStatsMonitoring(): void {
+    this.stopStatsMonitoring()
+    this.statsTimer = setInterval(async () => {
+      if (!this.pc || this.pc.connectionState !== 'connected') return
+      try {
+        const stats = await this.pc.getStats()
+        let rttMs = 0
+        let bitrateKbps = 0
+        let packetLoss = 0
+
+        stats.forEach((report) => {
+          if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+            if (typeof report.currentRoundTripTime === 'number') {
+              rttMs = Math.round(report.currentRoundTripTime * 1000)
+            }
+          } else if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+            const now = report.timestamp
+            const bytes = report.bytesReceived || 0
+            if (this.prevTimestamp > 0 && now > this.prevTimestamp) {
+              const deltaSeconds = (now - this.prevTimestamp) / 1000
+              const deltaBytes = Math.max(0, bytes - this.prevBytesReceived)
+              bitrateKbps = Math.round((deltaBytes * 8) / (deltaSeconds * 1000))
+            }
+            this.prevBytesReceived = bytes
+            this.prevTimestamp = now
+
+            const packetsLost = report.packetsLost || 0
+            const packetsReceived = report.packetsReceived || 0
+            const total = packetsLost + packetsReceived
+            if (total > 0) {
+              packetLoss = Math.min(100, Math.round((packetsLost / total) * 100))
+            }
+          }
+        })
+
+        if (this.onStats && (rttMs > 0 || bitrateKbps > 0)) {
+          this.onStats({ rttMs, bitrateKbps, packetLoss })
+        }
+      } catch {
+        // Ignored
+      }
+    }, 2500)
+  }
+
+  private stopStatsMonitoring(): void {
+    if (this.statsTimer) {
+      clearInterval(this.statsTimer)
+      this.statsTimer = null
+    }
+  }
+
   disconnect(): void {
+    this.stopStatsMonitoring()
+    this.pendingCandidates = []
     if (this.channel) {
       void this.channel.send({
         type: 'broadcast',

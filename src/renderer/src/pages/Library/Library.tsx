@@ -23,7 +23,9 @@ import {
   User,
   ChevronRight,
   FileText,
-  X
+  X,
+  Laptop2,
+  Download
 } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useNavigate } from 'react-router-dom'
@@ -37,6 +39,8 @@ import { cn } from '../../lib/utils'
 import { PersonalizationService } from '../../services/PersonalizationService'
 import { ArtworkImage } from '../Home/components/ArtworkImage'
 import { HighlightMatch } from '../../components/Common/HighlightMatch'
+import { remoteClient } from '../Remote/remoteClient'
+import { remoteLibraryService } from '../../services/RemoteLibraryService'
 
 export interface SongArtist {
   id?: string
@@ -168,6 +172,13 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     y: number
   } | null>(null)
   const [creditsSong, setCreditsSong] = useState<Song | null>(null)
+  const [librarySource, setLibrarySource] = useState<'local' | 'pc'>('local')
+  const [isRemoteConnected, setIsRemoteConnected] = useState(() => remoteClient.getIsConnected())
+
+  useEffect(() => {
+    const unsub = remoteClient.subscribeConnection(setIsRemoteConnected)
+    return () => unsub()
+  }, [])
   const { setQueue, togglePlay, currentSongIndex, queue, isPlaying, enqueueSong } = usePlayerStore(
     useShallow((s) => ({
       setQueue: s.setQueue,
@@ -228,11 +239,30 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     })
   }, [songs, searchQuery, sortKey, sortDirection])
 
-  const loadSongs = async () => {
+  const loadSongs = async (source = librarySource) => {
     const generation = ++loadGenerationRef.current
     setIsLoadingSongs(true)
     try {
-      if (window.api?.getSongs) {
+      if (source === 'pc') {
+        const res = await remoteLibraryService.getSongs({ limit: 200 })
+        const mapped: Song[] = res.songs.map((s) => ({
+          id: s.id,
+          title: s.title,
+          artist: s.artist,
+          album: s.album,
+          duration: s.duration,
+          filePath: remoteClient.getAudioStreamUrl(s.id),
+          artworkPath: s.artworkUrl,
+          artworkUrl: s.artworkUrl,
+          bitrate: s.bitrate,
+          sampleRate: s.sampleRate,
+          trackNumber: s.trackNumber,
+          genre: s.genre,
+          dateAdded: s.dateAdded,
+          isOnline: true
+        }))
+        setSongs(mapped)
+      } else if (window.api?.getSongs) {
         const data = await window.api.getSongs()
         setSongs(data || [])
       } else {
@@ -241,6 +271,9 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
       }
     } catch (err) {
       console.error('Failed to load songs:', err)
+      if (source === 'pc') {
+        setSongs([])
+      }
     } finally {
       if (generation === loadGenerationRef.current) {
         setIsLoadingSongs(false)
@@ -248,6 +281,10 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
       }
     }
   }
+
+  useEffect(() => {
+    void loadSongs(librarySource)
+  }, [librarySource])
 
   const handleStartSongRadio = async (song: Song) => {
     try {
@@ -389,15 +426,24 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     const targetSong = filteredSongs[index]
     if (!targetSong) return
 
+    if (librarySource === 'pc') {
+      const targetDevice = remoteClient.getTargetDevice()
+      if (targetDevice === 'desktop') {
+        void remoteClient.play(targetSong.id)
+        return
+      }
+    }
+
     if (queue[currentSongIndex]?.id === targetSong.id) {
       togglePlay()
       return
     }
 
+    const contextTitle = librarySource === 'pc' ? 'Remote PC Library' : 'Your Library'
     const playbackContext = usePlayerStore.getState().playbackContext
     const isSameLibraryContext =
       playbackContext?.type === 'library' &&
-      playbackContext.title === 'Your Library' &&
+      playbackContext.title === contextTitle &&
       !searchQuery.trim()
 
     if (isSameLibraryContext) {
@@ -410,7 +456,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
 
     setQueue(filteredSongs, index, {
       type: 'library',
-      title: 'Your Library',
+      title: contextTitle,
       route: '/library'
     })
   }
@@ -624,177 +670,267 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
   }, [filteredSongs, lastSelectedIndex, selectedSongIds, virtualizer, togglePlay])
 
   return (
-    <div className="h-full flex flex-col pt-8 px-6 pb-6 select-none relative">
+    <div className="h-full flex flex-col pt-4 sm:pt-8 px-3 sm:px-6 pb-2 select-none relative">
       {/* Header Sticky */}
-      <div className="flex items-end justify-between mb-6 shrink-0">
-        <div className="flex items-baseline gap-4">
-          <h1 className="text-4xl font-extrabold text-text tracking-tight">My Library</h1>
-          <span className="text-[13px] font-medium text-text-muted tabular-nums">
-            {filteredSongs.length} {filteredSongs.length === 1 ? 'song' : 'songs'}
-            {searchQuery && songs.length !== filteredSongs.length && (
-              <span className="opacity-75"> (of {songs.length})</span>
-            )}
-          </span>
-        </div>
+      <div className="mb-4 sm:mb-6 shrink-0">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-baseline gap-2.5 sm:gap-4 min-w-0">
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-text tracking-tight truncate">
+              {librarySource === 'pc' ? 'PC Library' : 'My Library'}
+            </h1>
+            <span className="text-xs sm:text-[13px] font-medium text-text-muted tabular-nums shrink-0">
+              {filteredSongs.length} {filteredSongs.length === 1 ? 'song' : 'songs'}
+              {searchQuery && songs.length !== filteredSongs.length && (
+                <span className="opacity-75 hidden sm:inline"> (of {songs.length})</span>
+              )}
+            </span>
+          </div>
 
-        <div className="flex items-center gap-3">
-          {/* In-Library Search Filter */}
-          <div
-            className={cn(
-              'flex h-11 origin-right items-center overflow-hidden rounded-full border border-border/60 bg-surface-elevated transition-all duration-300',
-              isSearchOpen ? 'w-64 px-3' : 'w-11'
-            )}
-          >
+          {/* Library Source Switcher (when connected to PC desktop) */}
+          {isRemoteConnected && (
+            <div className="flex items-center gap-1 p-1 rounded-xl bg-surface-elevated border border-border/60 text-xs shrink-0 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setLibrarySource('local')}
+                className={cn(
+                  'px-3 py-1 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer',
+                  librarySource === 'local'
+                    ? 'bg-white/10 text-white shadow-sm'
+                    : 'text-text-muted hover:text-white'
+                )}
+              >
+                <span>This Device</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setLibrarySource('pc')}
+                className={cn(
+                  'px-3 py-1 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer',
+                  librarySource === 'pc'
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                    : 'text-text-muted hover:text-white'
+                )}
+              >
+                <Laptop2 className="w-3.5 h-3.5" />
+                <span>PC Library</span>
+              </button>
+            </div>
+          )}
+
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+            {/* Desktop Expanding In-Library Search Filter */}
+            <div
+              className={cn(
+                'hidden md:flex h-11 origin-right items-center overflow-hidden rounded-full border border-border/60 bg-surface-elevated transition-all duration-300',
+                isSearchOpen ? 'w-64 px-3' : 'w-11'
+              )}
+            >
+              <button
+                type="button"
+                title="Search library"
+                onClick={() => setIsSearchOpen(true)}
+                className="flex h-11 w-11 shrink-0 items-center justify-center text-text-muted hover:text-white"
+              >
+                <Search className="h-4 w-4" />
+              </button>
+              <input
+                ref={searchInputRef}
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    if (searchQuery) {
+                      setSearchQuery('')
+                    } else {
+                      setIsSearchOpen(false)
+                    }
+                  }
+                }}
+                onBlur={() => !searchQuery && setIsSearchOpen(false)}
+                placeholder="Filter library..."
+                aria-label="Filter library"
+                className={cn(
+                  'h-full min-w-0 flex-1 bg-transparent pr-1 text-sm text-white outline-none placeholder:text-text-muted',
+                  isSearchOpen ? 'opacity-100' : 'pointer-events-none opacity-0'
+                )}
+              />
+              {searchQuery && isSearchOpen && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('')
+                    searchInputRef.current?.focus()
+                  }}
+                  className="p-1 text-text-muted hover:text-white transition-colors shrink-0"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Mobile Search Toggle Button */}
             <button
               type="button"
               title="Search library"
-              onClick={() => setIsSearchOpen(true)}
-              className="flex h-11 w-11 shrink-0 items-center justify-center text-text-muted hover:text-white"
+              onClick={() => {
+                setIsSearchOpen((open) => !open)
+                if (!isSearchOpen) {
+                  setTimeout(() => searchInputRef.current?.focus(), 50)
+                }
+              }}
+              className={cn(
+                'md:hidden flex h-9 w-9 items-center justify-center rounded-full border transition-colors',
+                isSearchOpen
+                  ? 'border-white/40 bg-white/20 text-white'
+                  : 'border-border/60 bg-surface-elevated text-text-muted hover:text-white'
+              )}
             >
               <Search className="h-4 w-4" />
             </button>
+
+            {/* Sort & View Dropdown Menu */}
+            <div ref={viewMenuRef} className="relative">
+              <button
+                type="button"
+                title="Sort and view options"
+                aria-expanded={isViewMenuOpen}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setIsViewMenuOpen((isOpen) => !isOpen)
+                }}
+                className={cn(
+                  'flex h-9 w-9 sm:h-11 sm:w-11 items-center justify-center rounded-full shadow-sm transition-colors border',
+                  isViewMenuOpen
+                    ? 'border-white/30 bg-white/20 text-white'
+                    : 'border-border/60 bg-surface-elevated text-text-muted hover:bg-hover hover:text-white'
+                )}
+              >
+                <List className="h-4 w-4" />
+              </button>
+              {isViewMenuOpen && (
+                <div
+                  className="absolute right-0 top-full z-[1000] mt-2 w-48 rounded-xl border border-border/80 bg-surface-elevated py-2.5 text-xs shadow-2xl backdrop-blur-md"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <div className="px-3 pb-1.5 text-[10px] font-bold text-text-muted uppercase tracking-wider">
+                    Sort by
+                  </div>
+                  {(['dateAdded', 'title', 'artist', 'album', 'duration', 'default'] as const).map(
+                    (key) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => handleSort(key)}
+                        className={cn(
+                          'flex w-full items-center justify-between px-3 py-1.5 text-left font-medium transition-colors hover:bg-white/10',
+                          sortKey === key ? 'text-white font-bold' : 'text-text-muted'
+                        )}
+                      >
+                        <span>{sortLabels[key]}</span>
+                        {sortKey === key && (
+                          <ArrowUp
+                            className={cn(
+                              'h-3.5 w-3.5 transition-transform text-white',
+                              sortDirection === 'desc' && 'rotate-180'
+                            )}
+                          />
+                        )}
+                      </button>
+                    )
+                  )}
+
+                  <div className="my-1.5 border-t border-border/40" />
+
+                  <div className="px-3 pb-1.5 text-[10px] font-bold text-text-muted uppercase tracking-wider">
+                    View mode
+                  </div>
+                  {(['compact', 'list'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setViewMode(mode)}
+                      className={cn(
+                        'flex w-full items-center justify-between px-3 py-1.5 text-left font-medium transition-colors hover:bg-white/10',
+                        viewMode === mode ? 'text-white font-bold' : 'text-text-muted'
+                      )}
+                    >
+                      <span className="capitalize">{mode}</span>
+                      {viewMode === mode && <Check className="h-3.5 w-3.5" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Refresh Library Button */}
+            <button
+              type="button"
+              title="Refresh library"
+              onClick={() => void loadSongs()}
+              disabled={isLoadingSongs}
+              className="flex h-9 w-9 sm:h-11 sm:w-11 items-center justify-center rounded-full border border-border/60 bg-surface-elevated text-text-muted transition-colors hover:bg-hover hover:text-white"
+            >
+              <RefreshCw className={cn('h-4 w-4', isLoadingSongs && 'animate-spin')} />
+            </button>
+
+            {/* Add Folder Button */}
+            <button
+              type="button"
+              onClick={handleAddFolder}
+              disabled={isScanning}
+              className="flex h-9 sm:h-11 items-center gap-1.5 sm:gap-2.5 rounded-full bg-white px-3 sm:px-5 text-xs sm:text-sm font-bold text-black transition-all hover:scale-[1.02] hover:bg-white/90 shadow-sm disabled:cursor-not-allowed disabled:opacity-60 shrink-0 whitespace-nowrap"
+            >
+              {isScanning ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin text-primary-amber" />
+                  <span className="tabular-nums">
+                    {scanProgress?.percent !== undefined
+                      ? `${scanProgress.percent}%`
+                      : 'Scanning...'}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Plus className="h-4 w-4 stroke-[3]" />
+                  <span className="hidden sm:inline">Add Folder</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile Full-Width In-Library Search Filter Row */}
+        {isSearchOpen && (
+          <div className="md:hidden mt-2.5 flex items-center gap-2 bg-surface-elevated border border-border/60 rounded-full px-3.5 py-1.5 animate-in fade-in slide-in-from-top-1">
+            <Search className="h-4 w-4 text-text-muted shrink-0" />
             <input
               ref={searchInputRef}
               value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  if (searchQuery) {
-                    setSearchQuery('')
-                  } else {
-                    setIsSearchOpen(false)
-                  }
-                }
-              }}
-              onBlur={() => !searchQuery && setIsSearchOpen(false)}
+              onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Filter library..."
-              aria-label="Filter library"
-              className={cn(
-                'h-full min-w-0 flex-1 bg-transparent pr-1 text-sm text-white outline-none placeholder:text-text-muted',
-                isSearchOpen ? 'opacity-100' : 'pointer-events-none opacity-0'
-              )}
+              className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-text-muted"
             />
-            {searchQuery && isSearchOpen && (
+            {searchQuery && (
               <button
                 type="button"
-                onClick={() => {
-                  setSearchQuery('')
-                  searchInputRef.current?.focus()
-                }}
-                className="p-1 text-text-muted hover:text-white transition-colors shrink-0"
+                onClick={() => setSearchQuery('')}
+                className="p-1 text-text-muted hover:text-white"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
-          </div>
-
-          {/* Sort & View Dropdown Menu */}
-          <div ref={viewMenuRef} className="relative">
             <button
               type="button"
-              title="Sort and view options"
-              aria-expanded={isViewMenuOpen}
-              onClick={(event) => {
-                event.stopPropagation()
-                setIsViewMenuOpen((isOpen) => !isOpen)
+              onClick={() => {
+                setSearchQuery('')
+                setIsSearchOpen(false)
               }}
-              className={cn(
-                'flex h-11 w-11 items-center justify-center rounded-full shadow-sm transition-colors border',
-                isViewMenuOpen
-                  ? 'border-white/30 bg-white/20 text-white'
-                  : 'border-border/60 bg-surface-elevated text-text-muted hover:bg-hover hover:text-white'
-              )}
+              className="text-xs font-semibold text-text-muted hover:text-white ml-1 shrink-0"
             >
-              <List className="h-4 w-4" />
+              Done
             </button>
-            {isViewMenuOpen && (
-              <div
-                className="absolute right-0 top-full z-[1000] mt-2 w-48 rounded-xl border border-border/80 bg-surface-elevated py-2.5 text-xs shadow-2xl backdrop-blur-md"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <div className="px-3 pb-1.5 text-[10px] font-bold text-text-muted uppercase tracking-wider">
-                  Sort by
-                </div>
-                {(['dateAdded', 'title', 'artist', 'album', 'duration', 'default'] as const).map(
-                  (key) => (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => handleSort(key)}
-                      className={cn(
-                        'flex w-full items-center justify-between px-3 py-1.5 text-left font-medium transition-colors hover:bg-white/10',
-                        sortKey === key ? 'text-white font-bold' : 'text-text-muted'
-                      )}
-                    >
-                      <span>{sortLabels[key]}</span>
-                      {sortKey === key && (
-                        <ArrowUp
-                          className={cn(
-                            'h-3.5 w-3.5 transition-transform text-white',
-                            sortDirection === 'desc' && 'rotate-180'
-                          )}
-                        />
-                      )}
-                    </button>
-                  )
-                )}
-
-                <div className="my-1.5 border-t border-border/40" />
-
-                <div className="px-3 pb-1.5 text-[10px] font-bold text-text-muted uppercase tracking-wider">
-                  View mode
-                </div>
-                {(['compact', 'list'] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => setViewMode(mode)}
-                    className={cn(
-                      'flex w-full items-center justify-between px-3 py-1.5 text-left font-medium transition-colors hover:bg-white/10',
-                      viewMode === mode ? 'text-white font-bold' : 'text-text-muted'
-                    )}
-                  >
-                    <span className="capitalize">{mode}</span>
-                    {viewMode === mode && <Check className="h-3.5 w-3.5" />}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
-
-          <button
-            type="button"
-            title="Refresh library"
-            onClick={loadSongs}
-            disabled={isLoadingSongs}
-            className="flex h-11 w-11 items-center justify-center rounded-full border border-border/60 bg-surface-elevated text-text-muted transition-colors hover:bg-hover hover:text-white"
-          >
-            <RefreshCw className={cn('h-4 w-4', isLoadingSongs && 'animate-spin')} />
-          </button>
-
-          <button
-            type="button"
-            onClick={handleAddFolder}
-            disabled={isScanning}
-            className="flex h-11 items-center gap-2.5 rounded-full bg-white px-5 text-sm font-bold text-black transition-all hover:scale-[1.02] hover:bg-white/90 shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isScanning ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin text-primary-amber" />
-                <span className="tabular-nums">
-                  {scanProgress?.percent !== undefined
-                    ? `Scanning ${scanProgress.percent}%`
-                    : 'Scanning...'}
-                </span>
-              </>
-            ) : (
-              <>
-                <Plus className="h-4 w-4 stroke-[3]" />
-                Add Folder
-              </>
-            )}
-          </button>
-        </div>
+        )}
       </div>
 
       {/* Scanning Banner */}
@@ -898,7 +1034,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
       ) : (
         <div className="flex-1 flex flex-col min-h-0">
           {/* Interactive Clickable Table Header */}
-          <div className="grid grid-cols-[36px_minmax(0,1fr)_140px] gap-2 border-b border-border/30 bg-surface px-2 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-text-muted sticky top-0 z-10 shrink-0 md:grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_160px] md:gap-3 md:px-3 xl:grid-cols-[40px_minmax(0,2.2fr)_minmax(0,1.25fr)_minmax(110px,0.8fr)_minmax(180px,1fr)] xl:gap-4 xl:px-4">
+          <div className="grid grid-cols-[32px_minmax(0,1fr)_76px] gap-2 border-b border-border/30 bg-surface px-2 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-text-muted sticky top-0 z-10 shrink-0 md:grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_160px] md:gap-3 md:px-3 xl:grid-cols-[40px_minmax(0,2.2fr)_minmax(0,1.25fr)_minmax(110px,0.8fr)_minmax(180px,1fr)] xl:gap-4 xl:px-4">
             <button
               type="button"
               onClick={() => handleSort('default')}
@@ -984,7 +1120,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
               onClick={() => handleSort('duration')}
               title="Sort by Duration"
               className={cn(
-                'flex items-center justify-end gap-1.5 pr-8 hover:text-text transition-colors ml-auto',
+                'flex items-center justify-end gap-1.5 pr-1 md:pr-8 hover:text-text transition-colors ml-auto',
                 sortKey === 'duration' ? 'text-white font-bold' : 'text-text-muted'
               )}
             >
@@ -1001,7 +1137,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
           </div>
 
           {/* Virtual Table Body */}
-          <div ref={parentRef} key={viewMode} className="flex-1 overflow-y-auto mt-1 pb-16">
+          <div ref={parentRef} key={viewMode} className="flex-1 overflow-y-auto mt-1 pb-36 md:pb-16">
             <div
               style={{
                 height: `${virtualizer.getTotalSize()}px`,
@@ -1021,7 +1157,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
                     key={song.id}
                     onClick={(e) => handleRowClick(e, index, song)}
                     className={cn(
-                      'absolute top-0 left-0 grid w-full grid-cols-[36px_minmax(0,1fr)_140px] items-center gap-2 rounded-lg px-2 text-[13px] group cursor-pointer transition-colors md:grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_160px] md:gap-3 md:px-3 xl:grid-cols-[40px_minmax(0,2.2fr)_minmax(0,1.25fr)_minmax(110px,0.8fr)_minmax(180px,1fr)] xl:gap-4 xl:px-4',
+                      'absolute top-0 left-0 grid w-full grid-cols-[32px_minmax(0,1fr)_76px] items-center gap-2 rounded-lg px-2 text-[13px] group cursor-pointer transition-colors md:grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_160px] md:gap-3 md:px-3 xl:grid-cols-[40px_minmax(0,2.2fr)_minmax(0,1.25fr)_minmax(110px,0.8fr)_minmax(180px,1fr)] xl:gap-4 xl:px-4',
                       isSelected
                         ? 'bg-white/10 border border-white/20 text-white'
                         : isActive
@@ -1150,7 +1286,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
                           'h-7 w-7 shrink-0 rounded-md flex items-center justify-center transition-all',
                           activeMenu?.song.id === song.id
                             ? 'opacity-100 text-text bg-hover'
-                            : 'opacity-0 text-text-muted group-hover:opacity-100 hover:text-text hover:bg-hover'
+                            : 'opacity-70 md:opacity-0 text-text-muted md:group-hover:opacity-100 hover:text-text hover:bg-hover'
                         )}
                       >
                         <MoreVertical className="h-4 w-4" />
@@ -1230,6 +1366,33 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
           style={{ left: activeMenu.x, top: activeMenu.y }}
           onClick={(event) => event.stopPropagation()}
         >
+          {isRemoteConnected && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  void remoteClient.play(activeMenu.song.id)
+                  setActiveMenu(null)
+                }}
+                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-semibold text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+              >
+                <Laptop2 className="h-3.5 w-3.5" />
+                Play on PC
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  remoteClient.downloadSong(activeMenu.song.id)
+                  setActiveMenu(null)
+                }}
+                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted hover:bg-white/10 hover:text-text transition-colors"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Transfer / Download to Phone
+              </button>
+              <div className="my-1 border-t border-white/10" />
+            </>
+          )}
           <button
             type="button"
             onClick={() => {

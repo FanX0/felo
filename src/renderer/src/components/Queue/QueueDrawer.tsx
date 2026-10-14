@@ -1,4 +1,5 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   ChevronDown,
   ChevronUp,
@@ -46,6 +47,21 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
   const clearUpcomingQueue = usePlayerStore((s) => s.clearUpcomingQueue)
   const transfers = useDownloadStore((s) => s.transfers)
 
+  const [touchStartY, setTouchStartY] = useState<number | null>(null)
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    setTouchStartY(e.touches[0].clientY)
+  }
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartY === null) return
+    const deltaY = e.changedTouches[0].clientY - touchStartY
+    if (deltaY > 60) {
+      onClose()
+    }
+    setTouchStartY(null)
+  }
+
   const currentSong: Song | undefined = queue[currentSongIndex]
 
   const upcomingSongs = useMemo(() => {
@@ -58,51 +74,72 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
 
   if (!isOpen) return null
 
-  return (
-    <aside
-      aria-label="Play Queue"
-      className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[380px] flex-col border-l border-white/10 bg-[#121212]/95 backdrop-blur-xl shadow-2xl transition-transform animate-in slide-in-from-right duration-200"
-    >
-      {/* Header */}
-      <div className="flex h-16 shrink-0 items-center justify-between border-b border-white/10 px-5">
-        <div className="flex items-center gap-2.5">
-          <ListMusic className="h-5 w-5 text-primary-amber" />
-          <h2 className="text-base font-bold text-white">Queue</h2>
-          {isShuffle && (
-            <span
-              title="Shuffle is active"
-              className="flex items-center gap-1 text-[11px] font-mono font-medium text-primary-amber"
-            >
-              <Shuffle className="h-3 w-3" />
-              Shuffled
-            </span>
-          )}
+  const drawerContent = (
+    <>
+      <div
+        className="fixed inset-0 z-[99999] bg-black/70 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
+        onClick={onClose}
+      />
+      <aside
+        aria-label="Play Queue"
+        className="fixed inset-0 sm:inset-y-0 sm:left-auto sm:right-0 z-[99999] flex w-full max-w-full sm:max-w-[380px] flex-col border-t sm:border-t-0 sm:border-l border-white/10 bg-[#121212] shadow-2xl transition-transform animate-in slide-in-from-bottom sm:slide-in-from-right duration-200 pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] select-none"
+      >
+        {/* Mobile Drag Indicator */}
+        <div
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+          onClick={onClose}
+          className="sm:hidden w-full flex flex-col items-center pt-2.5 pb-1 cursor-pointer shrink-0"
+          title="Swipe or tap to close"
+        >
+          <div className="w-12 h-1.5 rounded-full bg-white/30" />
         </div>
-        <div className="flex items-center gap-2">
-          {upcomingSongs.length > 0 && (
+
+        {/* Header */}
+        <div
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+          className="flex h-14 sm:h-16 shrink-0 items-center justify-between border-b border-white/10 px-4 sm:px-5 pt-[env(safe-area-inset-top,0px)] bg-[#121212]"
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <ListMusic className="h-5 w-5 text-primary-amber shrink-0" />
+            <h2 className="text-base font-bold text-white truncate">Queue</h2>
+            {isShuffle && (
+              <span
+                title="Shuffle is active"
+                className="flex items-center gap-1 text-[11px] font-mono font-medium text-primary-amber shrink-0"
+              >
+                <Shuffle className="h-3 w-3" />
+                Shuffled
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {upcomingSongs.length > 0 && (
+              <button
+                type="button"
+                onClick={clearUpcomingQueue}
+                title="Clear upcoming queue"
+                className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold text-text-muted transition-colors hover:bg-white/10 hover:text-danger cursor-pointer whitespace-nowrap active:scale-95"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Clear</span>
+              </button>
+            )}
             <button
               type="button"
-              onClick={clearUpcomingQueue}
-              title="Clear upcoming queue"
-              className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold text-text-muted transition-colors hover:bg-white/10 hover:text-danger cursor-pointer"
+              onClick={onClose}
+              title="Close queue"
+              className="flex h-9 w-9 sm:h-8 sm:w-8 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-white/10 hover:text-white cursor-pointer active:scale-95"
             >
-              <Trash2 className="h-3.5 w-3.5" />
-              Clear
+              <ChevronDown className="h-5 w-5 sm:hidden" />
+              <X className="h-4 w-4 hidden sm:block" />
             </button>
-          )}
-          <button
-            type="button"
-            onClick={onClose}
-            title="Close queue"
-            className="flex h-8 w-8 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          </div>
         </div>
-      </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto px-4 py-4 pb-12 space-y-6">
         {/* Now Playing */}
         <div>
           <div className="mb-2.5 flex items-center justify-between">
@@ -237,7 +274,7 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
                       {formatDuration(song.duration)}
                     </span>
 
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-0.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                       {idx > 0 && (
                         <button
                           type="button"
@@ -288,5 +325,12 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
         </div>
       </div>
     </aside>
+  </>
   )
+
+  if (typeof document !== 'undefined') {
+    return createPortal(drawerContent, document.body)
+  }
+
+  return drawerContent
 }

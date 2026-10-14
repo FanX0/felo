@@ -11,15 +11,21 @@ import {
   Download,
   Globe,
   Laptop2,
+  Smartphone,
+  Tablet,
   Sparkles,
-  User,
-  ChevronDown,
-  ChevronUp
+  User
 } from 'lucide-react'
 import { remoteClient, type PlaybackTarget } from '../../pages/Remote/remoteClient'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
+import { usePlayerStore } from '../../hooks/usePlayerStore'
+import {
+  useConnectedDeviceStore,
+  sendDeviceCommand
+} from '../../hooks/useConnectedDeviceStore'
 import { getSupabase, isSupabaseConfigured } from '../../lib/supabase'
 import type { UserConnectedDevice } from '../../online/types'
+import { detectDeviceInfo } from '../../lib/deviceInfo'
 
 interface RemoteControlModalProps {
   isOpen: boolean
@@ -50,15 +56,72 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
   const [qrMode, setQrMode] = useState<'cloudflare' | 'local'>('cloudflare')
 
   // Web mode state
-  const [webHostInput, setWebHostInput] = useState(() => remoteClient.getBaseUrl())
-  const [webTokenInput, setWebTokenInput] = useState(() => remoteClient.getToken())
   const [currentTarget, setCurrentTarget] = useState<PlaybackTarget>(() => remoteClient.getTargetDevice())
   const [isWebConnected, setIsWebConnected] = useState(() => remoteClient.getIsConnected())
 
   // Discovered devices in Web mode
   const [discoveredDevices, setDiscoveredDevices] = useState<UserConnectedDevice[]>([])
   const [isLoadingDiscovered, setIsLoadingDiscovered] = useState(false)
-  const [showManualLAN, setShowManualLAN] = useState(false)
+  const [transferredDeviceId, setTransferredDeviceId] = useState<string | null>(null)
+
+  const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
+  const myDeviceId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : null
+  const isRemotePlaying = Boolean(
+    activeRemote &&
+      activeRemote.activeDeviceId !== myDeviceId &&
+      activeRemote.isPlaying
+  )
+
+  const deviceInfo = detectDeviceInfo()
+  const activeDesktop = discoveredDevices.find(
+    (dev) => dev.local_ip && remoteClient.getBaseUrl().includes(dev.local_ip)
+  )
+  const desktopDisplayName =
+    activeDesktop?.device_name || remoteClient.getState().deviceName || 'Felo Desktop'
+
+  const handlePlayOnThisComputer = async () => {
+    if (!activeRemote || !user?.id) return
+
+    // 1. Send pause command to the active remote device
+    await sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'pause')
+
+    // 2. Clear remote playback state in store
+    useConnectedDeviceStore.getState().clearRemotePlayback()
+
+    // 3. Queue and play locally on PC
+    const player = usePlayerStore.getState()
+    if (activeRemote.song) {
+      let songToPlay = activeRemote.song
+      if (window.api?.getSongs) {
+        try {
+          const localSongs = await window.api.getSongs()
+          const matched = localSongs.find(
+            (s: any) =>
+              s.id === activeRemote.song?.id ||
+              (s.title?.toLowerCase() === activeRemote.song?.title?.toLowerCase() &&
+                s.artist?.toLowerCase() === activeRemote.song?.artist?.toLowerCase())
+          )
+          if (matched) {
+            songToPlay = matched
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      player.setQueue([songToPlay], 0, {
+        type: 'library',
+        title: 'Transferred Playback'
+      })
+      if (typeof activeRemote.position === 'number' && activeRemote.position > 0) {
+        setTimeout(() => {
+          usePlayerStore.getState().seek(activeRemote.position)
+        }, 80)
+      }
+    } else {
+      player.setIsPlaying(true)
+    }
+  }
 
   const loadInfo = async () => {
     if (!window.api?.getRemoteControlInfo) return
@@ -91,9 +154,9 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
     }
   }, [isOpen, isElectron])
 
-  // Fetch active discovered devices from Supabase in Web mode
+  // Fetch active discovered devices from Supabase in both Electron and Web mode
   useEffect(() => {
-    if (!isOpen || isElectron || !user?.id || !isSupabaseConfigured) return undefined
+    if (!isOpen || !user?.id || !isSupabaseConfigured) return undefined
 
     const fetchDevices = async () => {
       setIsLoadingDiscovered(true)
@@ -142,7 +205,44 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
       clearInterval(pollInterval)
       void supabase.removeChannel(channel)
     }
-  }, [isOpen, isElectron, user?.id])
+  }, [isOpen, user?.id])
+
+  const handleSendToMobile = async (device: UserConnectedDevice) => {
+    if (!user?.id) return
+    const supabase = getSupabase()
+    const player = usePlayerStore.getState()
+    const activeSong = player.queue[player.currentSongIndex]
+    if (!activeSong) return
+
+    let songForMobile = activeSong
+    if (info?.ip && info?.token) {
+      const port = info.port || 4788
+      const streamUrl = `http://${info.ip}:${port}/v1/audio/${encodeURIComponent(activeSong.id)}?token=${encodeURIComponent(info.token)}`
+      const artworkUrl = `http://${info.ip}:${port}/v1/artwork/${encodeURIComponent(activeSong.id)}?token=${encodeURIComponent(info.token)}`
+      songForMobile = {
+        ...activeSong,
+        filePath: streamUrl,
+        artworkUrl: artworkUrl,
+        isOnline: true
+      }
+    }
+
+    await supabase.channel(`user_playback_sync_${user.id}`).send({
+      type: 'broadcast',
+      event: 'command',
+      payload: {
+        targetDeviceId: device.id,
+        action: 'play',
+        song: songForMobile,
+        position: player.currentTime
+      }
+    })
+
+    // Pause PC playback so audio smoothly switches to the mobile phone
+    player.setIsPlaying(false)
+    setTransferredDeviceId(device.id)
+    setTimeout(() => setTransferredDeviceId(null), 3000)
+  }
 
   if (!isOpen) return null
 
@@ -188,15 +288,16 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
     }
   }
 
-  const handleSaveWebConnection = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (webHostInput) remoteClient.setBaseUrl(webHostInput)
-    if (webTokenInput) remoteClient.setToken(webTokenInput)
-  }
-
   const handleSelectWebTarget = async (target: PlaybackTarget) => {
     setCurrentTarget(target)
     await remoteClient.setTargetDevice(target)
+  }
+
+  const handleConnectToDiscovered = async (device: UserConnectedDevice) => {
+    if (!device.local_ip) return
+    const targetUrl = `http://${device.local_ip}:${device.port || 4788}`
+    remoteClient.configure(targetUrl, device.token || '')
+    await handleSelectWebTarget('desktop')
   }
 
   return (
@@ -242,148 +343,221 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
               <span className="text-xs">Preparing connection...</span>
             </div>
           ) : !isElectron ? (
-            /* --- WEB BROWSER MODE --- */
+            /* --- WEB / MOBILE DEVICE PICKER (SPOTIFY CONNECT STANDARD) --- */
             <div className="w-full space-y-5">
+              {/* 1. CURRENT PLAYING DEVICE HERO */}
               <div>
-                <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2.5 px-0.5">
-                  Playback Output
-                </h3>
-                <div className="space-y-2.5">
-                  {/* 1. This Web Browser */}
-                  <button
-                    type="button"
-                    onClick={() => handleSelectWebTarget('mobile')}
-                    className={`w-full p-3.5 rounded-xl text-left transition flex items-center justify-between border cursor-pointer ${
-                      currentTarget === 'mobile'
-                        ? 'bg-white/[0.08] border-white/40 shadow-md'
-                        : 'bg-white/[0.02] border-white/5 hover:bg-white/[0.05]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center text-white shrink-0">
-                        <Globe className="w-5 h-5" />
-                      </div>
-                      <div className="min-w-0">
-                        <h4 className="text-sm font-bold text-white truncate">This Web Browser</h4>
-                        <p className="text-[11px] text-zinc-400 truncate">Play audio directly in this browser</p>
-                      </div>
-                    </div>
-                    {currentTarget === 'mobile' ? (
-                      <div className="w-6 h-6 rounded-full bg-white flex items-center justify-center text-black shrink-0">
-                        <Check className="w-3.5 h-3.5 stroke-[3]" />
-                      </div>
-                    ) : (
-                      <div className="w-5 h-5 rounded-full border border-zinc-600 shrink-0" />
-                    )}
-                  </button>
+                <div className="flex items-center justify-between mb-2 px-0.5">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+                    Current Device
+                  </span>
+                  <div className="flex items-center gap-1.5 text-[11px]">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="text-emerald-400 font-semibold">Active Audio Output</span>
+                  </div>
+                </div>
 
-                  {/* 2. Felo Desktop */}
-                  <button
-                    type="button"
-                    onClick={() => handleSelectWebTarget('desktop')}
-                    className={`w-full p-3.5 rounded-xl text-left transition flex items-center justify-between border cursor-pointer ${
-                      currentTarget === 'desktop'
-                        ? 'bg-white/[0.08] border-white/40 shadow-md'
-                        : 'bg-white/[0.02] border-white/5 hover:bg-white/[0.05]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center text-white shrink-0">
-                        <Laptop2 className="w-5 h-5" />
-                      </div>
-                      <div className="min-w-0">
-                        <h4 className="text-sm font-bold text-white truncate">Felo Desktop</h4>
-                        <p className="text-[11px] text-zinc-400 truncate">
-                          {isWebConnected ? 'Play through PC speakers' : 'Requires desktop connection'}
-                        </p>
-                      </div>
+                <div className="w-full p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between shadow-lg shadow-emerald-500/5">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="w-12 h-12 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                      {currentTarget === 'mobile' ? (
+                        deviceInfo.type === 'phone' ? (
+                          <Smartphone className="w-6 h-6 text-emerald-400 animate-pulse" />
+                        ) : deviceInfo.type === 'tablet' ? (
+                          <Tablet className="w-6 h-6 text-emerald-400 animate-pulse" />
+                        ) : (
+                          <Globe className="w-6 h-6 text-emerald-400 animate-pulse" />
+                        )
+                      ) : currentTarget === 'both' ? (
+                        <Radio className="w-6 h-6 text-emerald-400 animate-pulse" />
+                      ) : (
+                        <Laptop2 className="w-6 h-6 text-emerald-400 animate-pulse" />
+                      )}
                     </div>
-                    {currentTarget === 'desktop' ? (
-                      <div className="w-6 h-6 rounded-full bg-white flex items-center justify-center text-black shrink-0">
-                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-bold text-white truncate">
+                          {currentTarget === 'mobile'
+                            ? `${deviceInfo.model} (This Device)`
+                            : currentTarget === 'both'
+                              ? 'Play on Both (Dual Sync)'
+                              : desktopDisplayName}
+                        </h4>
                       </div>
-                    ) : (
-                      <div className="w-5 h-5 rounded-full border border-zinc-600 shrink-0" />
-                    )}
-                  </button>
-
-                  {/* 3. Play on Both (Dual Audio Sync) */}
-                  <button
-                    type="button"
-                    onClick={() => handleSelectWebTarget('both')}
-                    className={`w-full p-3.5 rounded-xl text-left transition flex items-center justify-between border cursor-pointer ${
-                      currentTarget === 'both'
-                        ? 'bg-white/[0.08] border-white/40 shadow-md'
-                        : 'bg-white/[0.02] border-white/5 hover:bg-white/[0.05]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-amber-500/20 to-emerald-500/20 border border-white/10 flex items-center justify-center text-white shrink-0">
-                        <Radio className="w-5 h-5 text-emerald-400" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <h4 className="text-sm font-bold text-white truncate">Play on Both</h4>
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300">
-                            Dual Sync
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-emerald-400/90 truncate">
-                          Synchronized audio on Browser + PC simultaneously
-                        </p>
-                      </div>
+                      <p className="text-xs text-emerald-400/90 font-medium truncate mt-0.5">
+                        {currentTarget === 'mobile'
+                          ? deviceInfo.isMobile
+                            ? 'Playing on phone speakers'
+                            : 'Playing directly in browser'
+                          : currentTarget === 'both'
+                            ? `Synchronized audio on ${deviceInfo.model} + PC`
+                            : isWebConnected
+                              ? 'Playing through PC speakers'
+                              : 'Connected to desktop'}
+                      </p>
                     </div>
-                    {currentTarget === 'both' ? (
-                      <div className="w-6 h-6 rounded-full bg-white flex items-center justify-center text-black shrink-0">
-                        <Check className="w-3.5 h-3.5 stroke-[3]" />
-                      </div>
-                    ) : (
-                      <div className="w-5 h-5 rounded-full border border-zinc-600 shrink-0" />
-                    )}
-                  </button>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-end gap-1 h-4">
+                      <span className="w-1 h-full bg-emerald-400 rounded-full animate-pulse" />
+                      <span className="w-1 h-3 bg-emerald-400 rounded-full animate-pulse" style={{ animationDelay: '150ms' }} />
+                      <span className="w-1 h-full bg-emerald-400 rounded-full animate-pulse" style={{ animationDelay: '300ms' }} />
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              {/* Desktop Connection Form */}
-              <div className="pt-2 border-t border-white/5">
-                <div className="flex items-center justify-between mb-2 px-0.5">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-400">Desktop Connection</h4>
-                  <div className="flex items-center gap-1.5 text-[11px]">
-                    <span className={`w-2 h-2 rounded-full ${isWebConnected ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`} />
-                    <span className={isWebConnected ? 'text-emerald-400 font-medium' : 'text-zinc-500'}>
-                      {isWebConnected ? 'Connected' : 'Disconnected'}
-                    </span>
-                  </div>
+              {/* 2. SELECT ANOTHER DEVICE */}
+              <div className="space-y-3 pt-1 border-t border-white/5">
+                <div className="flex items-center justify-between mb-1 px-0.5">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+                    Select a Device
+                  </h4>
+                  {isLoadingDiscovered && (
+                    <div className="flex items-center gap-1 text-[11px] text-zinc-400">
+                      <RefreshCw className="w-3 h-3 animate-spin text-zinc-500" />
+                      <span>Scanning account...</span>
+                    </div>
+                  )}
                 </div>
 
-                <form onSubmit={handleSaveWebConnection} className="p-3.5 rounded-xl bg-black/40 border border-white/10 space-y-2.5 text-xs">
-                  <div>
-                    <label className="block text-zinc-400 mb-1 text-[11px]">Desktop Server URL</label>
-                    <input
-                      type="text"
-                      value={webHostInput}
-                      onChange={(e) => setWebHostInput(e.target.value)}
-                      placeholder="http://192.168.1.X:4788"
-                      className="w-full bg-zinc-800 text-white p-2 rounded-lg border border-white/10 focus:border-white/40 outline-none font-mono text-[11px]"
-                    />
+                <div className="space-y-2">
+                  {/* Switch to Local Device (if not already active) */}
+                  {currentTarget !== 'mobile' && (
+                    <button
+                      type="button"
+                      onClick={() => handleSelectWebTarget('mobile')}
+                      className="w-full p-3.5 rounded-xl text-left transition flex items-center justify-between border bg-white/[0.03] border-white/5 hover:bg-white/[0.06] hover:border-white/20 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center text-white shrink-0">
+                          {deviceInfo.type === 'phone' ? (
+                            <Smartphone className="w-5 h-5 text-zinc-300" />
+                          ) : deviceInfo.type === 'tablet' ? (
+                            <Tablet className="w-5 h-5 text-zinc-300" />
+                          ) : (
+                            <Globe className="w-5 h-5 text-zinc-300" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <h5 className="text-xs font-bold text-white truncate">
+                            {deviceInfo.model} (This Device)
+                          </h5>
+                          <p className="text-[11px] text-zinc-400 truncate">
+                            {deviceInfo.isMobile ? 'Listen on phone speakers' : 'Listen in this browser'}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-white/10 hover:bg-white/20 text-white transition">
+                        Listen Here
+                      </span>
+                    </button>
+                  )}
+
+                  {/* Discovered Desktops from same account */}
+                  {user && discoveredDevices.length > 0 &&
+                    discoveredDevices.map((dev) => {
+                      const isCurrent =
+                        currentTarget === 'desktop' &&
+                        isWebConnected &&
+                        remoteClient.getBaseUrl().includes(dev.local_ip || '')
+                      if (isCurrent) return null
+
+                      return (
+                        <button
+                          key={dev.id}
+                          type="button"
+                          onClick={() => handleConnectToDiscovered(dev)}
+                          className="w-full p-3.5 rounded-xl text-left transition flex items-center justify-between border bg-white/[0.03] border-white/5 hover:bg-white/[0.06] hover:border-white/20 cursor-pointer"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center text-white shrink-0">
+                              <Laptop2 className="w-5 h-5 text-white" />
+                            </div>
+                            <div className="min-w-0">
+                              <h5 className="text-xs font-bold text-white truncate">
+                                {dev.device_name || 'Felo Desktop'}
+                              </h5>
+                              <p className="text-[11px] text-zinc-400 truncate">
+                                Ready on local Wi-Fi • {dev.local_ip}
+                              </p>
+                            </div>
+                          </div>
+                          <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-white/10 hover:bg-white/20 text-white transition">
+                            Switch to PC
+                          </span>
+                        </button>
+                      )
+                    })}
+
+                  {/* Play on Both (Dual Sync) Option */}
+                  {currentTarget !== 'both' && (
+                    <button
+                      type="button"
+                      onClick={() => handleSelectWebTarget('both')}
+                      className="w-full p-3.5 rounded-xl text-left transition flex items-center justify-between border bg-white/[0.03] border-white/5 hover:bg-white/[0.06] hover:border-white/20 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-amber-500/20 to-emerald-500/20 border border-white/10 flex items-center justify-center text-white shrink-0">
+                          <Radio className="w-5 h-5 text-emerald-400" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <h5 className="text-xs font-bold text-white truncate">Play on Both</h5>
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300">
+                              Dual Sync
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-zinc-400 truncate">
+                            Synchronized audio on {deviceInfo.model} + PC
+                          </p>
+                        </div>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-white/10 hover:bg-white/20 text-white transition">
+                        Dual Play
+                      </span>
+                    </button>
+                  )}
+                </div>
+
+                {/* LOGGED OUT STATE: Call to Action */}
+                {!user && (
+                  <div className="bg-gradient-to-br from-emerald-950/40 via-zinc-900 to-zinc-900 border border-emerald-500/20 rounded-2xl p-4 shadow-xl space-y-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                        <Sparkles className="w-4 h-4" />
+                      </div>
+                      <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                        Connect to Your Computer
+                      </h4>
+                    </div>
+                    <p className="text-xs text-zinc-300 leading-relaxed">
+                      Sign in to your Felo account on your phone and computer to discover and control playback across devices with 1 tap.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose()
+                        navigate('/account')
+                      }}
+                      className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer active:scale-95 shadow"
+                    >
+                      <User className="w-4 h-4" />
+                      <span>Log In to Connect Devices</span>
+                    </button>
                   </div>
-                  <div>
-                    <label className="block text-zinc-400 mb-1 text-[11px]">Pairing Token</label>
-                    <input
-                      type="text"
-                      value={webTokenInput}
-                      onChange={(e) => setWebTokenInput(e.target.value)}
-                      placeholder="32-character pairing token"
-                      className="w-full bg-zinc-800 text-white p-2 rounded-lg border border-white/10 focus:border-white/40 outline-none font-mono text-[11px]"
-                    />
+                )}
+
+                {/* Logged in with no active desktop detected */}
+                {user && discoveredDevices.length === 0 && currentTarget !== 'desktop' && (
+                  <div className="p-4 rounded-xl bg-white/[0.02] border border-white/5 text-center text-xs text-zinc-400">
+                    <Laptop2 className="w-7 h-7 mx-auto mb-1.5 opacity-40 text-zinc-400" />
+                    <p className="font-semibold text-white mb-0.5">No active desktop players found</p>
+                    <p className="text-[11px] text-zinc-500">
+                      Open Felo on your computer and make sure you are logged into <span className="text-zinc-300">{user.email}</span>.
+                    </p>
                   </div>
-                  <button
-                    type="submit"
-                    className="w-full py-2 bg-white text-black font-bold rounded-lg hover:bg-white/90 transition text-xs cursor-pointer active:scale-95"
-                  >
-                    Save & Connect to Desktop
-                  </button>
-                </form>
+                )}
               </div>
             </div>
           ) : !info?.enabled ? (
@@ -407,6 +581,44 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
           ) : (
             /* --- ELECTRON: REMOTE ENABLED (TABS FOR CLOUDFLARE WEB VS LOCAL WI-FI) --- */
             <>
+              {/* Active Remote Hero Card (Spotify Connect) */}
+              {isRemotePlaying && activeRemote && (
+                <div className="w-full mb-4 p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between shadow-lg shadow-emerald-500/5">
+                  <div className="flex items-center gap-3 min-w-0 text-left">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                      {activeRemote.activeDeviceType === 'mobile' ? (
+                        <Smartphone className="w-5 h-5 text-emerald-400 animate-pulse" />
+                      ) : (
+                        <Laptop2 className="w-5 h-5 text-emerald-400 animate-pulse" />
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                          Playing on {activeRemote.activeDeviceName}
+                        </span>
+                      </div>
+                      <p className="text-xs font-semibold text-white truncate mt-0.5">
+                        {activeRemote.song ? activeRemote.song.title : 'Audio Playing'}
+                      </p>
+                      <p className="text-[11px] text-zinc-400 truncate">
+                        {activeRemote.song?.artist || activeRemote.activeDeviceName}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => void handlePlayOnThisComputer()}
+                    className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs transition active:scale-95 shadow-md flex items-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    <Laptop2 className="w-3.5 h-3.5" />
+                    <span>Play on PC</span>
+                  </button>
+                </div>
+              )}
+
               {/* Tab Selector: Cloudflare Web vs Local Wi-Fi */}
               <div className="w-full flex rounded-xl bg-white/5 p-1 mb-4 border border-white/5 text-xs font-semibold">
                 <button
@@ -516,6 +728,89 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
                   )}
                 </button>
               </div>
+
+              {/* Connected Mobile Devices for Spotify Connect bidirectional control */}
+              {discoveredDevices.filter((d) => d.device_type !== 'desktop').length > 0 && (
+                <div className="w-full mt-4 space-y-2 border-t border-white/10 pt-3 text-left">
+                  <div className="flex items-center justify-between px-0.5">
+                    <span className="text-[11px] font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>
+                        Active Mobile Devices ({discoveredDevices.filter((d) => d.device_type !== 'desktop').length})
+                      </span>
+                    </span>
+                  </div>
+                  {discoveredDevices
+                    .filter((d) => d.device_type !== 'desktop')
+                    .map((dev) => {
+                      const isThisDevPlaying =
+                        activeRemote?.activeDeviceId === dev.id && activeRemote.isPlaying
+
+                      return (
+                        <div
+                          key={dev.id}
+                          className={`w-full p-2.5 rounded-xl border flex items-center justify-between transition ${
+                            isThisDevPlaying
+                              ? 'bg-emerald-500/10 border-emerald-500/40 shadow-sm shadow-emerald-500/5'
+                              : 'bg-white/[0.03] border-white/5 hover:bg-white/[0.06]'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div
+                              className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                isThisDevPlaying
+                                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                  : 'bg-emerald-500/10 text-emerald-400'
+                              }`}
+                            >
+                              <Smartphone className="w-4 h-4" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-xs font-bold text-white truncate">{dev.device_name}</p>
+                                {isThisDevPlaying && (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300">
+                                    Currently Playing
+                                  </span>
+                                )}
+                              </div>
+                              <p
+                                className={`text-[10px] truncate ${
+                                  isThisDevPlaying ? 'text-emerald-400 font-medium' : 'text-zinc-400'
+                                }`}
+                              >
+                                {isThisDevPlaying
+                                  ? 'Active audio output'
+                                  : 'Ready for playback transfer'}
+                              </p>
+                            </div>
+                          </div>
+                          {isThisDevPlaying ? (
+                            <button
+                              type="button"
+                              onClick={() => void handlePlayOnThisComputer()}
+                              className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-white/10 hover:bg-white/20 text-white transition cursor-pointer active:scale-95"
+                            >
+                              Pull to PC
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => void handleSendToMobile(dev)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer active:scale-95 shadow-sm ${
+                                transferredDeviceId === dev.id
+                                  ? 'bg-emerald-400 text-black'
+                                  : 'bg-emerald-500 hover:bg-emerald-400 text-black'
+                              }`}
+                            >
+                              {transferredDeviceId === dev.id ? '✓ Playing on Phone' : 'Transfer to Phone'}
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
+                </div>
+              )}
             </>
           )}
         </div>

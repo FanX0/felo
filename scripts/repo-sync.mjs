@@ -39,7 +39,9 @@ function printStatus() {
   console.log(remotes || 'No remotes configured!')
 
   const hasProviders = fs.existsSync(path.join(ROOT_DIR, 'src', 'main', 'providers'))
+  const hasWorktree = fs.existsSync(path.join(ROOT_DIR, '..', 'felo-private', 'src', 'main', 'providers'))
   console.log(`\nLocal Providers Folder (src/main/providers/): ${hasProviders ? 'PRESENT (mounted)' : 'ABSENT (clean)'}`)
+  console.log(`Linked Worktree Providers (../felo-private/): ${hasWorktree ? 'PRESENT (worktree ready)' : 'ABSENT'}`)
 
   const status = runCapture('git status --short')
   console.log('\nWorking Directory Changes:')
@@ -56,10 +58,14 @@ function syncPrivate(message) {
     run('git checkout backup-full')
   }
 
-  // Ensure providers are tracked on private backup branch
+  // Ensure providers and private README are tracked on private backup branch
   if (fs.existsSync(path.join(ROOT_DIR, 'src', 'main', 'providers'))) {
     console.log('Adding src/main/providers/ to private backup...')
     run('git add -f src/main/providers')
+  }
+  if (fs.existsSync(path.join(ROOT_DIR, 'README.private.md'))) {
+    console.log('Adding README.private.md to private backup...')
+    run('git add -f README.private.md')
   }
 
   // Stage general project changes
@@ -93,8 +99,13 @@ function syncPublic(message) {
   const stagedFiles = runCapture('git diff --name-only --cached')
   const trackedFiles = runCapture('git ls-files')
 
-  if (stagedFiles.includes('src/main/providers') || trackedFiles.includes('src/main/providers')) {
-    console.error('\n❌ CRITICAL SECURITY ERROR: src/main/providers/ is tracked or staged on public branch!')
+  if (
+    stagedFiles.includes('src/main/providers') ||
+    trackedFiles.includes('src/main/providers') ||
+    stagedFiles.includes('README.private.md') ||
+    trackedFiles.includes('README.private.md')
+  ) {
+    console.error('\n❌ CRITICAL SECURITY ERROR: Private assets (src/main/providers/ or README.private.md) tracked or staged on public branch!')
     console.error('Aborting push to public repository to prevent secret leak.')
     process.exit(1)
   }

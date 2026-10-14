@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { usePlayerStore } from '../hooks/usePlayerStore'
+import { useOnlineStore } from '../hooks/useOnlineStore'
 import {
   getTabInstanceId,
   broadcastCrossTabMessage,
@@ -8,12 +9,153 @@ import {
   type PlayerSyncSnapshot
 } from '../lib/crossTabSync'
 import { getActiveAudioTime, getActiveAudioElement } from '../lib/audioBridge'
+import { getDeterministicDeviceKey } from '../lib/deviceFingerprint'
+import { getSupabase, isSupabaseConfigured } from '../lib/supabase'
 
 export default function CrossTabSyncBridge(): null {
   const isApplyingRemoteRef = useRef(false)
   const heartbeatTimerRef = useRef<any>(null)
+  const desktopProbeTimerRef = useRef<any>(null)
+  const realtimeChannelRef = useRef<any>(null)
   const tabId = getTabInstanceId()
+  const user = useOnlineStore((s) => s.user)
+  const isElectron = typeof window !== 'undefined' && Boolean((window as any).electron)
 
+  // ─── 1. Cross-Origin Supabase Realtime Sync Channel ─────────────────
+  // Coordinates playback across different origins (e.g. localhost:5173 vs deployed domain)
+  // and native Desktop app on the same device (or across the user's account).
+  useEffect(() => {
+    if (!isSupabaseConfigured) return undefined
+
+    let isDisposed = false
+    let currentChannel: any = null
+
+    const initRealtimeChannel = async () => {
+      try {
+        const deviceKey = await getDeterministicDeviceKey()
+        if (isDisposed) return
+
+        const channelTopic = user?.id
+          ? `user_sync_${user.id}`
+          : `device_sync_${deviceKey}`
+
+        const supabase = getSupabase()
+        const channel = supabase.channel(`felo_playback_${channelTopic}`, {
+          config: {
+            broadcast: { ack: false, self: false }
+          }
+        })
+
+        channel.on('broadcast', { event: 'felo_playback' }, ({ payload }) => {
+          if (!payload || payload.senderId === tabId) return
+
+          const state = usePlayerStore.getState()
+
+          switch (payload.type) {
+            case 'CLAIM_PLAYBACK': {
+              // Another instance (e.g. deployed domain or localhost) started audio playback!
+              // 1. Immediately pause local audio element if playing
+              const audio = getActiveAudioElement()
+              if (audio && !audio.paused) {
+                audio.pause()
+              }
+
+              // 2. Relinquish audio ownership in local store
+              isApplyingRemoteRef.current = true
+              state.syncFromExternal({
+                ...payload.payload,
+                activeInstanceId: payload.senderId
+              })
+
+              // 3. Relay to local BroadcastChannel so any sibling tabs on this origin also yield
+              broadcastCrossTabMessage({
+                type: 'CLAIM_PLAYBACK',
+                senderId: payload.senderId,
+                payload: payload.payload
+              })
+              break
+            }
+
+            case 'STATE_UPDATE': {
+              if (state.activeInstanceId === tabId && state.isAudioActive) {
+                // If this tab is currently the active audio owner, ignore passive state updates
+                return
+              }
+              isApplyingRemoteRef.current = true
+              state.syncFromExternal(payload.payload)
+
+              // Relay to local sibling tabs
+              broadcastCrossTabMessage({
+                type: 'STATE_UPDATE',
+                senderId: payload.senderId,
+                payload: payload.payload
+              })
+              break
+            }
+
+            case 'RELEASE_PLAYBACK': {
+              if (state.activeInstanceId === payload.senderId) {
+                isApplyingRemoteRef.current = true
+                state.syncFromExternal({
+                  isPlaying: false,
+                  activeInstanceId: undefined
+                })
+                broadcastCrossTabMessage({
+                  type: 'RELEASE_PLAYBACK',
+                  senderId: payload.senderId
+                })
+              }
+              break
+            }
+          }
+        })
+
+        channel.subscribe()
+        currentChannel = channel
+        realtimeChannelRef.current = channel
+      } catch (err) {
+        console.warn('[CrossTabSync] Failed to initialize cross-origin Realtime channel:', err)
+      }
+    }
+
+    void initRealtimeChannel()
+
+    return () => {
+      isDisposed = true
+      if (currentChannel) {
+        try {
+          const supabase = getSupabase()
+          void supabase.removeChannel(currentChannel)
+        } catch {
+          // ignore
+        }
+      }
+      realtimeChannelRef.current = null
+    }
+  }, [user?.id, tabId])
+
+  // Helper to send cross-origin broadcast messages
+  const sendRealtimeBroadcast = (type: string, payload?: any) => {
+    const channel = realtimeChannelRef.current
+    if (!channel) return
+    try {
+      void channel.send({
+        type: 'broadcast',
+        event: 'felo_playback',
+        payload: {
+          type,
+          senderId: tabId,
+          origin: typeof window !== 'undefined' ? window.location.origin : '',
+          timestamp: Date.now(),
+          payload
+        }
+      })
+    } catch {
+      // ignore
+    }
+  }
+
+  // ─── 2. Same-Origin BroadcastChannel & Local Tab Coordination ──────
   useEffect(() => {
     const handleIncomingMessage = (message: CrossTabSyncMessage) => {
       const state = usePlayerStore.getState()
@@ -52,7 +194,6 @@ export default function CrossTabSyncBridge(): null {
         case 'SYNC_STATE_RESPONSE': {
           if (message.targetId && message.targetId !== tabId) return
           // Another tab is already active and sent us its state!
-          // Mark this tab as passive/synced and apply the snapshot
           isApplyingRemoteRef.current = true
           state.syncFromExternal({
             ...message.payload,
@@ -65,13 +206,11 @@ export default function CrossTabSyncBridge(): null {
           if (message.senderId === tabId) return
 
           // Another tab took over audio playback!
-          // 1. Immediately pause local audio element if playing
           const audio = getActiveAudioElement()
           if (audio && !audio.paused) {
             audio.pause()
           }
 
-          // 2. Mark this tab as passive and sync state
           isApplyingRemoteRef.current = true
           state.syncFromExternal({
             ...message.payload,
@@ -134,13 +273,13 @@ export default function CrossTabSyncBridge(): null {
 
     const unsubscribeMessages = subscribeCrossTabSync(handleIncomingMessage)
 
-    // On mount, ask other open tabs on this device if any of them is already playing
+    // On mount, ask other open tabs on this origin if any is already playing
     broadcastCrossTabMessage({
       type: 'REQUEST_SYNC_STATE',
       senderId: tabId
     })
 
-    // Listen to local store changes and broadcast to other tabs
+    // Listen to local store changes and broadcast to other tabs & origins
     const unsubscribeStore = usePlayerStore.subscribe((curr, prev) => {
       // If this update was triggered by an incoming sync message, do not re-broadcast
       if (isApplyingRemoteRef.current) {
@@ -162,16 +301,44 @@ export default function CrossTabSyncBridge(): null {
       // Case 1: This tab became the active audio owner, or started playing a new track
       if (curr.isAudioActive && (audioActiveChanged || (curr.isPlaying && (songChanged || playChanged)))) {
         const audioTime = getActiveAudioTime() || curr.currentTime
+        const snapshot: PlayerSyncSnapshot = {
+          isPlaying: curr.isPlaying,
+          isBuffering: curr.isBuffering,
+          currentSongIndex: curr.currentSongIndex,
+          queue: curr.queue,
+          originalQueue: curr.originalQueue,
+          currentTime: audioTime,
+          duration: curr.duration,
+          volume: curr.volume,
+          isShuffle: curr.isShuffle,
+          repeatMode: curr.repeatMode,
+          playbackContext: curr.playbackContext,
+          timestamp: Date.now(),
+          activeInstanceId: tabId
+        }
+
+        // Broadcast to same-origin tabs
         broadcastCrossTabMessage({
           type: 'CLAIM_PLAYBACK',
           senderId: tabId,
-          payload: {
+          payload: snapshot
+        })
+
+        // Broadcast cross-origin via Supabase Realtime
+        sendRealtimeBroadcast('CLAIM_PLAYBACK', snapshot)
+        return
+      }
+
+      // Case 2: This tab is the active audio owner and state updated
+      if (curr.isAudioActive) {
+        if (songChanged || queueChanged || playChanged || volumeChanged || modesChanged || seekChanged) {
+          const payload = {
             isPlaying: curr.isPlaying,
             isBuffering: curr.isBuffering,
             currentSongIndex: curr.currentSongIndex,
             queue: curr.queue,
             originalQueue: curr.originalQueue,
-            currentTime: audioTime,
+            currentTime: seekChanged ? curr.seekRequest! : (getActiveAudioTime() || curr.currentTime),
             duration: curr.duration,
             volume: curr.volume,
             isShuffle: curr.isShuffle,
@@ -180,44 +347,28 @@ export default function CrossTabSyncBridge(): null {
             timestamp: Date.now(),
             activeInstanceId: tabId
           }
-        })
-        return
-      }
 
-      // Case 2: This tab is the active audio owner and state updated
-      if (curr.isAudioActive) {
-        if (songChanged || queueChanged || playChanged || volumeChanged || modesChanged || seekChanged) {
+          // Broadcast to same-origin tabs
           broadcastCrossTabMessage({
             type: 'STATE_UPDATE',
             senderId: tabId,
-            payload: {
-              isPlaying: curr.isPlaying,
-              isBuffering: curr.isBuffering,
-              currentSongIndex: curr.currentSongIndex,
-              queue: curr.queue,
-              originalQueue: curr.originalQueue,
-              currentTime: seekChanged ? curr.seekRequest! : (getActiveAudioTime() || curr.currentTime),
-              duration: curr.duration,
-              volume: curr.volume,
-              isShuffle: curr.isShuffle,
-              repeatMode: curr.repeatMode,
-              playbackContext: curr.playbackContext,
-              timestamp: Date.now(),
-              activeInstanceId: tabId
-            }
+            payload
           })
+
+          // On play/pause or song change, inform cross-origin peers
+          if (songChanged || playChanged) {
+            sendRealtimeBroadcast('STATE_UPDATE', payload)
+          }
         }
       } else {
         // Case 3: Passive tab - user interacted with controls in the passive tab
         if (playChanged && !curr.isPlaying) {
-          // User hit pause in the passive tab
           broadcastCrossTabMessage({
             type: 'COMMAND',
             senderId: tabId,
             command: 'pause'
           })
         } else if (seekChanged && curr.seekRequest !== null) {
-          // User scrubbed seek bar in the passive tab
           broadcastCrossTabMessage({
             type: 'COMMAND',
             senderId: tabId,
@@ -252,6 +403,37 @@ export default function CrossTabSyncBridge(): null {
       }
     }, 1500)
 
+    // ─── 3. Local Desktop Loopback Probe (Web Browser Mode) ───────────
+    // If running in browser on localhost or HTTP, probe desktop app on 127.0.0.1:4788
+    if (!isElectron && typeof window !== 'undefined' && window.location.protocol === 'http:') {
+      const probeDesktop = async () => {
+        try {
+          const res = await fetch('http://127.0.0.1:4788/health', {
+            signal: AbortSignal.timeout(1200)
+          })
+          if (res.ok) {
+            const data = await res.json()
+            if (data?.isPlaying) {
+              const state = usePlayerStore.getState()
+              if (state.isAudioActive && state.isPlaying) {
+                // Desktop app on same machine is playing audio! Yield web audio.
+                const audio = getActiveAudioElement()
+                if (audio && !audio.paused) {
+                  audio.pause()
+                }
+                state.setIsAudioActive(false, 'felo-desktop-local')
+                state.setIsPlaying(false)
+              }
+            }
+          }
+        } catch {
+          // Desktop app not running or unreachable
+        }
+      }
+
+      desktopProbeTimerRef.current = setInterval(probeDesktop, 3000)
+    }
+
     const handleBeforeUnload = () => {
       const state = usePlayerStore.getState()
       if (state.isAudioActive) {
@@ -259,17 +441,19 @@ export default function CrossTabSyncBridge(): null {
           type: 'RELEASE_PLAYBACK',
           senderId: tabId
         })
+        sendRealtimeBroadcast('RELEASE_PLAYBACK')
       }
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
 
     return () => {
       if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current)
+      if (desktopProbeTimerRef.current) clearInterval(desktopProbeTimerRef.current)
       window.removeEventListener('beforeunload', handleBeforeUnload)
       unsubscribeMessages()
       unsubscribeStore()
     }
-  }, [tabId])
+  }, [tabId, isElectron])
 
   return null
 }

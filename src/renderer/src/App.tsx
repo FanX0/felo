@@ -4,6 +4,7 @@ import { cn } from './lib/utils'
 import Sidebar from './components/Sidebar/Sidebar'
 import Footer from './components/Footer/Footer'
 import AudioEngine from './components/AudioEngine'
+import CrossTabSyncBridge from './components/CrossTabSyncBridge'
 import DownloadPanel from './components/DownloadPanel/DownloadPanel'
 import type { DownloadTarget } from './components/DownloadPanel/DownloadPanel'
 import DownloadEventBridge from './components/DownloadEventBridge'
@@ -23,8 +24,10 @@ import MobileNowPlaying from './pages/Remote/MobileNowPlaying'
 import MobileDeviceSheet from './pages/Remote/MobileDeviceSheet'
 import DevicePresenceBridge from './components/DevicePresenceBridge'
 import { remoteClient, type RemotePlayerState } from './pages/Remote/remoteClient'
+import { useConnectedDeviceStore, getInterpolatedPosition } from './hooks/useConnectedDeviceStore'
 import { toMediaUrl } from './lib/media'
-import { AppCapabilities } from './lib/appConfig'
+import { AppCapabilities, isElectron } from './lib/appConfig'
+import { useIsMobile } from './hooks/useIsMobile'
 
 import Home from './pages/Home/Home'
 import Library from './pages/Library/Library'
@@ -110,9 +113,40 @@ function App() {
     }
   }, [])
 
+  const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
+  const myDeviceId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : null
+  const isCloudRemoteActive = Boolean(
+    !localIsPlaying &&
+      activeRemote &&
+      activeRemote.song &&
+      (myDeviceId ? activeRemote.activeDeviceId !== myDeviceId : true)
+  )
+
   const activePlayerState: RemotePlayerState =
     isRemoteConnected && remoteState.song
       ? remoteState
+      : isCloudRemoteActive && activeRemote?.song
+        ? {
+            ready: true,
+            playbackState: activeRemote.isPlaying ? 'playing' : 'paused',
+            isPlaying: activeRemote.isPlaying,
+            position: getInterpolatedPosition(activeRemote),
+            duration: activeRemote.duration,
+            volume: localVolume,
+            volumePercent: Math.round(localVolume * 100),
+            shuffle: false,
+            repeat: 'off',
+            targetDevice: 'desktop',
+            deviceName: activeRemote.activeDeviceName || 'Felo Desktop',
+            song: {
+              id: activeRemote.song.id,
+              title: activeRemote.song.title || 'Unknown Title',
+              artist: activeRemote.song.artist || 'Unknown Artist',
+              album: activeRemote.song.album || 'Desktop Library',
+              duration: activeRemote.song.duration || activeRemote.duration,
+              artworkUrl: activeRemote.song.artworkUrl || ''
+            }
+          }
       : {
           ready: true,
           playbackState: localIsPlaying ? 'playing' : 'paused',
@@ -268,12 +302,27 @@ function App() {
     }
   }
 
-  const isCapacitor = typeof window !== 'undefined' && Boolean((window as any).Capacitor)
-  const isMobileScreen =
-    typeof window !== 'undefined' &&
-    (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-      window.innerWidth <= 768 ||
-      isCapacitor)
+  const isMobileScreen = useIsMobile()
+
+  const isSubPage =
+    location.pathname.startsWith('/album/') ||
+    location.pathname.startsWith('/artist/') ||
+    location.pathname.startsWith('/playlists/') ||
+    location.pathname === '/lyrics' ||
+    location.pathname === '/settings' ||
+    location.pathname === '/chat' ||
+    location.pathname.startsWith('/profile')
+
+  const getSubPageTitle = () => {
+    if (location.pathname.startsWith('/album/')) return 'Album'
+    if (location.pathname.startsWith('/artist/')) return 'Artist'
+    if (location.pathname.startsWith('/playlists/')) return 'Playlist'
+    if (location.pathname === '/lyrics') return 'Lyrics'
+    if (location.pathname === '/settings') return 'Settings'
+    if (location.pathname === '/chat') return 'Direct Messages'
+    if (location.pathname.startsWith('/profile')) return 'Profile'
+    return 'Back'
+  }
 
   const isRemoteMode =
     location.pathname.startsWith('/remote') ||
@@ -291,6 +340,7 @@ function App() {
       )}
     >
       <AudioEngine />
+      <CrossTabSyncBridge />
       <OfflineNoticeToast />
       <PlaybackControlBridge />
       <PlaybackStreamBridge />
@@ -301,18 +351,54 @@ function App() {
 
       {/* Top Application Bar */}
       {isMobileScreen ? (
-        <header className="fixed top-0 left-0 right-0 h-14 bg-canvas/95 backdrop-blur-md flex items-center justify-between px-4 z-50 border-b border-border-subtle/40">
-          <button
-            type="button"
-            onClick={() => navigate('/')}
-            title="Felo Home"
-            className="flex items-center gap-2.5 text-text cursor-pointer select-none"
-          >
-            <FeloMark className="h-6 w-6 text-emerald-400" />
-            <span className="font-bold text-base tracking-tight">Felo</span>
-          </button>
+        <header className="fixed top-0 left-0 right-0 z-50 bg-canvas/95 backdrop-blur-md border-b border-border-subtle/40 px-3.5 pt-[env(safe-area-inset-top,0px)] h-[calc(3.5rem+env(safe-area-inset-top,0px))] flex items-center justify-between select-none">
+          {isSubPage ? (
+            <div className="flex items-center gap-1.5 text-text">
+              <button
+                type="button"
+                onClick={() => navigate(-1)}
+                title="Go back"
+                className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition cursor-pointer -ml-1"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+              <span className="font-bold text-base tracking-tight truncate max-w-[180px]">
+                {getSubPageTitle()}
+              </span>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              title="Felo Home"
+              className="flex items-center gap-2.5 text-text cursor-pointer select-none"
+            >
+              <FeloMark className="h-6 w-6 text-emerald-400" />
+              <span className="font-bold text-base tracking-tight">Felo</span>
+            </button>
+          )}
 
           <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                if (location.pathname === '/search') {
+                  const input = document.querySelector<HTMLInputElement>('input[type="search"]')
+                  input?.focus()
+                } else {
+                  navigate('/search')
+                }
+              }}
+              title="Search"
+              className={cn(
+                'w-9 h-9 rounded-full flex items-center justify-center transition cursor-pointer',
+                location.pathname.startsWith('/search')
+                  ? 'bg-hover text-text font-bold'
+                  : 'text-text-muted hover:text-text hover:bg-hover'
+              )}
+            >
+              <SearchIcon className="w-4 h-4" />
+            </button>
             <button
               type="button"
               onClick={() => setIsMobileDeviceSheetOpen(true)}
@@ -329,16 +415,24 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => navigate('/account')}
-              title="Account"
+              onClick={() => navigate(user ? '/profile' : '/account')}
+              title={user ? 'Profile' : 'Account'}
               className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition cursor-pointer"
             >
-              <User className="w-5 h-5" />
+              {profile?.avatar_url ? (
+                <img
+                  src={profile.avatar_url}
+                  alt=""
+                  className="h-7 w-7 rounded-full object-cover"
+                />
+              ) : (
+                <User className="w-5 h-5" />
+              )}
             </button>
           </div>
         </header>
       ) : (
-        <header className="absolute top-0 left-0 right-0 h-16 draggable-header flex items-center justify-between px-4 z-50 pointer-events-none">
+        <header className="hidden md:flex absolute top-0 left-0 right-0 h-16 draggable-header items-center justify-between px-4 z-50 pointer-events-none">
         <div className="w-[min(20vw,450px)] flex items-center gap-2 pointer-events-auto">
           <button
             type="button"
@@ -625,32 +719,34 @@ function App() {
               </div>
             )}
           </div>
-          <div className="flex items-center gap-2 no-drag">
-            <button
-              type="button"
-              onClick={() => window.api?.minimizeWindow()}
-              title="Minimize"
-              className="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition-colors"
-            >
-              <Minus className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => window.api?.maximizeWindow()}
-              title="Maximize"
-              className="w-7 h-7 rounded-sm flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition-colors"
-            >
-              <Square className="w-3.5 h-3.5 fill-current" />
-            </button>
-            <button
-              type="button"
-              onClick={() => window.api?.closeWindow()}
-              title="Close"
-              className="w-7 h-7 rounded-sm flex items-center justify-center text-text-muted hover:text-danger hover:bg-danger/10 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+          {isElectron && (
+            <div className="flex items-center gap-2 no-drag">
+              <button
+                type="button"
+                onClick={() => window.api?.minimizeWindow()}
+                title="Minimize"
+                className="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition-colors"
+              >
+                <Minus className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => window.api?.maximizeWindow()}
+                title="Maximize"
+                className="w-7 h-7 rounded-sm flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition-colors"
+              >
+                <Square className="w-3.5 h-3.5 fill-current" />
+              </button>
+              <button
+                type="button"
+                onClick={() => window.api?.closeWindow()}
+                title="Close"
+                className="w-7 h-7 rounded-sm flex items-center justify-center text-text-muted hover:text-danger hover:bg-danger/10 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          )}
         </div>
       </header>
       )}
@@ -658,14 +754,16 @@ function App() {
       {/* Main Layout Container */}
       <div
         className={cn(
-          'flex-1 flex overflow-hidden pb-2 px-2 gap-2 relative z-0',
-          isMobileScreen ? 'pt-14 px-0 pb-0' : 'pt-[64px]'
+          'flex-1 flex overflow-hidden pb-2 px-2 gap-2 relative',
+          isMobileScreen
+            ? 'pt-[calc(3.5rem+env(safe-area-inset-top,0px))] px-0 pb-0'
+            : 'pt-[64px]'
         )}
       >
         {/* Left Sidebar (Desktop Only) */}
         {!isMobileScreen && (
           <div
-            className={`h-full shrink-0 transition-[width] duration-300 ease-out ${
+            className={`hidden md:block h-full shrink-0 transition-[width] duration-300 ease-out ${
               isSidebarOpen ? 'w-[min(20vw,500px)]' : 'w-[72px]'
             }`}
           >
@@ -690,7 +788,7 @@ function App() {
             isMobileScreen ? 'rounded-none' : 'rounded-xl'
           )}
         >
-          <section className={`flex-1 overflow-y-auto relative no-drag ${isMobileScreen ? 'pb-32' : ''}`}>
+          <section className={`flex-1 overflow-y-auto relative no-drag ${isMobileScreen ? 'pb-36' : ''}`}>
             <div className="h-full">
               <Routes>
                 <Route
@@ -812,7 +910,6 @@ function App() {
         {isFriendActivityOpen && (
           <FriendActivityPanel onClose={() => setIsFriendActivityOpen(false)} />
         )}
-        <QueueDrawer isOpen={isQueueOpen} onClose={() => setIsQueueOpen(false)} />
         <LibraryScanPill />
         <PlaybackNoticeToast />
       </div>
@@ -828,7 +925,7 @@ function App() {
             <div className="fixed inset-0 z-50 bg-black animate-in fade-in duration-200">
               <MobileNowPlaying
                 state={activePlayerState}
-                isConnected={isRemoteConnected}
+                isConnected={isRemoteConnected || Boolean(isCloudRemoteActive)}
                 onClose={() => setIsMobileNowPlayingOpen(false)}
                 onOpenQueue={() => {
                   setIsMobileNowPlayingOpen(false)
@@ -851,13 +948,13 @@ function App() {
           )}
           <MobileDeviceSheet
             state={activePlayerState}
-            isConnected={isRemoteConnected}
+            isConnected={isRemoteConnected || Boolean(isCloudRemoteActive)}
             isOpen={isMobileDeviceSheetOpen}
             onClose={() => setIsMobileDeviceSheetOpen(false)}
           />
         </>
       ) : (
-        <div className="px-2 pb-2">
+        <div className="hidden md:block px-2 pb-2">
           <Footer
             isQueueOpen={isQueueOpen}
             onToggleQueue={() => setIsQueueOpen((open) => !open)}
@@ -876,6 +973,9 @@ function App() {
           />
         </div>
       )}
+
+      {/* Play Queue Overlay Drawer */}
+      <QueueDrawer isOpen={isQueueOpen} onClose={() => setIsQueueOpen(false)} />
     </div>
   )
 }

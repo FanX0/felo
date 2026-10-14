@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Download,
   FileText,
+  Laptop2,
   ListPlus,
   Loader2,
   MoreVertical,
@@ -26,6 +27,8 @@ import ArtistLinks from '../../components/Common/ArtistLinks'
 import SongCreditsModal from '../../components/Common/SongCreditsModal'
 import { parseArtists } from '../../lib/artistParser'
 import { AppCapabilities } from '../../lib/appConfig'
+import { remoteClient } from '../Remote/remoteClient'
+import { remoteLibraryService } from '../../services/RemoteLibraryService'
 
 interface AlbumPageProps {
   onOpenDownloadPanel?: (target: DownloadTarget) => void
@@ -193,6 +196,43 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
         }
       } else {
         setLoading(true)
+      }
+
+      if (localAlbumSongs.length === 0 && remoteClient.getIsConnected()) {
+        try {
+          const remoteTracks = await remoteLibraryService.getAlbumTracks(albumTitle)
+          if (remoteTracks.length > 0 && !cancelled) {
+            const mapped: AlbumTrack[] = remoteTracks.map((r) => ({
+              id: String(r.id),
+              title: r.title,
+              artist: r.artist || albumArtist,
+              album: r.album || albumTitle,
+              duration: r.duration
+                ? `${Math.floor(r.duration / 60)}:${String(r.duration % 60).padStart(2, '0')}`
+                : null,
+              thumbnail: r.artworkUrl || '',
+              localSong: {
+                id: r.id,
+                title: r.title,
+                artist: r.artist,
+                album: r.album,
+                duration: r.duration,
+                filePath: remoteClient.getAudioStreamUrl(r.id),
+                artworkPath: r.artworkUrl,
+                artworkUrl: r.artworkUrl,
+                isOnline: true
+              }
+            }))
+            setTracks(mapped)
+            const firstArt = mapped.find((s) => s.thumbnail)?.thumbnail
+            if (firstArt) setArtwork(firstArt)
+            setError('')
+            setLoading(false)
+            return
+          }
+        } catch {
+          // ignore and fallback
+        }
       }
 
       if (!AppCapabilities.onlineSearch || !window.api?.searchAppleMusic) {
@@ -455,23 +495,23 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-[#121212] px-8 py-8 text-white">
-      <div className="flex items-end gap-6 border-b border-white/10 pb-8">
-        <div className="flex h-48 w-48 shrink-0 items-center justify-center overflow-hidden rounded-md bg-[#282828]">
+    <div className="h-full overflow-y-auto bg-[#121212] px-4 sm:px-8 pt-4 sm:pt-8 pb-36 md:pb-8 text-white">
+      <div className="flex flex-col sm:flex-row items-center sm:items-end text-center sm:text-left gap-5 sm:gap-6 border-b border-white/10 pb-6 sm:pb-8">
+        <div className="flex h-36 w-36 sm:h-48 sm:w-48 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[#282828] shadow-xl">
           {artwork ? <img src={artwork} alt="" className="h-full w-full object-cover" /> : <Music2 className="h-16 w-16 text-[#777]" />}
         </div>
         <div>
-          <p className="text-sm font-bold uppercase text-[#b3b3b3]">Album</p>
-          <h1 className="mt-2 text-5xl font-black">{albumTitle}</h1>
-          <div className="mt-3 text-lg text-[#b3b3b3]">
+          <p className="text-xs sm:text-sm font-bold uppercase text-[#b3b3b3]">Album</p>
+          <h1 className="mt-1 sm:mt-2 text-2xl sm:text-4xl md:text-5xl font-black leading-tight tracking-tight">{albumTitle}</h1>
+          <div className="mt-2 sm:mt-3 text-sm sm:text-lg text-[#b3b3b3]">
             <ArtistLinks
               artist={albumArtist}
-              linkClassName="text-white/80 hover:text-white hover:underline text-lg font-medium"
+              linkClassName="text-white/80 hover:text-white hover:underline text-sm sm:text-lg font-medium"
               separatorClassName="text-[#b3b3b3]/60"
             />
           </div>
-          <p className="mt-2 text-sm text-[#777]">{tracks.length} tracks</p>
-          <div className="mt-5 flex flex-wrap items-center gap-3">
+          <p className="mt-1 sm:mt-2 text-xs sm:text-sm text-[#777]">{tracks.length} tracks</p>
+          <div className="mt-4 sm:mt-5 flex flex-wrap items-center justify-center sm:justify-start gap-2.5 sm:gap-3">
             <button
               type="button"
               onClick={handlePlayAlbum}
@@ -615,7 +655,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                     y: Math.min(e.clientY, window.innerHeight - menuHeight - 12)
                   })
                 }}
-                className="group grid h-16 grid-cols-[40px_48px_minmax(0,1fr)_120px] items-center gap-3 rounded-md px-3 text-left hover:bg-white/10 transition-colors cursor-pointer"
+                className="group grid h-16 grid-cols-[28px_minmax(0,1fr)_84px] sm:grid-cols-[40px_48px_minmax(0,1fr)_120px] items-center gap-2 sm:gap-3 rounded-md px-2 sm:px-3 text-left hover:bg-white/10 transition-colors cursor-pointer"
               >
                 <div className="flex items-center justify-center">
                   <span className={`text-center text-[#b3b3b3] group-hover:hidden ${isTrackPlaying || (isCurrent && isBuffering) ? 'hidden' : ''}`}>
@@ -642,7 +682,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                   )}
                 </div>
 
-                <span className="flex h-11 w-11 items-center justify-center overflow-hidden rounded bg-[#282828] shrink-0">
+                <span className="hidden sm:flex h-11 w-11 items-center justify-center overflow-hidden rounded bg-[#282828] shrink-0">
                   {track.thumbnail ? (
                     <img src={track.thumbnail} alt="" className="h-full w-full object-cover" />
                   ) : (
@@ -737,7 +777,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                     className={`h-7 w-7 flex items-center justify-center rounded-full transition-all ${
                       activeMenu?.track.id === track.id
                         ? 'text-primary-amber bg-white/10 opacity-100'
-                        : 'opacity-0 group-hover:opacity-100 text-[#b3b3b3] hover:text-white hover:bg-white/10'
+                        : 'opacity-70 md:opacity-0 text-[#b3b3b3] md:group-hover:opacity-100 hover:text-white hover:bg-white/10'
                     }`}
                   >
                     <MoreVertical className="h-4 w-4" />
@@ -756,6 +796,33 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
             style={{ left: activeMenu.x, top: activeMenu.y }}
             onClick={(event) => event.stopPropagation()}
           >
+            {remoteClient.getIsConnected() && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void remoteClient.play(activeMenu.song.id)
+                    setActiveMenu(null)
+                  }}
+                  className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm font-semibold text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+                >
+                  <Laptop2 className="h-4 w-4" />
+                  Play on PC
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    remoteClient.downloadSong(activeMenu.song.id)
+                    setActiveMenu(null)
+                  }}
+                  className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted hover:bg-white/10 hover:text-text transition-colors"
+                >
+                  <Download className="h-4 w-4" />
+                  Transfer / Download to Phone
+                </button>
+                <div className="my-1 border-t border-white/10" />
+              </>
+            )}
             <button
               type="button"
               onClick={() => {

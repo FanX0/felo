@@ -4,6 +4,7 @@ import { EventEmitter } from 'events'
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
+import { pathToFileURL } from 'url'
 import { getDb } from '../database'
 import { LibraryService } from './LibraryService'
 import { ArtworkService } from './ArtworkService'
@@ -28,14 +29,50 @@ let _providersCache: ExternalProviders | null = null
 let _providersAttempted = false
 
 async function getExternalProviders(): Promise<ExternalProviders | null> {
+  // If explicitly requested to run in public mode, disable proprietary external providers
+  if (process.env.FELO_MODE === 'public') {
+    return null
+  }
   if (_providersAttempted) return _providersCache
   _providersAttempted = true
   try {
-    const specifier = '../providers' + '/index'
+    const candidatePaths = [
+      process.env.FELO_PROVIDERS_PATH,
+      path.resolve(process.cwd(), 'src/main/providers/index.ts'),
+      path.resolve(process.cwd(), 'src/main/providers/index.js'),
+      path.resolve(process.cwd(), '../felo-private/src/main/providers/index.ts'),
+      path.resolve(process.cwd(), '../felo-private/src/main/providers/index.js'),
+      path.resolve(__dirname, '../providers/index.js')
+    ].filter(Boolean) as string[]
+
     const dynamicImport = new Function('m', 'return import(m)')
-    const mod = await dynamicImport(specifier)
-    if (mod) {
-      _providersCache = mod as ExternalProviders
+
+    for (const cand of candidatePaths) {
+      if (fs.existsSync(cand)) {
+        try {
+          const fileUrl = pathToFileURL(cand).href
+          const mod = await dynamicImport(fileUrl)
+          if (mod && (mod.QobuzClient || mod.DeezerClient || mod.slsk)) {
+            _providersCache = mod as ExternalProviders
+            break
+          }
+        } catch (err) {
+          console.warn(`[DownloadService] Failed importing candidate from ${cand}:`, err)
+        }
+      }
+    }
+
+    if (!_providersCache) {
+      // Fallback to relative specifier
+      try {
+        const specifier = '../providers' + '/index'
+        const mod = await dynamicImport(specifier)
+        if (mod && (mod.QobuzClient || mod.DeezerClient || mod.slsk)) {
+          _providersCache = mod as ExternalProviders
+        }
+      } catch {
+        _providersCache = null
+      }
     }
   } catch {
     _providersCache = null
@@ -326,6 +363,8 @@ async function embedCleanAudioTags(
 
   if (tags.album) {
     ffmpegArgs.push('-metadata', `album=${tags.album}`)
+  } else {
+    ffmpegArgs.push('-metadata', 'album=')
   }
 
   ffmpegArgs.push(tempTaggedPath)
@@ -518,8 +557,11 @@ function moveCompletedFile(
   fs.mkdirSync(targetDirectory, { recursive: true })
 
   const downloadedBase = path.basename(downloadedPath, downloadedExtension)
+  const sanitizedBase = sanitizeTrackMetadata({ title: downloadedBase, artist: '' }, source)
   const cleanBase =
-    sanitizeTrackMetadata({ title: downloadedBase, artist: '' }, source).title || downloadedBase
+    sanitizedBase.artist && sanitizedBase.artist.toLowerCase() !== 'unknown artist'
+      ? `${sanitizedBase.artist} - ${sanitizedBase.title}`
+      : sanitizedBase.title || downloadedBase
 
   const sanitizedReq = sanitizeTrackMetadata(
     { title: requestTitle || '', artist: requestArtist || '' },
@@ -597,7 +639,13 @@ async function finalizeDownloadedFile(
   )
   const cleanTitle = sanitized.title || request.title
   const cleanArtist = sanitized.artist || request.artist
-  const cleanAlbum = sanitized.album
+  const cleanAlbum =
+    sanitized.album ||
+    (request.album && !DUMMY_PROVIDER_ALBUMS.has(request.album.toLowerCase())
+      ? request.album
+      : song?.album && !DUMMY_PROVIDER_ALBUMS.has(song.album.toLowerCase())
+        ? song.album
+        : `${cleanTitle} - Single`)
 
   // Embed clean canonical tags into the physical audio file before caching or moving
   await embedCleanAudioTags(downloadedPath, {
@@ -716,6 +764,28 @@ export class DownloadService {
   private static readonly activeDownloadKeys = new Set<string>()
   private static readonly activeTasks = new Map<string, ActiveTask>()
   private static readonly inFlightAcquisitions = new Map<string, Promise<any>>()
+
+  static async getProviderInfo(): Promise<{
+    mode: 'public' | 'private'
+    sources: string[]
+  }> {
+    const providers = await getExternalProviders()
+    if (!providers) {
+      return {
+        mode: 'public',
+        sources: ['YouTube Audio', 'Local Library']
+      }
+    }
+    const sources: string[] = []
+    if (providers.QobuzClient) sources.push('Qobuz 24-bit Hi-Res')
+    if (providers.DeezerClient) sources.push('Deezer FLAC')
+    if (providers.slsk) sources.push('Soulseek P2P')
+    sources.push('YouTube')
+    return {
+      mode: 'private',
+      sources
+    }
+  }
 
   static async acquireAndDownload(
     query: string,
