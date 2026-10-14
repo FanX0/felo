@@ -26,3 +26,4 @@ resources/hermes/
 *.tsbuildinfo
 scripts/*.cjs
 README.private.md
+.wrangler/

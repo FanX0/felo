@@ -141,6 +141,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
                 isPriority: true
               }
               if (action === 'play_now') {
+                player.updateSong(matchedSong, matchedSong.id)
                 player.playSong(queueMatchIndex)
               } else if (action === 'enqueue') {
                 player.enqueueSong(matchedSong)
@@ -148,7 +149,8 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
                 // Priority / Important request: placed right after current song or after previous priority requests
                 player.enqueueSongPriority(matchedSong)
                 if (!player.isPlaying || player.currentSongIndex === -1) {
-                  player.playNext(true)
+                  const targetIdx = player.currentSongIndex === -1 ? 0 : player.currentSongIndex + 1
+                  player.playSong(targetIdx)
                 }
               }
               void ensureHostRoom(true)
@@ -175,13 +177,19 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
               if (action === 'enqueue') {
                 player.enqueueSong(prioritySong)
               } else if (action === 'play_now') {
-                player.enqueueSongPriority(prioritySong)
-                player.playNext(true)
+                if (player.queue.length === 0) {
+                  player.setQueue([prioritySong], 0)
+                } else {
+                  player.enqueueSongPriority(prioritySong)
+                  const targetIdx = player.currentSongIndex === -1 ? 0 : player.currentSongIndex + 1
+                  player.playSong(targetIdx)
+                }
               } else {
                 // Priority / Important request
                 player.enqueueSongPriority(prioritySong)
                 if (!player.isPlaying || player.currentSongIndex === -1) {
-                  player.playNext(true)
+                  const targetIdx = player.currentSongIndex === -1 ? 0 : player.currentSongIndex + 1
+                  player.playSong(targetIdx)
                 }
               }
               void ensureHostRoom(true)
@@ -204,13 +212,19 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             if (action === 'enqueue') {
               player.enqueueSong(virtualSong)
             } else if (action === 'play_now') {
-              player.enqueueSongPriority(virtualSong)
-              player.playNext(true)
+              if (player.queue.length === 0) {
+                player.setQueue([virtualSong], 0)
+              } else {
+                player.enqueueSongPriority(virtualSong)
+                const targetIdx = player.currentSongIndex === -1 ? 0 : player.currentSongIndex + 1
+                player.playSong(targetIdx)
+              }
             } else {
               // Priority / Important request
               player.enqueueSongPriority(virtualSong)
               if (!player.isPlaying || player.currentSongIndex === -1) {
-                player.playNext(true)
+                const targetIdx = player.currentSongIndex === -1 ? 0 : player.currentSongIndex + 1
+                player.playSong(targetIdx)
               }
             }
             void ensureHostRoom(true)
@@ -261,13 +275,20 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
           case 'jumpto':
           case 'skipto': {
             let targetIdx = -1
-            if (typeof cmdPayload?.index === 'number') {
-              targetIdx = cmdPayload.index
-            } else if (cmdPayload?.query) {
-              const q = String(cmdPayload.query).toLowerCase()
+            const searchTitle = cmdPayload?.title || cmdPayload?.query
+            if (searchTitle) {
+              const q = String(searchTitle).toLowerCase()
               targetIdx = player.queue.findIndex(
                 (s) => s.title.toLowerCase().includes(q) || (s.artist && s.artist.toLowerCase().includes(q))
               )
+            }
+            if (targetIdx === -1 && typeof cmdPayload?.index === 'number') {
+              const relIdx = player.currentSongIndex + cmdPayload.index
+              if (relIdx >= 0 && relIdx < player.queue.length) {
+                targetIdx = relIdx
+              } else if (cmdPayload.index >= 0 && cmdPayload.index < player.queue.length) {
+                targetIdx = cmdPayload.index
+              }
             }
             if (targetIdx >= 0 && targetIdx < player.queue.length) {
               player.playSong(targetIdx)
@@ -278,13 +299,20 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
           case 'bump':
           case 'make_priority': {
             let targetIdx = -1
-            if (typeof cmdPayload?.index === 'number') {
-              targetIdx = cmdPayload.index
-            } else if (cmdPayload?.query) {
-              const q = String(cmdPayload.query).toLowerCase()
+            const searchTitle = cmdPayload?.title || cmdPayload?.query
+            if (searchTitle) {
+              const q = String(searchTitle).toLowerCase()
               targetIdx = player.queue.findIndex(
                 (s) => s.title.toLowerCase().includes(q) || (s.artist && s.artist.toLowerCase().includes(q))
               )
+            }
+            if (targetIdx === -1 && typeof cmdPayload?.index === 'number') {
+              const relIdx = player.currentSongIndex + cmdPayload.index
+              if (relIdx >= 0 && relIdx < player.queue.length) {
+                targetIdx = relIdx
+              } else if (cmdPayload.index >= 0 && cmdPayload.index < player.queue.length) {
+                targetIdx = cmdPayload.index
+              }
             }
             if (targetIdx >= 0 && targetIdx < player.queue.length) {
               player.bumpSongToPriority(targetIdx)

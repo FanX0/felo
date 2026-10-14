@@ -21,6 +21,15 @@ export default defineConfig({
       },
       extensions: ['.ts', '.tsx', '.js', '.mjs', '.json']
     },
+    build: {
+      rollupOptions: {
+        output: {
+          entryFileNames: '[name]-[hash].js',
+          chunkFileNames: '[name]-[hash].js',
+          assetFileNames: '[name]-[hash].[ext]'
+        }
+      }
+    },
     plugins: [tailwindcss(), react()]
   }
 })

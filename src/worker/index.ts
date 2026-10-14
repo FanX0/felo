@@ -735,9 +735,9 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
       const explicitAction = options.find((o: any) => o.name === 'action')?.value
 
       const room = await supabase.getRoom(roomCode)
-      const isCurrentlyPlaying = Boolean(room?.is_playing && room?.song)
-      // Industry standard: if already playing, queue as next up ('play_next'). If idle, 'play_now'.
-      const action = explicitAction || (isCurrentlyPlaying ? 'play_next' : 'play_now')
+      // When a user runs /play, default to play_now so it plays automatically,
+      // while allowing explicit action: 'play_next' or 'enqueue' if specified.
+      const action = explicitAction || 'play_now'
 
       const fullQueue: any[] = Array.isArray(room?.queue) ? room.queue : []
       const cleanQ = query.toLowerCase()
@@ -774,13 +774,41 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
           data: {
             embeds: [
               {
-                title: '🎶 Playing Now',
+                title: '🎶 Playing Now Automatically',
                 description:
                   `**Track:** **${displayTitle}** ${displayArtist}${trackDur}\n` +
                   `**Room:** \`${roomCode}\`\n\n` +
-                  `⚡ *Instant playback initiated!*`,
+                  `⚡ *Playback started automatically!*`,
                 color: 0x10b981,
                 footer: { text: `Requested by @${username} • Felo Music` }
+              }
+            ],
+            components: [
+              {
+                type: 1,
+                components: [
+                  {
+                    type: 2,
+                    style: 2,
+                    custom_id: 'queue_skip',
+                    label: 'Skip Track',
+                    emoji: { name: '⏭️' }
+                  },
+                  {
+                    type: 2,
+                    style: 1,
+                    custom_id: 'queue_bump_1',
+                    label: 'Move to Next Up',
+                    emoji: { name: '🌟' }
+                  },
+                  {
+                    type: 2,
+                    style: 5,
+                    label: 'Open Web Player',
+                    emoji: { name: '🌐' },
+                    url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+                  }
+                ]
               }
             ]
           }
@@ -788,6 +816,7 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
       }
 
       // Next up / Enqueued
+      const isCurrentlyPlaying = Boolean(room?.is_playing && room?.song)
       const curRemaining = Math.max(0, (room?.song?.duration || 0) - (room?.position_seconds || 0))
       const waitMin = Math.floor(curRemaining / 60)
       const waitSec = (curRemaining % 60).toString().padStart(2, '0')
@@ -811,9 +840,37 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 (isCurrentlyPlaying ? `⏳ **Estimated Wait:** \`${waitStr}\`\n` : '') +
                 currentPlayingInfo +
                 `🔑 **Room:** \`${roomCode}\`\n\n` +
-                `🌟 *Marked as Priority Request! It will play right after the current song before background playlist tracks.*`,
+                `🌟 *Marked as Priority Request! It will play right after the current song automatically.*`,
               color: 0xf59e0b,
               footer: { text: `Requested by @${username} • Lossless Synchronized Audio` }
+            }
+          ],
+          components: [
+            {
+              type: 1,
+              components: [
+                {
+                  type: 2,
+                  style: 1,
+                  custom_id: 'queue_play_now',
+                  label: 'Play Instantly Now',
+                  emoji: { name: '⚡' }
+                },
+                {
+                  type: 2,
+                  style: 2,
+                  custom_id: 'queue_skip',
+                  label: 'Skip Current Track',
+                  emoji: { name: '⏭️' }
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Open Web Player',
+                  emoji: { name: '🌐' },
+                  url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+                }
+              ]
             }
           ]
         }
@@ -1467,7 +1524,16 @@ export default {
 
     // Default: Fall through to static SPA assets (Felo web player)
     if (env.ASSETS && typeof env.ASSETS.fetch === 'function') {
-      return env.ASSETS.fetch(request)
+      const assetRes = await env.ASSETS.fetch(request)
+      // Guard against SPA fallback serving index.html (200 OK) for missing JS/CSS/static file requests
+      const isStaticExt = /\.(js|mjs|css|png|jpg|jpeg|gif|svg|ico|woff2?|ttf|eot|json|map)$/i.test(url.pathname)
+      if (isStaticExt && assetRes.headers.get('content-type')?.includes('text/html')) {
+        return new Response(`Asset Not Found: ${url.pathname}`, {
+          status: 404,
+          headers: { 'Content-Type': 'text/plain' }
+        })
+      }
+      return assetRes
     }
 
     return new Response('Felo Music Cloudflare Worker is Live!', { status: 200 })

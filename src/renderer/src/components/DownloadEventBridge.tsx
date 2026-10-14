@@ -91,7 +91,11 @@ export default function DownloadEventBridge(): null {
               })
 
               if (matchIndex !== -1) {
-                // Found in active queue
+                // Found in active queue - update the queued track with real audio file path on disk
+                const matchedQueueItem = player.queue[matchIndex]
+                if (matchedQueueItem) {
+                  player.updateSong(completedSong, matchedQueueItem.id)
+                }
                 if (player.currentSongIndex === matchIndex) {
                   if (player.isBuffering) {
                     player.setIsBuffering(false)
