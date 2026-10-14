@@ -982,7 +982,6 @@ export default function LyricsPage() {
             <ClassicLyricsDisplay
               lyrics={lyricsData?.syncedLyrics || []}
               plainLyrics={lyricsData?.plainLyrics || ''}
-              currentTime={currentTime}
               onSeek={handleSeek}
               translations={translations}
               romanizations={isRomanized ? romanizations : []}
