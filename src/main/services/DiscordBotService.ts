@@ -1496,53 +1496,35 @@ export class DiscordBotService {
           {
             title: '🎵 Felo Music Bot — Complete Guide',
             description:
-              `Felo lets you control your **local desktop music player** from Discord in real-time, ` +
-              `and streams lossless audio to everyone in your **Listen Together room** — ` +
-              `zero voice channel lag, no re-encoding.\n\n` +
-              `> 📌 **Prerequisite:** The **Felo desktop app** must be installed and running ` +
-              `on the host machine for any bot command to work.\n` +
+              `Felo controls your **local desktop music player** in real-time and syncs audio with everyone in your **Listen Together room** — zero voice channel lag, lossless quality.\n\n` +
               `> 💡 Slash commands (\`/play\`) and prefix commands (\`${p}play\`) both work in any channel.\n` +
-              `> 🔊 Audio always plays through the **host's machine** — friends join via a room code in the Felo app.`,
+              `> 🔊 Audio always plays through the **host's machine** — listeners join via the Felo app using a room code.`,
             color: 0xf59e0b
           },
-
           {
             title: '🚀 Setup — How to Add This Bot to Your Server',
             color: 0x5865f2,
             description:
+              `Follow these steps to connect your Felo desktop app to Discord:\n\n` +
               `**Step 1 — Create a Discord Application**\n` +
-              `Go to [discord.com/developers/applications](https://discord.com/developers/applications) ` +
-              `→ click **New Application** → give it a name (e.g. \`Felo Music\`).\n\n` +
-
-              `**Step 2 — Create a Bot User & Copy the Token**\n` +
-              `Inside your application → open the **Bot** tab → click **Add Bot** → confirm.\n` +
-              `Scroll down → click **Reset Token** → **copy the token**. Keep it secret — treat it like a password.\n\n` +
-
+              `Go to [discord.com/developers/applications](https://discord.com/developers/applications) → click **New Application** → give it a name (e.g. \`Felo\`).\n\n` +
+              `**Step 2 — Create a Bot User**\n` +
+              `Inside your application → open the **Bot** tab → click **Add Bot** → confirm. Under the bot's username, click **Reset Token** and **copy the token** — keep it secret!\n\n` +
               `**Step 3 — Enable Privileged Intents**\n` +
-              `Still on the **Bot** tab, scroll to *Privileged Gateway Intents* and toggle on:\n` +
-              `　✅ **Server Members Intent**\n` +
-              `　✅ **Message Content Intent**\n` +
-              `Then click **Save Changes**.\n\n` +
-
+              `Still on the Bot tab, scroll to **Privileged Gateway Intents** and enable:\n` +
+              `　✅ Server Members Intent　✅ Message Content Intent\n\n` +
               `**Step 4 — Paste Token into Felo**\n` +
-              `Open the **Felo desktop app** → **Settings** → **Discord** tab → ` +
-              `paste your token into the *Bot Token* field → toggle **Enable Bot** on.\n` +
-              `Felo connects to Discord instantly — no app restart needed.\n\n` +
-
+              `Open the **Felo desktop app** → **Settings** → **Discord** → paste your bot token → toggle **Enable Bot** on. Felo will connect instantly.\n\n` +
               `**Step 5 — Invite the Bot to Your Server**\n` +
-              `In your Discord application → go to **OAuth2 → URL Generator**.\n` +
-              `Under *Scopes* select: \`bot\` + \`applications.commands\`\n` +
-              `Under *Bot Permissions* select: \`Read Messages\` · \`Send Messages\` · \`Embed Links\` · \`Use Slash Commands\`\n` +
-              `Copy the generated URL → open it in a browser → pick your server → click **Authorize**.\n\n` +
-
+              `Go to **OAuth2 → URL Generator** in your Discord application. Under *Scopes* select \`bot\` + \`applications.commands\`. Under *Bot Permissions* select:\n` +
+              `　\`Read Messages\` \`Send Messages\` \`Embed Links\` \`Use Slash Commands\`\n` +
+              `Copy the generated URL, open it in a browser, and add the bot to your server.\n\n` +
               `**Step 6 — Done! 🎉**\n` +
-              `Type \`/help\` in any channel — if the bot responds, setup is complete.\n` +
-              `Use \`/play <song name>\` to start playing music right away.`,
+              `Type \`/help\` in any channel — the bot will respond with this guide. Use \`/play <song>\` to start playing music!`,
             footer: {
               text: '🔒 Never share your bot token publicly — treat it like a password.'
             }
           },
-
           {
             title: '🎧 Playback Commands',
             color: 0x10b981,
@@ -1985,59 +1967,14 @@ export class DiscordBotService {
 
     await this.sendChannelMessage(channelId, {
       embeds: [
-        // ── Embed 1: What Is Felo? ──────────────────────────────────────
         {
           title: '🎵 Felo Music Bot — Complete Guide',
           description:
-            `Felo lets you control your **local desktop music player** from Discord in real-time, ` +
-            `and streams lossless audio to everyone in your **Listen Together room** — ` +
-            `zero voice channel lag, no re-encoding.\n\n` +
-            `> 📌 **Prerequisite:** The **Felo desktop app** must be installed and running ` +
-            `on the host machine for any bot command to work.\n` +
-            `> 💡 Use \`${p}command\` below, or switch to slash commands (\`/play\`, \`/help\`) for autocomplete.\n` +
-            `> 🔊 Audio plays through the **host's machine** — friends join via a room code in the Felo app.`,
+            `Felo controls your **local desktop music player** in real-time and syncs audio with everyone in your **Listen Together room** — zero voice channel lag, lossless quality.\n\n` +
+            `> 💡 Use \`${p}command\` below, or switch to slash commands (\`/play\`, \`/help\`, etc.) for autocomplete support.\n` +
+            `> 🔊 Audio plays through the **host's machine** — friends join via the Felo app using a room code.`,
           color: 0xf59e0b
         },
-
-        // ── Embed 2: Setup Tutorial ─────────────────────────────────────
-        {
-          title: '🚀 Setup — How to Add This Bot to Your Server',
-          color: 0x5865f2,
-          description:
-            `**Step 1 — Create a Discord Application**\n` +
-            `Go to [discord.com/developers/applications](https://discord.com/developers/applications) ` +
-            `→ click **New Application** → give it a name (e.g. \`Felo Music\`).\n\n` +
-
-            `**Step 2 — Create a Bot User & Copy the Token**\n` +
-            `Inside your application → open the **Bot** tab → click **Add Bot** → confirm.\n` +
-            `Scroll down → click **Reset Token** → **copy the token**. Keep it secret — treat it like a password.\n\n` +
-
-            `**Step 3 — Enable Privileged Intents**\n` +
-            `Still on the **Bot** tab, scroll to *Privileged Gateway Intents* and toggle on:\n` +
-            `　✅ **Server Members Intent**\n` +
-            `　✅ **Message Content Intent**\n` +
-            `Then click **Save Changes**.\n\n` +
-
-            `**Step 4 — Paste Token into Felo**\n` +
-            `Open the **Felo desktop app** → **Settings** → **Discord** tab → ` +
-            `paste your token into the *Bot Token* field → toggle **Enable Bot** on.\n` +
-            `Felo connects to Discord instantly — no app restart needed.\n\n` +
-
-            `**Step 5 — Invite the Bot to Your Server**\n` +
-            `In your Discord application → go to **OAuth2 → URL Generator**.\n` +
-            `Under *Scopes* select: \`bot\` + \`applications.commands\`\n` +
-            `Under *Bot Permissions* select: \`Read Messages\` · \`Send Messages\` · \`Embed Links\` · \`Use Slash Commands\`\n` +
-            `Copy the generated URL → open it in a browser → pick your server → click **Authorize**.\n\n` +
-
-            `**Step 6 — Done! 🎉**\n` +
-            `Type \`${p}help\` in any channel — if the bot responds, setup is complete.\n` +
-            `Use \`${p}play <song name>\` to start playing music right away.`,
-          footer: {
-            text: '🔒 Never share your bot token publicly — treat it like a password.'
-          }
-        },
-
-        // ── Embed 3: Playback Commands ──────────────────────────────────
         {
           title: '🎧 Playback Commands',
           color: 0x10b981,
@@ -2046,7 +1983,7 @@ export class DiscordBotService {
               name: `\`${p}play <song name>\` — Play a Song`,
               value:
                 `• Song **in library** → plays instantly at lossless quality.\n` +
-                `• Song **not in library** → bot triggers an auto-download (see Embed 5), then plays once ready.\n` +
+                `• Song **not in library** → bot automatically searches your priority providers (Qobuz → Deezer → Soulseek → YouTube), downloads in the background, and plays once ready.\n` +
                 `*Example: \`${p}play Daft Punk Get Lucky\`*`,
               inline: false
             },
@@ -2072,17 +2009,13 @@ export class DiscordBotService {
             }
           ]
         },
-
-        // ── Embed 4: Queue & Info Commands ─────────────────────────────
         {
           title: '📋 Queue & Info Commands',
           color: 0x3b82f6,
           fields: [
             {
               name: `\`${p}np\` — Now Playing`,
-              value:
-                'Shows the current track title, artist, album, duration, and a progress bar.\n' +
-                'Includes the Listen Together room code if a session is active.',
+              value: 'Shows the current track title, artist, album, duration, and progress. Includes the Listen Together room code if active.',
               inline: false
             },
             {
@@ -2097,55 +2030,28 @@ export class DiscordBotService {
             }
           ]
         },
-
-        // ── Embed 5: On-Demand Auto-Download ────────────────────────────
         {
           title: '📥 On-Demand Auto-Download — How It Works',
           color: 0x8b5cf6,
           description:
             `When you request a song **not in the host's local library**:\n\n` +
-            `1️⃣ **Bot replies instantly** — *"⚡ On-Demand Download Started…"*\n` +
-            `2️⃣ **Felo searches providers** in your configured priority order:\n` +
+            `**Step 1** — Bot replies: *"Downloading via priority providers…"*\n` +
+            `**Step 2** — Felo searches in your configured priority order:\n` +
             `　　\`Qobuz\` → \`Deezer\` → \`Soulseek P2P\` → \`YouTube Music\`\n` +
-            `3️⃣ **First successful provider** downloads the file at the best available quality.\n` +
-            `4️⃣ **Track auto-plays** (or queues). If a Listen Together room is open, all listeners sync.\n\n` +
-            `> ⚙️ Customize provider priority in **Felo Settings → Downloads → Priority Order**.\n` +
-            `> 🔑 Providers need credentials — configure in **Felo Settings → Streaming Accounts**.` +
+            `**Step 3** — First successful provider downloads the file at the best quality.\n` +
+            `**Step 4** — Track plays automatically. If a Listen Together room is active, all listeners sync.\n\n` +
+            `> ⚙️ Change provider priority in **Felo Settings → Downloads → Priority Order**.` +
             (roomCode ? `\n\n🎧 **Current Room Code:** \`${roomCode}\`` : '')
         },
-
-        // ── Embed 6: App & Session Commands ─────────────────────────────
-        {
-          title: '🌐 App & Session Commands',
-          color: 0x6366f1,
-          fields: [
-            {
-              name: `\`${p}download\``,
-              value: 'Sends the official Felo app download link (Windows / macOS / Linux).\n🔗 https://bit.ly/47iv3PK',
-              inline: false
-            },
-            {
-              name: `\`${p}help\``,
-              value: 'Shows this full setup guide and command reference.',
-              inline: true
-            },
-            {
-              name: '/play, /search, /skip, /queue…',
-              value: 'All prefix commands have a slash command equivalent with autocomplete support.',
-              inline: true
-            }
-          ]
-        },
-
-        // ── Embed 7: Tips & Best Practices ──────────────────────────────
         {
           title: '💡 Tips & Best Practices',
           color: 0xf59e0b,
           description:
-            `• **Switch to slash commands** (\`/play\`, \`/search\`) for autocomplete — much faster!\n` +
-            `• **Invite friends** — they open Felo → Listen Together → enter the room code. No bot needed on their side.\n` +
+            `• **Slash commands** (\`/play\`, \`/search\`) give you autocomplete — try them!\n` +
+            `• **Inviting friends** — they open Felo → Listen Together → enter the room code.\n` +
             `• **Audio quality** — Felo streams lossless FLAC/Hi-Res locally. Sync is real-time, no re-encoding.\n` +
-            `• **Provider not connecting?** — add credentials in **Felo → Settings → Streaming Accounts**.`,
+            `• **\`${p}download\`** — Get the Felo app: https://bit.ly/47iv3PK\n` +
+            `• **Provider not connecting?** — configure credentials in Felo → Settings → Streaming Accounts.`,
           footer: {
             text: 'Felo Desktop Music • Lossless Local Audio • Zero Voice Channel Lag'
           }
