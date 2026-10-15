@@ -119,8 +119,10 @@ To enable social rooms, friend activity, and realtime listening sessions:
 ### Desktop Binaries
 
 ```bash
-# Windows (.exe installer & portable)
-npm run build:win
+# Windows Installer (.exe setup)
+npm run build:win:public   # Clean open-source release (Felo-Public-Setup.exe)
+npm run build:win:private  # Full multi-provider release (Felo-Private-Setup.exe)
+npm run build:win:all      # Build both installers sequentially
 
 # macOS (.dmg & .zip)
 npm run build:mac
