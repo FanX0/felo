@@ -20,6 +20,7 @@ __pycache__/
 *.pyc
 supabase/.temp
 src/main/providers/
+resources/providers/
 resources/downloader/
 resources/hermes/
 .vscode/
