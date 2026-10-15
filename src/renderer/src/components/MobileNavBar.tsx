@@ -12,7 +12,11 @@ const triggerHaptic = () => {
   }
 }
 
-export default function MobileNavBar() {
+interface MobileNavBarProps {
+  onOpenAccountMenu?: () => void
+}
+
+export default function MobileNavBar({ onOpenAccountMenu }: MobileNavBarProps = {}) {
   const navigate = useNavigate()
   const location = useLocation()
   const { user } = useOnlineStore()
@@ -37,6 +41,10 @@ export default function MobileNavBar() {
   const handleNav = (targetPath: string, isActive: boolean) => {
     triggerHaptic()
     if (isActive) {
+      if ((targetPath === '/profile' || targetPath === '/account') && onOpenAccountMenu) {
+        onOpenAccountMenu()
+        return
+      }
       const scrollContainer = document.querySelector<HTMLElement>('main section')
       if (scrollContainer) {
         scrollContainer.scrollTo({ top: 0, behavior: 'smooth' })

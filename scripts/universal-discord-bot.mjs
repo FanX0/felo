@@ -127,7 +127,14 @@ async function searchMusicCatalog(query) {
   }
 }
 
-function buildQueuePayload(room, roomCode) {
+function formatTime(seconds) {
+  const s = Math.max(0, Math.round(Number(seconds) || 0))
+  const mins = Math.floor(s / 60)
+  const secs = (s % 60).toString().padStart(2, '0')
+  return `${mins}:${secs}`
+}
+
+function buildQueuePayload(room, roomCode, page = 1) {
   const song = room?.song
   const fullQueue = Array.isArray(room?.queue) ? room.queue : []
   const isFirstCurrent =
@@ -151,8 +158,8 @@ function buildQueuePayload(room, roomCode) {
     '🔘' +
     '▬'.repeat(Math.max(0, totalBars - activeBars))
 
-  const posStr = `${Math.floor(pos / 60)}:${(pos % 60).toString().padStart(2, '0')}`
-  const durStr = dur > 0 ? `${Math.floor(dur / 60)}:${(dur % 60).toString().padStart(2, '0')}` : '0:00'
+  const posStr = formatTime(pos)
+  const durStr = dur > 0 ? formatTime(dur) : '0:00'
 
   let queueDescription = ''
 
@@ -180,7 +187,7 @@ function buildQueuePayload(room, roomCode) {
   if (priorityTracks.length > 0) {
     const priorityLines = priorityTracks.slice(0, 5).map((t, idx) => {
       const globalIdx = 2 + idx
-      const tDur = t.duration ? ` [${Math.floor(t.duration / 60)}:${(t.duration % 60).toString().padStart(2, '0')}]` : ''
+      const tDur = t.duration ? ` [${formatTime(t.duration)}]` : ''
       const reqBy = t.requestedBy ? ` (Requested by @${t.requestedBy})` : ' (Discord Request)'
       return `Track #${globalIdx}: 🌟 ${t.title}${reqBy}${tDur}`
     })
@@ -195,18 +202,25 @@ function buildQueuePayload(room, roomCode) {
 
   queueDescription += `⬇️\n\n`
 
-  // Tier 3: 📜 Background Local Playlist Box
-  queueDescription += `### 📜 Background Local Playlist\n`
+  // Tier 3: 📜 Background Local Playlist Box with Pagination
+  const pageSize = 10
+  const totalPages = Math.max(1, Math.ceil(backgroundTracks.length / pageSize))
+  const currentPage = Math.min(Math.max(1, Number(page) || 1), totalPages)
+  const startIdx = (currentPage - 1) * pageSize
+  const pageBgTracks = backgroundTracks.slice(startIdx, startIdx + pageSize)
+
+  const pageHeader = totalPages > 1 ? ` (Page ${currentPage} of ${totalPages} • Total ${backgroundTracks.length} Tracks)` : ''
+  queueDescription += `### 📜 Background Local Playlist${pageHeader}\n`
   if (backgroundTracks.length > 0) {
-    const previewLimit = 4
-    const bgLines = backgroundTracks.slice(0, previewLimit).map((t, idx) => {
-      const globalIdx = 2 + priorityTracks.length + idx
-      const tDur = t.duration ? ` [${Math.floor(t.duration / 60)}:${(t.duration % 60).toString().padStart(2, '0')}]` : ''
-      return `Track #${globalIdx}: ${t.title} (Local #${idx + 1})${tDur}`
+    const bgLines = pageBgTracks.map((t, idx) => {
+      const localIdx = startIdx + idx + 1
+      const globalIdx = 2 + priorityTracks.length + startIdx + idx
+      const tDur = t.duration ? ` [${formatTime(t.duration)}]` : ''
+      return `Track #${globalIdx}: ${t.title} (Local #${localIdx})${tDur}`
     })
     queueDescription += `\`\`\`yaml\n` + bgLines.join('\n')
-    if (backgroundTracks.length > previewLimit) {
-      queueDescription += `\n... (Remaining ${backgroundTracks.length - previewLimit} Local Tracks)`
+    if (totalPages > 1) {
+      queueDescription += `\n... (Showing Local #${startIdx + 1}–#${startIdx + pageBgTracks.length} of ${backgroundTracks.length} • Use ◀️ / ▶️ or /queue page: <num> to view all)`
     }
     queueDescription += `\n\`\`\`\n`
   } else {
@@ -243,6 +257,48 @@ function buildQueuePayload(room, roomCode) {
     url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
   })
 
+  const components = [
+    {
+      type: 1,
+      components: queueActionButtons
+    }
+  ]
+
+  if (totalPages > 1) {
+    components.push({
+      type: 1,
+      components: [
+        {
+          type: 2,
+          style: 2,
+          custom_id: `queue_page_${currentPage - 1}`,
+          label: 'Prev',
+          emoji: { name: '◀️' },
+          disabled: currentPage <= 1
+        },
+        {
+          type: 2,
+          style: 2,
+          custom_id: 'queue_page_curr',
+          label: `Page ${currentPage} / ${totalPages}`,
+          disabled: true
+        },
+        {
+          type: 2,
+          style: 2,
+          custom_id: `queue_page_${currentPage + 1}`,
+          label: 'Next',
+          emoji: { name: '▶️' },
+          disabled: currentPage >= totalPages
+        }
+      ]
+    })
+  }
+
+  const footerText = totalPages > 1
+    ? `Page ${currentPage} of ${totalPages} • ${priorityTracks.length} priority • ${backgroundTracks.length} host track(s) • Room: ${roomCode}`
+    : `${priorityTracks.length} priority request(s) • ${backgroundTracks.length} background track(s) • Room: ${roomCode}`
+
   return {
     embeds: [
       {
@@ -250,16 +306,11 @@ function buildQueuePayload(room, roomCode) {
         description: queueDescription,
         color: priorityTracks.length > 0 ? 0xf59e0b : 0x10b981,
         footer: {
-          text: `${priorityTracks.length} priority request(s) • ${backgroundTracks.length} background track(s) • Room: ${roomCode}`
+          text: footerText
         }
       }
     ],
-    components: [
-      {
-        type: 1,
-        components: queueActionButtons
-      }
-    ]
+    components
   }
 }
 
@@ -450,7 +501,7 @@ async function handleComponent(interaction) {
     let nextInfo = ''
     if (nextTrack) {
       const nextDur = nextTrack.duration
-        ? ` \`[${Math.floor(nextTrack.duration / 60)}:${(nextTrack.duration % 60).toString().padStart(2, '0')}]\``
+        ? ` \`[${formatTime(nextTrack.duration)}]\``
         : ''
       if (nextTrack.isPriority) {
         nextInfo = `\n\n▶️ **Now Playing Next:** 🌟 **${nextTrack.title}** by **${nextTrack.artist || 'Unknown'}**${nextDur}\n*(🌟 Priority Request by @${nextTrack.requestedBy || 'Discord User'})*`
@@ -548,6 +599,27 @@ async function handleComponent(interaction) {
             color: 0x10b981,
             footer: { text: `Triggered by @${username} • Instant Play` }
           }
+        ],
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 2,
+                style: 2,
+                custom_id: 'queue_help_view',
+                label: 'View Current Queue',
+                emoji: { name: '📜' }
+              },
+              {
+                type: 2,
+                style: 5,
+                label: 'Open Web Player',
+                emoji: { name: '🌐' },
+                url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+              }
+            ]
+          }
         ]
       }
     })
@@ -569,6 +641,26 @@ async function handleComponent(interaction) {
     return respond(interaction.id, interaction.token, {
       type: 4,
       data: buildQueuePayload(room, roomCode)
+    })
+  }
+
+  if (customId.startsWith('queue_page_')) {
+    const pageNum = parseInt(customId.replace('queue_page_', ''), 10) || 1
+    const { data: room } = await supabase
+      .from('listening_rooms')
+      .select('*')
+      .eq('code', roomCode)
+      .maybeSingle()
+
+    if (!room) {
+      return respond(interaction.id, interaction.token, {
+        type: 4,
+        data: { flags: 64, content: '❌ Room is not active.' }
+      })
+    }
+    return respond(interaction.id, interaction.token, {
+      type: 7,
+      data: buildQueuePayload(room, roomCode, pageNum)
     })
   }
 
@@ -600,7 +692,7 @@ async function handleComponent(interaction) {
     })
 
     const trackDur = targetTrack.duration
-      ? ` \`[${Math.floor(targetTrack.duration / 60)}:${(targetTrack.duration % 60).toString().padStart(2, '0')}]\``
+      ? ` \`[${formatTime(targetTrack.duration)}]\``
       : ''
 
     return respond(interaction.id, interaction.token, {
@@ -1147,9 +1239,7 @@ async function handleCommand(interaction) {
                 `We couldn't find an exact track for **"${query}"**, but found these related songs:\n\n` +
                 relatedTracks
                   .map((r, i) => {
-                    const rDur = r.duration
-                      ? ` \`[${Math.floor(r.duration / 60)}:${(r.duration % 60).toString().padStart(2, '0')}]\``
-                      : ''
+                    const rDur = r.duration ? ` \`[${formatTime(r.duration)}]\`` : ''
                     return `\`${i + 1}.\` **${r.title}** by *${r.artist || 'Unknown'}*${rDur}`
                   })
                   .join('\n') +
@@ -1195,9 +1285,7 @@ async function handleCommand(interaction) {
 
     const displayTitle = songToPlay.title
     const displayArtist = songToPlay.artist ? `by **${songToPlay.artist}**` : ''
-    const trackDur = songToPlay.duration
-      ? ` \`[${Math.floor(songToPlay.duration / 60)}:${(songToPlay.duration % 60).toString().padStart(2, '0')}]\``
-      : ''
+    const trackDur = songToPlay.duration ? ` \`[${formatTime(songToPlay.duration)}]\`` : ''
     const albumLine = songToPlay.album ? `💿 **Album:** *${songToPlay.album}*\n` : ''
 
     let relatedSection = ''
@@ -1207,9 +1295,7 @@ async function handleCommand(interaction) {
         relatedTracks
           .slice(0, 3)
           .map((r, i) => {
-            const rDur = r.duration
-              ? ` \`[${Math.floor(r.duration / 60)}:${(r.duration % 60).toString().padStart(2, '0')}]\``
-              : ''
+            const rDur = r.duration ? ` \`[${formatTime(r.duration)}]\`` : ''
             return `\`${i + 1}.\` **${r.title}** — ${r.artist || 'Unknown'}${rDur}`
           })
           .join('\n')
@@ -1290,8 +1376,7 @@ async function handleCommand(interaction) {
           ? Boolean(fullQueue[0]?.discordPriorityEnabled)
           : true
 
-    const isCurrentlyPlaying = Boolean(room?.is_playing && room?.song)
-    const curRemaining = Math.max(0, (room?.song?.duration || 0) - (room?.position_seconds || 0))
+    const curRemaining = Math.max(0, Math.round((room?.song?.duration || 0) - (room?.position_seconds || 0)))
     const waitMin = Math.floor(curRemaining / 60)
     const waitSec = (curRemaining % 60).toString().padStart(2, '0')
     const waitStr = curRemaining > 0 ? `~${waitMin}m ${waitSec}s` : 'Moments'
@@ -1390,6 +1475,27 @@ async function handleCommand(interaction) {
               `⚡ *Playback will interrupt and start this song right now!*`,
             color: 0x10b981,
             footer: { text: `Requested by @${username} • Instant Play` }
+          }
+        ],
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 2,
+                style: 2,
+                custom_id: 'queue_help_view',
+                label: 'View Current Queue',
+                emoji: { name: '📜' }
+              },
+              {
+                type: 2,
+                style: 5,
+                label: 'Open Web Player',
+                emoji: { name: '🌐' },
+                url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+              }
+            ]
           }
         ]
       }
@@ -1532,9 +1638,7 @@ async function handleCommand(interaction) {
 
     let nextInfo = ''
     if (nextTrack) {
-      const nextDur = nextTrack.duration
-        ? ` \`[${Math.floor(nextTrack.duration / 60)}:${(nextTrack.duration % 60).toString().padStart(2, '0')}]\``
-        : ''
+      const nextDur = nextTrack.duration ? ` \`[${formatTime(nextTrack.duration)}]\`` : ''
       if (nextTrack.isPriority) {
         nextInfo = `\n\n▶️ **Now Playing Next:** 🌟 **${nextTrack.title}** by **${nextTrack.artist || 'Unknown'}**${nextDur}\n*(🌟 Priority Request by @${nextTrack.requestedBy || 'Discord User'})*`
       } else {
@@ -1691,8 +1795,9 @@ async function handleCommand(interaction) {
       source: 'discord_universal'
     })
 
-    const seekMin = Math.floor(seconds / 60)
-    const seekSec = (seconds % 60).toString().padStart(2, '0')
+    const s = Math.max(0, Math.round(seconds))
+    const seekMin = Math.floor(s / 60)
+    const seekSec = (s % 60).toString().padStart(2, '0')
     return respond(interaction.id, interaction.token, {
       type: 4,
       data: {
@@ -1709,6 +1814,7 @@ async function handleCommand(interaction) {
   }
 
   if (name === 'queue') {
+    const page = Math.max(1, Number(options?.find((o) => o.name === 'page')?.value) || 1)
     const { data: room } = await supabase
       .from('listening_rooms')
       .select('*')
@@ -1732,7 +1838,7 @@ async function handleCommand(interaction) {
 
     return respond(interaction.id, interaction.token, {
       type: 4,
-      data: buildQueuePayload(room, roomCode)
+      data: buildQueuePayload(room, roomCode, page)
     })
   }
 
@@ -1762,8 +1868,8 @@ async function handleCommand(interaction) {
     const pos = room.position_seconds || 0
     const dur = song.duration || 0
     const progress = dur > 0 ? Math.min(100, Math.floor((pos / dur) * 100)) : 0
-    const posStr = `${Math.floor(pos / 60)}:${(pos % 60).toString().padStart(2, '0')}`
-    const durStr = dur > 0 ? `${Math.floor(dur / 60)}:${(dur % 60).toString().padStart(2, '0')}` : '0:00'
+    const posStr = formatTime(pos)
+    const durStr = dur > 0 ? formatTime(dur) : '0:00'
 
     const totalBars = 12
     const activeBars = Math.max(0, Math.min(totalBars, Math.round((progress / 100) * totalBars)))
@@ -1787,9 +1893,7 @@ async function handleCommand(interaction) {
 
     let upNextText = ''
     if (nextSong) {
-      const nextDur = nextSong.duration
-        ? ` \`[${Math.floor(nextSong.duration / 60)}:${(nextSong.duration % 60).toString().padStart(2, '0')}]\``
-        : ''
+      const nextDur = nextSong.duration ? ` \`[${formatTime(nextSong.duration)}]\`` : ''
       const nextReq = nextSong.requestedBy ? ` • *by @${nextSong.requestedBy}*` : ''
       const nextStar = nextSong.isPriority ? '🌟 ' : ''
       upNextText = `\n\n⏭️ **Up Next:** ${nextStar}**${nextSong.title}** by **${nextSong.artist || 'Unknown'}**${nextDur}${nextReq}`
@@ -1817,9 +1921,16 @@ async function handleCommand(interaction) {
             components: [
               {
                 type: 2,
+                style: 2,
+                custom_id: 'queue_help_view',
+                label: 'View Current Queue',
+                emoji: { name: '📜' }
+              },
+              {
+                type: 2,
                 style: 5,
-                label: 'Join in Web Player',
-                emoji: { name: '🎧' },
+                label: 'Open Web Player',
+                emoji: { name: '🌐' },
                 url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
               }
             ]

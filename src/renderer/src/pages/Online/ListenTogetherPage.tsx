@@ -145,6 +145,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   const deviceAudioClientLevel = useListeningStore((state) => state.deviceAudioClientLevel)
   const isLosslessMasterActive = useListeningStore((state) => state.isLosslessMasterActive)
   const connectToDeviceStream = useListeningStore((state) => state.connectToDeviceStream)
+  const disconnectFromDeviceStream = useListeningStore((state) => state.disconnectFromDeviceStream)
   const setDeviceAudioBitrate = useListeningStore((state) => state.setDeviceAudioBitrate)
   const toggleDeviceAudioMute = useListeningStore((state) => state.toggleDeviceAudioMute)
   const setDeviceAudioVolume = useListeningStore((state) => state.setDeviceAudioVolume)
@@ -830,8 +831,12 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
           </div>
         )}
 
-        {/* Live Device / System Audio Stream Status Banner */}
-        {(isReceivingDeviceStream || joinedRoom.song?.isDeviceStream || joinedRoom.is_device_stream) && (
+        {/* Live Audio Stream Status Banner */}
+        {(isReceivingDeviceStream ||
+          joinedRoom.song?.isDeviceStream ||
+          joinedRoom.is_device_stream ||
+          joinedRoom.song?.isTrackStream ||
+          joinedRoom.is_track_streaming) && (
           <div className="mt-4 rounded-xl border border-primary-amber/40 bg-gradient-to-r from-primary-amber/15 via-surface-elevated to-surface p-4 shadow-lg flex flex-col gap-3 animate-fade-in">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
@@ -840,34 +845,60 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-black text-white">Live System Audio Stream</span>
+                    <span className="text-sm font-black text-white">
+                      {joinedRoom.song?.isDeviceStream ? 'Live System Audio Stream' : 'Live Host Audio Stream'}
+                    </span>
                     <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-mono font-bold text-emerald-300 flex items-center gap-1">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
                       {isLosslessMasterActive
                         ? '✨ Bit-Perfect Lossless Master (FLAC in RAM)'
-                        : deviceAudioClientState === 'connected'
+                        : isReceivingDeviceStream && deviceAudioClientState === 'connected'
                           ? '510 kbps Studio Ultra Opus'
-                          : deviceAudioClientState}
+                          : isReceivingDeviceStream
+                            ? deviceAudioClientState
+                            : 'Available'}
                     </span>
                   </div>
                   <p className="text-xs text-text-muted mt-0.5">
-                    Listening live to {hostName}'s computer audio (Spotify, games, browser) via ultra-low latency WebRTC.
+                    {isReceivingDeviceStream
+                      ? `Listening live to ${hostName}'s audio stream via ultra-low latency WebRTC.`
+                      : `${hostName} is broadcasting audio. Tune in to stream directly.`}
                   </p>
                 </div>
               </div>
 
-              {/* WebRTC Telemetry chip */}
+              {/* WebRTC Telemetry chip & action buttons */}
               <div className="flex items-center gap-2 flex-wrap">
-                <div className="flex items-center gap-2 rounded-lg bg-surface border border-border/60 px-2.5 py-1 text-[11px] font-mono text-text-muted">
-                  <Wifi className="h-3 w-3 text-emerald-400" />
-                  <span>{deviceAudioStats?.rttMs != null ? `${deviceAudioStats.rttMs}ms RTT` : 'Direct P2P'}</span>
-                  {deviceAudioStats?.bitrateKbps ? (
-                    <span className="text-text font-bold">• {Math.round(deviceAudioStats.bitrateKbps)} kbps</span>
-                  ) : null}
-                </div>
-                <span className="text-[11px] font-bold text-emerald-400/90 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-                  Mode A: RAM Stream
-                </span>
+                {isReceivingDeviceStream ? (
+                  <>
+                    <div className="flex items-center gap-2 rounded-lg bg-surface border border-border/60 px-2.5 py-1 text-[11px] font-mono text-text-muted">
+                      <Wifi className="h-3 w-3 text-emerald-400" />
+                      <span>{deviceAudioStats?.rttMs != null ? `${deviceAudioStats.rttMs}ms RTT` : 'Direct P2P'}</span>
+                      {deviceAudioStats?.bitrateKbps ? (
+                        <span className="text-text font-bold">• {Math.round(deviceAudioStats.bitrateKbps)} kbps</span>
+                      ) : null}
+                    </div>
+                    <span className="text-[11px] font-bold text-emerald-400/90 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                      Mode A: RAM Stream
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => disconnectFromDeviceStream()}
+                      className="rounded-full bg-white/10 hover:bg-white/20 px-3 py-1 text-[11px] font-semibold text-text-muted hover:text-white transition-all cursor-pointer"
+                    >
+                      Disconnect
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void connectToDeviceStream(joinedRoom)}
+                    className="flex items-center gap-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-3.5 py-1.5 text-xs transition-all shadow-md active:scale-95 cursor-pointer"
+                  >
+                    <Radio className="h-3.5 w-3.5" />
+                    <span>Tune In Live</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -917,33 +948,73 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
 
         {/* Missing Song Alert Banner */}
         {syncStatus === 'missing_song' && missingSong && !activeSubstitute && !isReceivingDeviceStream && !joinedRoom.song?.isDeviceStream && (() => {
+          const isStreamAvailable = Boolean(
+            joinedRoom.is_track_streaming ||
+            joinedRoom.is_device_stream ||
+            joinedRoom.song?.isDeviceStream ||
+            joinedRoom.song?.isTrackStream ||
+            joinedRoom.song?.streamType === 'track_stream' ||
+            joinedRoom.song?.streamType === 'device_audio'
+          )
+
           if (!AppCapabilities.downloads) {
             // Public Web Deployment: Clean, ephemeral streaming mode (no download buttons/scrapers)
+            if (isStreamAvailable) {
+              return (
+                <div className="mt-6 flex items-center justify-between rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4 animate-fade-in shadow-lg">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400">
+                      <Radio className="h-5 w-5 animate-pulse" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-white">
+                        "{missingSong.title}" • Live Stream Available
+                      </p>
+                      <p className="text-xs text-emerald-200/80 mt-0.5">
+                        Streamed live from host in studio quality (Bit-Perfect Lossless / 510 kbps Opus • Ephemeral in RAM).
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => void connectToDeviceStream(joinedRoom)}
+                      className="flex items-center gap-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-3.5 py-2 text-xs transition-all shadow-md active:scale-95 cursor-pointer"
+                    >
+                      <Radio className="h-3.5 w-3.5" />
+                      <span>Tune In Live</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openReplaceModal}
+                      className="flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 hover:bg-white/20 px-3.5 py-2 text-xs font-bold text-white transition-all cursor-pointer"
+                    >
+                      <SlidersHorizontal className="h-3.5 w-3.5" />
+                      <span>Use Local File</span>
+                    </button>
+                  </div>
+                </div>
+              )
+            }
+
             return (
-              <div className="mt-6 flex items-center justify-between rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4 animate-fade-in shadow-lg">
+              <div className="mt-6 flex items-center justify-between rounded-xl border border-border/60 bg-surface-elevated/60 p-4 animate-fade-in shadow-lg">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400">
-                    <Radio className="h-5 w-5 animate-pulse" />
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/5 text-text-muted">
+                    <Radio className="h-5 w-5" />
                   </div>
                   <div>
                     <p className="text-sm font-bold text-white">
-                      "{missingSong.title}" • Live Lossless Stream
+                      "{missingSong.title}" is on the host's device
                     </p>
-                    <p className="text-xs text-emerald-200/80 mt-0.5">
-                      Streamed live from host in studio quality (510 kbps Opus • Ephemeral in RAM).
+                    <p className="text-xs text-text-muted mt-0.5">
+                      Waiting for host audio stream. You can also pick a local file to match playback.
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => void connectToDeviceStream(joinedRoom)}
-                    className="flex items-center gap-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-3.5 py-2 text-xs transition-all shadow-md active:scale-95 cursor-pointer"
-                  >
-                    <Radio className="h-3.5 w-3.5" />
-                    <span>Tune In Live</span>
-                  </button>
                   <button
                     type="button"
                     onClick={openReplaceModal}
@@ -982,16 +1053,27 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                       ? `Downloading from ${activeMissingDownload.sourceName || activeMissingDownload.source} (${activeMissingDownload.progress}%)... Will play automatically.`
                       : autoDownloadMissing
                         ? 'Acquiring track in the background... It will start playing automatically once ready.'
-                        : 'Download the track or choose a local substitute to keep listening.'}
+                        : 'Stream live from host, download for offline access, or choose a local substitute.'}
                   </p>
                 </div>
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
+                {isStreamAvailable && (
+                  <button
+                    type="button"
+                    onClick={() => void connectToDeviceStream(joinedRoom)}
+                    className="flex items-center gap-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-3.5 py-2 text-xs transition-all shadow-md active:scale-95 cursor-pointer"
+                  >
+                    <Radio className="h-3.5 w-3.5" />
+                    <span>Stream Live</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={openReplaceModal}
-                  className="flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 hover:bg-white/20 px-3.5 py-2 text-xs font-bold text-white transition-all"
+                  className="flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 hover:bg-white/20 px-3.5 py-2 text-xs font-bold text-white transition-all cursor-pointer"
                 >
                   <SlidersHorizontal className="h-3.5 w-3.5" />
                   <span>Replace</span>
@@ -1006,7 +1088,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                   <button
                     type="button"
                     onClick={handleDownloadMissingSong}
-                    className="flex items-center gap-1.5 rounded-full bg-amber-500 hover:bg-amber-400 px-4 py-2 text-xs font-black text-black transition-all"
+                    className="flex items-center gap-1.5 rounded-full bg-amber-500 hover:bg-amber-400 px-4 py-2 text-xs font-black text-black transition-all cursor-pointer"
                   >
                     <Download className="h-3.5 w-3.5" />
                     <span>Download</span>

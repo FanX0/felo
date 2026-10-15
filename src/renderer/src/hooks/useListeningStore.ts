@@ -40,6 +40,15 @@ export function toSharedSong(song: Song): SharedSong {
       ? useListeningStore.getState().discordPriorityEnabled
       : readInitialDiscordPriority()
 
+  const isStreaming =
+    typeof useListeningStore !== 'undefined' && useListeningStore?.getState
+      ? Boolean(
+          useListeningStore.getState().isAutoStreamingToListeners ||
+          useListeningStore.getState().isDeviceAudioSharing ||
+          _activeAudioHost
+        )
+      : Boolean(_activeAudioHost)
+
   return {
     localId: song.id,
     title: song.title,
@@ -49,7 +58,9 @@ export function toSharedSong(song: Song): SharedSong {
     artworkUrl: /^https?:\/\//i.test(song.artworkPath || '') ? song.artworkPath : undefined,
     requestedBy: song.requestedBy,
     isPriority: song.isPriority,
-    discordPriorityEnabled: isPriorityOn
+    discordPriorityEnabled: isPriorityOn,
+    isTrackStream: isStreaming,
+    streamType: isStreaming ? 'track_stream' : 'library'
   }
 }
 
@@ -159,6 +170,9 @@ interface ListeningStoreState {
   unmuteDeviceStream: () => Promise<boolean>
   startDeviceAudioSharing: () => Promise<void>
   stopDeviceAudioSharing: () => Promise<void>
+  isAutoStreamingToListeners: boolean
+  startAutoTrackStreaming: () => Promise<void>
+  stopAutoTrackStreaming: () => void
   connectToDeviceStream: (room: ListeningRoom) => Promise<void>
   disconnectFromDeviceStream: () => void
 
@@ -269,6 +283,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
 
   // Device audio streaming state
   isDeviceAudioSharing: false,
+  isAutoStreamingToListeners: false,
   isReceivingDeviceStream: false,
   deviceAudioLevel: 0,
   deviceAudioPeerCount: 0,
@@ -371,7 +386,16 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         .from('listening_room_members')
         .select('*', { count: 'exact', head: true })
         .eq('room_id', roomId)
-      set({ memberCount: count || 0 })
+      const memberCount = count || 0
+      set({ memberCount })
+
+      // Auto-start track streaming when host has active listeners
+      const hostRoom = get().hostRoom
+      if (hostRoom && hostRoom.id === roomId && !get().joinedRoom && !get().hostRoomStopped) {
+        if (memberCount > 0 && !get().isDeviceAudioSharing && !get().isAutoStreamingToListeners && !_activeAudioHost) {
+          void get().startAutoTrackStreaming()
+        }
+      }
     } catch {
       // ignore
     }
@@ -517,6 +541,17 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
 
       set({ hostRoom: activeRoom, hostRoomStopped: false, error: null })
       void get().refreshMemberCount(activeRoom.id)
+
+      // Ready WebRTC track streaming channel immediately if playing music
+      if (
+        playerState.isPlaying &&
+        currentSong &&
+        !get().isDeviceAudioSharing &&
+        !get().isAutoStreamingToListeners &&
+        !_activeAudioHost
+      ) {
+        void get().startAutoTrackStreaming()
+      }
       return activeRoom
     } catch (err: any) {
       console.error('Failed to ensure host room:', err)
@@ -700,7 +735,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       _activeAudioHost.stop()
       _activeAudioHost = null
     }
-    set({ isDeviceAudioSharing: false, deviceAudioLevel: 0, deviceAudioPeerCount: 0 })
+    set({ isDeviceAudioSharing: false, isAutoStreamingToListeners: false, deviceAudioLevel: 0, deviceAudioPeerCount: 0 })
     if (!user) return
 
     try {
@@ -723,7 +758,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       _activeAudioHost.stop()
       _activeAudioHost = null
     }
-    set({ isDeviceAudioSharing: false, deviceAudioLevel: 0, deviceAudioPeerCount: 0 })
+    set({ isDeviceAudioSharing: false, isAutoStreamingToListeners: false, deviceAudioLevel: 0, deviceAudioPeerCount: 0 })
 
     // Immediately update local state so UI responds in 0ms
     set({ hostRoom: null, hostRoomStopped: true })
@@ -822,6 +857,155 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         // If guest is currently tuned into the live audio broadcast, maintain the stream seamlessly
         if (get().isReceivingDeviceStream) {
           set({ syncStatus: 'synced', missingSong: null })
+          return
+        }
+
+        // Step 3.1: Try direct LAN HTTP stream from host's desktop instance
+        const lanUrl = resolveSongAudioUrl({
+          id: room.song.localId || '',
+          title: room.song.title,
+          artist: room.song.artist,
+          album: room.song.album || '',
+          duration: room.song.duration || 0,
+          isOnline: true
+        } as Song)
+
+        if (lanUrl && !lanUrl.startsWith('media://') && !lanUrl.startsWith('virtual:')) {
+          const lanSong: Song = {
+            id: `lan-${room.song.localId || Date.now()}`,
+            title: room.song.title,
+            artist: room.song.artist,
+            album: room.song.album || 'LAN Direct Stream',
+            duration: room.song.duration || 0,
+            artworkPath: room.song.artworkUrl || '',
+            filePath: lanUrl,
+            audioUrl: lanUrl,
+            isOnline: true
+          }
+
+          usePlayerStore.getState().setQueue([lanSong], 0)
+          const now = Date.now()
+          const dbElapsed = Math.max(0, (now - new Date(room.updated_at).getTime()) / 1000)
+          const elapsed = room.is_playing && dbElapsed < 30 ? dbElapsed : 0
+          const rawTarget = room.position_seconds + elapsed
+          const duration = room.song.duration || 0
+          const targetTime = duration > 0 ? Math.min(duration, Math.max(0, rawTarget)) : Math.max(0, rawTarget)
+          if (targetTime > 0) {
+            usePlayerStore.getState().seek(targetTime)
+          }
+          setAudioPlaybackRate(1.0)
+          usePlayerStore.getState().setIsPlaying(room.is_playing)
+          set({ syncStatus: 'synced', missingSong: null })
+          return
+        }
+
+        // Step 3.2: Check if host WebRTC stream is active (Default streaming mode for missing tracks)
+        const isHostStreaming = Boolean(
+          room.is_track_streaming ||
+          room.is_device_stream ||
+          room.song?.isDeviceStream ||
+          room.song?.isTrackStream ||
+          room.song?.streamType === 'track_stream' ||
+          room.song?.streamType === 'device_audio'
+        )
+
+        if (isHostStreaming) {
+          void get().connectToDeviceStream(room)
+          set({ syncStatus: 'synced', missingSong: null })
+
+          // If autoDownloadMissing is also turned on (private desktop), optionally download in background
+          if (get().autoDownloadMissing && room.song) {
+            const requestKey = `${room.id}:${songKey}`
+            if (!_autoDownloadRequests.has(requestKey)) {
+              _autoDownloadRequests.add(requestKey)
+              void (async () => {
+                try {
+                  const query =
+                    cleanSearchQuery(room.song!.artist, room.song!.title) ||
+                    `${room.song!.artist || ''} ${room.song!.title}`.trim()
+                  const savedPriority = await window.api?.getSetting?.(DOWNLOAD_PRIORITY_SETTING)
+                  const savedAccounts = await window.api?.getSetting?.(STREAMING_ACCOUNTS_SETTING)
+                  const priority = Array.isArray(savedPriority) && savedPriority.length > 0
+                    ? savedPriority
+                    : DEFAULT_DOWNLOAD_PRIORITY
+                  const accounts = savedAccounts && typeof savedAccounts === 'object' ? savedAccounts : {}
+
+                  for (const source of priority) {
+                    if (source === 'qobuz' && !accounts.qobuzSecret && !accounts.qobuzUser) continue
+                    if (source === 'deezer' && !accounts.deezerArl) continue
+                    if (source === 'soulseek' && !accounts.soulseekUser && !accounts.soulseekPassword) continue
+
+                    try {
+                      let timer: ReturnType<typeof setTimeout> | undefined
+                      const searchPromise = window.api?.searchDownloadSource?.(source, query, accounts)
+                      const timeoutPromise = new Promise<never>((_, reject) => {
+                        timer = setTimeout(() => reject(new Error(`Room track search timed out on ${source}`)), 12000)
+                      })
+                      const results = await Promise.race([searchPromise, timeoutPromise]).finally(() => {
+                        if (timer) clearTimeout(timer)
+                      })
+                      const bestHit = findBestDownloadMatch(
+                        results,
+                        room.song!.title,
+                        room.song!.artist,
+                        room.song!.duration
+                      )
+                      if (!bestHit) continue
+
+                      const transferId = `room-${room.id}-${Date.now()}`
+                      const safeArtwork =
+                        bestHit.artworkUrl && /^https?:\/\//i.test(bestHit.artworkUrl)
+                          ? bestHit.artworkUrl
+                          : room.song?.artworkUrl && /^https?:\/\//i.test(room.song.artworkUrl)
+                            ? room.song.artworkUrl
+                            : undefined
+
+                      useDownloadStore.getState().queueTransfer(
+                        {
+                          id: transferId,
+                          source: source as any,
+                          sourceName: bestHit.sourceName || source,
+                          title: bestHit.title || room.song!.title,
+                          artist: bestHit.artist || room.song!.artist || 'Unknown Artist',
+                          quality: bestHit.quality || 'FLAC',
+                          size: bestHit.size || '...',
+                          conflictMode: 'keep_both',
+                          status: 'downloading',
+                          progress: 5,
+                          message: `Downloading from ${bestHit.sourceName || source}...`,
+                          autoPlay: false,
+                          resultId: String(bestHit.id),
+                          song: room.song ? fromSharedSong(room.song) : undefined
+                        },
+                        { openDrawer: false }
+                      )
+
+                      await window.api?.startDownload?.({
+                        transferId,
+                        source,
+                        resultId: String(bestHit.id),
+                        title: bestHit.title || room.song!.title,
+                        artist: bestHit.artist || room.song!.artist || 'Unknown Artist',
+                        songId: '',
+                        conflictMode: 'keep_both',
+                        accounts,
+                        autoPlay: false,
+                        artworkUrl: safeArtwork,
+                        album: bestHit.album || room.song?.album
+                      })
+                      return
+                    } catch (sourceErr) {
+                      console.warn(`Auto-download failed on source ${source}:`, sourceErr)
+                    }
+                  }
+                } catch (autoErr) {
+                  console.warn('Auto-download background search attempt:', autoErr)
+                } finally {
+                  setTimeout(() => _autoDownloadRequests.delete(requestKey), 30_000)
+                }
+              })()
+            }
+          }
           return
         }
 
@@ -1465,6 +1649,56 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
           : null
       }))
     }
+  },
+
+  startAutoTrackStreaming: async () => {
+    const user = useOnlineStore.getState().user
+    const hostRoom = get().hostRoom
+    if (!user || !hostRoom) return
+    if (_activeAudioHost || get().isDeviceAudioSharing) return
+
+    try {
+      const audioHost = new WebRTCAudioHost(hostRoom.code, user.id, {
+        bitrateBps: get().deviceAudioBitrate || 510000
+      })
+      audioHost.onPeerCountChange = (count) => {
+        set({ deviceAudioPeerCount: count })
+      }
+      audioHost.onLevelChange = (level) => {
+        set({ deviceAudioLevel: level })
+      }
+      audioHost.onError = (err) => {
+        console.error('[WebRTCAudioHost TrackOnly] Error:', err)
+      }
+      audioHost.onEnded = () => {
+        get().stopAutoTrackStreaming()
+      }
+
+      await audioHost.startTrackOnlyMode()
+      _activeAudioHost = audioHost
+      set({ isAutoStreamingToListeners: true })
+
+      const playerState = usePlayerStore.getState()
+      const currentTrack = playerState.queue[playerState.currentSongIndex]
+      if (currentTrack) {
+        broadcastHostLosslessTrack(currentTrack)
+      }
+    } catch (err) {
+      console.warn('[startAutoTrackStreaming] Error starting track-only audio broadcast:', err)
+      if (_activeAudioHost) {
+        _activeAudioHost.stop()
+        _activeAudioHost = null
+      }
+      set({ isAutoStreamingToListeners: false })
+    }
+  },
+
+  stopAutoTrackStreaming: () => {
+    if (!get().isDeviceAudioSharing && _activeAudioHost) {
+      _activeAudioHost.stop()
+      _activeAudioHost = null
+    }
+    set({ isAutoStreamingToListeners: false })
   },
 
   connectToDeviceStream: async (room: ListeningRoom) => {

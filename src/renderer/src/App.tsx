@@ -20,6 +20,7 @@ import RemotePhoneView from './pages/Remote/RemotePhoneView'
 import OfflineNoticeToast from './components/OfflineNoticeToast'
 import ErrorBoundary from './components/ErrorBoundary'
 import MobileNavBar from './components/MobileNavBar'
+import AccountDropdownMenu from './components/AccountMenu/AccountDropdownMenu'
 import MobileDockedPlayer from './components/MobileDockedPlayer'
 import MobileNowPlaying from './pages/Remote/MobileNowPlaying'
 import MobileDeviceSheet from './pages/Remote/MobileDeviceSheet'
@@ -53,9 +54,7 @@ import ChatPage from './pages/Online/ChatPage'
 import ListenTogetherPage from './pages/Online/ListenTogetherPage'
 import {
   Search as SearchIcon,
-  Settings as SettingsIcon,
   User,
-  LogOut,
   EyeOff,
   Globe,
   Database,
@@ -127,7 +126,7 @@ function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(
     () => localStorage.getItem('felo_sidebar_open') !== 'false'
   )
-  const { configured, initialized, user, profile, initialize, signOut } = useOnlineStore()
+  const { user, profile, initialize } = useOnlineStore()
 
   // Mobile & Remote Player State
   const [isMobileNowPlayingOpen, setIsMobileNowPlayingOpen] = useState(false)
@@ -212,6 +211,7 @@ function App() {
   // Reset scroll position on route change
   useEffect(() => {
     mainContentRef.current?.scrollTo({ top: 0, behavior: 'instant' })
+    setIsProfileOpen(false)
   }, [location.pathname])
 
   const toggleSidebar = (): void => {
@@ -398,7 +398,8 @@ function App() {
 
       {/* Top Application Bar */}
       {isMobileScreen ? (
-        <header className="fixed top-0 left-0 right-0 z-50 bg-canvas/95 backdrop-blur-md border-b border-border-subtle/40 px-3.5 pt-[env(safe-area-inset-top,0px)] h-[calc(3.5rem+env(safe-area-inset-top,0px))] flex items-center justify-between select-none">
+        <>
+          <header className="fixed top-0 left-0 right-0 z-50 bg-canvas/95 backdrop-blur-md border-b border-border-subtle/40 px-3.5 pt-[env(safe-area-inset-top,0px)] h-[calc(3.5rem+env(safe-area-inset-top,0px))] flex items-center justify-between select-none">
           {isSubPage ? (
             <div className="flex items-center gap-1.5 text-text">
               <button
@@ -459,8 +460,8 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => navigate(user ? '/profile' : '/account')}
-              title={user ? 'Profile' : 'Account'}
+              onClick={() => setIsProfileOpen((prev) => !prev)}
+              title={user ? (isPrivateSession ? 'Account (Private session active)' : 'Account') : 'Sign in'}
               className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition cursor-pointer relative"
             >
               {profile?.avatar_url ? (
@@ -481,6 +482,12 @@ function App() {
             </button>
           </div>
         </header>
+        <AccountDropdownMenu
+          isOpen={isProfileOpen}
+          onClose={() => setIsProfileOpen(false)}
+          isMobile={true}
+        />
+      </>
       ) : (
         <header className="hidden md:flex absolute top-0 left-0 right-0 h-16 draggable-header items-center justify-between px-4 z-50 pointer-events-none">
         <div className="w-[min(20vw,450px)] flex items-center gap-2 pointer-events-auto">
@@ -715,90 +722,11 @@ function App() {
               )}
             </button>
 
-            {isProfileOpen && (
-              <div className="absolute right-0 top-full mt-2 w-56 bg-surface-elevated border border-border rounded-lg shadow-xl py-1.5 z-[100] animate-in fade-in slide-in-from-top-1">
-                {/* User Info */}
-                <div className="px-4 py-3 border-b border-border">
-                  <p className="truncate text-sm font-bold text-text">
-                    {profile?.display_name || (user ? 'Online profile' : 'Local listener')}
-                  </p>
-                  <p className="truncate text-xs text-text-muted">
-                    {user?.email || (configured && initialized ? 'Not signed in' : 'Local account')}
-                  </p>
-                </div>
-
-                <div className="py-1">
-                  <button
-                    onClick={() => {
-                      setIsProfileOpen(false)
-                      navigate(user ? '/profile' : '/account')
-                    }}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-text-muted hover:bg-hover hover:text-text transition-colors"
-                  >
-                    <User className="w-4 h-4" />
-                    {user ? 'Profile' : 'Sign in'}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setIsProfileOpen(false)
-                      navigate('/settings')
-                    }}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-text-muted hover:bg-hover hover:text-text transition-colors"
-                  >
-                    <SettingsIcon className="w-4 h-4" />
-                    Settings
-                  </button>
-                  <button
-                    onClick={() => {
-                      setIsProfileOpen(false)
-                      navigate('/remote')
-                    }}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-text-muted hover:bg-hover hover:text-text transition-colors"
-                  >
-                    <Radio className="w-4 h-4" />
-                    Remote control (PC)
-                  </button>
-                  <button
-                    onClick={() => togglePrivateSession()}
-                    className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-text-muted hover:bg-hover hover:text-text transition-colors"
-                  >
-                    <span className="flex items-center gap-3">
-                      <EyeOff className="w-4 h-4" />
-                      <span className="text-left">
-                        Private session
-                        {isPrivateSession && remainingTimeStr && (
-                          <span className="block text-[10px] text-primary-amber font-normal">
-                            {remainingTimeStr} remaining
-                          </span>
-                        )}
-                      </span>
-                    </span>
-                    <div
-                      className={`w-9 h-5 rounded-full transition-colors relative ${isPrivateSession ? 'bg-primary-amber' : 'bg-border'}`}
-                    >
-                      <div
-                        className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${isPrivateSession ? 'translate-x-4' : 'translate-x-0.5'}`}
-                      />
-                    </div>
-                  </button>
-                </div>
-
-                <div className="border-t border-border py-1">
-                  {user && (
-                    <button
-                      onClick={() => {
-                        setIsProfileOpen(false)
-                        void signOut()
-                      }}
-                      className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-danger hover:bg-danger/10 transition-colors"
-                    >
-                      <LogOut className="w-4 h-4" />
-                      Log out
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
+            <AccountDropdownMenu
+              isOpen={isProfileOpen}
+              onClose={() => setIsProfileOpen(false)}
+              isMobile={false}
+            />
           </div>
           {isElectron && (
             <div className="flex items-center gap-2 no-drag">
@@ -1044,7 +972,7 @@ function App() {
             onExpand={() => setIsMobileNowPlayingOpen(true)}
             onOpenDevices={() => setIsMobileDeviceSheetOpen(true)}
           />
-          <MobileNavBar />
+          <MobileNavBar onOpenAccountMenu={() => setIsProfileOpen((prev) => !prev)} />
           {isMobileNowPlayingOpen && (
             <div className="fixed inset-0 z-50 bg-black animate-in fade-in duration-200">
               <MobileNowPlaying

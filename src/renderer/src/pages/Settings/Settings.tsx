@@ -35,7 +35,8 @@ import { useListeningStore } from '../../hooks/useListeningStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { useThemeStore, ACCENT_PRESETS } from '../../hooks/useThemeStore'
 import { usePrivateSessionStore } from '../../hooks/usePrivateSessionStore'
-import { AppCapabilities } from '../../lib/appConfig'
+import { AppCapabilities, isElectron } from '../../lib/appConfig'
+import { getSupabase, isSupabaseConfigured } from '../../lib/supabase'
 import {
   DEFAULT_DOWNLOAD_PRIORITY,
   DOWNLOAD_LOCATION_SETTING,
@@ -196,14 +197,8 @@ export default function Settings() {
   const [presenceSettingUp, setPresenceSettingUp] = useState(false)
   const [presenceSetupMsg, setPresenceSetupMsg] = useState<string | null>(null)
 
-  // Discord Bot & Webhook Controller
-  const [discordBotEnabled, setDiscordBotEnabled] = useState(false)
-  const [discordBotConnected, setDiscordBotConnected] = useState(false)
-  const [discordBotToken, setDiscordBotToken] = useState('')
-  const [showDiscordBotToken, setShowDiscordBotToken] = useState(false)
-  const [discordBotPrefix, setDiscordBotPrefix] = useState('!')
-  const [discordBotChannel, setDiscordBotChannel] = useState('')
-  const [discordBotUser, setDiscordBotUser] = useState<{ id?: string; username: string; tag?: string } | null>(null)
+  // Official Discord Bot & Webhook Controller
+  const [discordBinding, setDiscordBinding] = useState<{ channel_id: string; bound_by: string; updated_at?: string } | null>(null)
   const [discordBotError, setDiscordBotError] = useState<string | null>(null)
   const [discordWebhookUrl, setDiscordWebhookUrl] = useState('')
   const [discordWebhookEnabled, setDiscordWebhookEnabled] = useState(false)
@@ -212,6 +207,7 @@ export default function Settings() {
   const hostRoom = useListeningStore((state) => state.hostRoom)
   const ensureHostRoom = useListeningStore((state) => state.ensureHostRoom)
   const [copiedRoomCode, setCopiedRoomCode] = useState(false)
+  const [copiedConnectCmd, setCopiedConnectCmd] = useState(false)
 
   // Appearance & Theme Accent
   const [reducedMotion, setReducedMotion] = useState(false)
@@ -375,6 +371,7 @@ export default function Settings() {
   }, [])
 
   const refreshPresenceStatus = async () => {
+    if (!isElectron) return
     try {
       const status = await window.api?.getMusicPresenceStatus?.()
       if (status) {
@@ -389,10 +386,16 @@ export default function Settings() {
   }
 
   useEffect(() => {
-    refreshPresenceStatus()
+    if (isElectron) {
+      refreshPresenceStatus()
+    }
   }, [])
 
   const handleSetupMusicPresence = async () => {
+    if (!isElectron) {
+      setPresenceSetupMsg('Discord Rich Presence requires the desktop app.')
+      return
+    }
     setPresenceSettingUp(true)
     setPresenceSetupMsg(null)
     try {
@@ -412,6 +415,7 @@ export default function Settings() {
   }
 
   const handleLaunchMusicPresence = async () => {
+    if (!isElectron) return
     try {
       const res = await window.api?.launchMusicPresence?.()
       if (res?.success) {
@@ -426,17 +430,12 @@ export default function Settings() {
   }
 
   const refreshDiscordStatus = async () => {
+    if (!isElectron) return
     try {
       const status = await window.api?.getDiscordBotStatus?.()
       if (status) {
-        setDiscordBotEnabled(status.enabled)
-        setDiscordBotConnected(status.connected)
-        setDiscordBotPrefix(status.prefix || '!')
-        setDiscordBotChannel(status.channelId || '')
-        setDiscordBotUser(status.botUser)
-        setDiscordBotError(status.error)
         setDiscordWebhookUrl(status.webhookUrl || '')
-        setDiscordWebhookEnabled(status.webhookEnabled)
+        setDiscordWebhookEnabled(Boolean(status.webhookEnabled))
       }
     } catch {
       // ignore
@@ -444,36 +443,60 @@ export default function Settings() {
   }
 
   useEffect(() => {
+    if (!isElectron) return
     refreshDiscordStatus()
-    const timer = setInterval(() => {
-      refreshDiscordStatus()
-    }, 4000)
-    return () => clearInterval(timer)
   }, [])
 
-  const handleSaveDiscordBotSettings = async (overrides?: any) => {
+  useEffect(() => {
+    let mounted = true
+    const checkBinding = async () => {
+      if (!hostRoom?.code || !isSupabaseConfigured) {
+        if (mounted) setDiscordBinding(null)
+        return
+      }
+      try {
+        const supabase = getSupabase()
+        const { data } = await supabase
+          .from('discord_channel_bindings')
+          .select('channel_id, bound_by, updated_at')
+          .eq('room_code', hostRoom.code)
+          .maybeSingle()
+        if (mounted) {
+          setDiscordBinding(data || null)
+        }
+      } catch {
+        // ignore network error
+      }
+    }
+
+    void checkBinding()
+    const timer = setInterval(() => {
+      void checkBinding()
+    }, 4000)
+    return () => {
+      mounted = false
+      clearInterval(timer)
+    }
+  }, [hostRoom?.code])
+
+  const handleSaveDiscordWebhook = async (overrides?: { webhookUrl?: string; webhookEnabled?: boolean }) => {
+    if (!isElectron) {
+      setDiscordBotError('Discord Webhook Announcer requires the desktop app.')
+      return
+    }
     try {
       setDiscordMessage('')
-      const res = await window.api?.updateDiscordSettings?.({
-        token: discordBotToken,
-        enabled: overrides?.enabled !== undefined ? overrides.enabled : discordBotEnabled,
-        prefix: overrides?.prefix !== undefined ? overrides.prefix : discordBotPrefix,
-        channelId: overrides?.channelId !== undefined ? overrides.channelId : discordBotChannel,
-        webhookUrl: overrides?.webhookUrl !== undefined ? overrides.webhookUrl : discordWebhookUrl,
-        webhookEnabled:
-          overrides?.webhookEnabled !== undefined ? overrides.webhookEnabled : discordWebhookEnabled,
-        ...overrides
+      const nextWebhookUrl = overrides?.webhookUrl !== undefined ? overrides.webhookUrl : discordWebhookUrl
+      const nextWebhookEnabled =
+        overrides?.webhookEnabled !== undefined ? overrides.webhookEnabled : discordWebhookEnabled
+      await window.api?.updateDiscordSettings?.({
+        webhookUrl: nextWebhookUrl,
+        webhookEnabled: nextWebhookEnabled
       })
-      if (res) {
-        setDiscordBotEnabled(res.enabled)
-        setDiscordBotConnected(res.connected)
-        setDiscordBotUser(res.botUser)
-        setDiscordBotError(res.error)
-      }
-      setDiscordMessage('Discord settings saved.')
+      setDiscordMessage('Discord webhook settings saved.')
       setTimeout(() => setDiscordMessage(''), 3000)
     } catch (err: any) {
-      setDiscordBotError(err?.message || 'Failed to update Discord settings')
+      setDiscordBotError(err?.message || 'Failed to update Discord webhook settings')
     }
   }
 
@@ -1822,157 +1845,216 @@ export default function Settings() {
               title="Discord & Media Presence"
               description="Share what you're listening to with Discord Rich Presence and system media controls."
             >
-              {/* Detection & Connection Status */}
-              <div className="p-3 rounded-lg bg-surface-elevated/60 border border-border/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                  <span
-                    className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                      presenceStatus?.running
-                        ? 'bg-white animate-pulse'
-                        : presenceStatus?.configured
-                          ? 'bg-amber-400'
-                          : 'bg-zinc-500'
-                    }`}
-                  />
-                  <div>
-                    <div className="text-xs font-semibold text-text flex items-center gap-1.5 flex-wrap">
-                      <span>Music Presence (Discord Integration)</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface border border-border/60 text-text-muted">
-                        {presenceStatus?.running
-                          ? 'Active & Running'
-                          : presenceStatus?.configured
-                            ? 'Configured (Idle)'
-                            : presenceStatus?.installed
-                              ? 'Detected (Needs Link)'
-                              : 'Not Detected'}
+              {!isElectron ? (
+                <div className="p-4 rounded-xl bg-surface-elevated/60 border border-border/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="space-y-1.5 flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-bold text-text">Discord Rich Presence & Music Presence</span>
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30 uppercase tracking-wide">
+                        Desktop App Only
                       </span>
                     </div>
-                    <p className="text-[11px] text-text-muted mt-0.5">
-                      {presenceStatus?.running
-                        ? 'Felo is connected and syncing what you are listening to on Discord.'
-                        : presenceStatus?.configured
-                          ? 'Felo is registered in Music Presence. Start Music Presence to broadcast to Discord.'
-                          : 'Music Presence integrates desktop playback directly with your Discord profile.'}
+                    <p className="text-[11px] text-text-muted leading-relaxed">
+                      Web browsers operate in a sandboxed security environment and cannot access local OS IPC pipes (named pipes or sockets) to communicate directly with Discord and Music Presence desktop apps. To display your currently playing tracks on Discord, please use the desktop version of Felo.
                     </p>
                   </div>
+                  <a
+                    href="https://github.com/FanX0/felo/releases"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface border border-border hover:bg-surface-elevated text-xs font-medium text-text shrink-0 transition-colors"
+                  >
+                    <span>Download App</span>
+                    <ExternalLink className="w-3.5 h-3.5 text-text-muted" />
+                  </a>
                 </div>
+              ) : (
+                <>
+                  {/* Detection & Connection Status */}
+                  <div className="p-3 rounded-lg bg-surface-elevated/60 border border-border/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <span
+                        className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                          presenceStatus?.running
+                            ? 'bg-white animate-pulse'
+                            : presenceStatus?.configured
+                              ? 'bg-amber-400'
+                              : 'bg-zinc-500'
+                        }`}
+                      />
+                      <div>
+                        <div className="text-xs font-semibold text-text flex items-center gap-1.5 flex-wrap">
+                          <span>Music Presence (Discord Integration)</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface border border-border/60 text-text-muted">
+                            {presenceStatus?.running
+                              ? 'Active & Running'
+                              : presenceStatus?.configured
+                                ? 'Configured (Idle)'
+                                : presenceStatus?.installed
+                                  ? 'Detected (Needs Link)'
+                                  : 'Not Detected'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-text-muted mt-0.5">
+                          {presenceStatus?.running
+                            ? 'Felo is connected and syncing what you are listening to on Discord.'
+                            : presenceStatus?.configured
+                              ? 'Felo is registered in Music Presence. Start Music Presence to broadcast to Discord.'
+                              : 'Music Presence integrates desktop playback directly with your Discord profile.'}
+                        </p>
+                      </div>
+                    </div>
 
-                <div className="flex items-center gap-2 shrink-0">
-                  {presenceStatus?.installed && !presenceStatus?.running && (
-                    <button
-                      type="button"
-                      onClick={handleLaunchMusicPresence}
-                      className="px-2.5 py-1 text-xs font-medium rounded bg-surface border border-border hover:bg-surface-elevated text-text transition-colors"
-                    >
-                      Start Presence App
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {presenceStatus?.installed && !presenceStatus?.running && (
+                        <button
+                          type="button"
+                          onClick={handleLaunchMusicPresence}
+                          className="px-2.5 py-1 text-xs font-medium rounded bg-surface border border-border hover:bg-surface-elevated text-text transition-colors"
+                        >
+                          Start Presence App
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleSetupMusicPresence}
+                        disabled={presenceSettingUp}
+                        className="px-3 py-1.5 text-xs font-medium rounded-md bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-50 flex items-center gap-1.5 transition-colors"
+                      >
+                        {presenceSettingUp ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        )}
+                        <span>{presenceStatus?.configured ? 'Re-link Discord' : 'Setup Discord'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {presenceSetupMsg && (
+                    <div className="text-xs px-3 py-2 rounded bg-surface/80 border border-primary/20 text-primary flex items-center justify-between">
+                      <span>{presenceSetupMsg}</span>
+                      <button
+                        type="button"
+                        onClick={() => setPresenceSetupMsg(null)}
+                        className="text-text-muted hover:text-text text-[10px] ml-2"
+                      >
+                        ✕
+                      </button>
+                    </div>
                   )}
-                  <button
-                    type="button"
-                    onClick={handleSetupMusicPresence}
-                    disabled={presenceSettingUp}
-                    className="px-3 py-1.5 text-xs font-medium rounded-md bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-50 flex items-center gap-1.5 transition-colors"
-                  >
-                    {presenceSettingUp ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <RefreshCw className="w-3.5 h-3.5" />
-                    )}
-                    <span>{presenceStatus?.configured ? 'Re-link Discord' : 'Setup Discord'}</span>
-                  </button>
-                </div>
-              </div>
 
-              {presenceSetupMsg && (
-                <div className="text-xs px-3 py-2 rounded bg-surface/80 border border-primary/20 text-primary flex items-center justify-between">
-                  <span>{presenceSetupMsg}</span>
-                  <button
-                    type="button"
-                    onClick={() => setPresenceSetupMsg(null)}
-                    className="text-text-muted hover:text-text text-[10px] ml-2"
+                  <SettingRow
+                    label="Discord Rich Presence"
+                    hint="Show currently playing track in your Discord status."
                   >
-                    ✕
-                  </button>
-                </div>
+                    <Toggle
+                      enabled={discordRpcEnabled}
+                      onChange={(val) => {
+                        setDiscordRpcEnabled(val)
+                        if (val && !presenceStatus?.configured) {
+                          void handleSetupMusicPresence()
+                        }
+                      }}
+                    />
+                  </SettingRow>
+                  {discordRpcEnabled && (
+                    <SettingRow
+                      label="Show Song Details"
+                      hint="Display title, artist, album, and elapsed time."
+                    >
+                      <Toggle enabled={showSongInDiscord} onChange={setShowSongInDiscord} />
+                    </SettingRow>
+                  )}
+                </>
               )}
 
-              <SettingRow
-                label="Discord Rich Presence"
-                hint="Show currently playing track in your Discord status."
-              >
-                <Toggle
-                  enabled={discordRpcEnabled}
-                  onChange={(val) => {
-                    setDiscordRpcEnabled(val)
-                    if (val && !presenceStatus?.configured) {
-                      void handleSetupMusicPresence()
-                    }
-                  }}
-                />
-              </SettingRow>
-              {discordRpcEnabled && (
-                <SettingRow
-                  label="Show Song Details"
-                  hint="Display title, artist, album, and elapsed time."
-                >
-                  <Toggle enabled={showSongInDiscord} onChange={setShowSongInDiscord} />
-                </SettingRow>
-              )}
               <SettingRow
                 label="System Media Controls"
-                hint="Enable media keys and OS media transport controls."
+                hint={
+                  isElectron
+                    ? "Enable media keys and OS media transport controls."
+                    : "Enable hardware media keys and OS media transport controls via Web Media Session API."
+                }
               >
                 <Toggle enabled={mediaSessionEnabled} onChange={setMediaSessionEnabled} />
               </SettingRow>
             </SettingsSection>
 
-            {/* Discord Music Bot & Webhook Remote Control */}
+            {/* Official Discord Bot & Webhook Remote Control */}
             <SettingsSection
               icon={<Bot className="w-5 h-5" />}
-                            title="Discord Music Bot & Webhook Remote Control"
-              description="Control your local Felo player and synchronize group Listen Together sessions using standard Discord music bot commands and webhooks—without spawning a bot into a voice channel."
+              title="Official Discord Music Bot"
+              description="Connect any Discord channel to your Felo session using the official bot. Server members can queue songs, vote to skip, and listen together in real-time."
             >
               {/* Connection Status Banner */}
               <div className="p-3.5 rounded-xl bg-surface-elevated/60 border border-border/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <span
                     className={`w-3 h-3 rounded-full shrink-0 ${
-                      discordBotConnected
-                        ? 'bg-white animate-pulse'
-                        : discordBotEnabled
+                      discordBinding
+                        ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
+                        : hostRoom?.code
                           ? 'bg-amber-400 animate-pulse'
                           : 'bg-zinc-500'
                     }`}
                   />
                   <div>
                     <div className="text-xs font-bold text-text flex items-center gap-2">
-                      <span>Discord Music Bot Gateway</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-surface border border-border/60 text-text-muted font-mono">
-                        {discordBotConnected
-                          ? `Online as @${discordBotUser?.username || 'Bot'}`
-                          : discordBotEnabled
-                            ? 'Connecting...'
-                            : 'Offline'}
+                      <span>
+                        {discordBinding
+                          ? 'Discord Server Connected'
+                          : hostRoom?.code
+                            ? 'Ready for Discord Connection'
+                            : 'Official Bot Idle'}
+                      </span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono font-medium ${
+                        discordBinding
+                          ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                          : hostRoom?.code
+                            ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                            : 'bg-surface border-border/60 text-text-muted'
+                      }`}>
+                        {discordBinding
+                          ? 'Linked via /connect'
+                          : hostRoom?.code
+                            ? 'Room Code Active'
+                            : 'No Code'}
                       </span>
                     </div>
                     <p className="text-[11px] text-text-muted mt-0.5">
-                      Commands play locally on the host player and auto-sync to all group listeners.
+                      {discordBinding
+                        ? `Linked by @${discordBinding.bound_by}. Songs requested with /play in Discord play directly on this player.`
+                        : hostRoom?.code
+                          ? `In your Discord server, type /connect ${hostRoom.code} to link this channel.`
+                          : 'Generate a room code below or start Listen Together to link your Discord server.'}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void handleSaveDiscordBotSettings({ enabled: !discordBotEnabled })}
-                    className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition-all border ${
-                      discordBotEnabled
-                        ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
-                        : 'border-border bg-surface-elevated text-text hover:bg-hover'
-                    }`}
-                  >
-                    {discordBotEnabled ? 'Enabled' : 'Disabled'}
-                  </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  {hostRoom?.code ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(`/connect ${hostRoom.code}`)
+                        setCopiedConnectCmd(true)
+                        setTimeout(() => setCopiedConnectCmd(false), 2000)
+                      }}
+                      className="px-3.5 py-1.5 rounded-full bg-surface-elevated border border-border hover:bg-hover text-text text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      {copiedConnectCmd ? <Check className="w-3.5 h-3.5 text-text" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedConnectCmd ? 'Copied /connect' : 'Copy /connect'}</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void ensureHostRoom(true)}
+                      className="px-3.5 py-1.5 rounded-full bg-primary text-primary-foreground text-xs font-bold transition-all hover:bg-primary/90 cursor-pointer"
+                    >
+                      Generate Code
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1982,7 +2064,7 @@ export default function Settings() {
                   <button
                     type="button"
                     onClick={() => setDiscordBotError(null)}
-                    className="text-text-muted hover:text-text text-[10px] ml-2"
+                    className="text-text-muted hover:text-text text-[10px] ml-2 cursor-pointer"
                   >
                     ✕
                   </button>
@@ -1995,7 +2077,7 @@ export default function Settings() {
                 </div>
               )}
 
-              {/* Universal Cloudflare Bot Section (1-Click) */}
+              {/* Official Discord Bot (1-Click) */}
               <div className="mt-4 p-4 rounded-xl bg-surface-elevated/40 border border-border/60 space-y-3.5">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
@@ -2004,13 +2086,13 @@ export default function Settings() {
                     </span>
                     <div>
                       <h4 className="text-xs font-bold text-text flex items-center gap-2">
-                        <span>Universal Discord Bot (1-Click)</span>
+                        <span>Official Felo Discord Bot</span>
                         <span className="text-[10px] px-2 py-0.5 rounded-full bg-surface-elevated border border-border text-text-muted font-mono font-medium">
-                          felo.feloapp.workers.dev
+                          1 Official Bot Access
                         </span>
                       </h4>
                       <p className="text-[11px] text-text-muted mt-0.5">
-                        Zero setup. Invite our bot to your Discord server and control this desktop player from any channel.
+                        Zero token setup. All users simply link to the official bot using <code className="text-text font-mono font-semibold">/connect</code> in Discord.
                       </p>
                     </div>
                   </div>
@@ -2035,7 +2117,7 @@ export default function Settings() {
                           setCopiedRoomCode(true)
                           setTimeout(() => setCopiedRoomCode(false), 2000)
                         }}
-                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-text text-xs font-medium flex items-center gap-1.5 transition-colors"
+                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-text text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
                       >
                         {copiedRoomCode ? <Check className="w-3.5 h-3.5 text-text" /> : <Copy className="w-3.5 h-3.5" />}
                         <span>{copiedRoomCode ? 'Copied!' : 'Copy Code'}</span>
@@ -2052,185 +2134,104 @@ export default function Settings() {
                   </div>
                 </div>
 
-                <div className="text-[11px] text-text-muted space-y-1 pt-1">
+                <div className="text-[11px] text-text-muted space-y-1.5 pt-1">
                   <p className="font-semibold text-text">How to connect in Discord:</p>
-                  <ol className="list-decimal list-inside space-y-0.5 text-[11px] text-text-muted">
-                    <li>In your Discord server, type <code className="text-text font-mono font-bold">/connect {hostRoom?.code || '<code>'}</code></li>
-                    <li>Type <code className="text-text font-mono font-bold">/play &lt;song&gt;</code> — Felo plays and queues the song in the room in real-time!</li>
+                  <ol className="list-decimal list-inside space-y-1 text-[11px] text-text-muted">
+                    <li>In your Discord server channel, type: <code className="text-text font-mono font-bold">/connect {hostRoom?.code || '<code>'}</code></li>
+                    <li>Type <code className="text-text font-mono font-bold">/play &lt;song name&gt;</code> — Felo automatically searches, queues, and plays the music in real-time!</li>
+                    <li>Everyone in the channel can request songs, vote to skip, or view the 3-tier queue with <code className="text-text font-mono font-bold">/queue</code>!</li>
                   </ol>
                 </div>
               </div>
 
-              {/* Bot Configuration Fields */}
-              <div className="mt-4 space-y-4 pt-4 border-t border-border/30">
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-text">Discord Bot Token</span>
-                    <a
-                      href="https://discord.com/developers/applications"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-[11px] text-text-muted hover:text-white hover:underline flex items-center gap-1"
-                    >
-                      <span>Create Token in Discord Portal</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </div>
-                  <div className="relative">
-                    <input
-                      type={showDiscordBotToken ? 'text' : 'password'}
-                      value={discordBotToken}
-                      onChange={(e) => setDiscordBotToken(e.target.value.trim())}
-                      placeholder="Paste your Discord Bot Token here..."
-                      className="w-full rounded-lg border border-border bg-surface-elevated px-3 py-2 pr-20 text-xs font-mono text-text outline-none focus:border-white/40 transition-colors"
-                    />
-                    <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              {/* Outgoing Webhook Section */}
+              <div className="mt-4 pt-4 border-t border-border/30 space-y-3">
+                <SettingRow
+                  label="Discord Webhook Announcer"
+                  hint="Automatically post Now Playing embeds with Room Code to a Discord channel."
+                >
+                  <Toggle
+                    enabled={discordWebhookEnabled}
+                    onChange={(val) => {
+                      setDiscordWebhookEnabled(val)
+                      void handleSaveDiscordWebhook({ webhookEnabled: val })
+                    }}
+                  />
+                </SettingRow>
+
+                {discordWebhookEnabled && (
+                  <div className="space-y-2 mt-2">
+                    <span className="text-xs font-bold text-text">Discord Webhook URL</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={discordWebhookUrl}
+                        onChange={(e) => setDiscordWebhookUrl(e.target.value.trim())}
+                        placeholder="https://discord.com/api/webhooks/..."
+                        className="flex-1 rounded-lg border border-border bg-surface-elevated px-3 py-2 text-xs font-mono text-text outline-none focus:border-white/40 transition-colors"
+                      />
                       <button
                         type="button"
-                        onClick={() => setShowDiscordBotToken(!showDiscordBotToken)}
-                        className="rounded p-1 text-text-muted hover:bg-hover hover:text-text transition-colors"
-                        title={showDiscordBotToken ? 'Hide token' : 'Show token'}
+                        onClick={handleTestDiscordWebhook}
+                        disabled={discordTestStatus.loading || !discordWebhookUrl.trim()}
+                        className="rounded-lg border border-border bg-surface-elevated px-3 py-2 text-xs font-bold text-text hover:bg-hover transition-colors disabled:opacity-50 shrink-0 cursor-pointer"
                       >
-                        {showDiscordBotToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                        {discordTestStatus.loading ? 'Testing...' : 'Test Webhook'}
                       </button>
                       <button
                         type="button"
-                        onClick={() => void handleSaveDiscordBotSettings({ token: discordBotToken, enabled: true })}
-                        className="rounded-md bg-white text-black px-2.5 py-1 text-[11px] font-bold transition-all hover:bg-white/90 shadow-sm"
+                        onClick={() => void handleSaveDiscordWebhook({ webhookUrl: discordWebhookUrl })}
+                        className="rounded-lg border border-border bg-surface-elevated px-3 py-2 text-xs font-bold text-text hover:bg-hover transition-colors shrink-0 cursor-pointer"
                       >
-                        Connect
+                        Save
                       </button>
                     </div>
+
+                    {discordTestStatus.message && (
+                      <p
+                        className={`text-xs font-bold ${
+                          discordTestStatus.success ? 'text-success' : 'text-danger'
+                        }`}
+                      >
+                        {discordTestStatus.message}
+                      </p>
+                    )}
                   </div>
-                  <p className="text-[11px] text-text-muted leading-relaxed">
-                    💡 <strong>Tip:</strong> Native Slash Commands (like <code className="text-text font-mono font-bold">/play</code>, <code className="text-text font-mono font-bold">/search</code>, <code className="text-text font-mono font-bold">/invite</code>) work out-of-the-box! When creating your bot invite URL in Discord Developer Portal, check both <strong>bot</strong> and <strong>applications.commands</strong> under <em>OAuth2 → URL Generator</em>.
-                  </p>
-                </div>
+                )}
+              </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <span className="text-xs font-bold text-text">Command Prefix</span>
-                    <input
-                      type="text"
-                      maxLength={3}
-                      value={discordBotPrefix}
-                      onChange={(e) => setDiscordBotPrefix(e.target.value.trim() || '!')}
-                      placeholder="!"
-                      className="w-full rounded-lg border border-border bg-surface-elevated px-3 py-2 text-xs font-mono text-text outline-none focus:border-white/40 transition-colors"
-                    />
-                    <p className="text-[10px] text-text-muted">
-                      Default prefix is <code className="text-text font-bold">!</code> (e.g. <code className="text-text font-bold">!play song name</code>)
-                    </p>
+              {/* Command Quick Reference Sheet */}
+              <div className="mt-5 rounded-xl border border-border/40 bg-surface/80 p-4">
+                <div className="flex items-center justify-between mb-2.5">
+                  <div className="flex items-center gap-2 text-xs font-bold text-text uppercase tracking-wider">
+                    <ListMusic className="w-3.5 h-3.5 text-text-muted" />
+                    <span>Official Bot Slash Commands</span>
                   </div>
-
-                  <div className="space-y-1.5">
-                    <span className="text-xs font-bold text-text">Channel Lock (Optional)</span>
-                    <input
-                      type="text"
-                      value={discordBotChannel}
-                      onChange={(e) => setDiscordBotChannel(e.target.value.trim())}
-                      placeholder="e.g. 123456789012345678"
-                      className="w-full rounded-lg border border-border bg-surface-elevated px-3 py-2 text-xs font-mono text-text outline-none focus:border-white/40 transition-colors"
-                    />
-                    <p className="text-[10px] text-text-muted">
-                      Leave blank to listen in any channel, or enter a specific channel ID.
-                    </p>
-                  </div>
+                  <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-[10px] font-medium text-text-muted border border-border">
+                    Universal Slash Commands
+                  </span>
                 </div>
-
-                {/* Save Bot Settings Button */}
-                <div className="flex justify-end pt-1">
-                  <button
-                    type="button"
-                    onClick={() => void handleSaveDiscordBotSettings()}
-                    className="rounded-full border border-border bg-surface-elevated px-4 py-1.5 text-xs font-bold text-text hover:bg-hover transition-colors"
-                  >
-                    Save Bot Settings
-                  </button>
-                </div>
-
-                {/* Outgoing Webhook Section */}
-                <div className="mt-4 pt-4 border-t border-border/30 space-y-3">
-                  <SettingRow
-                    label="Discord Webhook Announcer"
-                    hint="Automatically post Now Playing embeds with Room Code to a Discord channel."
-                  >
-                    <Toggle
-                      enabled={discordWebhookEnabled}
-                      onChange={(val) => {
-                        setDiscordWebhookEnabled(val)
-                        void handleSaveDiscordBotSettings({ webhookEnabled: val })
-                      }}
-                    />
-                  </SettingRow>
-
-                  {discordWebhookEnabled && (
-                    <div className="space-y-2 mt-2">
-                      <span className="text-xs font-bold text-text">Discord Webhook URL</span>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={discordWebhookUrl}
-                          onChange={(e) => setDiscordWebhookUrl(e.target.value.trim())}
-                          placeholder="https://discord.com/api/webhooks/..."
-                          className="flex-1 rounded-lg border border-border bg-surface-elevated px-3 py-2 text-xs font-mono text-text outline-none focus:border-white/40 transition-colors"
-                        />
-                        <button
-                          type="button"
-                          onClick={handleTestDiscordWebhook}
-                          disabled={discordTestStatus.loading || !discordWebhookUrl.trim()}
-                          className="rounded-lg border border-border bg-surface-elevated px-3 py-2 text-xs font-bold text-text hover:bg-hover transition-colors disabled:opacity-50 shrink-0"
-                        >
-                          {discordTestStatus.loading ? 'Testing...' : 'Test Webhook'}
-                        </button>
-                      </div>
-
-                      {discordTestStatus.message && (
-                        <p
-                          className={`text-xs font-bold ${
-                            discordTestStatus.success ? 'text-success' : 'text-danger'
-                          }`}
-                        >
-                          {discordTestStatus.message}
-                        </p>
-                      )}
+                <p className="text-[11px] text-text-muted mb-3">
+                  Connect your session by typing <code className="font-mono text-text font-bold">/connect {hostRoom?.code || '<ROOM_CODE>'}</code> in any Discord channel.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  {[
+                    ['/connect <code>', 'Links Discord channel to your active Felo room'],
+                    ['/play <song>', 'Searches and queues songs to play in your room'],
+                    ['/queue', 'Shows upcoming songs in the 3-tier room queue'],
+                    ['/skip', 'Skips to next track in queue'],
+                    ['/pause & /resume', 'Pauses or resumes playback in the session'],
+                    ['/nowplaying', 'Current song, cover art, progress & room code'],
+                    ['/volume <0-100>', 'Adjusts host playback volume (0-100%)'],
+                    ['/invite', 'Posts Room Code + 1-Click Web Join Link for friends'],
+                    ['/disconnect', 'Unbinds this Discord channel from the room'],
+                    ['/help', 'Interactive beginner guide & quick-start buttons']
+                  ].map(([cmd, desc]) => (
+                    <div key={cmd} className="flex items-center justify-between p-2 rounded-lg bg-surface-elevated/40 border border-border/20">
+                      <code className="text-text font-mono font-bold text-[11px]">{cmd}</code>
+                      <span className="text-[10px] text-text-muted text-right max-w-[55%]">{desc}</span>
                     </div>
-                  )}
-                </div>
-
-                {/* Command Quick Reference Sheet */}
-                <div className="mt-5 rounded-xl border border-border/40 bg-surface/80 p-4">
-                  <div className="flex items-center justify-between mb-2.5">
-                    <div className="flex items-center gap-2 text-xs font-bold text-text uppercase tracking-wider">
-                      <ListMusic className="w-3.5 h-3.5 text-text-muted" />
-                      <span>Discord Slash (/) & Prefix Commands</span>
-                    </div>
-                    <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-[10px] font-medium text-text-muted border border-border">
-                      Universal Slash Commands
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-text-muted mb-3">
-                    Link your session by copying your Room Code from <span className="font-bold text-text">Listen Together</span> and typing <code className="font-mono text-primary-amber font-bold">/connect code:&lt;YOUR_CODE&gt;</code> in any Discord channel.
-                  </p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                    {[
-                      ['/connect <code>', 'Links Discord channel to your active Felo room'],
-                      ['/play <song>', 'Autocomplete; plays and queues songs in room'],
-                      ['/skip', 'Skips to next track in queue'],
-                      ['/pause & /resume', 'Pauses or resumes session across group'],
-                      ['/nowplaying', 'Current song, cover art, progress & room code'],
-                      ['/volume <0-100>', 'Adjusts host playback volume (0-100%)'],
-                      ['/invite', 'Posts Room Code + 1-Click Web Join Link for friends'],
-                      ['/disconnect', 'Unbinds this Discord channel from the room'],
-                      ['/download', 'Direct link to download Felo Desktop app'],
-                      ['/help', 'Interactive beginner guide & quick-start buttons']
-                    ].map(([cmd, desc]) => (
-                      <div key={cmd} className="flex items-center justify-between p-2 rounded-lg bg-surface-elevated/40 border border-border/20">
-                        <code className="text-text font-mono font-bold text-[11px]">{cmd}</code>
-                        <span className="text-[10px] text-text-muted text-right max-w-[55%]">{desc}</span>
-                      </div>
-                    ))}
-                  </div>
+                  ))}
                 </div>
               </div>
             </SettingsSection>

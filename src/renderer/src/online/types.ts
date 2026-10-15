@@ -53,7 +53,8 @@ export interface SharedSong {
   duration?: number
   artworkUrl?: string
   isDeviceStream?: boolean
-  streamType?: 'device_audio' | 'library'
+  isTrackStream?: boolean
+  streamType?: 'device_audio' | 'library' | 'track_stream'
   requestedBy?: string
   isPriority?: boolean
   discordPriorityEnabled?: boolean
@@ -106,6 +107,7 @@ export interface ListeningRoom {
   position_seconds: number
   is_playing: boolean
   is_device_stream?: boolean
+  is_track_streaming?: boolean
   created_at: string
   updated_at: string
 }

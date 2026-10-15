@@ -1,5 +1,6 @@
 import { getSupabase } from './supabase'
 import type { RealtimeChannel } from '@supabase/supabase-js'
+import { getActiveAudioElement } from './audioBridge'
 
 export interface WebRTCSignalMessage {
   type: 'stream-started' | 'stream-stopped' | 'join-stream' | 'leave-stream' | 'offer' | 'answer' | 'ice-candidate'
@@ -254,6 +255,7 @@ export class WebRTCAudioHost {
   private userId: string
   private bitrateBps = 510000
   private isMuted = false
+  private isTrackOnly = false
   private rawStream: MediaStream | null = null
   private audioTrack: MediaStreamTrack | null = null
   private audioOnlyStream: MediaStream | null = null
@@ -311,6 +313,7 @@ export class WebRTCAudioHost {
   }
 
   async start(): Promise<void> {
+    this.isTrackOnly = false
     // 1. Capture system loopback audio
     const { rawStream, audioTrack, audioOnlyStream } = await captureSystemAudioStream()
     this.rawStream = rawStream
@@ -368,8 +371,78 @@ export class WebRTCAudioHost {
     })
   }
 
+  /**
+   * Starts WebRTC audio hosting in track-only mode without prompt for screen/system audio capture.
+   * Listeners connect and stream lossless FLAC/MP3 track chunks directly via WebRTC DataChannel.
+   * If local audio element stream capture is available, it also streams real-time Opus audio.
+   */
+  async startTrackOnlyMode(): Promise<void> {
+    this.isTrackOnly = true
+
+    // Best-effort capture of local audio element stream without user prompt
+    try {
+      const el = getActiveAudioElement()
+      if (el) {
+        const stream: MediaStream | null =
+          typeof (el as any).captureStream === 'function'
+            ? (el as any).captureStream()
+            : typeof (el as any).mozCaptureStream === 'function'
+            ? (el as any).mozCaptureStream()
+            : null
+
+        if (stream && stream.getAudioTracks().length > 0) {
+          this.audioOnlyStream = stream
+          this.audioTrack = stream.getAudioTracks()[0]
+        }
+      }
+    } catch (captureErr) {
+      console.warn('[WebRTCHost] Audio element stream capture unavailable, running DataChannel streaming:', captureErr)
+    }
+
+    if (this.onLevelChange && this.audioOnlyStream) {
+      this.levelMonitor = new AudioLevelMonitor(this.onLevelChange)
+      this.levelMonitor.start(this.audioOnlyStream)
+    }
+
+    const supabase = getSupabase()
+    this.channel = supabase.channel(`room-rtc-${this.roomCode}`, {
+      config: { broadcast: { ack: false, self: false } }
+    })
+
+    this.channel.on('broadcast', { event: 'signal' }, async ({ payload }) => {
+      const msg = payload as WebRTCSignalMessage
+      if (!msg) return
+
+      try {
+        if (msg.type === 'join-stream' && msg.senderId) {
+          await this.handlePeerJoin(msg.senderId)
+        } else if (msg.type === 'answer' && msg.senderId && msg.targetId === this.userId && msg.answer) {
+          await this.handlePeerAnswer(msg.senderId, msg.answer)
+        } else if (msg.type === 'ice-candidate' && msg.senderId && msg.targetId === this.userId && msg.candidate) {
+          await this.handlePeerCandidate(msg.senderId, msg.candidate)
+        } else if (msg.type === 'leave-stream' && msg.senderId) {
+          this.removePeer(msg.senderId)
+        }
+      } catch (err) {
+        console.warn(`[WebRTCHost] Error handling signal from ${msg.senderId}:`, err)
+      }
+    })
+
+    await this.channel.subscribe()
+
+    await this.channel.send({
+      type: 'broadcast',
+      event: 'signal',
+      payload: {
+        type: 'stream-started',
+        senderId: this.userId,
+        metadata: { bitrate: this.bitrateBps }
+      } satisfies WebRTCSignalMessage
+    })
+  }
+
   private async handlePeerJoin(peerId: string): Promise<void> {
-    if (!this.audioTrack || !this.audioOnlyStream) return
+    if (!this.isTrackOnly && (!this.audioTrack || !this.audioOnlyStream)) return
 
     // Clean up any existing connection for this peer
     this.removePeer(peerId)
@@ -421,8 +494,14 @@ export class WebRTCAudioHost {
       }
     }
 
-    // Add audio track to peer connection
-    pc.addTrack(this.audioTrack, this.audioOnlyStream)
+    // Add audio track to peer connection if available
+    if (this.audioTrack && this.audioOnlyStream) {
+      try {
+        pc.addTrack(this.audioTrack, this.audioOnlyStream)
+      } catch (trackErr) {
+        console.warn('[WebRTCHost] Could not add audio track to peer connection:', trackErr)
+      }
+    }
 
     // Setup DataChannel for lossless audio streaming
     try {

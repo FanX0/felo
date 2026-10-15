@@ -680,7 +680,7 @@ function FullListeningHistoryModal({
 function ProfileWorkspace(): ReactElement {
   const { username } = useParams<{ username?: string }>()
   const navigate = useNavigate()
-  const { user, profile: ownProfile } = useOnlineStore()
+  const { user, profile: ownProfile, signOut } = useOnlineStore()
   const { requestPlaySong } = usePlaybackArbitration()
   const [viewedProfile, setViewedProfile] = useState<OnlineProfile | null>(null)
   const [relationship, setRelationship] = useState<FriendRequest | null>(null)
@@ -1078,16 +1078,34 @@ function ProfileWorkspace(): ReactElement {
       <main className="min-h-[420px] px-4 sm:px-10 py-4 sm:py-6 pb-36 sm:pb-12">
         <div className="flex min-h-12 items-center gap-3">
           {isOwnProfile ? (
-            <>
+            <div className="flex items-center gap-2.5 flex-wrap">
               <button
                 type="button"
                 onClick={() => setIsEditing(true)}
                 title="Edit profile"
-                className="flex h-11 w-11 items-center justify-center rounded-full text-text-muted hover:bg-hover hover:text-text"
+                className="flex h-10 items-center gap-2 rounded-full border border-border bg-surface-elevated px-4 text-xs sm:text-sm font-black text-text hover:bg-hover hover:border-white/40 transition-colors cursor-pointer"
               >
-                <Settings className="h-6 w-6" />
+                <Settings className="h-4 w-4 text-text-muted" />
+                <span>Edit Profile</span>
               </button>
-            </>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await signOut()
+                    navigate('/')
+                  } catch (err) {
+                    console.error('Failed to sign out:', err)
+                  }
+                }}
+                title="Sign out of your account"
+                className="flex h-10 items-center gap-2 rounded-full border border-danger/40 bg-danger/10 px-4 text-xs sm:text-sm font-black text-danger hover:bg-danger/20 transition-colors cursor-pointer"
+              >
+                <LogOut className="h-4 w-4" />
+                <span>Log out</span>
+              </button>
+            </div>
           ) : (
             <>
               <button
