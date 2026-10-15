@@ -192,6 +192,9 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     }
     return 'local'
   })
+  const librarySourceRef = useRef(librarySource)
+  librarySourceRef.current = librarySource
+  const [isSelectingFolder, setIsSelectingFolder] = useState(false)
   const [isRemoteConnected, setIsRemoteConnected] = useState(() => remoteClient.getIsConnected())
   const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
   const pcLibrarySongs = useConnectedDeviceStore((s) => s.pcLibrarySongs)
@@ -508,8 +511,10 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
   }
 
   useEffect(() => {
-    loadSongs()
-    const handleLibraryUpdate = () => loadSongs()
+    void loadSongs(librarySourceRef.current)
+    const handleLibraryUpdate = () => {
+      void loadSongs(librarySourceRef.current)
+    }
     window.addEventListener('felo:library-updated', handleLibraryUpdate)
     return () => window.removeEventListener('felo:library-updated', handleLibraryUpdate)
   }, [])
@@ -537,22 +542,39 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     }
   }, [])
 
-
-
   const handleAddFolder = async () => {
+    if (isScanning || isSelectingFolder) return
+    setIsSelectingFolder(true)
     try {
       if (!window.api?.selectFolder) {
         console.warn('selectFolder is not available')
         return
       }
-      const folderPath = await window.api.selectFolder()
+      let folderPath: string | null = null
+      try {
+        folderPath = await window.api.selectFolder()
+      } catch (selectErr) {
+        console.warn('Folder selection error, trying audio files fallback:', selectErr)
+      }
+
+      // If folder selection returned nothing and we are on mobile / web, fallback to audio files selection
+      if (!folderPath && !isElectronApp) {
+        if (window.api?.selectFiles) {
+          folderPath = await window.api.selectFiles()
+        } else if (window.api?.selectFolder) {
+          folderPath = await window.api.selectFolder({ forceFiles: true })
+        }
+      }
+
       if (folderPath) {
-        await window.api.scanLibrary(folderPath)
         setLibrarySource('local')
+        await window.api.scanLibrary(folderPath)
         await loadSongs('local')
       }
     } catch (err) {
       console.error('Failed to scan library:', err)
+    } finally {
+      setIsSelectingFolder(false)
     }
   }
 
@@ -1125,7 +1147,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
             <button
               type="button"
               onClick={handleAddFolder}
-              disabled={isScanning}
+              disabled={isScanning || isSelectingFolder}
               className="flex h-9 sm:h-11 items-center gap-1.5 sm:gap-2.5 rounded-full bg-white px-3 sm:px-5 text-xs sm:text-sm font-bold text-black transition-all hover:scale-[1.02] hover:bg-white/90 shadow-sm disabled:cursor-not-allowed disabled:opacity-60 shrink-0 whitespace-nowrap cursor-pointer"
             >
               {isScanning ? (
@@ -1136,6 +1158,11 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
                       ? `${scanProgress.percent}%`
                       : 'Scanning...'}
                   </span>
+                </>
+              ) : isSelectingFolder ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin text-black" />
+                  <span>Selecting...</span>
                 </>
               ) : (
                 <>
@@ -1324,11 +1351,21 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
                 <button
                   type="button"
                   onClick={handleAddFolder}
-                  disabled={isScanning}
+                  disabled={isScanning || isSelectingFolder}
                   className="flex h-11 items-center gap-2 rounded-full bg-white px-6 text-sm font-bold text-black transition-all hover:scale-[1.02] hover:bg-white/90 shadow-md cursor-pointer disabled:opacity-60"
                 >
-                  <Plus className="h-4 w-4 stroke-[3]" />
-                  <span>{isMobile ? 'Add Music Folder' : 'Add Local Music Folder'}</span>
+                  {isSelectingFolder ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-black" />
+                  ) : (
+                    <Plus className="h-4 w-4 stroke-[3]" />
+                  )}
+                  <span>
+                    {isSelectingFolder
+                      ? 'Selecting Folder...'
+                      : isMobile
+                        ? 'Add Music Folder'
+                        : 'Add Local Music Folder'}
+                  </span>
                 </button>
                 {!isElectronApp && (
                   <button

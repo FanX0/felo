@@ -1159,8 +1159,7 @@ function pickFilesWithInput(options?: {
     if (options?.directory) {
       input.setAttribute('webkitdirectory', '')
       input.setAttribute('directory', '')
-    }
-    if (options?.accept) {
+    } else if (options?.accept) {
       input.accept = options.accept
     }
     input.style.position = 'fixed'
@@ -1172,7 +1171,6 @@ function pickFilesWithInput(options?: {
     const cleanup = () => {
       if (!resolved) {
         resolved = true
-        window.removeEventListener('focus', onFocusCheck)
         input.remove()
       }
     }
@@ -1190,16 +1188,6 @@ function pickFilesWithInput(options?: {
 
     input.addEventListener('change', handleChange, { once: true })
     input.addEventListener('cancel', handleCancel, { once: true })
-
-    const onFocusCheck = () => {
-      setTimeout(() => {
-        if (!resolved) {
-          cleanup()
-          resolve(null)
-        }
-      }, 1000)
-    }
-    window.addEventListener('focus', onFocusCheck, { once: true })
 
     document.body.appendChild(input)
     input.click()
@@ -1235,10 +1223,20 @@ async function selectBrowserFiles(options?: { accept?: string }): Promise<string
 
 async function selectBrowserFolder(options?: { forceFiles?: boolean }): Promise<string | null> {
   try {
+    const isMobile =
+      typeof navigator !== 'undefined' &&
+      (/android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent) ||
+        (navigator.maxTouchPoints > 1 && /mac/i.test(navigator.userAgent)))
+
+    // On mobile devices, directory picking is not supported by browsers; directly open file picker
+    if (isMobile || options?.forceFiles) {
+      return await selectBrowserFiles()
+    }
+
     const browserWindow = window as Window & {
       showDirectoryPicker?: () => Promise<BrowserDirectoryHandle>
     }
-    if (!options?.forceFiles && browserWindow.showDirectoryPicker) {
+    if (browserWindow.showDirectoryPicker) {
       try {
         const directory = await browserWindow.showDirectoryPicker()
         if (navigator.storage?.persist) {
@@ -1254,36 +1252,33 @@ async function selectBrowserFolder(options?: { forceFiles?: boolean }): Promise<
       }
     }
 
-    // Try directory input fallback if not forced to files
-    if (!options?.forceFiles) {
-      try {
-        const dirFiles = await pickFilesWithInput({
-          directory: true,
-          accept: 'audio/*,.mp3,.flac,.m4a,.wav,.ogg,.opus,.aac,.wma'
-        })
-        if (dirFiles && dirFiles.length > 0) {
-          pendingDirectoryHandle = undefined
-          pendingFiles = Array.from(dirFiles)
-            .filter(isAudioFile)
-            .map((file) => ({
-              file,
-              relativePath:
-                (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
-            }))
-          if (pendingFiles.length > 0) {
-            pendingFolderName =
-              pendingFiles[0]?.relativePath.includes('/')
-                ? pendingFiles[0].relativePath.split('/')[0]
-                : 'Browser folder'
-            return WEB_FOLDER_TOKEN
-          }
+    // Try directory input fallback for desktop browsers without File System Access API
+    try {
+      const dirFiles = await pickFilesWithInput({
+        directory: true
+      })
+      if (dirFiles && dirFiles.length > 0) {
+        pendingDirectoryHandle = undefined
+        pendingFiles = Array.from(dirFiles)
+          .filter(isAudioFile)
+          .map((file) => ({
+            file,
+            relativePath:
+              (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
+          }))
+        if (pendingFiles.length > 0) {
+          pendingFolderName =
+            pendingFiles[0]?.relativePath.includes('/')
+              ? pendingFiles[0].relativePath.split('/')[0]
+              : 'Browser folder'
+          return WEB_FOLDER_TOKEN
         }
-      } catch (e) {
-        console.warn('Directory input failed, falling back to files:', e)
       }
+    } catch (e) {
+      console.warn('Directory input failed, falling back to files:', e)
     }
 
-    // Direct audio files picker (standard on mobile browsers / WebView)
+    // Direct audio files picker fallback
     return await selectBrowserFiles()
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') return null
