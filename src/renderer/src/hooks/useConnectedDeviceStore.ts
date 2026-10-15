@@ -112,7 +112,13 @@ export const useConnectedDeviceStore = create<ConnectedDeviceStoreState>((set, g
   resolutionPreference: getInitialResolutionPreference(),
   devicePlaybackMode: 'local',
   claimEpoch: Date.now(),
-  setDevicePlaybackMode: (devicePlaybackMode) => set({ devicePlaybackMode }),
+  setDevicePlaybackMode: (devicePlaybackMode) => {
+    if (devicePlaybackMode === 'local') {
+      set({ devicePlaybackMode, activePlayback: null, claimEpoch: Date.now() })
+    } else {
+      set({ devicePlaybackMode })
+    }
+  },
   claimPlayback: () => {
     const nextEpoch = Date.now()
     set({ claimEpoch: nextEpoch, devicePlaybackMode: 'local' })

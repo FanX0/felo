@@ -14,6 +14,7 @@ import {
 } from '../lib/deviceInfo'
 import { remoteClient } from '../pages/Remote/remoteClient'
 import { getActiveAudioElement, getActiveAudioTime } from '../lib/audioBridge'
+import { useListeningStore, isSessionSyncing } from '../hooks/useListeningStore'
 
 function getDeviceName(info: DeviceInfo, isElectron: boolean, ip?: string): string {
   if (info.customName) {
@@ -39,12 +40,44 @@ export default function DevicePresenceBridge() {
   const broadcastTimerRef = useRef<any>(null)
   const lastBroadcastHashRef = useRef<string>('')
   const staleCleanupTimerRef = useRef<any>(null)
+  const lastClaimRef = useRef<{ epoch: number; timer: any; payload: any } | null>(null)
 
   const isPlaying = usePlayerStore((s) => s.isPlaying)
   const isAudioActive = usePlayerStore((s) => s.isAudioActive)
   const currentSong = usePlayerStore((s) => s.queue[s.currentSongIndex] || null)
   const seekRequest = usePlayerStore((s) => s.seekRequest)
   const remoteControlInfoRef = useRef<any>(null)
+
+  const sendPlaybackClaim = (claimPayload: any) => {
+    if (!channelRef.current) return
+    void channelRef.current.send({
+      type: 'broadcast',
+      event: 'playback_claim',
+      payload: claimPayload
+    })
+    if (lastClaimRef.current?.timer) {
+      clearTimeout(lastClaimRef.current.timer)
+    }
+    const timer = setTimeout(() => {
+      const store = useConnectedDeviceStore.getState()
+      const player = usePlayerStore.getState()
+      if (
+        lastClaimRef.current?.epoch === claimPayload.claimEpoch &&
+        store.devicePlaybackMode === 'local' &&
+        player.isPlaying &&
+        player.isAudioActive &&
+        channelRef.current
+      ) {
+        void channelRef.current.send({
+          type: 'broadcast',
+          event: 'playback_claim',
+          payload: { ...claimPayload, isRetry: true }
+        })
+      }
+      lastClaimRef.current = null
+    }, 2000)
+    lastClaimRef.current = { epoch: claimPayload.claimEpoch, timer, payload: claimPayload }
+  }
 
   // Broadcast current player state to all peers
   const broadcastCurrentState = (playing: boolean) => {
@@ -526,6 +559,8 @@ export default function DevicePresenceBridge() {
                   }
                 }
                 if (songToPlay) {
+                  useConnectedDeviceStore.getState().setDevicePlaybackMode('local')
+                  const epoch = useConnectedDeviceStore.getState().claimPlayback()
                   player.setQueue([songToPlay], 0, {
                     type: 'library',
                     title: 'Remote Playback'
@@ -535,9 +570,36 @@ export default function DevicePresenceBridge() {
                       usePlayerStore.getState().seek(payload.position)
                     }, 80)
                   }
+                  sendPlaybackClaim({
+                    deviceId: deviceIdRef.current,
+                    deviceName: getDeviceName(deviceInfo, isElectron),
+                    deviceCategory: deviceInfo.category,
+                    deviceType: isPcDevice(deviceInfo.category) ? 'desktop' : 'mobile',
+                    song: songToPlay,
+                    position: payload.position ?? 0,
+                    duration: songToPlay.duration ?? 0,
+                    claimEpoch: epoch,
+                    timestamp: Date.now()
+                  })
                 }
               } else {
+                useConnectedDeviceStore.getState().setDevicePlaybackMode('local')
+                const epoch = useConnectedDeviceStore.getState().claimPlayback()
                 player.setIsPlaying(true)
+                const currentTrack = player.queue[player.currentSongIndex] || currentSong
+                if (currentTrack) {
+                  sendPlaybackClaim({
+                    deviceId: deviceIdRef.current,
+                    deviceName: getDeviceName(deviceInfo, isElectron),
+                    deviceCategory: deviceInfo.category,
+                    deviceType: isPcDevice(deviceInfo.category) ? 'desktop' : 'mobile',
+                    song: currentTrack,
+                    position: getActiveAudioTime() || player.currentTime,
+                    duration: player.duration || currentTrack.duration || 0,
+                    claimEpoch: epoch,
+                    timestamp: Date.now()
+                  })
+                }
               }
               break
             case 'pause':
@@ -657,11 +719,21 @@ export default function DevicePresenceBridge() {
           const player = usePlayerStore.getState()
           const store = useConnectedDeviceStore.getState()
 
-          const amPlayingLocally = Boolean(player.isPlaying && player.isAudioActive)
+          const amPlayingLocally = Boolean(
+            player.isPlaying &&
+            player.isAudioActive &&
+            store.devicePlaybackMode !== 'remote_controller'
+          )
 
           if (amPlayingLocally) {
-            // Remote claimed playback. If remote claim epoch is newer than our claimEpoch, yield:
-            if (payload.claimEpoch > store.claimEpoch) {
+            // Remote claimed playback. If remote claim epoch is newer than our claimEpoch, yield.
+            // If claims were made nearly simultaneously (within 500ms), deterministic tiebreak: lower deviceId yields.
+            const epochDiff = payload.claimEpoch - store.claimEpoch
+            const shouldYield =
+              epochDiff > 0 ||
+              (Math.abs(epochDiff) < 500 && deviceId < payload.deviceId)
+
+            if (shouldYield) {
               player.setIsPlaying(false)
               store.setDevicePlaybackMode('remote_controller')
               store.setRemotePlayback({
@@ -719,6 +791,10 @@ export default function DevicePresenceBridge() {
         ({ payload }: { payload: any }) => {
           if (!payload || payload.claimerDeviceId !== deviceId) return
           // Claim successfully acknowledged by remote peer
+          if (lastClaimRef.current && lastClaimRef.current.epoch === payload.claimEpoch) {
+            clearTimeout(lastClaimRef.current.timer)
+            lastClaimRef.current = null
+          }
         }
       )
       .subscribe((status) => {
@@ -774,6 +850,10 @@ export default function DevicePresenceBridge() {
       if (broadcastTimerRef.current) {
         clearTimeout(broadcastTimerRef.current)
       }
+      if (lastClaimRef.current?.timer) {
+        clearTimeout(lastClaimRef.current.timer)
+        lastClaimRef.current = null
+      }
       channelRef.current = null
       window.removeEventListener('beforeunload', handleUnload)
       void supabase.removeChannel(channel)
@@ -786,22 +866,30 @@ export default function DevicePresenceBridge() {
     if (!channelRef.current || !user?.id) return
 
     if (isPlaying && isAudioActive && currentSong) {
+      // Do NOT broadcast playback_claim if we're a guest syncing in Listen-Together
+      const listeningState = useListeningStore.getState()
+      const isGuestSyncing = Boolean(
+        (listeningState.joinedRoom && !listeningState.hostRoom) ||
+        isSessionSyncing()
+      )
+      if (isGuestSyncing) {
+        debouncedBroadcast(true)
+        wasPlayingRef.current = isPlaying && isAudioActive
+        return
+      }
+
       useConnectedDeviceStore.getState().clearRemotePlayback()
       const newEpoch = useConnectedDeviceStore.getState().claimPlayback()
-      void channelRef.current.send({
-        type: 'broadcast',
-        event: 'playback_claim',
-        payload: {
-          deviceId: deviceIdRef.current,
-          deviceName: getDeviceName(deviceInfo, isElectron),
-          deviceCategory: deviceInfo.category,
-          deviceType: isPcDevice(deviceInfo.category) ? 'desktop' : 'mobile',
-          song: currentSong,
-          position: getActiveAudioTime() || usePlayerStore.getState().currentTime,
-          duration: usePlayerStore.getState().duration || currentSong.duration || 0,
-          claimEpoch: newEpoch,
-          timestamp: Date.now()
-        }
+      sendPlaybackClaim({
+        deviceId: deviceIdRef.current,
+        deviceName: getDeviceName(deviceInfo, isElectron),
+        deviceCategory: deviceInfo.category,
+        deviceType: isPcDevice(deviceInfo.category) ? 'desktop' : 'mobile',
+        song: currentSong,
+        position: getActiveAudioTime() || usePlayerStore.getState().currentTime,
+        duration: usePlayerStore.getState().duration || currentSong.duration || 0,
+        claimEpoch: newEpoch,
+        timestamp: Date.now()
       })
       debouncedBroadcast(true)
     } else if (!isPlaying && wasPlayingRef.current && isAudioActive) {

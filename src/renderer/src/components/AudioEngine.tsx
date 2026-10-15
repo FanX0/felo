@@ -7,6 +7,7 @@ import { recordCertifiedScrobble } from '../lib/playbackEvents'
 import type { Song } from '../pages/Library/Library'
 import { remoteClient } from '../pages/Remote/remoteClient'
 import { resolveSongAudioUrl } from '../lib/songAudioResolver'
+import { useConnectedDeviceStore } from '../hooks/useConnectedDeviceStore'
 
 function shouldMaskMediaSession(): boolean {
   const { isPrivateSession, maskMediaSession } = usePrivateSessionStore.getState()
@@ -132,6 +133,17 @@ export default function AudioEngine() {
     registerActiveAudioElement(audioRef.current)
     return () => registerActiveAudioElement(null)
   }, [])
+
+  useEffect(() => {
+    return useConnectedDeviceStore.subscribe((state, previousState) => {
+      if (state.devicePlaybackMode === 'remote_controller' && previousState.devicePlaybackMode !== 'remote_controller') {
+        const audio = audioRef.current
+        if (audio && !audio.paused) {
+          audio.pause()
+        }
+      }
+    })
+  }, [])
   const volume = usePlayerStore((s) => s.volume)
   const seekRequest = usePlayerStore((s) => s.seekRequest)
   const playNext = usePlayerStore((s) => s.playNext)
@@ -166,6 +178,11 @@ export default function AudioEngine() {
 
   const startPlayback = (audio: HTMLAudioElement) => {
     if (!audio.src) return
+    const mode = useConnectedDeviceStore.getState().devicePlaybackMode
+    if (mode === 'remote_controller') {
+      if (!audio.paused) audio.pause()
+      return
+    }
     remoteClient.pauseMobileAudio()
     try {
       const playPromise = audio.play()
@@ -194,6 +211,8 @@ export default function AudioEngine() {
   const resumePendingPlayback = (audio: HTMLAudioElement) => {
     const state = usePlayerStore.getState()
     if (!state.isPlaying || !state.isAudioActive || !audio.paused) return
+    const mode = useConnectedDeviceStore.getState().devicePlaybackMode
+    if (mode === 'remote_controller') return
     startPlayback(audio)
   }
 
@@ -298,8 +317,9 @@ export default function AudioEngine() {
           })
         }
 
-        // ONLY play audio if this tab is the designated active audio instance
-        if (state.isPlaying && state.isAudioActive) {
+        // ONLY play audio if this tab is the designated active audio instance and not acting as remote controller
+        const mode = useConnectedDeviceStore.getState().devicePlaybackMode
+        if (state.isPlaying && state.isAudioActive && mode !== 'remote_controller') {
           startPlayback(audio)
         } else {
           audio.pause()

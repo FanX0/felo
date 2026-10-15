@@ -83,6 +83,9 @@ const AUTO_DOWNLOAD_STORAGE_KEY = 'fanxmusic:listen_together:auto_download'
 const SUBSTITUTES_STORAGE_KEY = 'fanxmusic:listen_together:substitutes'
 const DISCORD_PRIORITY_STORAGE_KEY = 'felo:discord-priority-enabled'
 let _isSessionSyncing = false
+export function isSessionSyncing(): boolean {
+  return _isSessionSyncing
+}
 
 function readInitialDiscordPriority(): boolean {
   try {

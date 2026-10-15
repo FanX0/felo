@@ -108,6 +108,8 @@ export function usePlaybackArbitration() {
 
   const startLocalPlayback = useCallback(
     (queue: Song[], index = 0, context?: PlaybackContext | null, seekTo?: number) => {
+      useConnectedDeviceStore.getState().setDevicePlaybackMode('local')
+      useConnectedDeviceStore.getState().claimPlayback()
       const player = usePlayerStore.getState()
       // Resolve audio URLs for any virtual / remote songs when playing locally on web/mobile
       const preparedQueue = queue.map((s) => {
@@ -173,6 +175,8 @@ export function usePlaybackArbitration() {
       // If the song is NOT local (e.g. streaming or remote library), apply standard arbitration
       if (isExternalDevicePlaying && effectiveRemote) {
         if (resolutionPreference === 'remote') {
+          usePlayerStore.getState().setIsPlaying(false)
+          useConnectedDeviceStore.getState().setDevicePlaybackMode('remote_controller')
           void sendDeviceCommand(user?.id || '', effectiveRemote.activeDeviceId, 'play', {
             songId: targetSong.id,
             song: targetSong
@@ -241,6 +245,7 @@ export function usePlaybackArbitration() {
       }
 
       if (action === 'remote') {
+        usePlayerStore.getState().setIsPlaying(false)
         useConnectedDeviceStore.getState().setDevicePlaybackMode('remote_controller')
         if (playbackConflict.pendingSong) {
           void sendDeviceCommand(
