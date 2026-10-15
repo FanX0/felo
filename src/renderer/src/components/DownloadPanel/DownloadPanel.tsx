@@ -90,7 +90,9 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
       togglePlay: s.togglePlay
     }))
   )
-  const { transfers, queueTransfer, updateTransfer } = useDownloadStore()
+  const transfers = useDownloadStore((s) => s.transfers)
+  const queueTransfer = useDownloadStore((s) => s.queueTransfer)
+  const updateTransfer = useDownloadStore((s) => s.updateTransfer)
   const navigate = useNavigate()
   const currentSong = queue[currentSongIndex]
   const panelSong = targetSong || currentSong

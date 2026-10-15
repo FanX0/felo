@@ -429,6 +429,17 @@ export class DiscordBotService {
           os: process.platform,
           browser: 'felo-desktop',
           device: 'felo-desktop'
+        },
+        presence: {
+          activities: [
+            {
+              name: 'Custom Status',
+              type: 4,
+              state: 'Listen Together | Use /help'
+            }
+          ],
+          status: 'online',
+          afk: false
         }
       }
     }

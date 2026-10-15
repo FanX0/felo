@@ -19,9 +19,12 @@ export function useInfiniteRadio(
   librarySongs: Song[],
   setLibrarySongs: React.Dispatch<React.SetStateAction<Song[]>>
 ) {
-  const { updateSong, setIsPlaying, currentSongIndex } = usePlayerStore()
+  const updateSong = usePlayerStore((s) => s.updateSong)
+  const setIsPlaying = usePlayerStore((s) => s.setIsPlaying)
+  const currentSongIndex = usePlayerStore((s) => s.currentSongIndex)
   const { requestPlayQueue } = usePlaybackArbitration()
-  const { queueTransfer, updateTransfer } = useDownloadStore()
+  const queueTransfer = useDownloadStore((s) => s.queueTransfer)
+  const updateTransfer = useDownloadStore((s) => s.updateTransfer)
 
   const [isInfiniteRadio, setIsInfiniteRadio] = useState(false)
   const radioSongsRef = useRef<Song[]>([])

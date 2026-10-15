@@ -29,9 +29,10 @@ export function AppleChartsTab({
   onChooseSourceOrReplace,
   libraryIndex
 }: AppleChartsTabProps) {
-  const { queue, currentSongIndex } = usePlayerStore()
+  const queue = usePlayerStore((s) => s.queue)
+  const currentSongIndex = usePlayerStore((s) => s.currentSongIndex)
   const { requestPlayQueue } = usePlaybackArbitration()
-  const { transfers } = useDownloadStore()
+  const transfers = useDownloadStore((s) => s.transfers)
   const currentSong = queue[currentSongIndex]
 
   const [appleSection, setAppleSection] = useState<AppleChartSection>('all')

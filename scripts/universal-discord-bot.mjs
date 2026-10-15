@@ -2,15 +2,27 @@
 // Connects any Discord server/channel to an active Felo Listen Together session via Room Code.
 // Runs standalone on any Node.js host (Vercel, Railway, Fly.io, Render, or VPS).
 
+import dotenv from 'dotenv'
+dotenv.config()
+dotenv.config({ path: '.env.local', override: true })
+
 import { createClient } from '@supabase/supabase-js'
 import { SLASH_COMMANDS } from './register-discord-commands.mjs'
 
 const DISCORD_API = 'https://discord.com/api/v10'
 const DISCORD_GATEWAY = 'wss://gateway.discord.gg/?v=10&encoding=json'
 
-const token = process.env.DISCORD_BOT_TOKEN
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
-const supabaseKey = process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_ANON_KEY
+const clean = (val) => (val ? String(val).replace(/^["']|["']$/g, '').trim() : '')
+
+const token = clean(process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_TOKEN)
+const supabaseUrl = clean(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL)
+const supabaseKey = clean(
+  process.env.SUPABASE_KEY ||
+  process.env.VITE_SUPABASE_ANON_KEY ||
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
+const botActivity = clean(process.env.DISCORD_BOT_ACTIVITY) || 'Listen Together | Use /help'
+const botActivityType = Number(process.env.DISCORD_BOT_ACTIVITY_TYPE ?? 4)
 
 if (!token) {
   console.error('❌ DISCORD_BOT_TOKEN environment variable is required.')
@@ -2148,6 +2160,22 @@ function identify() {
           os: process.platform,
           browser: 'felo-universal-bot',
           device: 'felo-universal-bot'
+        },
+        presence: {
+          activities: [
+            botActivityType === 4
+              ? {
+                  name: 'Custom Status',
+                  type: 4,
+                  state: botActivity
+                }
+              : {
+                  name: botActivity,
+                  type: botActivityType
+                }
+          ],
+          status: 'online',
+          afk: false
         }
       }
     })

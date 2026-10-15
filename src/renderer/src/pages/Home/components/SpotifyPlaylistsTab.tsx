@@ -24,7 +24,7 @@ export function SpotifyPlaylistsTab({
   libraryIndex
 }: SpotifyPlaylistsTabProps) {
   const navigate = useNavigate()
-  const { transfers } = useDownloadStore()
+  const transfers = useDownloadStore((s) => s.transfers)
 
   const [spotifySection, setSpotifySection] = useState<SpotifySection>('all')
   const [selectedSpotifyPlaylist, setSelectedSpotifyPlaylist] = useState<SpotifyPlaylistItem | null>(null)

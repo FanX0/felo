@@ -9,12 +9,14 @@ interface ErrorBoundaryProps {
 interface ErrorBoundaryState {
   hasError: boolean
   error: Error | null
+  componentStack?: string | null
 }
 
 export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   public state: ErrorBoundaryState = {
     hasError: false,
-    error: null
+    error: null,
+    componentStack: null
   }
 
   public static getDerivedStateFromError(error: Error): ErrorBoundaryState {
@@ -22,7 +24,8 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    console.error('[ErrorBoundary caught error]:', error, errorInfo)
+    console.error('[ErrorBoundary caught error]:', error?.message, errorInfo?.componentStack)
+    this.setState({ componentStack: errorInfo?.componentStack })
   }
 
   private handleReset = (): void => {
@@ -50,8 +53,9 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
             </div>
 
             <h2 className="mt-4 text-lg font-bold text-text">Something went wrong</h2>
-            <p className="mt-2 text-xs text-text-muted leading-relaxed line-clamp-3 font-mono bg-canvas/60 p-2.5 rounded-lg border border-border/50 text-left overflow-x-auto">
+            <p className="mt-2 text-xs text-text-muted leading-relaxed font-mono bg-canvas/60 p-2.5 rounded-lg border border-border/50 text-left overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto">
               {this.state.error?.message || 'An unexpected error occurred while rendering this view.'}
+              {this.state.componentStack ? `\n\nComponent Stack:\n${this.state.componentStack}` : ''}
             </p>
 
             <div className="mt-5 flex items-center justify-center gap-3">

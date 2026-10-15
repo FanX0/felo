@@ -44,15 +44,13 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [activeMenuTransferId, setActiveMenuTransferId] = useState<string | null>(null)
   const menuContainerRef = useRef<HTMLDivElement | null>(null)
-  const {
-    transfers,
-    isTransfersOpen,
-    setTransfersOpen,
-    toggleTransfers,
-    updateTransfer,
-    removeTransfer,
-    clearTransfers
-  } = useDownloadStore()
+  const transfers = useDownloadStore((s) => s.transfers)
+  const isTransfersOpen = useDownloadStore((s) => s.isTransfersOpen)
+  const setTransfersOpen = useDownloadStore((s) => s.setTransfersOpen)
+  const toggleTransfers = useDownloadStore((s) => s.toggleTransfers)
+  const updateTransfer = useDownloadStore((s) => s.updateTransfer)
+  const removeTransfer = useDownloadStore((s) => s.removeTransfer)
+  const clearTransfers = useDownloadStore((s) => s.clearTransfers)
   const { requestPlaySong } = usePlaybackArbitration()
   const navigate = useNavigate()
 

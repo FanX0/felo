@@ -221,8 +221,9 @@ function Artwork({
 export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode {
   const isMobile = useIsMobile()
   const { searchQuery, setSearchQuery, searchMode, setSearchMode } = useAppStore()
-  const { queue, playbackContext } = usePlayerStore()
-  const { transfers } = useDownloadStore()
+  const queue = usePlayerStore((s) => s.queue)
+  const playbackContext = usePlayerStore((s) => s.playbackContext)
+  const transfers = useDownloadStore((s) => s.transfers)
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [activeTab, setActiveTab] = useState<SearchTab>('All')
@@ -1604,7 +1605,7 @@ function SongList({
   const currentSongIndex = usePlayerStore((s) => s.currentSongIndex)
   const queue = usePlayerStore((s) => s.queue)
   const isPlaying = usePlayerStore((s) => s.isPlaying)
-  const { transfers } = useDownloadStore()
+  const transfers = useDownloadStore((s) => s.transfers)
   const currentTrack = queue[currentSongIndex]
 
   return (

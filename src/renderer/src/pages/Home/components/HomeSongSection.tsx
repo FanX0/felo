@@ -49,8 +49,10 @@ export function HomeSongSection({
   onStartRadio,
   isRadioActive
 }: HomeSongSectionProps) {
-  const { queue, currentSongIndex, isPlaying } = usePlayerStore()
-  const { transfers } = useDownloadStore()
+  const queue = usePlayerStore((s) => s.queue)
+  const currentSongIndex = usePlayerStore((s) => s.currentSongIndex)
+  const isPlaying = usePlayerStore((s) => s.isPlaying)
+  const transfers = useDownloadStore((s) => s.transfers)
   const currentTrack = queue[currentSongIndex]
 
   if (songs.length === 0) return null

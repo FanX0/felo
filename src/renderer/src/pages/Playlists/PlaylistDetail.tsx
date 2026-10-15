@@ -118,8 +118,10 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
       playbackContext: s.playbackContext
     }))
   )
-  const { transfers } = useDownloadStore()
-  const { configured, initialized, user } = useOnlineStore()
+  const transfers = useDownloadStore((s) => s.transfers)
+  const configured = useOnlineStore((s) => s.configured)
+  const initialized = useOnlineStore((s) => s.initialized)
+  const user = useOnlineStore((s) => s.user)
   const { requestPlayQueue } = usePlaybackArbitration()
   const [playlist, setPlaylist] = useState<Playlist | null>(null)
   const [librarySongs, setLibrarySongs] = useState<Song[]>([])

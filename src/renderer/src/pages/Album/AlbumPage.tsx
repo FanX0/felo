@@ -98,7 +98,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
       playbackContext: s.playbackContext
     }))
   )
-  const { transfers } = useDownloadStore()
+  const transfers = useDownloadStore((s) => s.transfers)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [saveMessage, setSaveMessage] = useState('')

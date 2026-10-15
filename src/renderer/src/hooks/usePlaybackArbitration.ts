@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import type { Song } from '../pages/Library/Library'
 import { usePlayerStore, type PlaybackContext } from './usePlayerStore'
 import {
@@ -22,29 +22,55 @@ export function usePlaybackArbitration() {
   const setResolutionPreference = useConnectedDeviceStore((s) => s.setResolutionPreference)
 
   const myDeviceId = getCurrentDeviceId()
-  const localPlayerState = usePlayerStore((s) => ({
-    queue: s.queue,
-    currentSongIndex: s.currentSongIndex,
-    isPlaying: s.isPlaying,
-    currentTime: s.currentTime,
-    duration: s.duration,
-    volume: s.volume,
-    isAudioActive: s.isAudioActive,
-    isShuffle: s.isShuffle,
-    repeatMode: s.repeatMode
-  }))
+  const queue = usePlayerStore((s) => s.queue)
+  const currentSongIndex = usePlayerStore((s) => s.currentSongIndex)
+  const isPlaying = usePlayerStore((s) => s.isPlaying)
+  const currentTime = usePlayerStore((s) => s.currentTime)
+  const duration = usePlayerStore((s) => s.duration)
+  const volume = usePlayerStore((s) => s.volume)
+  const isAudioActive = usePlayerStore((s) => s.isAudioActive)
+  const isShuffle = usePlayerStore((s) => s.isShuffle)
+  const repeatMode = usePlayerStore((s) => s.repeatMode)
 
   const lanState = remoteClient.getState()
   const isLanConnected = remoteClient.getIsConnected()
 
   // Use unified resolver across local, LAN, and Cloud Realtime
-  const unified = resolveEffectivePlaybackState({
-    localPlayer: localPlayerState,
-    activeRemote,
-    lanState,
-    isLanConnected,
-    myDeviceId
-  })
+  const unified = useMemo(
+    () =>
+      resolveEffectivePlaybackState({
+        localPlayer: {
+          queue,
+          currentSongIndex,
+          isPlaying,
+          currentTime,
+          duration,
+          volume,
+          isAudioActive,
+          isShuffle,
+          repeatMode
+        },
+        activeRemote,
+        lanState,
+        isLanConnected,
+        myDeviceId
+      }),
+    [
+      queue,
+      currentSongIndex,
+      isPlaying,
+      currentTime,
+      duration,
+      volume,
+      isAudioActive,
+      isShuffle,
+      repeatMode,
+      activeRemote,
+      lanState,
+      isLanConnected,
+      myDeviceId
+    ]
+  )
 
   const isExternalDevicePlaying = Boolean(
     unified.isRemote &&
@@ -53,22 +79,32 @@ export function usePlaybackArbitration() {
       (!myDeviceId || unified.activeDeviceId !== myDeviceId)
   )
 
-  const effectiveRemote =
-    unified.isRemote && unified.song
-      ? {
-          activeDeviceId: unified.activeDeviceId,
-          activeDeviceName: unified.activeDeviceName,
-          activeDeviceType: isPcDevice(unified.activeDeviceCategory)
-            ? ('desktop' as const)
-            : ('mobile' as const),
-          activeDeviceCategory: unified.activeDeviceCategory,
-          isPlaying: unified.isPlaying,
-          song: unified.song,
-          position: unified.position,
-          duration: unified.duration,
-          timestamp: Date.now()
-        }
-      : null
+  const effectiveRemote = useMemo(() => {
+    if (!unified.isRemote || !unified.song) return null
+    return {
+      activeDeviceId: unified.activeDeviceId,
+      activeDeviceName: unified.activeDeviceName,
+      activeDeviceType: isPcDevice(unified.activeDeviceCategory)
+        ? ('desktop' as const)
+        : ('mobile' as const),
+      activeDeviceCategory: unified.activeDeviceCategory,
+      isPlaying: unified.isPlaying,
+      song: unified.song,
+      position: unified.position,
+      duration: unified.duration,
+      timestamp: activeRemote?.timestamp || 0
+    }
+  }, [
+    unified.isRemote,
+    unified.song,
+    unified.activeDeviceId,
+    unified.activeDeviceName,
+    unified.activeDeviceCategory,
+    unified.isPlaying,
+    unified.position,
+    unified.duration,
+    activeRemote?.timestamp
+  ])
 
   const startLocalPlayback = useCallback(
     (queue: Song[], index = 0, context?: PlaybackContext | null, seekTo?: number) => {

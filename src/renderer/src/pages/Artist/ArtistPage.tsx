@@ -172,7 +172,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
       playbackContext: s.playbackContext
     }))
   )
-  const { transfers } = useDownloadStore()
+  const transfers = useDownloadStore((s) => s.transfers)
   const { requestPlayQueue } = usePlaybackArbitration()
 
   const [isRemoteConnected, setIsRemoteConnected] = useState(remoteClient.getIsConnected())
