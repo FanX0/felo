@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: felo-discord-bot
+    runtime: node
+    plan: free
+    buildCommand: npm install --omit=dev --ignore-scripts
+    startCommand: node scripts/universal-discord-bot.mjs
+    envVars:
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        value: https://yvmkfguclsxurlwgnvsu.supabase.co
+      - key: SUPABASE_KEY
+        sync: false
+      - key: DISCORD_BOT_ACTIVITY
+        value: Listen Together | Use /help

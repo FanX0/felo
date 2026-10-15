@@ -6,6 +6,7 @@ import dotenv from 'dotenv'
 dotenv.config()
 dotenv.config({ path: '.env.local', override: true })
 
+import http from 'http'
 import { createClient } from '@supabase/supabase-js'
 import { SLASH_COMMANDS } from './register-discord-commands.mjs'
 
@@ -35,6 +36,26 @@ if (!supabaseUrl || !supabaseKey) {
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey)
+
+// Lightweight HTTP Health Check Server (enables hosting on Render Web Service, Koyeb, Railway, etc.)
+const PORT = process.env.PORT || process.env.HEALTH_PORT
+if (PORT) {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(
+      JSON.stringify({
+        status: 'online',
+        bot: typeof botUser !== 'undefined' && botUser ? botUser.username : 'connecting',
+        activity: botActivity,
+        uptimeSeconds: Math.round(process.uptime()),
+        timestamp: new Date().toISOString()
+      })
+    )
+  })
+  server.listen(Number(PORT), () => {
+    console.log(`🌐 Health check HTTP server listening on port ${PORT}`)
+  })
+}
 
 // In-memory cache for channel-to-room mappings (backed by Supabase)
 const channelMap = new Map()

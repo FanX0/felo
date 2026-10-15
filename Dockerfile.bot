@@ -1,0 +1,16 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy package definitions and install only production dependencies
+COPY package*.json ./
+RUN npm install --omit=dev --ignore-scripts
+
+# Copy bot scripts
+COPY scripts ./scripts
+
+# Expose HTTP health check port
+ENV PORT=3000
+EXPOSE 3000
+
+CMD ["node", "scripts/universal-discord-bot.mjs"]
