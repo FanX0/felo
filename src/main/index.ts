@@ -2908,11 +2908,22 @@ app.whenReady().then(() => {
   // ─── IPC Handlers ────────────────────────────────────────
 
   // Library: Open directory picker
-  ipcMain.handle('dialog:openDirectory', async () => {
-    const { canceled, filePaths } = await dialog.showOpenDialog({
-      properties: ['openDirectory'],
-      title: 'Select a music folder'
-    })
+  ipcMain.handle('dialog:openDirectory', async (event) => {
+    const win =
+      BrowserWindow.fromWebContents(event.sender) ||
+      BrowserWindow.getFocusedWindow() ||
+      BrowserWindow.getAllWindows()[0]
+
+    const { canceled, filePaths } = win
+      ? await dialog.showOpenDialog(win, {
+          properties: ['openDirectory'],
+          title: 'Select a music folder'
+        })
+      : await dialog.showOpenDialog({
+          properties: ['openDirectory'],
+          title: 'Select a music folder'
+        })
+
     if (!canceled && filePaths.length > 0) {
       return filePaths[0]
     }
@@ -2948,6 +2959,20 @@ app.whenReady().then(() => {
       const resolved = resolve(validatedPath)
       if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
         console.warn('[Library] Folder does not exist or is not a directory:', resolved)
+        if (!event.sender.isDestroyed()) {
+          event.sender.send('library:scan-progress', {
+            status: 'error',
+            folderPath: resolved,
+            folderName: path.basename(resolved),
+            totalFiles: 0,
+            processedFiles: 0,
+            addedCount: 0,
+            updatedCount: 0,
+            skippedCount: 0,
+            percent: 0,
+            error: 'Selected folder does not exist or is not a directory.'
+          })
+        }
         return 0
       }
       currentScanAbortController?.abort()
@@ -2971,8 +2996,22 @@ app.whenReady().then(() => {
           currentScanAbortController = null
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('[Library] Blocked invalid scan folder path:', err)
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('library:scan-progress', {
+          status: 'error',
+          folderPath: typeof folderPath === 'string' ? folderPath : '',
+          folderName: typeof folderPath === 'string' ? path.basename(folderPath) : 'Folder',
+          totalFiles: 0,
+          processedFiles: 0,
+          addedCount: 0,
+          updatedCount: 0,
+          skippedCount: 0,
+          percent: 0,
+          error: err?.message || 'Folder path could not be validated.'
+        })
+      }
       return 0
     }
   })

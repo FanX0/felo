@@ -49,10 +49,11 @@ export type AllowedSettingsKey = z.infer<typeof AllowedSettingsKeySchema>
 
 const isSystemRootOrForbidden = (val: string): boolean => {
   const trimmed = val.trim().replace(/\\/g, '/')
-  // Forbidden system paths and roots
-  if (/^[a-zA-Z]:\/?$/.test(trimmed)) return true // e.g. C:, C:/, C:\
+  // Forbidden primary system root (C:\ or /)
+  if (/^c:\/?$/i.test(trimmed)) return true
   if (trimmed === '/' || trimmed === '//') return true
-  if (/^[a-zA-Z]:\/(windows|system32|program files)/i.test(trimmed)) return true
+  // Forbidden critical system directories
+  if (/^[a-zA-Z]:\/(windows|system32|program files|program files \(x86\)|programdata)/i.test(trimmed)) return true
   if (/^\/(etc|usr|bin|sbin|var|sys|proc|root)/i.test(trimmed)) return true
   return false
 }
