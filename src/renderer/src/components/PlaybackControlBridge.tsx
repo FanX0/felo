@@ -435,35 +435,50 @@ export default function PlaybackControlBridge() {
               throw new Error('UNKNOWN_COMMAND')
           }
           if (verifyPlayback) {
+            // Allow React a brief tick to process the state change before inspecting audio
+            await new Promise((r) => setTimeout(r, 60))
+            const getLiveAudio = (): HTMLAudioElement =>
+              (getActiveAudioElement() ?? document.querySelector('audio') ?? currentAudio) as HTMLAudioElement
+
             // Reconcile browser audio with the requested store state, including replay.
             await waitFor(() => usePlayerStore.getState().seekRequest === null)
-            if (currentAudio.paused) {
+            const liveAudioStart = getLiveAudio()
+            if (liveAudioStart.paused) {
               checkDeadline()
-              void currentAudio.play().catch(() => undefined)
+              void liveAudioStart.play().catch(() => undefined)
             }
-            const position = currentAudio.currentTime
+            const position = liveAudioStart.currentTime
             await waitFor(() => {
-              if (currentAudio.error) throw new Error('PLAYBACK_FAILED')
+              const liveAudio = getLiveAudio()
+              if (liveAudio.error) throw new Error('PLAYBACK_FAILED')
               const state = snapshot()
+              const isCorrectSong = !expectedSongId || state.song?.id === expectedSongId
+
               // Condition A: audio is audibly playing and data is ready
               const isReadyAndPlaying =
-                !currentAudio.paused &&
-                currentAudio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+                !liveAudio.paused &&
+                liveAudio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
               // Condition B: audio is progressing (position moved), means play() succeeded
               const isProgressing =
-                currentAudio.currentTime > position + 0.01 || currentAudio.currentTime > 0.01
-              // Condition C: track is actively buffering — store says playing+correct song,
-              // audio has metadata (bytes arriving), play() call is in flight.
-              // Accept this so network-fetched tracks don't fail before HAVE_CURRENT_DATA.
+                liveAudio.currentTime > position + 0.01 || liveAudio.currentTime > 0.01
+              // Condition C: track is transitioning/buffering — store confirms playing + correct song
               const isActivelyBuffering =
                 state.isPlaying &&
-                (!expectedSongId || state.song?.id === expectedSongId) &&
-                currentAudio.readyState >= HTMLMediaElement.HAVE_METADATA &&
-                currentAudio.paused
+                isCorrectSong &&
+                !liveAudio.error &&
+                (usePlayerStore.getState().isBuffering ||
+                  liveAudio.readyState >= HTMLMediaElement.HAVE_METADATA ||
+                  liveAudio.networkState === HTMLMediaElement.NETWORK_LOADING ||
+                  liveAudio.seeking)
+
+              // Nudge play if paused during transition once metadata is present
+              if (liveAudio.paused && !liveAudio.seeking && liveAudio.readyState >= HTMLMediaElement.HAVE_METADATA) {
+                void liveAudio.play().catch(() => undefined)
+              }
+
               return (
                 state.isPlaying &&
-                !currentAudio.seeking &&
-                (!expectedSongId || state.song?.id === expectedSongId) &&
+                isCorrectSong &&
                 (isProgressing || isReadyAndPlaying || isActivelyBuffering)
               )
             })
@@ -477,11 +492,13 @@ export default function PlaybackControlBridge() {
           const state = publish()
           result = { ok: true, state, warnings: state.warnings }
         } catch (error) {
-          // Cancel pending audio.play() so a timed-out load cannot start later.
+          // Only pause playback if there is an explicit fatal audio error (bad codec, 404 file).
+          // Never cancel playback just because a network buffer / verify took longer than the deadline.
           const current = usePlayerStore.getState()
-          if (!disposed && verifyPlayback && current.queue[current.currentSongIndex]?.id === expectedSongId) {
+          const liveAudio = getActiveAudioElement() ?? document.querySelector('audio')
+          if (!disposed && verifyPlayback && liveAudio?.error && current.queue[current.currentSongIndex]?.id === expectedSongId) {
             current.setIsPlaying(false)
-            ;(getActiveAudioElement() ?? document.querySelector('audio'))?.pause()
+            liveAudio.pause()
           }
           result = {
             ok: false,
