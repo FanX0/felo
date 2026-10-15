@@ -35,6 +35,9 @@ import { AppCapabilities } from '../../lib/appConfig'
 import { remoteClient } from '../Remote/remoteClient'
 import { remoteLibraryService } from '../../services/RemoteLibraryService'
 import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
+import { useOnlineStore } from '../../hooks/useOnlineStore'
+import { resolveSongAudioUrl } from '../../lib/songAudioResolver'
+import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 
 type SearchTab = 'All' | 'Songs' | 'Artists' | 'Albums' | 'Playlists'
 
@@ -225,6 +228,11 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
   const [activeTab, setActiveTab] = useState<SearchTab>('All')
   const [results, setResults] = useState<SearchSections>(EMPTY_RESULTS)
   const [librarySongs, setLibrarySongs] = useState<Song[]>([])
+  const pcLibrarySongs = useConnectedDeviceStore((s) => s.pcLibrarySongs)
+  const user = useOnlineStore((s) => s.user)
+  const isElectronApp = typeof window !== 'undefined' && Boolean((window as any).electron)
+  const { requestPlayQueue } = usePlaybackArbitration()
+
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
   const [recentSearches, setRecentSearches] = useState<string[]>(readRecentSearches)
@@ -258,16 +266,32 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
 
   useEffect(() => {
     const loadLibrarySongs = (): void => {
-      void window.api
-        ?.getSongs?.()
-        .then((songs) => setLibrarySongs(songs || []))
-        .catch((err) => console.error('Failed to load library for search matching:', err))
+      if (window.api?.getSongs) {
+        void window.api
+          .getSongs()
+          .then((songs) => setLibrarySongs(songs || []))
+          .catch((err) => console.error('Failed to load library for search matching:', err))
+      } else {
+        const pcSongs = useConnectedDeviceStore.getState().pcLibrarySongs
+        if (pcSongs.length > 0) {
+          setLibrarySongs(pcSongs)
+        } else {
+          const cached = useConnectedDeviceStore.getState().loadCachedPcSongs(user?.id)
+          setLibrarySongs(cached || [])
+        }
+      }
     }
 
     void loadLibrarySongs()
     window.addEventListener('felo:library-updated', loadLibrarySongs)
     return () => window.removeEventListener('felo:library-updated', loadLibrarySongs)
-  }, [])
+  }, [user?.id])
+
+  useEffect(() => {
+    if (!isElectronApp && pcLibrarySongs.length > 0) {
+      setLibrarySongs(pcLibrarySongs)
+    }
+  }, [isElectronApp, pcLibrarySongs])
 
   const saveRecentSearch = (query: string): void => {
     const trimmed = query.trim()
@@ -681,8 +705,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
 
       const searchQueue: Song[] = results.Songs.map((s) => {
         const match = localMatchFor(s)
-        if (match) return match
-        return {
+        const rawSong: Song = match || {
           id: s.id || `search-${s.title}-${s.artist}`,
           title: s.title,
           artist: s.artist,
@@ -690,6 +713,10 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
           duration: parseSearchDuration(s.duration),
           artworkPath: s.thumbnail || '',
           filePath: `virtual:${s.title} - ${s.artist}`
+        }
+        return {
+          ...rawSong,
+          filePath: resolveSongAudioUrl(rawSong) || rawSong.filePath
         }
       })
 
@@ -716,13 +743,15 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
       const activeItem = effectiveQueue[effectiveIndex]
       const isVirtual = !activeItem?.filePath || activeItem.filePath.startsWith('virtual:')
 
-      setQueue(effectiveQueue, effectiveIndex, {
+      requestPlayQueue(effectiveQueue, effectiveIndex, {
         type: 'search',
         title: `Search: "${searchQuery}"`,
         subtitle: `${effectiveQueue.length} tracks`,
         route: `/search?q=${encodeURIComponent(searchQuery)}`
       })
-      usePlayerStore.getState().setIsBuffering(isVirtual)
+      if (isVirtual) {
+        usePlayerStore.getState().setIsBuffering(true)
+      }
       return
     }
 

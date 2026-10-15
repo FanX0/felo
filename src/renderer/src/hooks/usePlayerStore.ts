@@ -40,7 +40,12 @@ interface PlayerState {
   setIsAudioActive: (isAudioActive: boolean, activeInstanceId?: string | null) => void
   claimAudioOwnership: () => void
   syncFromExternal: (snapshot: Partial<PlayerSyncSnapshot>) => void
-  setQueue: (queue: Song[], startPlayingIndex?: number, context?: PlaybackContext | null) => void
+  setQueue: (
+    queue: Song[],
+    startPlayingIndex?: number,
+    context?: PlaybackContext | null,
+    options?: { preservePriority?: boolean }
+  ) => void
   setPlaybackContext: (context: PlaybackContext | null) => void
   enqueueSong: (song: Song) => void
   enqueueSongNext: (song: Song) => void
@@ -54,7 +59,7 @@ interface PlayerState {
   removeSongFromQueueByIndex: (index: number) => void
   reorderQueue: (fromIndex: number, toIndex: number) => void
   clearQueue: () => void
-  clearUpcomingQueue: () => void
+  clearUpcomingQueue: (keepPriority?: boolean) => void
   setIsPlaying: (isPlaying: boolean) => void
   setIsBuffering: (isBuffering: boolean) => void
   setVolume: (volume: number) => void
@@ -181,18 +186,32 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setPlaybackContext: (playbackContext) => set({ playbackContext }),
   setIsBuffering: (isBuffering) => set({ isBuffering }),
 
-  setQueue: (newQueue, startPlayingIndex = 0, context) => {
-    const { isShuffle } = get()
-    rememberPlayedSong(newQueue[startPlayingIndex] || newQueue[0])
+  setQueue: (newQueue, startPlayingIndex = 0, context, options) => {
+    const { isShuffle, queue: currentQueue, currentSongIndex: currentIdx } = get()
+    const preservePriority = options?.preservePriority !== false
+    const pendingPriorities =
+      preservePriority && currentIdx >= 0 && currentQueue.length > 0
+        ? currentQueue.slice(currentIdx + 1).filter((s) => Boolean(s?.isPriority))
+        : []
+    const pendingPriorityIds = new Set(pendingPriorities.map((s) => s.id))
+
     const contextToSet = context !== undefined ? context : get().playbackContext
     const selectedSong = newQueue[startPlayingIndex] || newQueue[0]
+    rememberPlayedSong(selectedSong)
     const isVirtual = !selectedSong?.filePath || selectedSong.filePath.startsWith('virtual:')
     const tabId = typeof window !== 'undefined' ? getTabInstanceId() : null
-    if (isShuffle && newQueue.length > 0) {
-      const remaining = newQueue.filter((_, idx) => idx !== startPlayingIndex)
-      const shuffled = [selectedSong, ...shuffleArray(remaining)]
+
+    // Deduplicate any priority tracks from newQueue that already exist in pendingPriorities
+    const filteredNewQueue = newQueue.filter((s) => !pendingPriorityIds.has(s.id))
+    const selectedIndexInFiltered = filteredNewQueue.findIndex((s) => s.id === selectedSong?.id)
+    const safeStartIndex = selectedIndexInFiltered >= 0 ? selectedIndexInFiltered : 0
+
+    if (isShuffle && filteredNewQueue.length > 0) {
+      const remaining = filteredNewQueue.filter((_, idx) => idx !== safeStartIndex)
+      const shuffled = [selectedSong, ...pendingPriorities, ...shuffleArray(remaining)]
+      const orderedOriginal = [selectedSong, ...pendingPriorities, ...remaining]
       set({
-        originalQueue: newQueue,
+        originalQueue: orderedOriginal,
         queue: shuffled,
         currentSongIndex: 0,
         isPlaying: true,
@@ -204,10 +223,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         activeInstanceId: tabId
       })
     } else {
+      const beforeTracks = filteredNewQueue.slice(0, safeStartIndex)
+      const afterTracks = filteredNewQueue.slice(safeStartIndex + 1)
+      const unifiedQueue = [...beforeTracks, selectedSong, ...pendingPriorities, ...afterTracks]
+      const newCurrentIndex = beforeTracks.length
+
       set({
-        originalQueue: newQueue,
-        queue: newQueue,
-        currentSongIndex: startPlayingIndex,
+        originalQueue: unifiedQueue,
+        queue: unifiedQueue,
+        currentSongIndex: newCurrentIndex,
         isPlaying: true,
         isBuffering: isVirtual,
         currentTime: 0,
@@ -594,14 +618,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     if (nextShuffle) {
       // Turn shuffle ON (Spotify-standard): preserve played history (0..currentSongIndex),
-      // shuffle only upcoming tracks (currentSongIndex + 1 .. end)
+      // keep active priority requests pinned right after currentSong, shuffle only local background tracks
       const playedHistory = queue.slice(0, currentSongIndex + 1)
       const upcoming = queue.slice(currentSongIndex + 1)
-      const shuffledUpcoming = shuffleArray(upcoming)
+      const upcomingPriorities = upcoming.filter((s) => Boolean(s?.isPriority))
+      const upcomingNonPriorities = upcoming.filter((s) => !s?.isPriority)
+      const shuffledUpcoming = shuffleArray(upcomingNonPriorities)
       set({
         isShuffle: true,
         originalQueue: effectiveOriginal,
-        queue: [...playedHistory, ...shuffledUpcoming]
+        queue: [...playedHistory, ...upcomingPriorities, ...shuffledUpcoming]
       })
     } else {
       // Turn shuffle OFF: restore upcoming tracks in their relative original order,
@@ -609,9 +635,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       const playedHistory = queue.slice(0, currentSongIndex + 1)
       const playedIds = new Set(playedHistory.map((s) => s.id))
       const remainingOriginal = effectiveOriginal.filter((s) => !playedIds.has(s.id))
+      const remainingPriorities = remainingOriginal.filter((s) => Boolean(s?.isPriority))
+      const remainingNonPriorities = remainingOriginal.filter((s) => !s?.isPriority)
       set({
         isShuffle: false,
-        queue: [...playedHistory, ...remainingOriginal]
+        queue: [...playedHistory, ...remainingPriorities, ...remainingNonPriorities]
       })
     }
   },
@@ -797,7 +825,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     })
   },
 
-  clearUpcomingQueue: () => {
+  clearUpcomingQueue: (keepPriority = true) => {
     set((state) => {
       if (state.currentSongIndex < 0 || state.queue.length === 0) {
         return {
@@ -809,7 +837,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         }
       }
       const currentSong = state.queue[state.currentSongIndex]
-      const preserved = [currentSong]
+      const upcomingPriorities = keepPriority
+        ? state.queue.slice(state.currentSongIndex + 1).filter((s) => Boolean(s?.isPriority))
+        : []
+      const preserved = [currentSong, ...upcomingPriorities]
       return {
         queue: preserved,
         originalQueue: preserved,

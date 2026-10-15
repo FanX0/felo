@@ -175,8 +175,10 @@ export default function RemotePhoneView() {
       <MobileLyricsSheet
         song={state.song}
         currentTime={state.position}
+        isPlaying={state.isPlaying}
         isOpen={isLyricsOpen}
         onClose={() => setIsLyricsOpen(false)}
+        onSeek={(time) => void remoteClient.seek(time)}
       />
 
       {/* Sleep Timer Modal */}

@@ -3,6 +3,7 @@
 // Runs standalone on any Node.js host (Vercel, Railway, Fly.io, Render, or VPS).
 
 import { createClient } from '@supabase/supabase-js'
+import { SLASH_COMMANDS } from './register-discord-commands.mjs'
 
 const DISCORD_API = 'https://discord.com/api/v10'
 const DISCORD_GATEWAY = 'wss://gateway.discord.gg/?v=10&encoding=json'
@@ -68,6 +69,35 @@ async function clearRoomForChannel(channelId) {
   }
 }
 
+async function getBindingForChannel(channelId) {
+  try {
+    const { data } = await supabase
+      .from('discord_channel_bindings')
+      .select('room_code, bound_by, guild_id')
+      .eq('channel_id', channelId)
+      .maybeSingle()
+    return data || null
+  } catch (err) {
+    console.warn('Error reading channel binding details:', err)
+    return null
+  }
+}
+
+function isDiscordAdminOrManager(interaction) {
+  if (!interaction.guild_id) return true
+  const permsStr = interaction.member?.permissions
+  if (!permsStr) return false
+  try {
+    const perms = BigInt(permsStr)
+    const ADMINISTRATOR = 1n << 3n
+    const MANAGE_CHANNELS = 1n << 4n
+    const MANAGE_GUILD = 1n << 5n
+    return (perms & ADMINISTRATOR) !== 0n || (perms & MANAGE_CHANNELS) !== 0n || (perms & MANAGE_GUILD) !== 0n
+  } catch {
+    return false
+  }
+}
+
 // ─── GATEWAY CLIENT ───────────────────────────────────────────────────
 
 let ws = null
@@ -76,89 +106,162 @@ let lastHeartbeatAck = true
 let sequenceNumber = null
 let botUser = null
 
-const SLASH_COMMANDS = [
-  {
-    name: 'connect',
-    description: 'Bind this Discord channel to a live Felo Listen Together room code',
-    options: [
-      {
-        name: 'code',
-        description: 'The 6-character Felo room code (e.g. ABC123)',
-        type: 3,
-        required: true
-      }
-    ]
-  },
-  {
-    name: 'disconnect',
-    description: 'Unbind this Discord channel from the current Listen Together session'
-  },
-  {
-    name: 'play',
-    description: 'Play or queue a track in the connected Listen Together room',
-    options: [
-      {
-        name: 'query',
-        description: 'Song title or artist to play',
-        type: 3,
-        required: true
-      },
-      {
-        name: 'action',
-        description: 'How to queue the song',
-        type: 3,
-        required: false,
-        choices: [
-          { name: '▶️ Play Now', value: 'play_now' },
-          { name: '⏭️ Play Next', value: 'play_next' },
-          { name: '➕ Add to Queue', value: 'enqueue' }
-        ]
-      }
-    ]
-  },
-  {
-    name: 'skip',
-    description: 'Skip to the next song in the connected room'
-  },
-  {
-    name: 'pause',
-    description: 'Pause playback in the connected room'
-  },
-  {
-    name: 'resume',
-    description: 'Resume playback in the connected room'
-  },
-  {
-    name: 'nowplaying',
-    description: 'Show currently playing song and progress in the connected room'
-  },
-  {
-    name: 'invite',
-    description: 'Show room code and 1-click invite link for friends'
-  },
-  {
-    name: 'volume',
-    description: 'Adjust playback volume (0 - 100)',
-    options: [
-      {
-        name: 'percent',
-        description: 'Volume percentage',
-        type: 4,
-        required: true,
-        min_value: 0,
-        max_value: 100
-      }
-    ]
-  },
-  {
-    name: 'download',
-    description: 'Get the official download link for Felo Music Player'
-  },
-  {
-    name: 'help',
-    description: 'Show universal Felo bot commands guide'
+async function searchMusicCatalog(query) {
+  try {
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=music&entity=song&limit=5&country=US`
+    const res = await fetch(url, { headers: { 'User-Agent': 'FeloUniversalBot/1.0' } })
+    if (!res.ok) return []
+    const data = await res.json()
+    if (!Array.isArray(data.results)) return []
+    return data.results
+      .map((r) => ({
+        title: r.trackName || '',
+        artist: r.artistName || '',
+        album: r.collectionName || '',
+        duration: r.trackTimeMillis ? Math.round(r.trackTimeMillis / 1000) : 0,
+        artworkUrl: r.artworkUrl100 ? r.artworkUrl100.replace('100x100bb', '600x600bb') : ''
+      }))
+      .filter((t) => Boolean(t.title))
+  } catch {
+    return []
   }
-]
+}
+
+function buildQueuePayload(room, roomCode) {
+  const song = room?.song
+  const fullQueue = Array.isArray(room?.queue) ? room.queue : []
+  const isFirstCurrent =
+    fullQueue.length > 0 &&
+    song &&
+    fullQueue[0].title === song.title &&
+    fullQueue[0].artist === song.artist
+
+  const upcomingQueue = isFirstCurrent ? fullQueue.slice(1) : fullQueue
+
+  const priorityTracks = upcomingQueue.filter((t) => Boolean(t.isPriority))
+  const backgroundTracks = upcomingQueue.filter((t) => !t.isPriority)
+
+  const pos = room?.position_seconds || 0
+  const dur = song?.duration || 0
+  const progressPercent = dur > 0 ? Math.min(100, Math.max(0, Math.floor((pos / dur) * 100))) : 0
+  const totalBars = 12
+  const activeBars = Math.max(0, Math.min(totalBars, Math.round((progressPercent / 100) * totalBars)))
+  const progressBar =
+    '▬'.repeat(Math.max(0, activeBars - 1)) +
+    '🔘' +
+    '▬'.repeat(Math.max(0, totalBars - activeBars))
+
+  const posStr = `${Math.floor(pos / 60)}:${(pos % 60).toString().padStart(2, '0')}`
+  const durStr = dur > 0 ? `${Math.floor(dur / 60)}:${(dur % 60).toString().padStart(2, '0')}` : '0:00'
+
+  let queueDescription = ''
+
+  // Tier 1: Currently Playing Box
+  queueDescription += `### 🎧 Currently Playing\n`
+  if (song) {
+    const isCurrentPriority = Boolean(song.isPriority)
+    const originTag = isCurrentPriority
+      ? `🌟 Requested by @${song.requestedBy || 'Discord User'}`
+      : '📁 Host Library'
+    queueDescription +=
+      `\`\`\`yaml\n` +
+      `Track #1: ${song.title} (Playing Now)\n` +
+      `Artist: ${song.artist || 'Unknown'}\n` +
+      `Progress: ${posStr} / ${durStr} (${progressPercent}%) [${originTag}]\n` +
+      `\`\`\`\n`
+  } else {
+    queueDescription += `\`\`\`text\nNothing is playing right now\n\`\`\`\n`
+  }
+
+  queueDescription += `⬇️\n\n`
+
+  // Tier 2: 🌟 Priority / Important Requests (Discord) Box
+  queueDescription += `### 🌟 Priority / Important Requests (Discord)\n`
+  if (priorityTracks.length > 0) {
+    const priorityLines = priorityTracks.slice(0, 5).map((t, idx) => {
+      const globalIdx = 2 + idx
+      const tDur = t.duration ? ` [${Math.floor(t.duration / 60)}:${(t.duration % 60).toString().padStart(2, '0')}]` : ''
+      const reqBy = t.requestedBy ? ` (Requested by @${t.requestedBy})` : ' (Discord Request)'
+      return `Track #${globalIdx}: 🌟 ${t.title}${reqBy}${tDur}`
+    })
+    queueDescription += `\`\`\`yaml\n` + priorityLines.join('\n')
+    if (priorityTracks.length > 5) {
+      queueDescription += `\n... (+${priorityTracks.length - 5} more priority requests)`
+    }
+    queueDescription += `\n\`\`\`\n`
+  } else {
+    queueDescription += `\`\`\`text\n(No active priority requests from Discord)\n\`\`\`\n`
+  }
+
+  queueDescription += `⬇️\n\n`
+
+  // Tier 3: 📜 Background Local Playlist Box
+  queueDescription += `### 📜 Background Local Playlist\n`
+  if (backgroundTracks.length > 0) {
+    const previewLimit = 4
+    const bgLines = backgroundTracks.slice(0, previewLimit).map((t, idx) => {
+      const globalIdx = 2 + priorityTracks.length + idx
+      const tDur = t.duration ? ` [${Math.floor(t.duration / 60)}:${(t.duration % 60).toString().padStart(2, '0')}]` : ''
+      return `Track #${globalIdx}: ${t.title} (Local #${idx + 1})${tDur}`
+    })
+    queueDescription += `\`\`\`yaml\n` + bgLines.join('\n')
+    if (backgroundTracks.length > previewLimit) {
+      queueDescription += `\n... (Remaining ${backgroundTracks.length - previewLimit} Local Tracks)`
+    }
+    queueDescription += `\n\`\`\`\n`
+  } else {
+    queueDescription += `\`\`\`text\n(No background local playlist tracks queued)\n\`\`\`\n`
+  }
+
+  queueDescription += `\n💡 *Tip: Discord \`/play <song>\` automatically queues as Priority! Click \`Skip Track\` to advance.*`
+
+  const queueActionButtons = [
+    {
+      type: 2,
+      style: 2,
+      custom_id: 'queue_skip',
+      label: 'Skip Track',
+      emoji: { name: '⏭️' }
+    }
+  ]
+
+  if (upcomingQueue.length > 0) {
+    queueActionButtons.push({
+      type: 2,
+      style: 1,
+      custom_id: 'queue_play_now',
+      label: 'Play Next Now',
+      emoji: { name: '⚡' }
+    })
+  }
+
+  queueActionButtons.push({
+    type: 2,
+    style: 5,
+    label: 'Open Web Player',
+    emoji: { name: '🌐' },
+    url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+  })
+
+  return {
+    embeds: [
+      {
+        title: `🎧 Live Session Queue • Room \`${roomCode}\``,
+        description: queueDescription,
+        color: priorityTracks.length > 0 ? 0xf59e0b : 0x10b981,
+        footer: {
+          text: `${priorityTracks.length} priority request(s) • ${backgroundTracks.length} background track(s) • Room: ${roomCode}`
+        }
+      }
+    ],
+    components: [
+      {
+        type: 1,
+        components: queueActionButtons
+      }
+    ]
+  }
+}
 
 async function registerCommands(appId) {
   try {
@@ -193,6 +296,362 @@ async function respond(interactionId, interactionToken, payload) {
   } catch (err) {
     console.warn('Failed to reply to interaction:', err)
   }
+}
+
+// ─── COMPONENT HANDLERS (BUTTONS & MENUS) ──────────────────────────────
+
+async function handleComponent(interaction) {
+  const customId = interaction.data?.custom_id || ''
+  const channelId = interaction.channel_id
+  const username = interaction.member?.user?.username || interaction.user?.username || 'Discord User'
+
+  const roomCode = await getRoomForChannel(channelId)
+  if (!roomCode) {
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: { flags: 64, content: '❌ This channel is not connected to any room. Use `/connect <code>` first.' }
+    })
+  }
+
+  if (customId === 'disc_cancel') {
+    return respond(interaction.id, interaction.token, {
+      type: 7,
+      data: {
+        embeds: [
+          {
+            title: '✅ Disconnect Cancelled',
+            description: `The Listen Together session **\`${roomCode}\`** remains connected to this channel.`,
+            color: 0x10b981
+          }
+        ],
+        components: []
+      }
+    })
+  }
+
+  if (customId.startsWith('disc_unlink_')) {
+    const targetCode = customId.replace('disc_unlink_', '')
+    const binding = await getBindingForChannel(channelId)
+    const callerUser = interaction.member?.user || interaction.user
+    const callerUsername = callerUser?.username || 'User'
+    const callerId = callerUser?.id || ''
+    const boundBy = (binding?.bound_by || '').toLowerCase()
+    const isInitiator =
+      !binding ||
+      (callerUsername && callerUsername.toLowerCase() === boundBy) ||
+      (callerId && callerId === binding.bound_by)
+
+    if (!isInitiator && !isDiscordAdminOrManager(interaction)) {
+      return respond(interaction.id, interaction.token, {
+        type: 4,
+        data: {
+          flags: 64,
+          content: '❌ Only the session creator or an admin can confirm unlinking.'
+        }
+      })
+    }
+
+    await clearRoomForChannel(channelId)
+    return respond(interaction.id, interaction.token, {
+      type: 7,
+      data: {
+        embeds: [
+          {
+            title: '👋 Channel Unlinked',
+            description:
+              `This Discord channel has been unlinked from Room **\`${targetCode}\`**.\n\n` +
+              `🎶 *Playback is uninterrupted! Host and friends continue listening in the Felo desktop app and web player.*`,
+            color: 0x6b7280,
+            footer: { text: `Unlinked by @${callerUsername} • Room: ${targetCode}` }
+          }
+        ],
+        components: []
+      }
+    })
+  }
+
+  if (customId.startsWith('disc_end_')) {
+    const targetCode = customId.replace('disc_end_', '')
+    const binding = await getBindingForChannel(channelId)
+    const callerUser = interaction.member?.user || interaction.user
+    const callerUsername = callerUser?.username || 'User'
+    const callerId = callerUser?.id || ''
+    const boundBy = (binding?.bound_by || '').toLowerCase()
+    const isInitiator =
+      !binding ||
+      (callerUsername && callerUsername.toLowerCase() === boundBy) ||
+      (callerId && callerId === binding.bound_by)
+
+    if (!isInitiator && !isDiscordAdminOrManager(interaction)) {
+      return respond(interaction.id, interaction.token, {
+        type: 4,
+        data: {
+          flags: 64,
+          content: '❌ Only the session creator or an admin can end the session.'
+        }
+      })
+    }
+
+    await supabase.from('listening_room_commands').insert({
+      room_code: targetCode,
+      command: 'stop',
+      payload: {},
+      sender_name: callerUsername,
+      source: 'discord_universal',
+      status: 'pending'
+    })
+    await supabase.from('listening_rooms').update({ is_active: false, is_playing: false }).eq('code', targetCode)
+    await clearRoomForChannel(channelId)
+
+    return respond(interaction.id, interaction.token, {
+      type: 7,
+      data: {
+        embeds: [
+          {
+            title: '🛑 Session Ended & Disconnected',
+            description:
+              `The Listen Together session **\`${targetCode}\`** was closed by @${callerUsername}.\n\n` +
+              `• Room closed and playback stopped for all listeners.\n` +
+              `• Discord channel unlinked.`,
+            color: 0xef4444,
+            footer: { text: `Ended by @${callerUsername} • Lossless Synchronized Audio` }
+          }
+        ],
+        components: []
+      }
+    })
+  }
+
+  if (customId === 'queue_skip') {
+    const { data: room } = await supabase
+      .from('listening_rooms')
+      .select('*')
+      .eq('code', roomCode)
+      .maybeSingle()
+
+    const currentTrackTitle = room?.song?.title || 'Current Track'
+    const fullQueue = Array.isArray(room?.queue) ? room.queue : []
+    const isFirstCurrent =
+      fullQueue.length > 0 &&
+      room?.song &&
+      fullQueue[0].title === room.song.title &&
+      fullQueue[0].artist === room.song.artist
+    const upcoming = isFirstCurrent ? fullQueue.slice(1) : fullQueue
+    const nextTrack = upcoming[0]
+
+    await supabase.from('listening_room_commands').insert({
+      room_code: roomCode,
+      command: 'skip',
+      payload: {},
+      sender_name: username,
+      source: 'discord_universal'
+    })
+
+    let nextInfo = ''
+    if (nextTrack) {
+      const nextDur = nextTrack.duration
+        ? ` \`[${Math.floor(nextTrack.duration / 60)}:${(nextTrack.duration % 60).toString().padStart(2, '0')}]\``
+        : ''
+      if (nextTrack.isPriority) {
+        nextInfo = `\n\n▶️ **Now Playing Next:** 🌟 **${nextTrack.title}** by **${nextTrack.artist || 'Unknown'}**${nextDur}\n*(🌟 Priority Request by @${nextTrack.requestedBy || 'Discord User'})*`
+      } else {
+        nextInfo = `\n\n▶️ **Now Playing Next:** **${nextTrack.title}** by **${nextTrack.artist || 'Unknown'}**${nextDur}\n*(📁 Background Local Playlist)*`
+      }
+    } else {
+      nextInfo = `\n\n🔇 *Reached the end of the session queue.*`
+    }
+
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: {
+        embeds: [
+          {
+            title: '⏭️ Track Skipped',
+            description: `Skipped **${currentTrackTitle}** in Room **\`${roomCode}\`**.${nextInfo}`,
+            color: 0x10b981,
+            footer: { text: `Triggered by @${username} • Felo Live Session` }
+          }
+        ],
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 2,
+                style: 2,
+                custom_id: 'queue_skip',
+                label: 'Skip Track',
+                emoji: { name: '⏭️' }
+              },
+              {
+                type: 2,
+                style: 2,
+                custom_id: 'queue_help_view',
+                label: 'View Queue',
+                emoji: { name: '📜' }
+              },
+              {
+                type: 2,
+                style: 5,
+                label: 'Open Web Player',
+                emoji: { name: '🌐' },
+                url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+              }
+            ]
+          }
+        ]
+      }
+    })
+  }
+
+  if (customId === 'queue_play_now') {
+    const { data: room } = await supabase
+      .from('listening_rooms')
+      .select('*')
+      .eq('code', roomCode)
+      .maybeSingle()
+
+    const fullQueue = Array.isArray(room?.queue) ? room.queue : []
+    const isFirstCurrent =
+      fullQueue.length > 0 &&
+      room?.song &&
+      fullQueue[0].title === room.song.title &&
+      fullQueue[0].artist === room.song.artist
+    const upcoming = isFirstCurrent ? fullQueue.slice(1) : fullQueue
+    const song = upcoming[0]
+
+    if (!song) {
+      return respond(interaction.id, interaction.token, {
+        type: 4,
+        data: { flags: 64, content: 'ℹ️ No upcoming tracks to play.' }
+      })
+    }
+
+    await supabase.from('listening_room_commands').insert({
+      room_code: roomCode,
+      command: 'jump',
+      payload: { index: isFirstCurrent ? 1 : 0, title: song.title },
+      sender_name: username,
+      source: 'discord_universal'
+    })
+
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: {
+        embeds: [
+          {
+            title: '⚡ Playing Next Track Now',
+            description:
+              `**Track:** **${song.title}** by **${song.artist || 'Unknown'}**\n` +
+              `**Room:** \`${roomCode}\`\n\n` +
+              `⚡ *Playback started immediately!*`,
+            color: 0x10b981,
+            footer: { text: `Triggered by @${username} • Instant Play` }
+          }
+        ]
+      }
+    })
+  }
+
+  if (customId === 'queue_help_view') {
+    const { data: room } = await supabase
+      .from('listening_rooms')
+      .select('*')
+      .eq('code', roomCode)
+      .maybeSingle()
+
+    if (!room) {
+      return respond(interaction.id, interaction.token, {
+        type: 4,
+        data: { flags: 64, content: '❌ Room is not active.' }
+      })
+    }
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: buildQueuePayload(room, roomCode)
+    })
+  }
+
+  if (customId.startsWith('queue_rel_')) {
+    const relQuery = decodeURIComponent(customId.replace('queue_rel_', '')).trim()
+    const onlineMatches = await searchMusicCatalog(relQuery)
+    const targetTrack = onlineMatches[0] || {
+      title: relQuery,
+      artist: 'Selected Track',
+      album: '',
+      duration: 0,
+      artworkUrl: ''
+    }
+
+    await supabase.from('listening_room_commands').insert({
+      room_code: roomCode,
+      command: 'play',
+      payload: {
+        query: relQuery,
+        action: 'play_now',
+        title: targetTrack.title,
+        artist: targetTrack.artist,
+        album: targetTrack.album || '',
+        duration: targetTrack.duration || 0,
+        artworkUrl: targetTrack.artworkUrl || ''
+      },
+      sender_name: username,
+      source: 'discord_universal'
+    })
+
+    const trackDur = targetTrack.duration
+      ? ` \`[${Math.floor(targetTrack.duration / 60)}:${(targetTrack.duration % 60).toString().padStart(2, '0')}]\``
+      : ''
+
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: {
+        embeds: [
+          {
+            title: '🎶 Playing Selected Track',
+            description:
+              `**Track:** **${targetTrack.title}** by **${targetTrack.artist}**${trackDur}\n` +
+              (targetTrack.album ? `**Album:** *${targetTrack.album}*\n` : '') +
+              `**Room:** \`${roomCode}\`\n\n` +
+              `⚡ *Playback started automatically!*`,
+            color: 0x10b981,
+            thumbnail: targetTrack.artworkUrl ? { url: targetTrack.artworkUrl } : undefined,
+            footer: { text: `Requested by @${username} • Felo Music` }
+          }
+        ],
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 2,
+                style: 2,
+                custom_id: 'queue_skip',
+                label: 'Skip Track',
+                emoji: { name: '⏭️' }
+              },
+              {
+                type: 2,
+                style: 2,
+                custom_id: 'queue_help_view',
+                label: 'View Queue',
+                emoji: { name: '📜' }
+              },
+              {
+                type: 2,
+                style: 5,
+                label: 'Open Web Player',
+                emoji: { name: '🌐' },
+                url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+              }
+            ]
+          }
+        ]
+      }
+    })
+  }
+
+  return respond(interaction.id, interaction.token, { type: 6 })
 }
 
 // ─── COMMAND HANDLERS ─────────────────────────────────────────────────
@@ -265,23 +724,93 @@ async function handleCommand(interaction) {
   }
 
   if (name === 'disconnect') {
-    const currentCode = await getRoomForChannel(channelId)
-    if (!currentCode) {
+    const binding = await getBindingForChannel(channelId)
+    if (!binding || !binding.room_code) {
       return respond(interaction.id, interaction.token, {
         type: 4,
         data: { flags: 64, content: 'ℹ️ This channel is not connected to any room.' }
       })
     }
 
-    await clearRoomForChannel(channelId)
+    const callerUser = interaction.member?.user || interaction.user
+    const callerUsername = callerUser?.username || 'User'
+    const callerId = callerUser?.id || ''
+    const boundBy = (binding.bound_by || '').toLowerCase()
+    const isInitiator =
+      (callerUsername && callerUsername.toLowerCase() === boundBy) ||
+      (callerId && callerId === binding.bound_by)
+    const hasAdmin = isDiscordAdminOrManager(interaction)
+
+    // If user is a guest (neither the session creator nor an admin)
+    if (!isInitiator && !hasAdmin) {
+      return respond(interaction.id, interaction.token, {
+        type: 4,
+        data: {
+          flags: 64, // Ephemeral to caller only
+          embeds: [
+            {
+              title: '🔒 Permission Required to Disconnect',
+              description:
+                `Only **@${binding.bound_by || 'the session creator'}** or a **Server Admin** can disconnect this channel from Room **\`${binding.room_code}\`**.\n\n` +
+                `🎧 **Want to leave the session as a listener?**\n` +
+                `• **Instant Web Player:** Simply close your browser tab.\n` +
+                `• **Desktop App:** Open Felo → click **Leave Session** in the Listen Together tab.\n\n` +
+                `*This prevents other members from accidentally interrupting music for the whole server.*`,
+              color: 0xf59e0b
+            }
+          ]
+        }
+      })
+    }
+
+    // If authorized (session creator or admin), present confirmation choice
     return respond(interaction.id, interaction.token, {
       type: 4,
       data: {
         embeds: [
           {
-            title: '👋 Disconnected',
-            description: `Unlinked this channel from Room **\`${currentCode}\`**.`,
-            color: 0x6b7280
+            title: '👋 Disconnect Listen Together Session?',
+            description:
+              `This channel is linked to Room **\`${binding.room_code}\`**.\n\n` +
+              `Choose how you want to disconnect:\n\n` +
+              `1️⃣ **Unlink Channel Only (Keep Music Playing)**\n` +
+              `• Removes this Discord channel's music controls.\n` +
+              `• **Room stays active!** Host and listeners continue listening in the Felo desktop app and web browser.\n\n` +
+              `2️⃣ **End Session For Everyone (Stop Room)**\n` +
+              `• Unlinks this Discord channel and **closes the room**.\n` +
+              `• Stops audio playback for all connected listeners.`,
+            color: 0x3b82f6,
+            footer: {
+              text: `Requested by @${callerUsername} • Room: ${binding.room_code}`
+            }
+          }
+        ],
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 2,
+                style: 2,
+                custom_id: `disc_unlink_${binding.room_code}`,
+                label: 'Unlink Channel Only',
+                emoji: { name: '👋' }
+              },
+              {
+                type: 2,
+                style: 4,
+                custom_id: `disc_end_${binding.room_code}`,
+                label: 'End Session For Everyone',
+                emoji: { name: '🛑' }
+              },
+              {
+                type: 2,
+                style: 2,
+                custom_id: 'disc_cancel',
+                label: 'Cancel',
+                emoji: { name: '✖️' }
+              }
+            ]
           }
         ]
       }
@@ -317,6 +846,111 @@ async function handleCommand(interaction) {
                 type: 2,
                 style: 5,
                 label: 'Download Felo App',
+                emoji: { name: '📥' },
+                url: 'https://bit.ly/47iv3PK'
+              }
+            ]
+          }
+        ]
+      }
+    })
+  }
+
+  if (name === 'invite') {
+    const activeCode = await getRoomForChannel(channelId)
+    let room = null
+
+    if (activeCode) {
+      const { data } = await supabase
+        .from('listening_rooms')
+        .select('*')
+        .eq('code', activeCode)
+        .eq('is_active', true)
+        .maybeSingle()
+      room = data
+    }
+
+    // Only show invite link if user/channel is already connected to an active room
+    if (!activeCode || !room || !room.is_active) {
+      return respond(interaction.id, interaction.token, {
+        type: 4,
+        data: {
+          embeds: [
+            {
+              title: '⚠️ No Active Listen Together Session Connected',
+              description:
+                'This Discord channel is not connected to an active Listen Together session.\n\n' +
+                'To invite friends, a host must first connect this channel to an active room:\n\n' +
+                '1️⃣ **Start or Join a Room in Felo:**\n' +
+                '• Open the **Felo Desktop App** or **Web Player** and visit **Listen Together**.\n' +
+                '• Start a room or join one to get your 6-character room code.\n\n' +
+                '2️⃣ **Link This Channel:**\n' +
+                '• Type `/connect code:<ROOM_CODE>` in this channel.\n\n' +
+                '3️⃣ **Invite Friends:**\n' +
+                '• Once connected, type `/invite` here to get your 1-click web player link and share it!',
+              color: 0xf59e0b,
+              footer: { text: 'Felo Music • Connect a room first to generate invite links' }
+            }
+          ],
+          components: [
+            {
+              type: 1,
+              components: [
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Download Desktop App',
+                  emoji: { name: '📥' },
+                  url: 'https://bit.ly/47iv3PK'
+                }
+              ]
+            }
+          ]
+        }
+      })
+    }
+
+    const song = room.song
+    const currentTrack = song ? `🎶 **Now Playing:** **${song.title}** by **${song.artist}**\n\n` : ''
+    const memberCount = room.listener_count || (Array.isArray(room.members) ? room.members.length : 1)
+
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: {
+        embeds: [
+          {
+            title: '🎧 Live Listen Together Invitation',
+            description:
+              "You're invited to listen along live with synchronized lossless audio!\n\n" +
+              currentTrack +
+              `🔑 **Room Code:**\n\`\`\`${activeCode}\`\`\`\n` +
+              `👥 **Active Members:** \`${memberCount}\` listener(s) connected\n\n` +
+              `👉 **Choose How to Join & Listen:**\n\n` +
+              `**🌐 Option 1: Instant Web Player (Zero Install)**\n` +
+              `• Click **\`[🌐 1-Click Join in Web Browser]\`** below.\n` +
+              `• Works immediately on mobile, Mac, Windows, or Chromebook!\n\n` +
+              `**💻 Option 2: Felo Desktop App (PC / Mac / Linux)**\n` +
+              `• Open Felo → Click **Listen Together** in the sidebar.\n` +
+              `• Enter code **\`${activeCode}\`** to sync playback!`,
+            color: 0x10b981,
+            footer: { text: `Room: ${activeCode} • Lossless Synchronized Audio • Requested by @${username}` }
+          }
+        ],
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 2,
+                style: 5,
+                label: '1-Click Join in Web Browser',
+                emoji: { name: '🌐' },
+                url: `https://felo.feloapp.workers.dev/#/online/listen?code=${activeCode}`
+              },
+              {
+                type: 2,
+                style: 5,
+                label: 'Download Desktop App',
                 emoji: { name: '📥' },
                 url: 'https://bit.ly/47iv3PK'
               }
@@ -378,34 +1012,493 @@ async function handleCommand(interaction) {
   }
 
   if (name === 'play') {
-    const query = options.find((o) => o.name === 'query')?.value || ''
-    const action = options.find((o) => o.name === 'action')?.value || 'play_now'
+    const query = (options.find((o) => o.name === 'query')?.value || '').trim()
+    const explicitAction = options.find((o) => o.name === 'action')?.value
 
-    // Insert command into Supabase listening_room_commands
+    if (!query) {
+      return respond(interaction.id, interaction.token, {
+        type: 4,
+        data: { flags: 64, content: '❌ Please provide a song title or artist to play.' }
+      })
+    }
+
+    const { data: room } = await supabase
+      .from('listening_rooms')
+      .select('*')
+      .eq('code', roomCode)
+      .maybeSingle()
+
+    const action = explicitAction || 'play_now'
+    const fullQueue = Array.isArray(room?.queue) ? room.queue : []
+    const cleanQ = query.toLowerCase()
+
+    // 1. Search in published room queue (exact or substring match)
+    const queueExactMatches = fullQueue.filter(
+      (t) =>
+        t.title?.toLowerCase().includes(cleanQ) ||
+        (t.artist && t.artist.toLowerCase().includes(cleanQ))
+    )
+
+    let primaryTrack = null
+    let relatedTracks = []
+
+    if (queueExactMatches.length > 0) {
+      const best = queueExactMatches[0]
+      primaryTrack = {
+        title: best.title,
+        artist: best.artist || 'Host Library',
+        album: best.album || '',
+        duration: best.duration || 0,
+        artworkUrl: best.artworkUrl || ''
+      }
+      relatedTracks = queueExactMatches.slice(1, 4).map((t) => ({
+        title: t.title,
+        artist: t.artist || '',
+        album: t.album || '',
+        duration: t.duration || 0,
+        artworkUrl: t.artworkUrl || ''
+      }))
+    } else {
+      // Query online music catalog (iTunes Search API)
+      const onlineMatches = await searchMusicCatalog(query)
+      if (onlineMatches.length > 0) {
+        primaryTrack = onlineMatches[0]
+        relatedTracks = onlineMatches.slice(1, 4)
+      } else {
+        const words = cleanQ.split(/\s+/).filter((w) => w.length >= 3)
+        if (words.length > 0) {
+          const partialQueue = fullQueue.filter((t) => {
+            const tStr = `${t.title || ''} ${t.artist || ''}`.toLowerCase()
+            return words.some((w) => tStr.includes(w))
+          })
+          if (partialQueue.length > 0) {
+            relatedTracks = partialQueue.slice(0, 4).map((t) => ({
+              title: t.title,
+              artist: t.artist || '',
+              album: t.album || '',
+              duration: t.duration || 0,
+              artworkUrl: t.artworkUrl || ''
+            }))
+          }
+        }
+      }
+    }
+
+    // Branch 3: No track found AND no related songs
+    if (!primaryTrack && relatedTracks.length === 0) {
+      return respond(interaction.id, interaction.token, {
+        type: 4,
+        data: {
+          embeds: [
+            {
+              title: '❌ Song Not Found',
+              description:
+                `We couldn't find any songs matching **"${query}"** in this room or catalog.\n\n` +
+                `ℹ️ **What you can do:**\n` +
+                `• 🔍 **Check Spelling:** Make sure the song name or artist is spelled correctly.\n` +
+                `• 📜 **Browse Queue:** Run \`/queue\` to view available songs in the host's playlist.\n` +
+                `• 📥 **Import to Felo:** Host can download or add this track in the desktop app.\n` +
+                `• 🌐 **Listen Live:** Tune in to the active room via the web player.`,
+              color: 0xef4444,
+              footer: { text: `Searched for "${query}" • Felo Music` }
+            }
+          ],
+          components: [
+            {
+              type: 1,
+              components: [
+                {
+                  type: 2,
+                  style: 2,
+                  custom_id: 'queue_help_view',
+                  label: 'View Current Queue',
+                  emoji: { name: '📜' }
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Open Web Player',
+                  emoji: { name: '🌐' },
+                  url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Download App',
+                  emoji: { name: '📥' },
+                  url: 'https://bit.ly/47iv3PK'
+                }
+              ]
+            }
+          ]
+        }
+      })
+    }
+
+    // Branch 2: No exact match, but related songs were found
+    if (!primaryTrack && relatedTracks.length > 0) {
+      return respond(interaction.id, interaction.token, {
+        type: 4,
+        data: {
+          embeds: [
+            {
+              title: '🔍 Related Songs Found',
+              description:
+                `We couldn't find an exact track for **"${query}"**, but found these related songs:\n\n` +
+                relatedTracks
+                  .map((r, i) => {
+                    const rDur = r.duration
+                      ? ` \`[${Math.floor(r.duration / 60)}:${(r.duration % 60).toString().padStart(2, '0')}]\``
+                      : ''
+                    return `\`${i + 1}.\` **${r.title}** by *${r.artist || 'Unknown'}*${rDur}`
+                  })
+                  .join('\n') +
+                `\n\n👉 *Click a button below to play any of these songs!*`,
+              color: 0xf59e0b,
+              footer: { text: `Searched for "${query}" • Tap a song below to play` }
+            }
+          ],
+          components: [
+            {
+              type: 1,
+              components: relatedTracks.slice(0, 4).map((r, i) => ({
+                type: 2,
+                style: 1,
+                custom_id: `queue_rel_${encodeURIComponent(r.title.slice(0, 35))}`,
+                label: `Play #${i + 1}: ${r.title.slice(0, 20)}`,
+                emoji: { name: '▶️' }
+              }))
+            }
+          ]
+        }
+      })
+    }
+
+    // Branch 1: Primary Song Found
+    const songToPlay = primaryTrack
+
     await supabase.from('listening_room_commands').insert({
       room_code: roomCode,
       command: 'play',
-      payload: { query, action },
+      payload: {
+        query,
+        action,
+        title: songToPlay.title,
+        artist: songToPlay.artist,
+        album: songToPlay.album || '',
+        duration: songToPlay.duration || 0,
+        artworkUrl: songToPlay.artworkUrl || ''
+      },
       sender_name: username,
       source: 'discord_universal'
     })
 
-    const actionText =
-      action === 'enqueue'
-        ? 'Added to Queue'
-        : action === 'play_next'
-          ? 'Queued to Play Next'
-          : 'Now Playing'
+    const displayTitle = songToPlay.title
+    const displayArtist = songToPlay.artist ? `by **${songToPlay.artist}**` : ''
+    const trackDur = songToPlay.duration
+      ? ` \`[${Math.floor(songToPlay.duration / 60)}:${(songToPlay.duration % 60).toString().padStart(2, '0')}]\``
+      : ''
+    const albumLine = songToPlay.album ? `💿 **Album:** *${songToPlay.album}*\n` : ''
+
+    let relatedSection = ''
+    if (relatedTracks.length > 0) {
+      relatedSection =
+        `\n\n🔍 **Related Songs:**\n` +
+        relatedTracks
+          .slice(0, 3)
+          .map((r, i) => {
+            const rDur = r.duration
+              ? ` \`[${Math.floor(r.duration / 60)}:${(r.duration % 60).toString().padStart(2, '0')}]\``
+              : ''
+            return `\`${i + 1}.\` **${r.title}** — ${r.artist || 'Unknown'}${rDur}`
+          })
+          .join('\n')
+    }
+
+    const relatedButtonsRow =
+      relatedTracks.length > 0
+        ? [
+            {
+              type: 1,
+              components: relatedTracks.slice(0, 3).map((r, i) => ({
+                type: 2,
+                style: 2,
+                custom_id: `queue_rel_${encodeURIComponent(r.title.slice(0, 35))}`,
+                label: `#${i + 1}: ${r.title.slice(0, 20)}`,
+                emoji: { name: '▶️' }
+              }))
+            }
+          ]
+        : []
+
+    if (action === 'play_now') {
+      return respond(interaction.id, interaction.token, {
+        type: 4,
+        data: {
+          embeds: [
+            {
+              title: '🎶 Playing Now Automatically',
+              description:
+                `**Track:** **${displayTitle}** ${displayArtist}${trackDur}\n` +
+                albumLine +
+                `**Room:** \`${roomCode}\`\n\n` +
+                `⚡ *Playback started automatically!*` +
+                relatedSection,
+              color: 0x10b981,
+              thumbnail: songToPlay.artworkUrl ? { url: songToPlay.artworkUrl } : undefined,
+              footer: { text: `Requested by @${username} • Felo Music` }
+            }
+          ],
+          components: [
+            {
+              type: 1,
+              components: [
+                {
+                  type: 2,
+                  style: 2,
+                  custom_id: 'queue_skip',
+                  label: 'Skip Track',
+                  emoji: { name: '⏭️' }
+                },
+                {
+                  type: 2,
+                  style: 2,
+                  custom_id: 'queue_help_view',
+                  label: 'View Queue',
+                  emoji: { name: '📜' }
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Open Web Player',
+                  emoji: { name: '🌐' },
+                  url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+                }
+              ]
+            },
+            ...relatedButtonsRow
+          ]
+        }
+      })
+    }
+
+    // Next up / Enqueued
+    const isPriorityEnabled =
+      room?.song?.discordPriorityEnabled !== undefined
+        ? Boolean(room?.song?.discordPriorityEnabled)
+        : fullQueue[0]?.discordPriorityEnabled !== undefined
+          ? Boolean(fullQueue[0]?.discordPriorityEnabled)
+          : true
+
+    const isCurrentlyPlaying = Boolean(room?.is_playing && room?.song)
+    const curRemaining = Math.max(0, (room?.song?.duration || 0) - (room?.position_seconds || 0))
+    const waitMin = Math.floor(curRemaining / 60)
+    const waitSec = (curRemaining % 60).toString().padStart(2, '0')
+    const waitStr = curRemaining > 0 ? `~${waitMin}m ${waitSec}s` : 'Moments'
+    const existingPriorities = fullQueue.filter((t) => t.isPriority).length
+    const priorityPos = existingPriorities + 1
+    const positionText = isPriorityEnabled
+      ? `Priority #${priorityPos} (Plays next after current track)`
+      : `Playlist #${fullQueue.length + 1} (End of queue • Priority disabled by Host)`
+    const currentPlayingInfo = isCurrentlyPlaying
+      ? `▶️ **Currently Playing:** **${room?.song?.title}** by ${room?.song?.artist || 'Unknown'}\n`
+      : ''
+    const statusNotice = isPriorityEnabled
+      ? `🌟 *Marked as Priority Request! It will play right after the current song automatically.*`
+      : `ℹ️ *Added to the end of the host's background playlist (Host has disabled priority jump).*`
 
     return respond(interaction.id, interaction.token, {
       type: 4,
       data: {
         embeds: [
           {
-            title: `🎶 ${actionText}`,
-            description: `**Query:** "${query}"\n**Target Room:** \`${roomCode}\`\n\n*Dispatched to the host player and syncing with friends!*`,
+            title: isPriorityEnabled ? '🌟 Added as Priority Request' : '🎶 Added to Host Queue',
+            description:
+              `🎶 **Track:** **${displayTitle}** ${displayArtist}${trackDur}\n` +
+              albumLine +
+              `📍 **Queue Position:** \`${positionText}\`\n` +
+              (isCurrentlyPlaying ? `⏳ **Estimated Wait:** \`${waitStr}\`\n` : '') +
+              currentPlayingInfo +
+              `🔑 **Room:** \`${roomCode}\`\n\n` +
+              statusNotice +
+              relatedSection,
+            color: isPriorityEnabled ? 0xf59e0b : 0x3b82f6,
+            thumbnail: songToPlay.artworkUrl ? { url: songToPlay.artworkUrl } : undefined,
+            footer: { text: `Requested by @${username} • Lossless Synchronized Audio` }
+          }
+        ],
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 2,
+                style: 1,
+                custom_id: 'queue_play_now',
+                label: 'Play Instantly Now',
+                emoji: { name: '⚡' }
+              },
+              {
+                type: 2,
+                style: 2,
+                custom_id: 'queue_skip',
+                label: 'Skip Current Track',
+                emoji: { name: '⏭️' }
+              },
+              {
+                type: 2,
+                style: 5,
+                label: 'Open Web Player',
+                emoji: { name: '🌐' },
+                url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+              }
+            ]
+          },
+          ...relatedButtonsRow
+        ]
+      }
+    })
+  }
+
+  if (name === 'jumpto' || name === 'skipto') {
+    const pos = Math.max(1, Number(options.find((o) => o.name === 'position')?.value) || 1)
+    const { data: room } = await supabase
+      .from('listening_rooms')
+      .select('*')
+      .eq('code', roomCode)
+      .maybeSingle()
+    const fullQueue = Array.isArray(room?.queue) ? room.queue : []
+    const song = fullQueue[pos - 1]
+
+    await supabase.from('listening_room_commands').insert({
+      room_code: roomCode,
+      command: 'jump',
+      payload: { index: pos - 1, title: song?.title },
+      sender_name: username,
+      source: 'discord_universal'
+    })
+
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: {
+        embeds: [
+          {
+            title: '⚡ Instant Jump Initiated',
+            description:
+              `Jumping directly to track **#${pos}** in Room **\`${roomCode}\`**.\n\n` +
+              (song ? `🎶 **Track:** **${song.title}** by **${song.artist || 'Unknown'}**\n\n` : '') +
+              `⚡ *Playback will interrupt and start this song right now!*`,
             color: 0x10b981,
-            footer: { text: `Requested by @${username}` }
+            footer: { text: `Requested by @${username} • Instant Play` }
+          }
+        ]
+      }
+    })
+  }
+
+  if (name === 'bump') {
+    const pos = Math.max(1, Number(options.find((o) => o.name === 'position')?.value) || 1)
+    const { data: room } = await supabase
+      .from('listening_rooms')
+      .select('*')
+      .eq('code', roomCode)
+      .maybeSingle()
+    const fullQueue = Array.isArray(room?.queue) ? room.queue : []
+    const song = fullQueue[pos - 1]
+
+    await supabase.from('listening_room_commands').insert({
+      room_code: roomCode,
+      command: 'bump',
+      payload: { index: pos - 1, title: song?.title },
+      sender_name: username,
+      source: 'discord_universal'
+    })
+
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: {
+        embeds: [
+          {
+            title: '🌟 Promoted to Priority Request',
+            description:
+              `Track **#${pos}** promoted to **Priority Next Up** in Room **\`${roomCode}\`**!\n\n` +
+              (song ? `🎶 **Track:** **${song.title}** by **${song.artist || 'Unknown'}**\n\n` : '') +
+              `🌟 *Marked as Priority Request! It will play immediately after the current song before background tracks.*`,
+            color: 0xf59e0b,
+            footer: { text: `Requested by @${username} • Priority Bump` }
+          }
+        ]
+      }
+    })
+  }
+
+  if (name === 'remove') {
+    const pos = Math.max(1, Number(options.find((o) => o.name === 'position')?.value) || 1)
+    const { data: room } = await supabase
+      .from('listening_rooms')
+      .select('*')
+      .eq('code', roomCode)
+      .maybeSingle()
+    const fullQueue = Array.isArray(room?.queue) ? room.queue : []
+    const song = fullQueue[pos - 1]
+
+    await supabase.from('listening_room_commands').insert({
+      room_code: roomCode,
+      command: 'remove',
+      payload: { index: pos - 1, title: song?.title },
+      sender_name: username,
+      source: 'discord_universal'
+    })
+
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: {
+        embeds: [
+          {
+            title: '🗑️ Removed from Queue',
+            description:
+              `Removed track **#${pos}** from Room **\`${roomCode}\`** queue.\n\n` +
+              (song ? `🎶 **Track:** **${song.title}** by **${song.artist || 'Unknown'}**` : ''),
+            color: 0xef4444,
+            footer: { text: `Removed by @${username}` }
+          }
+        ]
+      }
+    })
+  }
+
+  if (name === 'priority') {
+    const { data: room } = await supabase
+      .from('listening_rooms')
+      .select('*')
+      .eq('code', roomCode)
+      .maybeSingle()
+    const currentSetting =
+      room?.song?.discordPriorityEnabled !== undefined
+        ? Boolean(room?.song?.discordPriorityEnabled)
+        : true
+    const explicitEnabled = options.find((o) => o.name === 'enabled')?.value
+    const newEnabled = explicitEnabled !== undefined ? Boolean(explicitEnabled) : !currentSetting
+
+    await supabase.from('listening_room_commands').insert({
+      room_code: roomCode,
+      command: 'priority',
+      payload: { enabled: newEnabled },
+      sender_name: username,
+      source: 'discord_universal'
+    })
+
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: {
+        embeds: [
+          {
+            title: newEnabled ? '🌟 Discord Priority Queue: ENABLED' : '📁 Discord Priority Queue: DISABLED',
+            description: newEnabled
+              ? `Songs requested via Discord \`/play\` will jump to **Priority Next Up** and play right after the current track!`
+              : `Songs requested via Discord \`/play\` will be placed at the **end of the host's background playlist**.`,
+            color: newEnabled ? 0xf59e0b : 0x6b7280,
+            footer: { text: `Configured by @${username} • Room: ${roomCode}` }
           }
         ]
       }
@@ -413,9 +1506,91 @@ async function handleCommand(interaction) {
   }
 
   if (name === 'skip') {
+    const { data: room } = await supabase
+      .from('listening_rooms')
+      .select('*')
+      .eq('code', roomCode)
+      .maybeSingle()
+
+    const currentTrackTitle = room?.song?.title || 'Current Track'
+    const fullQueue = Array.isArray(room?.queue) ? room.queue : []
+    const isFirstCurrent =
+      fullQueue.length > 0 &&
+      room?.song &&
+      fullQueue[0].title === room.song.title &&
+      fullQueue[0].artist === room.song.artist
+    const upcoming = isFirstCurrent ? fullQueue.slice(1) : fullQueue
+    const nextTrack = upcoming[0]
+
     await supabase.from('listening_room_commands').insert({
       room_code: roomCode,
       command: 'skip',
+      payload: {},
+      sender_name: username,
+      source: 'discord_universal'
+    })
+
+    let nextInfo = ''
+    if (nextTrack) {
+      const nextDur = nextTrack.duration
+        ? ` \`[${Math.floor(nextTrack.duration / 60)}:${(nextTrack.duration % 60).toString().padStart(2, '0')}]\``
+        : ''
+      if (nextTrack.isPriority) {
+        nextInfo = `\n\n▶️ **Now Playing Next:** 🌟 **${nextTrack.title}** by **${nextTrack.artist || 'Unknown'}**${nextDur}\n*(🌟 Priority Request by @${nextTrack.requestedBy || 'Discord User'})*`
+      } else {
+        nextInfo = `\n\n▶️ **Now Playing Next:** **${nextTrack.title}** by **${nextTrack.artist || 'Unknown'}**${nextDur}\n*(📁 Background Local Playlist)*`
+      }
+    } else {
+      nextInfo = `\n\n🔇 *Reached the end of the session queue.*`
+    }
+
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: {
+        embeds: [
+          {
+            title: '⏭️ Track Skipped',
+            description: `Skipped **${currentTrackTitle}** in Room **\`${roomCode}\`**.${nextInfo}`,
+            color: 0x10b981,
+            footer: { text: `Requested by @${username} • Felo Live Session` }
+          }
+        ],
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 2,
+                style: 2,
+                custom_id: 'queue_skip',
+                label: 'Skip Track',
+                emoji: { name: '⏭️' }
+              },
+              {
+                type: 2,
+                style: 1,
+                custom_id: 'queue_help_view',
+                label: 'View Queue',
+                emoji: { name: '📜' }
+              },
+              {
+                type: 2,
+                style: 5,
+                label: 'Open Web Player',
+                emoji: { name: '🌐' },
+                url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+              }
+            ]
+          }
+        ]
+      }
+    })
+  }
+
+  if (name === 'previous') {
+    await supabase.from('listening_room_commands').insert({
+      room_code: roomCode,
+      command: 'previous',
       payload: {},
       sender_name: username,
       source: 'discord_universal'
@@ -426,9 +1601,33 @@ async function handleCommand(interaction) {
       data: {
         embeds: [
           {
-            title: '⏭️ Skipped Track',
-            description: `Sent skip command to Room **\`${roomCode}\`**.`,
+            title: '⏮️ Previous Track',
+            description: `Skipped to previous track in Room **\`${roomCode}\`**.`,
             color: 0x10b981,
+            footer: { text: `Requested by @${username}` }
+          }
+        ]
+      }
+    })
+  }
+
+  if (name === 'stop') {
+    await supabase.from('listening_room_commands').insert({
+      room_code: roomCode,
+      command: 'stop',
+      payload: {},
+      sender_name: username,
+      source: 'discord_universal'
+    })
+
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: {
+        embeds: [
+          {
+            title: '⏹️ Playback Stopped',
+            description: `Stopped playback and reset track in Room **\`${roomCode}\`**.`,
+            color: 0xef4444,
             footer: { text: `Requested by @${username}` }
           }
         ]
@@ -482,6 +1681,61 @@ async function handleCommand(interaction) {
     })
   }
 
+  if (name === 'seek') {
+    const seconds = Number(options.find((o) => o.name === 'seconds')?.value)
+    await supabase.from('listening_room_commands').insert({
+      room_code: roomCode,
+      command: 'seek',
+      payload: { seconds },
+      sender_name: username,
+      source: 'discord_universal'
+    })
+
+    const seekMin = Math.floor(seconds / 60)
+    const seekSec = (seconds % 60).toString().padStart(2, '0')
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: {
+        embeds: [
+          {
+            title: '⏩ Seeked Position',
+            description: `Jumped to **${seekMin}:${seekSec}** in Room **\`${roomCode}\`**.`,
+            color: 0x10b981,
+            footer: { text: `Requested by @${username}` }
+          }
+        ]
+      }
+    })
+  }
+
+  if (name === 'queue') {
+    const { data: room } = await supabase
+      .from('listening_rooms')
+      .select('*')
+      .eq('code', roomCode)
+      .maybeSingle()
+
+    if (!room) {
+      return respond(interaction.id, interaction.token, {
+        type: 4,
+        data: {
+          embeds: [
+            {
+              title: '❌ Room Not Active',
+              description: `Could not find an active session with code **\`${roomCode}\`**.`,
+              color: 0xef4444
+            }
+          ]
+        }
+      })
+    }
+
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: buildQueuePayload(room, roomCode)
+    })
+  }
+
   if (name === 'nowplaying') {
     const { data: room } = await supabase
       .from('listening_rooms')
@@ -508,6 +1762,38 @@ async function handleCommand(interaction) {
     const pos = room.position_seconds || 0
     const dur = song.duration || 0
     const progress = dur > 0 ? Math.min(100, Math.floor((pos / dur) * 100)) : 0
+    const posStr = `${Math.floor(pos / 60)}:${(pos % 60).toString().padStart(2, '0')}`
+    const durStr = dur > 0 ? `${Math.floor(dur / 60)}:${(dur % 60).toString().padStart(2, '0')}` : '0:00'
+
+    const totalBars = 12
+    const activeBars = Math.max(0, Math.min(totalBars, Math.round((progress / 100) * totalBars)))
+    const progressBar =
+      '▬'.repeat(Math.max(0, activeBars - 1)) +
+      '🔘' +
+      '▬'.repeat(Math.max(0, totalBars - activeBars))
+
+    const fullQueue = Array.isArray(room.queue) ? room.queue : []
+    const isFirstCurrent =
+      fullQueue.length > 0 &&
+      fullQueue[0].title === song.title &&
+      fullQueue[0].artist === song.artist
+    const upcomingQueue = isFirstCurrent ? fullQueue.slice(1) : fullQueue
+    const nextSong = upcomingQueue[0]
+
+    const isCurrentPriority = Boolean(song.isPriority)
+    const originBadge = isCurrentPriority
+      ? `🌟 **Priority Request**${song.requestedBy ? ` by @${song.requestedBy}` : ''}`
+      : '📁 **Host Library Playlist**'
+
+    let upNextText = ''
+    if (nextSong) {
+      const nextDur = nextSong.duration
+        ? ` \`[${Math.floor(nextSong.duration / 60)}:${(nextSong.duration % 60).toString().padStart(2, '0')}]\``
+        : ''
+      const nextReq = nextSong.requestedBy ? ` • *by @${nextSong.requestedBy}*` : ''
+      const nextStar = nextSong.isPriority ? '🌟 ' : ''
+      upNextText = `\n\n⏭️ **Up Next:** ${nextStar}**${nextSong.title}** by **${nextSong.artist || 'Unknown'}**${nextDur}${nextReq}`
+    }
 
     return respond(interaction.id, interaction.token, {
       type: 4,
@@ -516,32 +1802,13 @@ async function handleCommand(interaction) {
           {
             title: room.is_playing ? '🔊 Now Playing' : '⏸️ Currently Paused',
             description:
-              `**${song.title}**\nby **${song.artist}**\n` +
-              (song.album ? `*Album:* ${song.album}\n\n` : '\n') +
-              `\`${Math.floor(pos / 60)}:${(pos % 60).toString().padStart(2, '0')} / ${Math.floor(dur / 60)}:${(dur % 60).toString().padStart(2, '0')}\` (${progress}%)\n\n` +
-              `🔑 **Room Code:** \`${roomCode}\``,
+              `**${song.title}**\nby **${song.artist || 'Unknown'}**\n` +
+              (song.album ? `*Album:* ${song.album}\n` : '') +
+              `\`${progressBar}\` \`${posStr} / ${durStr}\` (${progress}%)\n\n` +
+              `🏷️ **Origin:** ${originBadge}` +
+              upNextText +
+              `\n\n🔑 **Room Code:** \`${roomCode}\``,
             color: room.is_playing ? 0x10b981 : 0xf59e0b
-          }
-        ]
-      }
-    })
-  }
-
-  if (name === 'invite') {
-    return respond(interaction.id, interaction.token, {
-      type: 4,
-      data: {
-        embeds: [
-          {
-            title: '🎧 Live Listen Together Invitation',
-            description:
-              `Join our live audio session in your browser or desktop app!\n\n` +
-              `🔑 **Room Code:**\n\`\`\`${roomCode}\`\`\`\n` +
-              `**How to Join:**\n` +
-              `1. Open **Felo**\n` +
-              `2. Click **Listen Together**\n` +
-              `3. Enter code \`${roomCode}\` to listen along!`,
-            color: 0x10b981
           }
         ],
         components: [
@@ -551,16 +1818,9 @@ async function handleCommand(interaction) {
               {
                 type: 2,
                 style: 5,
-                label: 'Download Felo',
-                emoji: { name: '📥' },
-                url: 'https://bit.ly/47iv3PK'
-              },
-              {
-                type: 2,
-                style: 5,
-                label: 'Open Felo',
+                label: 'Join in Web Player',
                 emoji: { name: '🎧' },
-                url: 'https://github.com/FanX0/felo'
+                url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
               }
             ]
           }
@@ -623,9 +1883,16 @@ async function handleCommand(interaction) {
               `### ⚡ Essential Commands\n` +
               `• \`/connect <code>\` — Link channel to your active Felo room\n` +
               `• \`/play <query>\` — Search & queue any song (auto-downloads if missing!)\n` +
+              `• \`/queue\` — View the 3-tier visual queue (Now Playing, Priority, Local Playlist)\n` +
+              `• \`/priority [true/false]\` — Toggle automatic priority jump for Discord requests\n` +
+              `• \`/jumpto <pos>\` — Jump directly to track #N in the queue\n` +
+              `• \`/bump <pos>\` — Bump track #N to Priority #1 (plays immediately next)\n` +
+              `• \`/remove <pos>\` — Remove track #N from the room queue\n` +
               `• \`/skip\` — Skip to next track\n` +
+              `• \`/previous\` & \`/stop\` — Previous track or stop playback\n` +
               `• \`/pause\` & \`/resume\` — Toggle playback\n` +
-              `• \`/nowplaying\` — Show currently playing song & live progress\n` +
+              `• \`/seek <seconds>\` — Jump to time in current track\n` +
+              `• \`/nowplaying\` — Show currently playing song & live progress bar\n` +
               `• \`/volume <0-100>\` — Adjust room volume\n` +
               `• \`/invite\` — Get 1-click web join link for friends\n` +
               `• \`/disconnect\` — Unlink this channel`,
@@ -710,6 +1977,8 @@ function connect() {
           } else if (t === 'INTERACTION_CREATE') {
             if (d.type === 2) {
               void handleCommand(d)
+            } else if (d.type === 3) {
+              void handleComponent(d)
             }
           }
           break

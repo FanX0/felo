@@ -25,6 +25,7 @@ import {
   FileText,
   X,
   Laptop2,
+  Smartphone,
   Download
 } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -42,6 +43,10 @@ import { HighlightMatch } from '../../components/Common/HighlightMatch'
 import { remoteClient } from '../Remote/remoteClient'
 import { remoteLibraryService } from '../../services/RemoteLibraryService'
 import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
+import { useOnlineStore } from '../../hooks/useOnlineStore'
+import { AppCapabilities } from '../../lib/appConfig'
+import { resolveSongAudioUrl, resolveSongDownloadUrl } from '../../lib/songAudioResolver'
+import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 
 export interface SongArtist {
   id?: string
@@ -68,6 +73,8 @@ export interface Song {
   container?: string
   artworkPath?: string
   artworkUrl?: string
+  audioUrl?: string
+  downloadUrl?: string
   isOnline?: boolean
   dateAdded?: number
   requestedBy?: string
@@ -175,19 +182,90 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     y: number
   } | null>(null)
   const [creditsSong, setCreditsSong] = useState<Song | null>(null)
-  const [librarySource, setLibrarySource] = useState<'local' | 'pc'>('local')
+  const user = useOnlineStore((s) => s.user)
+  const isElectronApp = typeof window !== 'undefined' && Boolean((window as any).electron)
+  const [librarySource, setLibrarySource] = useState<string>(() => {
+    if (typeof window !== 'undefined' && !Boolean((window as any).electron)) {
+      return 'pc'
+    }
+    return 'local'
+  })
   const [isRemoteConnected, setIsRemoteConnected] = useState(() => remoteClient.getIsConnected())
   const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
-  const isElectronApp = typeof window !== 'undefined' && Boolean((window as any).electron)
-  const hasRemoteDevice = Boolean(isRemoteConnected || (activeRemote && activeRemote.song))
+  const pcLibrarySongs = useConnectedDeviceStore((s) => s.pcLibrarySongs)
+  const deviceLibraries = useConnectedDeviceStore((s) => s.deviceLibraries)
+  const isLoadingPcLibrary = useConnectedDeviceStore((s) => s.isLoadingPcLibrary)
+  const discoveredDevices = useConnectedDeviceStore((s) => s.discoveredDevices)
+  const requestPcLibrary = useConnectedDeviceStore((s) => s.requestPcLibrary)
+  const loadCachedPcSongs = useConnectedDeviceStore((s) => s.loadCachedPcSongs)
+  const { requestPlayQueue } = usePlaybackArbitration()
+
+  const myDeviceId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : null
+
+  // Industry standard: Dynamic multi-device discovery (Plex / Spotify Connect style)
+  const remoteLibraryDevices = useMemo(() => {
+    const list: Array<{ id: string; device_name: string; device_type?: string; local_ip?: string }> = []
+    const seen = new Set<string>()
+
+    // 1. Devices from discovered active devices
+    for (const d of discoveredDevices) {
+      if (d.id !== myDeviceId && d.is_active && !seen.has(d.id)) {
+        if (d.device_type === 'desktop' || d.local_ip) {
+          seen.add(d.id)
+          list.push({
+            id: d.id,
+            device_name: d.device_name || 'Felo Desktop',
+            device_type: d.device_type,
+            local_ip: d.local_ip
+          })
+        }
+      }
+    }
+
+    // 2. Active Remote currently broadcasting if not yet in list
+    if (
+      activeRemote?.activeDeviceId &&
+      activeRemote.activeDeviceId !== myDeviceId &&
+      !seen.has(activeRemote.activeDeviceId)
+    ) {
+      seen.add(activeRemote.activeDeviceId)
+      list.push({
+        id: activeRemote.activeDeviceId,
+        device_name: activeRemote.activeDeviceName || 'Felo Desktop',
+        device_type: activeRemote.activeDeviceType || 'desktop'
+      })
+    }
+
+    // 3. Fallback: If on mobile/web and we have cached songs or active user, but DB hasn't populated yet
+    if (list.length === 0 && !isElectronApp && (pcLibrarySongs.length > 0 || Boolean(user))) {
+      list.push({
+        id: 'default-pc',
+        device_name: 'Felo Desktop',
+        device_type: 'desktop'
+      })
+    }
+
+    return list
+  }, [discoveredDevices, myDeviceId, activeRemote, isElectronApp, pcLibrarySongs.length, user])
+
+  const selectedRemoteDevice = useMemo(() => {
+    if (librarySource === 'local') return null
+    if (librarySource === 'pc') return remoteLibraryDevices[0] || null
+    return (
+      remoteLibraryDevices.find((d) => d.id === librarySource) ||
+      remoteLibraryDevices[0] ||
+      null
+    )
+  }, [librarySource, remoteLibraryDevices])
+
+  const hasRemoteDevice = remoteLibraryDevices.length > 0
 
   useEffect(() => {
     const unsub = remoteClient.subscribeConnection(setIsRemoteConnected)
     return () => unsub()
   }, [])
-  const { setQueue, togglePlay, currentSongIndex, queue, isPlaying, enqueueSong } = usePlayerStore(
+  const { togglePlay, currentSongIndex, queue, isPlaying, enqueueSong } = usePlayerStore(
     useShallow((s) => ({
-      setQueue: s.setQueue,
       togglePlay: s.togglePlay,
       currentSongIndex: s.currentSongIndex,
       queue: s.queue,
@@ -249,54 +327,85 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     const generation = ++loadGenerationRef.current
     setIsLoadingSongs(true)
     try {
-      if (source === 'pc') {
+      if (source !== 'local') {
+        // If running in Electron desktop app, this machine IS the PC! Load local songs directly!
+        if (isElectronApp && window.api?.getSongs) {
+          const localData = await window.api.getSongs()
+          setSongs(localData || [])
+          return
+        }
+
+        const targetDev =
+          remoteLibraryDevices.find((d) => d.id === source) || remoteLibraryDevices[0]
+
         if (remoteClient.getIsConnected()) {
-          const res = await remoteLibraryService.getSongs({ limit: 200 })
-          const mapped: Song[] = res.songs.map((s) => ({
-            id: s.id,
-            title: s.title,
-            artist: s.artist,
-            album: s.album,
-            duration: s.duration,
-            filePath: remoteClient.getAudioStreamUrl(s.id),
-            artworkPath: s.artworkUrl,
-            artworkUrl: s.artworkUrl,
-            bitrate: s.bitrate,
-            sampleRate: s.sampleRate,
-            trackNumber: s.trackNumber,
-            genre: s.genre,
-            dateAdded: s.dateAdded,
-            isOnline: true
-          }))
-          setSongs(mapped)
-        } else if (activeRemote?.song) {
-          const s = activeRemote.song
-          const mapped: Song = {
-            id: s.id,
-            title: s.title,
-            artist: s.artist,
-            album: s.album,
-            duration: s.duration,
-            filePath: `virtual:${s.title} - ${s.artist}`,
-            artworkPath: s.artworkUrl || toMediaUrl(s.artworkPath) || undefined,
-            artworkUrl: s.artworkUrl || toMediaUrl(s.artworkPath) || undefined,
-            isOnline: true
+          try {
+            const res = await remoteLibraryService.getSongs({ limit: 200 })
+            if (res.songs && res.songs.length > 0) {
+              const mapped: Song[] = res.songs.map((s) => ({
+                id: s.id,
+                title: s.title,
+                artist: s.artist,
+                album: s.album,
+                duration: s.duration,
+                filePath: remoteClient.getAudioStreamUrl(s.id),
+                artworkPath: s.artworkUrl,
+                artworkUrl: s.artworkUrl,
+                bitrate: s.bitrate,
+                sampleRate: s.sampleRate,
+                trackNumber: s.trackNumber,
+                genre: s.genre,
+                dateAdded: s.dateAdded,
+                isOnline: true
+              }))
+              setSongs(mapped)
+              return
+            }
+          } catch (err) {
+            console.warn('[Library] Failed to query LAN remote library, falling back to Realtime/cache:', err)
           }
-          setSongs([mapped])
+        }
+
+        const storeSongs = useConnectedDeviceStore.getState().getDeviceSongs(targetDev?.id)
+        if (storeSongs.length > 0) {
+          setSongs(storeSongs)
         } else {
-          setSongs([])
+          const cached = loadCachedPcSongs(user?.id, targetDev?.id)
+          if (cached.length > 0) {
+            setSongs(cached)
+          } else if (activeRemote?.song) {
+            const s = activeRemote.song
+            const mapped: Song = {
+              id: s.id,
+              title: s.title,
+              artist: s.artist,
+              album: s.album,
+              duration: s.duration,
+              filePath: `virtual:${s.title} - ${s.artist}`,
+              artworkPath: s.artworkUrl || toMediaUrl(s.artworkPath) || undefined,
+              artworkUrl: s.artworkUrl || toMediaUrl(s.artworkPath) || undefined,
+              isOnline: true
+            }
+            setSongs([mapped])
+          } else {
+            setSongs([])
+          }
+        }
+
+        if (user?.id && !isElectronApp) {
+          void requestPcLibrary(user.id, targetDev?.id)
         }
       } else if (window.api?.getSongs) {
         const data = await window.api.getSongs()
         setSongs(data || [])
       } else {
-        console.warn('window.api is not available (running outside Electron)')
         setSongs([])
       }
     } catch (err) {
       console.error('Failed to load songs:', err)
-      if (source === 'pc') {
-        setSongs([])
+      if (source !== 'local') {
+        const cached = loadCachedPcSongs(user?.id, selectedRemoteDevice?.id)
+        setSongs(cached)
       }
     } finally {
       if (generation === loadGenerationRef.current) {
@@ -306,18 +415,17 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     }
   }
 
-  // Auto-switch to PC library if local library is empty on mobile and PC is connected
+  // Sync fresh device library when received from Realtime
   useEffect(() => {
-    if (
-      !isElectronApp &&
-      hasLoadedSongs &&
-      songs.length === 0 &&
-      librarySource === 'local' &&
-      (isRemoteConnected || activeRemote?.song)
-    ) {
-      setLibrarySource('pc')
+    if (librarySource !== 'local') {
+      const devSongs = useConnectedDeviceStore.getState().getDeviceSongs(selectedRemoteDevice?.id)
+      if (devSongs.length > 0) {
+        setSongs(devSongs)
+        setIsLoadingSongs(false)
+        setHasLoadedSongs(true)
+      }
     }
-  }, [isElectronApp, hasLoadedSongs, songs.length, librarySource, isRemoteConnected, activeRemote?.song])
+  }, [librarySource, pcLibrarySongs, deviceLibraries, selectedRemoteDevice?.id])
 
   useEffect(() => {
     void loadSongs(librarySource)
@@ -337,7 +445,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
         songs
       )
       if (station.length > 0) {
-        usePlayerStore.getState().setQueue(station, 0, {
+        requestPlayQueue(station, 0, {
           type: 'radio' as const,
           title: `${song.title} Radio`,
           route: `/artist/${encodeURIComponent(song.artist)}`
@@ -357,7 +465,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
         songs
       )
       if (station.length > 0) {
-        usePlayerStore.getState().setQueue(station, 0, {
+        requestPlayQueue(station, 0, {
           type: 'radio' as const,
           title: `${artistName} Radio`,
           route: `/artist/${encodeURIComponent(artistName)}`
@@ -463,20 +571,17 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     const targetSong = filteredSongs[index]
     if (!targetSong) return
 
-    if (librarySource === 'pc') {
-      const targetDevice = remoteClient.getTargetDevice()
-      if (targetDevice === 'desktop') {
-        void remoteClient.play(targetSong.id)
-        return
-      }
-    }
-
     if (queue[currentSongIndex]?.id === targetSong.id) {
       togglePlay()
       return
     }
 
-    const contextTitle = librarySource === 'pc' ? 'Remote PC Library' : 'Your Library'
+    const contextTitle =
+      librarySource === 'local'
+        ? 'Your Library'
+        : selectedRemoteDevice
+          ? `${selectedRemoteDevice.device_name} Library`
+          : 'Remote Library'
     const playbackContext = usePlayerStore.getState().playbackContext
     const isSameLibraryContext =
       playbackContext?.type === 'library' &&
@@ -491,7 +596,12 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
       }
     }
 
-    setQueue(filteredSongs, index, {
+    const resolvedSongs = filteredSongs.map((s) => ({
+      ...s,
+      filePath: resolveSongAudioUrl(s) || s.filePath
+    }))
+
+    requestPlayQueue(resolvedSongs, index, {
       type: 'library',
       title: contextTitle,
       route: '/library'
@@ -713,7 +823,11 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-baseline gap-2.5 sm:gap-4 min-w-0">
             <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-text tracking-tight truncate">
-              {librarySource === 'pc' ? 'PC Library' : 'My Library'}
+              {librarySource === 'local'
+                ? 'My Library'
+                : selectedRemoteDevice
+                  ? `${selectedRemoteDevice.device_name} Library`
+                  : 'Remote Library'}
             </h1>
             <span className="text-xs sm:text-[13px] font-medium text-text-muted tabular-nums shrink-0">
               {filteredSongs.length} {filteredSongs.length === 1 ? 'song' : 'songs'}
@@ -723,34 +837,65 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
             </span>
           </div>
 
-          {/* Library Source Switcher (when connected to PC desktop) */}
+          {/* Dynamic Multi-Device Library Source Switcher (Industry Standard) */}
           {hasRemoteDevice && (
-            <div className="flex items-center gap-1 p-1 rounded-xl bg-surface-elevated border border-border/60 text-xs shrink-0 shadow-sm">
+            <div className="flex items-center gap-1 p-1 rounded-xl bg-surface-elevated border border-border/60 text-xs shrink-0 shadow-sm max-w-[50vw] sm:max-w-none overflow-x-auto scrollbar-none">
               <button
                 type="button"
                 onClick={() => setLibrarySource('local')}
                 className={cn(
-                  'px-3 py-1 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer',
+                  'px-3 py-1 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0',
                   librarySource === 'local'
                     ? 'bg-white/10 text-white shadow-sm'
                     : 'text-text-muted hover:text-white'
                 )}
               >
+                {isElectronApp ? (
+                  <Laptop2 className="w-3.5 h-3.5" />
+                ) : (
+                  <Smartphone className="w-3.5 h-3.5" />
+                )}
                 <span>This Device</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setLibrarySource('pc')}
-                className={cn(
-                  'px-3 py-1 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer',
-                  librarySource === 'pc'
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                    : 'text-text-muted hover:text-white'
-                )}
-              >
-                <Laptop2 className="w-3.5 h-3.5" />
-                <span>PC Library</span>
-              </button>
+
+              {remoteLibraryDevices.map((dev) => {
+                const isSelected =
+                  librarySource === dev.id ||
+                  (librarySource === 'pc' && remoteLibraryDevices[0]?.id === dev.id)
+                return (
+                  <button
+                    key={dev.id}
+                    type="button"
+                    onClick={() => {
+                      setLibrarySource(dev.id)
+                      if (user?.id) void requestPcLibrary(user.id, dev.id)
+                    }}
+                    className={cn(
+                      'px-3 py-1 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0',
+                      isSelected
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : 'text-text-muted hover:text-white'
+                    )}
+                  >
+                    <Laptop2 className="w-3.5 h-3.5" />
+                    <span>{dev.device_name}</span>
+                    {isSelected && (
+                      <span
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (user?.id) void requestPcLibrary(user.id, dev.id)
+                        }}
+                        title={`Refresh library from ${dev.device_name}`}
+                        className="ml-0.5 p-0.5 hover:text-white transition"
+                      >
+                        <RefreshCw
+                          className={cn('w-3 h-3', isLoadingPcLibrary && 'animate-spin')}
+                        />
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
             </div>
           )}
 
@@ -1054,30 +1199,74 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
           </div>
         </div>
       ) : songs.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center text-text-muted gap-4">
-          <p className="text-base text-text">Your library is currently empty.</p>
-          <p className="text-xs text-text-muted max-w-sm text-center">
-            {hasRemoteDevice
-              ? 'Connect to your PC to browse and control playback from your desktop library.'
-              : 'Add a local music folder to scan and index all your high-resolution and lossless audio tracks.'}
-          </p>
-          {hasRemoteDevice && librarySource === 'local' ? (
-            <button
-              type="button"
-              onClick={() => setLibrarySource('pc')}
-              className="flex h-11 items-center gap-2 rounded-full bg-emerald-500 hover:bg-emerald-400 px-6 text-sm font-bold text-black transition-all hover:scale-[1.02] shadow-md cursor-pointer"
-            >
-              <Laptop2 className="h-4 w-4" />
-              <span>Browse PC Library</span>
-            </button>
+        <div className="flex-1 flex flex-col items-center justify-center text-text-muted gap-4 p-6 text-center">
+          {librarySource !== 'local' && !isElectronApp ? (
+            <>
+              <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shadow-inner">
+                {isLoadingPcLibrary ? (
+                  <Loader2 className="w-7 h-7 animate-spin text-emerald-400" />
+                ) : (
+                  <Laptop2 className="w-7 h-7 text-emerald-400" />
+                )}
+              </div>
+              <p className="text-base font-bold text-white">
+                {isLoadingPcLibrary
+                  ? `Syncing ${selectedRemoteDevice?.device_name || 'Device'} Library...`
+                  : `No Songs Loaded from ${selectedRemoteDevice?.device_name || 'Device'}`}
+              </p>
+              <p className="text-xs text-text-muted max-w-sm">
+                {isLoadingPcLibrary
+                  ? `Requesting track catalog from ${selectedRemoteDevice?.device_name || 'your computer'} over Realtime sync...`
+                  : `Ensure Felo is open on ${selectedRemoteDevice?.device_name || 'your computer'} and connected to this account to stream and browse music.`}
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-3 mt-1">
+                <button
+                  type="button"
+                  disabled={isLoadingPcLibrary}
+                  onClick={() => user?.id && void requestPcLibrary(user.id, selectedRemoteDevice?.id)}
+                  className="flex h-10 items-center gap-2 rounded-full bg-emerald-500 hover:bg-emerald-400 px-5 text-xs font-bold text-black transition-all hover:scale-[1.02] shadow-md cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={cn("h-3.5 w-3.5", isLoadingPcLibrary && "animate-spin")} />
+                  <span>{isLoadingPcLibrary ? 'Syncing...' : `Sync from ${selectedRemoteDevice?.device_name || 'Device'}`}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLibrarySource('local')}
+                  className="flex h-10 items-center gap-2 rounded-full border border-border/80 bg-surface-elevated px-4 text-xs font-medium text-text-muted hover:text-white transition cursor-pointer"
+                >
+                  <span>This Device</span>
+                </button>
+              </div>
+            </>
           ) : (
-            <button
-              onClick={handleAddFolder}
-              disabled={isScanning}
-              className="flex h-11 items-center gap-2 rounded-full bg-white px-6 text-sm font-bold text-black transition-all hover:scale-[1.02] hover:bg-white/90 shadow-md"
-            >
-              <Plus className="h-4 w-4 stroke-[3]" /> Add Local Music Folder
-            </button>
+            <>
+              <p className="text-base text-text">Your library is currently empty.</p>
+              <p className="text-xs text-text-muted max-w-sm text-center">
+                {isElectronApp
+                  ? 'Add a local music folder to scan and index all your high-resolution and lossless audio tracks.'
+                  : hasRemoteDevice
+                    ? `Switch to ${remoteLibraryDevices[0]?.device_name || 'a connected device'} to browse and control playback from your remote library.`
+                    : 'No downloaded songs on this device yet.'}
+              </p>
+              {isElectronApp ? (
+                <button
+                  onClick={handleAddFolder}
+                  disabled={isScanning}
+                  className="flex h-11 items-center gap-2 rounded-full bg-white px-6 text-sm font-bold text-black transition-all hover:scale-[1.02] hover:bg-white/90 shadow-md cursor-pointer"
+                >
+                  <Plus className="h-4 w-4 stroke-[3]" /> Add Local Music Folder
+                </button>
+              ) : hasRemoteDevice ? (
+                <button
+                  type="button"
+                  onClick={() => setLibrarySource(remoteLibraryDevices[0]?.id || 'pc')}
+                  className="flex h-11 items-center gap-2 rounded-full bg-emerald-500 hover:bg-emerald-400 px-6 text-sm font-bold text-black transition-all hover:scale-[1.02] shadow-md cursor-pointer"
+                >
+                  <Laptop2 className="h-4 w-4" />
+                  <span>Browse {remoteLibraryDevices[0]?.device_name || 'Device'}</span>
+                </button>
+              ) : null}
+            </>
           )}
         </div>
       ) : (
@@ -1361,7 +1550,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
             onClick={() => {
               const selectedSongs = filteredSongs.filter((s) => selectedSongIds.has(s.id))
               if (selectedSongs.length > 0) {
-                setQueue(selectedSongs, 0, {
+                requestPlayQueue(selectedSongs, 0, {
                   type: 'library',
                   title: `Selected (${selectedSongs.length} tracks)`,
                   route: '/library'
@@ -1431,7 +1620,19 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
               <button
                 type="button"
                 onClick={() => {
-                  remoteClient.downloadSong(activeMenu.song.id)
+                  const downloadUrl = resolveSongDownloadUrl(activeMenu.song)
+                  if (downloadUrl) {
+                    const a = document.createElement('a')
+                    a.href = downloadUrl
+                    a.setAttribute('download', '')
+                    a.target = '_blank'
+                    a.rel = 'noopener noreferrer'
+                    document.body.appendChild(a)
+                    a.click()
+                    document.body.removeChild(a)
+                  } else {
+                    remoteClient.downloadSong(activeMenu.song.id)
+                  }
                   setActiveMenu(null)
                 }}
                 className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted hover:bg-white/10 hover:text-text transition-colors"
@@ -1600,30 +1801,32 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
             <FolderOpen className="h-3.5 w-3.5" />
             Show in Explorer
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              onOpenDownloadPanel?.({
-                id: activeMenu.song.id,
-                title: activeMenu.song.title,
-                artist: activeMenu.song.artist,
-                album: activeMenu.song.album || '',
-                duration: activeMenu.song.duration || 0,
-                filePath: activeMenu.song.filePath,
-                artworkPath: activeMenu.song.artworkPath,
-                size: activeMenu.song.size,
-                sampleRate: activeMenu.song.sampleRate,
-                isOnline: false,
-                autoDownload: false,
-                autoPlay: false
-              })
-              setActiveMenu(null)
-            }}
-            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted transition-colors hover:bg-white/10 hover:text-text"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            Replace Audio / Re-download
-          </button>
+          {AppCapabilities.downloads && (
+            <button
+              type="button"
+              onClick={() => {
+                onOpenDownloadPanel?.({
+                  id: activeMenu.song.id,
+                  title: activeMenu.song.title,
+                  artist: activeMenu.song.artist,
+                  album: activeMenu.song.album || '',
+                  duration: activeMenu.song.duration || 0,
+                  filePath: activeMenu.song.filePath,
+                  artworkPath: activeMenu.song.artworkPath,
+                  size: activeMenu.song.size,
+                  sampleRate: activeMenu.song.sampleRate,
+                  isOnline: false,
+                  autoDownload: false,
+                  autoPlay: false
+                })
+                setActiveMenu(null)
+              }}
+              className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Replace Audio / Re-download
+            </button>
+          )}
           <div className="mx-2 my-1 h-px bg-white/10" />
           <button
             type="button"

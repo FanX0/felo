@@ -4,6 +4,7 @@ import { useOnlineStore } from '../hooks/useOnlineStore'
 import { usePlayerStore } from '../hooks/usePlayerStore'
 import { getSupabase } from '../lib/supabase'
 import { downloadTrackInBackground } from '../lib/backgroundDownloader'
+import { findMatchingLibrarySong } from '../lib/songMatching'
 import type { Song } from '../pages/Library/Library'
 
 interface ListeningPresenceBridgeProps {
@@ -25,7 +26,6 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
   const isJoiningRoom = useListeningStore((state) => state.isJoiningRoom)
   const hostRoom = useListeningStore((state) => state.hostRoom)
   const hostRoomStopped = useListeningStore((state) => state.hostRoomStopped)
-  const isDeviceAudioSharing = useListeningStore((state) => state.isDeviceAudioSharing)
   const ensureHostRoom = useListeningStore((state) => state.ensureHostRoom)
   const deactivateHostRoom = useListeningStore((state) => state.deactivateHostRoom)
 
@@ -36,7 +36,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
 
   // 1. Immediate Broadcast on Playback State Change (Song Change, Queue/Playlist Change, or Play/Pause)
   useEffect(() => {
-    if (!user || !enabled || !isAudioActive || isJoiningRoom || hostRoomStopped || joinedRoom !== null || isDeviceAudioSharing) return
+    if (!user || !enabled || !isAudioActive || isJoiningRoom || hostRoomStopped || joinedRoom !== null) return
 
     const songChanged = prevSongIdRef.current !== currentSongId
     const queueChanged = prevQueueKeyRef.current !== queueKey
@@ -88,6 +88,11 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
       void ensureHostRoom(true).finally(() => {
         isUpdatingRef.current = false
       })
+
+      const currentHost = useListeningStore.getState().hostRoom
+      if (currentHost?.id) {
+        void useListeningStore.getState().refreshMemberCount(currentHost.id)
+      }
     }, 5000)
 
     return () => window.clearInterval(interval)
@@ -117,25 +122,61 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
         switch (command) {
           case 'play': {
             const query = (cmdPayload?.query || '').trim()
-            const action = cmdPayload?.action || 'play_next'
+            const title = (cmdPayload?.title || '').trim()
+            const artist = (cmdPayload?.artist || '').trim()
+            const album = (cmdPayload?.album || '').trim()
+            const duration = Number(cmdPayload?.duration) || 0
+            const artworkUrl = cmdPayload?.artworkUrl || ''
+            const action = cmdPayload?.action || 'play_now'
             const requester = record?.sender_name ? `@${record.sender_name}` : 'Discord'
-            if (!query) {
+
+            if (!query && !title) {
+              player.claimAudioOwnership()
               player.setIsPlaying(true)
               void ensureHostRoom(true)
               break
             }
 
             const cleanQ = query.toLowerCase()
+            const targetTitle = (title || query).toLowerCase()
+            const targetArtist = artist.toLowerCase()
             const isPriorityEnabled = useListeningStore.getState().discordPriorityEnabled
             const effectiveAction = !isPriorityEnabled && action === 'play_next' ? 'enqueue' : action
             const isPriority = Boolean(isPriorityEnabled && (effectiveAction === 'play_next' || effectiveAction === 'play_now'))
 
+            const qWords = cleanQ.split(/\s+/).filter((w) => w.length >= 2)
+            const matchesTrack = (s: { title?: string; artist?: string }) => {
+              if (!s) return false
+              const sTitle = (s.title || '').toLowerCase()
+              const sArtist = (s.artist || '').toLowerCase()
+              const sCombined = `${sTitle} ${sArtist}`
+              const sCombinedRev = `${sArtist} ${sTitle}`
+
+              if (targetTitle && (sTitle === targetTitle || sTitle.includes(targetTitle) || targetTitle.includes(sTitle))) {
+                if (!targetArtist || sArtist.includes(targetArtist) || targetArtist.includes(sArtist)) {
+                  return true
+                }
+              }
+
+              if (sTitle.includes(cleanQ) || sArtist.includes(cleanQ)) return true
+              if (sCombined.includes(cleanQ) || sCombinedRev.includes(cleanQ)) return true
+              if (cleanQ.includes(sTitle) && sTitle.length >= 3) return true
+
+              if (qWords.length > 0 && qWords.every((w) => sCombined.includes(w))) {
+                return true
+              }
+
+              return false
+            }
+
             // 1. Check if the song is already in active player queue
-            const queueMatchIndex = player.queue.findIndex(
-              (s) =>
-                s.title?.toLowerCase().includes(cleanQ) ||
-                (s.artist && s.artist.toLowerCase().includes(cleanQ))
-            )
+            let queueMatchIndex = player.queue.findIndex(matchesTrack)
+            if (queueMatchIndex === -1 && (title || artist)) {
+              const matched = findMatchingLibrarySong(title || query, artist, player.queue)
+              if (matched) {
+                queueMatchIndex = player.queue.findIndex((s) => s.id === matched.id)
+              }
+            }
 
             if (queueMatchIndex >= 0) {
               const matchedSong = {
@@ -143,17 +184,21 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
                 requestedBy: requester,
                 isPriority
               }
-              if (effectiveAction === 'play_now') {
-                player.updateSong(matchedSong, matchedSong.id)
+              player.updateSong(matchedSong, matchedSong.id)
+
+              if (effectiveAction === 'play_now' || !player.isPlaying) {
+                player.claimAudioOwnership()
                 player.playSong(queueMatchIndex)
+                player.setIsPlaying(true)
               } else if (effectiveAction === 'enqueue') {
                 player.enqueueSong(matchedSong)
               } else {
-                // Priority / Important request: placed right after current song or after previous priority requests
                 player.enqueueSongPriority(matchedSong)
                 if (!player.isPlaying || player.currentSongIndex === -1) {
                   const targetIdx = player.currentSongIndex === -1 ? 0 : player.currentSongIndex + 1
+                  player.claimAudioOwnership()
                   player.playSong(targetIdx)
+                  player.setIsPlaying(true)
                 }
               }
               void ensureHostRoom(true)
@@ -164,80 +209,112 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             let libraryMatch: Song | undefined
             try {
               const songs = (await window.api?.getSongs?.()) || []
-              libraryMatch = songs.find(
-                (s: any) =>
-                  s.title?.toLowerCase().includes(cleanQ) ||
-                  (s.artist && s.artist.toLowerCase().includes(cleanQ))
-              )
-            } catch {}
+              if (title || artist) {
+                libraryMatch = findMatchingLibrarySong(title || query, artist, songs)
+              }
+              if (!libraryMatch) {
+                libraryMatch = songs.find(matchesTrack)
+              }
+            } catch (err) {
+              console.warn('[ListeningPresenceBridge] Library scan failed:', err)
+            }
 
             if (libraryMatch) {
-              const songToAdd = {
+              const songToAdd: Song = {
                 ...libraryMatch,
                 requestedBy: requester,
                 isPriority
               }
-              if (effectiveAction === 'enqueue') {
-                player.enqueueSong(songToAdd)
-              } else if (effectiveAction === 'play_now') {
+
+              player.claimAudioOwnership()
+
+              if (effectiveAction === 'play_now' || !player.isPlaying) {
                 if (player.queue.length === 0) {
                   player.setQueue([songToAdd], 0)
                 } else {
-                  player.enqueueSongPriority(songToAdd)
-                  const targetIdx = player.currentSongIndex === -1 ? 0 : player.currentSongIndex + 1
-                  player.playSong(targetIdx)
+                  const currentSong = player.queue[player.currentSongIndex]
+                  const isCurrentVirtual = !currentSong?.filePath || currentSong.filePath.startsWith('virtual:')
+                  if (isCurrentVirtual) {
+                    player.updateSong(songToAdd, currentSong?.id)
+                    player.playSong(player.currentSongIndex)
+                  } else {
+                    player.enqueueSongPriority(songToAdd)
+                    const targetIdx = player.currentSongIndex === -1 ? 0 : player.currentSongIndex + 1
+                    player.playSong(targetIdx)
+                  }
                 }
+                player.setIsPlaying(true)
+              } else if (effectiveAction === 'enqueue') {
+                player.enqueueSong(songToAdd)
               } else {
-                // Priority / Important request
                 player.enqueueSongPriority(songToAdd)
                 if (!player.isPlaying || player.currentSongIndex === -1) {
                   const targetIdx = player.currentSongIndex === -1 ? 0 : player.currentSongIndex + 1
                   player.playSong(targetIdx)
+                  player.setIsPlaying(true)
                 }
               }
               void ensureHostRoom(true)
               break
             }
 
-            // 3. Fallback: Create instant virtual track so UI & audio switch in 0ms
+            // 3. Fallback: Create instant virtual track so UI switches in 0ms, then stream/download
             const virtualSong: Song = {
               id: `discord-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-              title: cmdPayload?.title || query,
-              artist: cmdPayload?.artist || 'Discord Request',
-              album: '',
-              duration: cmdPayload?.duration || 0,
-              artworkPath: '',
+              title: title || query,
+              artist: artist || 'Discord Request',
+              album: album || '',
+              duration: duration || 0,
+              artworkPath: artworkUrl || '',
+              artworkUrl: artworkUrl || '',
               filePath: `virtual:${query}`,
               requestedBy: requester,
               isPriority
             }
 
-            if (effectiveAction === 'enqueue') {
-              player.enqueueSong(virtualSong)
-            } else if (effectiveAction === 'play_now') {
+            player.claimAudioOwnership()
+
+            if (effectiveAction === 'play_now' || !player.isPlaying) {
               if (player.queue.length === 0) {
                 player.setQueue([virtualSong], 0)
               } else {
-                player.enqueueSongPriority(virtualSong)
-                const targetIdx = player.currentSongIndex === -1 ? 0 : player.currentSongIndex + 1
-                player.playSong(targetIdx)
+                const currentSong = player.queue[player.currentSongIndex]
+                const isCurrentVirtual = !currentSong?.filePath || currentSong.filePath.startsWith('virtual:')
+                if (isCurrentVirtual) {
+                  player.updateSong(virtualSong, currentSong?.id)
+                  player.playSong(player.currentSongIndex)
+                } else {
+                  player.enqueueSongPriority(virtualSong)
+                  const targetIdx = player.currentSongIndex === -1 ? 0 : player.currentSongIndex + 1
+                  player.playSong(targetIdx)
+                }
               }
+              player.setIsPlaying(true)
+            } else if (effectiveAction === 'enqueue') {
+              player.enqueueSong(virtualSong)
             } else {
-              // Priority / Important request
               player.enqueueSongPriority(virtualSong)
               if (!player.isPlaying || player.currentSongIndex === -1) {
                 const targetIdx = player.currentSongIndex === -1 ? 0 : player.currentSongIndex + 1
                 player.playSong(targetIdx)
+                player.setIsPlaying(true)
               }
             }
             void ensureHostRoom(true)
 
-            // Also trigger desktop background downloader if capabilities allow
+            // Trigger background downloader with complete track metadata
             void downloadTrackInBackground(
-              { title: query },
+              {
+                id: virtualSong.id,
+                title: title || query,
+                artist,
+                album,
+                duration,
+                artworkUrl
+              },
               {
                 playAction: effectiveAction,
-                autoPlay: effectiveAction === 'play_now',
+                autoPlay: effectiveAction === 'play_now' || !player.isPlaying,
                 conflictMode: 'keep_both'
               }
             ).catch(() => undefined)
@@ -246,12 +323,16 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
           }
           case 'skip':
           case 'next':
+            player.claimAudioOwnership()
             player.playNext(true)
+            player.setIsPlaying(true)
             void ensureHostRoom(true)
             break
           case 'prev':
           case 'previous':
+            player.claimAudioOwnership()
             player.playPrevious()
+            player.setIsPlaying(true)
             void ensureHostRoom(true)
             break
           case 'stop':
@@ -264,6 +345,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             void ensureHostRoom(true)
             break
           case 'resume':
+            player.claimAudioOwnership()
             player.setIsPlaying(true)
             void ensureHostRoom(true)
             break
@@ -294,7 +376,9 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
               }
             }
             if (targetIdx >= 0 && targetIdx < player.queue.length) {
+              player.claimAudioOwnership()
               player.playSong(targetIdx)
+              player.setIsPlaying(true)
               void ensureHostRoom(true)
             }
             break
@@ -326,17 +410,31 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
           case 'remove':
           case 'remove_queue': {
             let targetIdx = -1
-            if (typeof cmdPayload?.index === 'number') {
-              targetIdx = cmdPayload.index
-            } else if (cmdPayload?.query) {
-              const q = String(cmdPayload.query).toLowerCase()
+            const searchTitle = cmdPayload?.title || cmdPayload?.query
+            if (searchTitle) {
+              const q = String(searchTitle).toLowerCase()
               targetIdx = player.queue.findIndex(
                 (s) => s.title.toLowerCase().includes(q) || (s.artist && s.artist.toLowerCase().includes(q))
               )
             }
+            if (targetIdx === -1 && typeof cmdPayload?.index === 'number') {
+              const relIdx = player.currentSongIndex + cmdPayload.index
+              if (relIdx >= 0 && relIdx < player.queue.length) {
+                targetIdx = relIdx
+              } else if (cmdPayload.index >= 0 && cmdPayload.index < player.queue.length) {
+                targetIdx = cmdPayload.index
+              }
+            }
             if (targetIdx >= 0 && targetIdx < player.queue.length) {
               player.removeSongFromQueueByIndex(targetIdx)
               void ensureHostRoom(true)
+            }
+            break
+          }
+          case 'priority':
+          case 'set_priority': {
+            if (cmdPayload?.enabled !== undefined) {
+              useListeningStore.getState().setDiscordPriorityEnabled(Boolean(cmdPayload.enabled))
             }
             break
           }
@@ -395,15 +493,132 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
     }
   }, [hostRoom?.code, enabled])
 
-  // 4. Deactivate room on unmount or disable ONLY if this tab was the active audio owner
+  // 4. Guest Session Sync & Heartbeat Watchdog (Lag mitigation, Reconnection & Failover)
   useEffect(() => {
-    return () => {
-      if (usePlayerStore.getState().isAudioActive) {
-        void deactivateHostRoom()
+    if (!joinedRoom?.id || !enabled || !user) return
+
+    const roomId = joinedRoom.id
+    const supabase = getSupabase()
+
+    // 1. Realtime channel for room updates (song changes, seeks, pauses, host transfers)
+    const channel = supabase
+      .channel(`guest-sync-${roomId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'listening_rooms',
+          filter: `id=eq.${roomId}`
+        },
+        (payload) => {
+          const next = payload.new as any
+          if (!next) return
+
+          // If room was explicitly marked inactive
+          if (!next.is_active) {
+            void useListeningStore.getState().handleHostDisconnect()
+            return
+          }
+
+          // If this user was promoted to host (via automatic failover or host transfer)
+          if (next.host_id === user.id) {
+            useListeningStore.setState({
+              hostRoom: next,
+              joinedRoom: null,
+              hostRoomStopped: false,
+              syncStatus: 'idle'
+            })
+            usePlayerStore.getState().setIsPlaying(true)
+            void useListeningStore.getState().ensureHostRoom(true, true)
+            return
+          }
+
+          const currentRoom = useListeningStore.getState().joinedRoom
+          const songChanged =
+            next.song?.title !== currentRoom?.song?.title ||
+            next.song?.artist !== currentRoom?.song?.artist ||
+            next.song?.localId !== currentRoom?.song?.localId
+
+          useListeningStore.getState().setJoinedRoom(next)
+
+          if (songChanged) {
+            void useListeningStore.getState().handleHostSongChange(next)
+          } else {
+            useListeningStore.getState().handleHostPauseResume(next)
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'listening_rooms',
+          filter: `id=eq.${roomId}`
+        },
+        () => {
+          void useListeningStore.getState().handleHostDisconnect()
+        }
+      )
+      .subscribe()
+
+    // 2. Watchdog timer (every 2.5s) to check host lag, heartbeat freshness & failover
+    const watchdogInterval = window.setInterval(() => {
+      void useListeningStore.getState().checkHostHealth()
+    }, 2500)
+
+    // 3. Periodic polling fallback (every 5s) to ensure zero desync even if WebSocket drops
+    const pollInterval = window.setInterval(async () => {
+      try {
+        const { data: latestRoom } = await supabase
+          .from('listening_rooms')
+          .select('*')
+          .eq('id', roomId)
+          .maybeSingle()
+
+        if (latestRoom && latestRoom.is_active) {
+          // If this user was promoted to host (via automatic failover or host transfer)
+          if (latestRoom.host_id === user.id) {
+            useListeningStore.setState({
+              hostRoom: latestRoom as any,
+              joinedRoom: null,
+              hostRoomStopped: false,
+              syncStatus: 'idle'
+            })
+            usePlayerStore.getState().setIsPlaying(true)
+            void useListeningStore.getState().ensureHostRoom(true, true)
+            return
+          }
+
+          const currentRoom = useListeningStore.getState().joinedRoom
+          const songChanged =
+            latestRoom.song?.title !== currentRoom?.song?.title ||
+            latestRoom.song?.artist !== currentRoom?.song?.artist ||
+            latestRoom.song?.localId !== currentRoom?.song?.localId
+
+          useListeningStore.getState().setJoinedRoom(latestRoom as any)
+
+          if (songChanged) {
+            void useListeningStore.getState().handleHostSongChange(latestRoom as any)
+          } else {
+            useListeningStore.getState().handleHostPauseResume(latestRoom as any)
+          }
+        }
+      } catch {
+        // best effort polling
       }
+    }, 5000)
+
+
+    return () => {
+      window.clearInterval(watchdogInterval)
+      window.clearInterval(pollInterval)
+      void supabase.removeChannel(channel)
     }
-  }, [deactivateHostRoom])
+  }, [joinedRoom?.id, enabled, user?.id])
 
   return null
 }
+
 

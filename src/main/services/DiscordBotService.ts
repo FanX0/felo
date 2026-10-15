@@ -113,12 +113,15 @@ export class DiscordBotService {
         this.playerState.song = null
       }
 
-      // Check if room details were attached
-      if (status.listeningRoomCode) {
-        this.playerState.listeningRoomCode = status.listeningRoomCode
+      // Check if room details were attached or updated
+      if ('listeningRoomCode' in status) {
+        this.playerState.listeningRoomCode = status.listeningRoomCode || undefined
       }
-      if (status.listeningRoomMembers !== undefined) {
-        this.playerState.listeningRoomMembers = status.listeningRoomMembers
+      if ('listeningRoomName' in status) {
+        this.playerState.listeningRoomName = status.listeningRoomName || undefined
+      }
+      if ('listeningRoomMembers' in status) {
+        this.playerState.listeningRoomMembers = Number(status.listeningRoomMembers) || 1
       }
 
       // Outgoing webhook auto-announce on track change (suppressed in Private Session)
@@ -146,9 +149,7 @@ export class DiscordBotService {
 
     // Listen for active Listen Together room info reported by renderer
     ipcMain.on('discord:update-room-info', (_event, info: { code: string; name?: string; members?: number }) => {
-      if (info?.code) {
-        this.playerState.listeningRoomCode = info.code
-      }
+      this.playerState.listeningRoomCode = info?.code || undefined
       if (info?.name) {
         this.playerState.listeningRoomName = info.name
       }
@@ -226,6 +227,10 @@ export class DiscordBotService {
 
     ipcMain.handle('discord:test-webhook', async (_event, url: string) => {
       return this.testWebhook(url || this.webhookUrl)
+    })
+
+    ipcMain.handle('discord:register-commands', async () => {
+      return this.registerSlashCommands()
     })
 
     // Load persisted configurations
@@ -500,6 +505,7 @@ export class DiscordBotService {
           break
         case 'room':
         case 'session':
+        case 'invite':
           await this.cmdRoom(channelId)
           break
         case 'volume':
@@ -531,23 +537,64 @@ export class DiscordBotService {
 
   // ─── SLASH COMMANDS & INTERACTIONS ─────────────────────────────────
 
-  private async registerSlashCommands(): Promise<void> {
-    if (!this.botUser?.id || !this.token) return
+  public async registerSlashCommands(): Promise<{ success: boolean; message: string; count?: number }> {
+    if (!this.token) {
+      return { success: false, message: 'Please enter and save your Discord Bot Token first.' }
+    }
+
+    if (!this.botUser?.id) {
+      try {
+        const userRes = await fetch(`${DISCORD_API}/users/@me`, {
+          headers: { Authorization: `Bot ${this.token}` }
+        })
+        if (userRes.ok) {
+          const userData = (await userRes.json()) as any
+          this.botUser = {
+            id: userData.id,
+            username: userData.username,
+            tag: `${userData.username}#${userData.discriminator || '0'}`,
+            avatar: userData.avatar
+          }
+        }
+      } catch (err: any) {
+        console.warn('[Discord Bot] Could not fetch bot user details:', err)
+      }
+    }
+
+    if (!this.botUser?.id) {
+      return { success: false, message: 'Could not authenticate with Discord. Please check your Bot Token.' }
+    }
+
     const commands = [
       {
+        name: 'connect',
+        description: 'Link this Discord channel to your Felo desktop Listen Together room',
+        options: [
+          {
+            name: 'code',
+            description: 'Your 6-character Felo room code (shown in Felo Settings → Discord or Listen Together)',
+            type: 3,
+            required: true
+          }
+        ]
+      },
+      {
+        name: 'disconnect',
+        description: 'Unlink this Discord channel or end the Listen Together session'
+      },
+      {
         name: 'play',
-        description: 'Play a track locally in Felo and sync with your Listen Together group',
+        description: 'Play a song in the connected Felo room (auto-downloads if not in local library)',
         options: [
           {
             name: 'query',
-            description: 'Song title, artist, or album to play',
+            description: 'Song title, artist, or album to search & play',
             type: 3,
-            required: true,
-            autocomplete: true
+            required: true
           },
           {
             name: 'action',
-            description: 'How to play this track',
+            description: 'Playback action',
             type: 3,
             required: false,
             choices: [
@@ -559,20 +606,88 @@ export class DiscordBotService {
         ]
       },
       {
-        name: 'search',
-        description: 'Search tracks and customize selection with interactive buttons',
+        name: 'jumpto',
+        description: 'Jump directly to a specific song number in the queue to play instantly',
         options: [
           {
-            name: 'query',
-            description: 'Song title or artist to search',
-            type: 3,
-            required: true
+            name: 'position',
+            description: 'Track number in the queue to jump to (e.g. 1, 2, 5)',
+            type: 4,
+            required: true,
+            min_value: 1
           }
         ]
       },
       {
-        name: 'invite',
-        description: 'Get Listen Together room code, 1-click join link, and QR code to invite friends'
+        name: 'bump',
+        description: 'Bump a track in the queue to Priority #1 (plays immediately next)',
+        options: [
+          {
+            name: 'position',
+            description: 'Track number in the queue to make priority',
+            type: 4,
+            required: true,
+            min_value: 1
+          }
+        ]
+      },
+      {
+        name: 'remove',
+        description: 'Remove a specific track from the room queue',
+        options: [
+          {
+            name: 'position',
+            description: 'Track number in the queue to remove',
+            type: 4,
+            required: true,
+            min_value: 1
+          }
+        ]
+      },
+      {
+        name: 'priority',
+        description: 'Toggle or configure Discord priority requests mode for this room',
+        options: [
+          {
+            name: 'enabled',
+            description: 'Enable or disable Discord priority queueing',
+            type: 5,
+            required: false
+          }
+        ]
+      },
+      {
+        name: 'skip',
+        description: 'Skip to the next song in the connected room'
+      },
+      {
+        name: 'previous',
+        description: 'Play previous song in the connected room'
+      },
+      {
+        name: 'stop',
+        description: 'Stop music playback and reset position'
+      },
+      {
+        name: 'pause',
+        description: 'Pause playback in the connected room'
+      },
+      {
+        name: 'resume',
+        description: 'Resume playback in the connected room'
+      },
+      {
+        name: 'seek',
+        description: 'Seek to a position in seconds in the current song',
+        options: [
+          {
+            name: 'seconds',
+            description: 'Position in seconds to jump to',
+            type: 4,
+            required: true,
+            min_value: 0
+          }
+        ]
       },
       {
         name: 'nowplaying',
@@ -580,53 +695,28 @@ export class DiscordBotService {
       },
       {
         name: 'queue',
-        description: 'Show upcoming songs in the player queue',
+        description: 'View the live session music queue and upcoming tracks',
         options: [
           {
             name: 'page',
-            description: 'Queue page number (default: 1)',
+            description: 'Queue page number (10 tracks per page)',
             type: 4,
-            required: false
+            required: false,
+            min_value: 1
           }
         ]
       },
       {
-        name: 'skip',
-        description: 'Skip to next track in queue'
-      },
-      {
-        name: 'pause',
-        description: 'Pause playback'
-      },
-      {
-        name: 'resume',
-        description: 'Resume playback'
-      },
-      {
-        name: 'stop',
-        description: 'Stop playback'
-      },
-      {
-        name: 'volume',
-        description: 'Adjust local Felo playback volume',
-        options: [
-          {
-            name: 'percent',
-            description: 'Volume percentage (0 - 100)',
-            type: 4,
-            required: true,
-            min_value: 0,
-            max_value: 100
-          }
-        ]
+        name: 'invite',
+        description: 'Get room code and 1-click web player invite link for the connected room'
       },
       {
         name: 'download',
-        description: 'Get the official download link for Felo Music Player'
+        description: 'Get official download links for Felo Music Player'
       },
       {
         name: 'help',
-        description: 'Show Felo music player commands and guide'
+        description: 'Complete guide for the Universal Felo Discord Bot'
       }
     ]
 
@@ -640,13 +730,26 @@ export class DiscordBotService {
         body: JSON.stringify(commands)
       })
       if (res.ok) {
-        console.log(`[Discord Bot] Registered ${commands.length} slash commands with Discord!`)
+        console.log(`[Discord Bot] Registered ${commands.length} slash commands with Discord for @${this.botUser.username}!`)
+        return {
+          success: true,
+          count: commands.length,
+          message: `Successfully registered ${commands.length} slash commands with Discord for @${this.botUser.username}!`
+        }
       } else {
         const errText = await res.text()
         console.warn(`[Discord Bot] Failed to register slash commands (${res.status}):`, errText)
+        return {
+          success: false,
+          message: `Discord API returned error ${res.status}: ${errText}`
+        }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('[Discord Bot] Error registering slash commands:', err)
+      return {
+        success: false,
+        message: `Network error registering commands: ${err?.message || err}`
+      }
     }
   }
 
@@ -759,6 +862,69 @@ export class DiscordBotService {
 
   private async handleMessageComponent(interaction: any): Promise<void> {
     const customId = interaction.data?.custom_id || ''
+
+    if (customId === 'disc_cancel') {
+      await this.respondInteraction(interaction.id, interaction.token, {
+        type: 7,
+        data: {
+          embeds: [
+            {
+              title: '✅ Disconnect Cancelled',
+              description: `The session **\`${this.playerState.listeningRoomCode || ''}\`** remains active.`,
+              color: 0x10b981
+            }
+          ],
+          components: []
+        }
+      })
+      return
+    }
+
+    if (customId.startsWith('disc_unlink_')) {
+      const code = customId.replace('disc_unlink_', '')
+      await this.respondInteraction(interaction.id, interaction.token, {
+        type: 7,
+        data: {
+          embeds: [
+            {
+              title: '👋 Channel Unlinked',
+              description:
+                `Discord controls unlinked from Room **\`${code}\`**.\n\n` +
+                `🎶 *Playback is uninterrupted on the host desktop app and for connected listeners.*`,
+              color: 0x6b7280
+            }
+          ],
+          components: []
+        }
+      })
+      return
+    }
+
+    if (customId.startsWith('disc_end_')) {
+      const code = customId.replace('disc_end_', '')
+      await this.sendPlayerCommand({ type: 'stop' })
+      this.playerState.listeningRoomCode = undefined
+      this.playerState.listeningRoomName = undefined
+      this.playerState.listeningRoomMembers = undefined
+
+      await this.respondInteraction(interaction.id, interaction.token, {
+        type: 7,
+        data: {
+          embeds: [
+            {
+              title: '🛑 Session Ended & Disconnected',
+              description:
+                `The Listen Together session **\`${code}\`** has been ended.\n\n` +
+                `• Host playback stopped.\n` +
+                `• Room closed for all connected listeners.`,
+              color: 0xef4444
+            }
+          ],
+          components: []
+        }
+      })
+      return
+    }
 
     if (customId === 'select_custom_song') {
       const selectedId = interaction.data?.values?.[0]
@@ -905,7 +1071,9 @@ export class DiscordBotService {
     switch (name) {
       case 'play': {
         const queryOption = options.find((o: any) => o.name === 'query')?.value || ''
-        const actionOption = options.find((o: any) => o.name === 'action')?.value || 'play_now'
+        const isCurrentlyPlaying = Boolean(this.playerState.isPlaying && this.playerState.song)
+        const actionOption =
+          options.find((o: any) => o.name === 'action')?.value || (isCurrentlyPlaying ? 'play_next' : 'play_now')
         await this.handleSlashPlay(interaction, queryOption, actionOption)
         break
       }
@@ -916,6 +1084,9 @@ export class DiscordBotService {
       }
       case 'invite':
         await this.handleSlashInvite(interaction)
+        break
+      case 'disconnect':
+        await this.handleSlashDisconnect(interaction)
         break
       case 'nowplaying':
         await this.handleSlashNowPlaying(interaction)
@@ -1202,8 +1373,10 @@ export class DiscordBotService {
         data: {
           embeds: [
             {
-              title: '🎧 Listen Together Session',
-              description: 'No active Listen Together room is hosted right now.\nStart playing music in Felo and visit **Listen Together** to activate your room code!',
+              title: '⚠️ No Active Listen Together Session',
+              description:
+                'The host is not currently in an active Listen Together room.\n\n' +
+                'To invite friends, please start or join a session in the Felo desktop app under **Listen Together** first.',
               color: 0xf59e0b
             }
           ]
@@ -1212,30 +1385,31 @@ export class DiscordBotService {
       return
     }
 
-    const joinUrl = `https://github.com/FanX0/felo`
+    const title = '🎧 Live Group Listen Together Invitation'
+    const note = "You're invited to listen together with lossless, real-time synchronized music!\n\n"
 
     await this.respondInteraction(interaction.id, interaction.token, {
       type: 4,
       data: {
         embeds: [
           {
-            title: '🎧 Live Group Listen Together Invitation',
+            title,
             description:
-              `You\'re invited to listen together with lossless, real-time synchronized music!\n\n` +
+              note +
               `🔑 **Room Code:**\n\`\`\`${code}\`\`\`\n` +
               (song ? `🎶 **Now Playing:** **${song.title}** by **${song.artist}**\n` : '') +
               `👥 **Active Members:** \`${memberCount}\` listener(s) connected\n\n` +
-              `**How to Join:**\n` +
-              `1. Open **Felo** on your computer or browser\n` +
-              `2. Go to **Listen Together**\n` +
-              `3. Enter code \`${code}\` and click **Join**!`,
+              `**How to Join & Listen:**\n` +
+              `• **Instant Web Player (Zero Install):** Click the button below to join right in your browser!\n` +
+              `• **Felo Desktop App:** Open Felo → **Listen Together** → Enter code \`${code}\` and click **Join**!\n\n` +
+              `🎵 **Anyone in this server can use \`/play <song>\` to search and queue tracks!**`,
             color: 0x10b981,
             fields: [
               { name: '🔊 Audio Mode', value: 'High-Fidelity Synchronized Audio', inline: true },
-              { name: '⚡ Lag', value: 'Zero Voice Channel Compression', inline: true }
+              { name: '⚡ Latency', value: 'Zero Voice Channel Compression', inline: true }
             ],
             footer: {
-              text: 'Felo Desktop Music • Click the button below to view Felo'
+              text: 'Felo Desktop Music • Lossless Synchronized Audio'
             }
           }
         ],
@@ -1246,22 +1420,125 @@ export class DiscordBotService {
               {
                 type: 2,
                 style: 5,
-                label: 'Download Felo',
-                emoji: { name: '📥' },
-                url: 'https://bit.ly/47iv3PK'
+                label: 'Join in Web Player',
+                emoji: { name: '🌐' },
+                url: `https://felo.feloapp.workers.dev/#/online/listen?code=${code}`
               },
               {
                 type: 2,
                 style: 5,
-                label: 'Join Listen Together',
-                emoji: { name: '🎧' },
-                url: joinUrl
+                label: 'Download Felo',
+                emoji: { name: '📥' },
+                url: 'https://bit.ly/47iv3PK'
               }
             ]
           }
         ]
       }
     })
+  }
+
+  private async handleSlashDisconnect(interaction: any): Promise<void> {
+    const code = this.playerState.listeningRoomCode
+    if (!code) {
+      await this.respondInteraction(interaction.id, interaction.token, {
+        type: 4,
+        data: {
+          flags: 64,
+          content: 'ℹ️ The host player is not currently in an active Listen Together session.'
+        }
+      })
+      return
+    }
+
+    const hasAdmin = this.isDiscordAdminOrManager(interaction)
+    if (!hasAdmin) {
+      await this.respondInteraction(interaction.id, interaction.token, {
+        type: 4,
+        data: {
+          flags: 64,
+          embeds: [
+            {
+              title: '🔒 Permission Required to Disconnect',
+              description:
+                `Only the host or a **Server Admin** can disconnect this channel from Room **\`${code}\`**.\n\n` +
+                `🎧 **Want to leave the session as a listener?**\n` +
+                `• **Instant Web Player:** Simply close your browser tab.\n` +
+                `• **Desktop App:** Open Felo → click **Leave Session** in the Listen Together tab.\n\n` +
+                `*This prevents other members from accidentally interrupting music for the whole server.*`,
+              color: 0xf59e0b
+            }
+          ]
+        }
+      })
+      return
+    }
+
+    await this.respondInteraction(interaction.id, interaction.token, {
+      type: 4,
+      data: {
+        embeds: [
+          {
+            title: '👋 Disconnect Listen Together Session?',
+            description:
+              `This channel is linked to Room **\`${code}\`**.\n\n` +
+              `Choose how you want to disconnect:\n\n` +
+              `1️⃣ **Unlink Channel Only (Keep Music Playing)**\n` +
+              `• Removes Discord music controls.\n` +
+              `• **Room stays active!** Host and listeners continue listening in the Felo app and browser.\n\n` +
+              `2️⃣ **End Session For Everyone (Stop Room)**\n` +
+              `• Stops host playback and **closes the room** for all connected listeners.`,
+            color: 0x3b82f6,
+            footer: {
+              text: `Room: ${code} • Felo Desktop Music`
+            }
+          }
+        ],
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 2,
+                style: 2,
+                custom_id: `disc_unlink_${code}`,
+                label: 'Unlink Channel Only',
+                emoji: { name: '👋' }
+              },
+              {
+                type: 2,
+                style: 4,
+                custom_id: `disc_end_${code}`,
+                label: 'End Session For Everyone',
+                emoji: { name: '🛑' }
+              },
+              {
+                type: 2,
+                style: 2,
+                custom_id: 'disc_cancel',
+                label: 'Cancel',
+                emoji: { name: '✖️' }
+              }
+            ]
+          }
+        ]
+      }
+    })
+  }
+
+  private isDiscordAdminOrManager(interaction: any): boolean {
+    if (!interaction.guild_id) return true
+    const permsStr = interaction.member?.permissions
+    if (!permsStr) return false
+    try {
+      const perms = BigInt(permsStr)
+      const ADMINISTRATOR = 1n << 3n
+      const MANAGE_CHANNELS = 1n << 4n
+      const MANAGE_GUILD = 1n << 5n
+      return (perms & ADMINISTRATOR) !== 0n || (perms & MANAGE_CHANNELS) !== 0n || (perms & MANAGE_GUILD) !== 0n
+    } catch {
+      return false
+    }
   }
 
   private async handleSlashNowPlaying(interaction: any): Promise<void> {
@@ -1691,11 +1968,14 @@ export class DiscordBotService {
 
     const search = searchLibrary(songs, query, '', 5, fs.existsSync)
 
+    const isCurrentlyPlaying = Boolean(this.playerState.isPlaying && this.playerState.song)
+    const playAction = isCurrentlyPlaying ? 'play_next' : 'play_now'
+
     if (!search.results.length) {
       await this.sendPlayerCommand({
         type: 'download-and-play',
         query,
-        action: 'play_now',
+        action: playAction,
         user: 'Discord'
       })
 
@@ -1707,7 +1987,7 @@ export class DiscordBotService {
             title: '⚡ On-Demand Download Started',
             description:
               `**"${query}"** is not in the host's local library.\n\n` +
-              `🎯 **Playback Action:** ▶️ Play Now (Auto-Plays)\n` +
+              `🎯 **Playback Action:** ${playAction === 'play_next' ? '⏭️ Play Next (Queued as Priority)' : '▶️ Play Now (Auto-Plays)'}\n` +
               `🔄 **Priority Download Order:**\n` +
               `1️⃣ **Qobuz** (24-bit Hi-Res) ➔ 2️⃣ **Deezer** (FLAC) ➔ 3️⃣ **Soulseek P2P** ➔ 4️⃣ **YouTube Music**\n\n` +
               `⏳ **Status:** Searching, buffering, and downloading in the background. Playback will begin as soon as ready and sync across Listen Together!` +
@@ -1926,8 +2206,10 @@ export class DiscordBotService {
       await this.sendChannelMessage(channelId, {
         embeds: [
           {
-            title: '🎧 Listen Together Session',
-            description: 'No active Listen Together room code found on the host.\nStart playing music in Felo to activate your session code!',
+            title: '⚠️ No Active Listen Together Session',
+            description:
+              'The host is not currently in an active Listen Together room.\n\n' +
+              'To invite listeners, please start or join a session in the Felo desktop app under **Listen Together** first.',
             color: 0xf59e0b
           }
         ]
@@ -1935,18 +2217,21 @@ export class DiscordBotService {
       return
     }
 
+    const title = '🎧 Live Group Listen Together Session'
+    const note = 'Join the live audio stream directly in the Felo desktop app or web browser!\n\n'
+
     await this.sendChannelMessage(channelId, {
       embeds: [
         {
-          title: '🎧 Live Group Listen Together Session',
+          title,
           description:
-            `Join the live audio stream directly in the Felo desktop app!\n\n` +
+            note +
             `🔑 **Room Code:** \`${code}\`\n\n` +
-            `**How to Join:**\n` +
-            `1. Open **Felo** on your computer.\n` +
-            `2. Go to **Listen Together**.\n` +
-            `3. Enter code \`${code}\` and click **Join**.\n\n` +
-            (song ? `🎶 *Now Playing:* **${song.title}** - ${song.artist}` : ''),
+            `**How to Join & Listen:**\n` +
+            `• **Web Player (Zero Install):** https://felo.feloapp.workers.dev/#/online/listen?code=${code}\n` +
+            `• **Desktop App:** Open Felo → **Listen Together** → Enter \`${code}\`\n\n` +
+            (song ? `🎶 *Now Playing:* **${song.title}** - ${song.artist}\n\n` : '') +
+            `🎵 Anyone can use \`${this.prefix}play <song>\` to queue music!`,
           color: 0x10b981,
           fields: [
             { name: '👥 Connected Listeners', value: `${memberCount}`, inline: true },

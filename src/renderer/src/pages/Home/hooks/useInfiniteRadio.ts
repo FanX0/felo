@@ -3,6 +3,7 @@ import type { Song } from '../../Library/Library'
 import type { HomeSongItem } from '../types'
 import { usePlayerStore } from '../../../hooks/usePlayerStore'
 import { useDownloadStore } from '../../../hooks/useDownloadStore'
+import { usePlaybackArbitration } from '../../../hooks/usePlaybackArbitration'
 import {
   DEFAULT_DOWNLOAD_PRIORITY,
   DOWNLOAD_PRIORITY_SETTING,
@@ -18,7 +19,8 @@ export function useInfiniteRadio(
   librarySongs: Song[],
   setLibrarySongs: React.Dispatch<React.SetStateAction<Song[]>>
 ) {
-  const { setQueue, updateSong, setIsPlaying, currentSongIndex } = usePlayerStore()
+  const { updateSong, setIsPlaying, currentSongIndex } = usePlayerStore()
+  const { requestPlayQueue } = usePlaybackArbitration()
   const { queueTransfer, updateTransfer } = useDownloadStore()
 
   const [isInfiniteRadio, setIsInfiniteRadio] = useState(false)
@@ -188,12 +190,15 @@ export function useInfiniteRadio(
       radioRequestedRef.current.clear()
       radioTransfersRef.current.clear()
       setIsInfiniteRadio(true)
-      setQueue(list, 0)
+      void requestPlayQueue(list, 0, {
+        type: 'radio',
+        title: 'Infinite Radio'
+      })
       if (list[0]) {
         void startRadioDownload(list[0])
       }
     },
-    [librarySongs, setQueue, startRadioDownload]
+    [librarySongs, requestPlayQueue, startRadioDownload]
   )
 
   useEffect(() => {

@@ -190,8 +190,10 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
   const user = useOnlineStore((state) => state.user)
   const activeRemote = useConnectedDeviceStore((state) => state.activePlayback)
   const myDeviceId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : null
+  const isAudioActive = usePlayerStore((state) => state.isAudioActive)
+  const isLocalAudioOwner = isAudioActive && isPlaying
   const isRemoteActive = Boolean(
-    !isPlaying &&
+    !isLocalAudioOwner &&
       activeRemote &&
       activeRemote.activeDeviceId !== myDeviceId &&
       activeRemote.song &&
@@ -516,6 +518,8 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
             className={`hidden xl:flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs no-drag shrink-0 transition-colors ${
               syncStatus === 'missing_song'
                 ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+                : syncStatus === 'host_reconnecting'
+                ? 'border-amber-500/60 bg-amber-500/15 text-amber-300 animate-pulse'
                 : 'border-border/60 bg-surface-elevated text-text'
             }`}
           >
@@ -526,7 +530,11 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
               className="truncate max-w-[120px] font-bold text-[11px] hover:underline cursor-pointer text-left"
               title="Open Listen Together session"
             >
-              {syncStatus === 'missing_song' ? `Missing: ${missingSong?.title || 'Song'}` : joinedRoom.name}
+              {syncStatus === 'missing_song'
+                ? `Missing: ${missingSong?.title || 'Song'}`
+                : syncStatus === 'host_reconnecting'
+                ? 'Host reconnecting...'
+                : joinedRoom.name}
             </button>
             <button
               type="button"
@@ -539,6 +547,7 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
             </button>
           </div>
         )}
+
       </div>
 
       {/* Controls (Center) */}
@@ -647,7 +656,7 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
         </button>
 
         {/* Lyrics */}
-        {Boolean(currentSong) && (
+        {Boolean(displaySong) && (
           <button
             title="Lyrics"
             className={`hover:text-text transition-colors p-1 ${isLyricsActive ? 'text-primary-amber' : ''}`}

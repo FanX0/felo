@@ -6,6 +6,7 @@ import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { findMatchingLibrarySong } from '../../lib/songMatching'
 import type { PersonalizedMix } from '../../services/PersonalizationService'
 import { AppCapabilities } from '../../lib/appConfig'
+import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 
 // Custom Hooks
 import { useHomeData } from './hooks/useHomeData'
@@ -30,6 +31,7 @@ export type { HomeSongItem, HomeAlbumItem }
 export default function Home({ onOpenDownloadPanel }: HomeProps) {
   const navigate = useNavigate()
   const setQueue = usePlayerStore((s) => s.setQueue)
+  const { requestPlaySong, requestPlayQueue } = usePlaybackArbitration()
 
   const [activeTab, setActiveTab] = useState<HomeTabType>('overview')
   const [selectedMix, setSelectedMix] = useState<PersonalizedMix | null>(null)
@@ -73,7 +75,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
       }
 
       if (localSong?.filePath) {
-        setQueue([localSong], 0)
+        requestPlaySong(localSong)
         return
       }
 
@@ -155,7 +157,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
       })
 
       if (queueSongs.length > 0) {
-        setQueue(queueSongs, startIndex, {
+        requestPlayQueue(queueSongs, startIndex, {
           type: 'playlist',
           id: mix.id,
           title: mix.title,

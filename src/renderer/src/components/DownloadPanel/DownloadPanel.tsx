@@ -386,19 +386,33 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
       song: (replaceTargetSong || panelSong || targetSong) as any
     })
     try {
+      const cleanArtwork =
+        (result as any)?.artworkUrl && /^https?:\/\//i.test((result as any).artworkUrl)
+          ? (result as any).artworkUrl
+          : targetSong?.artworkUrl && /^https?:\/\//i.test(targetSong.artworkUrl)
+            ? targetSong.artworkUrl
+            : targetSong?.artworkPath && /^https?:\/\//i.test(targetSong.artworkPath)
+              ? targetSong.artworkPath
+              : (panelSong as any)?.artworkUrl && /^https?:\/\//i.test((panelSong as any).artworkUrl)
+                ? (panelSong as any).artworkUrl
+                : undefined
+
+      const cleanTitle = result.title?.trim() || targetSong?.title?.trim() || (panelSong as any)?.title?.trim() || 'Unknown Track'
+      const cleanArtist = result.artist?.trim() || targetSong?.artist?.trim() || (panelSong as any)?.artist?.trim() || 'Unknown Artist'
+
       const response = await window.api.startDownload({
         transferId,
         source,
         resultId: result.id,
-        title: result.title,
-        artist: result.artist,
+        title: cleanTitle,
+        artist: cleanArtist,
         songId: replaceTargetSong?.id || panelSong?.id || '',
         conflictMode,
         accounts,
         storageMode: playbackMode,
         autoPlay: targetSong?.autoPlay,
         skipIfExists: targetSong?.autoDownload,
-        artworkUrl: (result as any)?.artworkUrl || targetSong?.artworkUrl || (panelSong as any)?.artworkUrl,
+        artworkUrl: cleanArtwork,
         album: result.album || targetSong?.album || panelSong?.album
       })
       if (response.alreadyExists || response.duplicateRequest) {

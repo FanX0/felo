@@ -14,6 +14,7 @@ import { ArtworkImage } from './ArtworkImage'
 import { UnifiedMediaCard } from './UnifiedMediaCard'
 import { usePlayerStore } from '../../../hooks/usePlayerStore'
 import { useDownloadStore } from '../../../hooks/useDownloadStore'
+import { usePlaybackArbitration } from '../../../hooks/usePlaybackArbitration'
 
 interface AppleChartsTabProps {
   onPlaySong: (song: HomeSongItem) => void
@@ -28,7 +29,8 @@ export function AppleChartsTab({
   onChooseSourceOrReplace,
   libraryIndex
 }: AppleChartsTabProps) {
-  const { queue, currentSongIndex, setQueue } = usePlayerStore()
+  const { queue, currentSongIndex } = usePlayerStore()
+  const { requestPlayQueue } = usePlaybackArbitration()
   const { transfers } = useDownloadStore()
   const currentSong = queue[currentSongIndex]
 
@@ -72,7 +74,11 @@ export function AppleChartsTab({
         artworkPath: t.artworkUrl,
         dateAdded: Math.floor(Date.now() / 1000)
       }))
-      setQueue(songItems, 0)
+      void requestPlayQueue(songItems, 0, {
+        type: 'playlist',
+        id: selectedAppleChart?.id || 'apple-chart',
+        title: selectedAppleChart?.name || 'Apple Chart'
+      })
     }
   }
 

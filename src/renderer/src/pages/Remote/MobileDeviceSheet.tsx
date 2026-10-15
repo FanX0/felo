@@ -24,6 +24,7 @@ import {
 } from '../../hooks/useConnectedDeviceStore'
 import { getSupabase, isSupabaseConfigured } from '../../lib/supabase'
 import { detectDeviceInfo, getDeviceDisplayName } from '../../lib/deviceInfo'
+import { resolveSongAudioUrl } from '../../lib/songAudioResolver'
 import type { UserConnectedDevice } from '../../online/types'
 
 interface MobileDeviceSheetProps {
@@ -218,6 +219,8 @@ export default function MobileDeviceSheet({
     if (currentTarget === target && target !== 'mobile') return
     setSwitching(true)
     try {
+      useConnectedDeviceStore.getState().setPlaybackTarget(target)
+
       if (
         target === 'mobile' &&
         activeRemote &&
@@ -227,9 +230,13 @@ export default function MobileDeviceSheet({
         // Pause active remote desktop
         await sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'pause')
 
-        // Hand over song to local mobile player
+        // Hand over song to local mobile player with resolved stream URL
         if (activeRemote.song) {
-          usePlayerStore.getState().setQueue([activeRemote.song], 0, {
+          const songWithStream = {
+            ...activeRemote.song,
+            filePath: resolveSongAudioUrl(activeRemote.song) || activeRemote.song.filePath
+          }
+          usePlayerStore.getState().setQueue([songWithStream], 0, {
             type: 'library',
             title: 'Transferred Playback'
           })
@@ -239,6 +246,18 @@ export default function MobileDeviceSheet({
             }, 80)
           }
         }
+      } else if (target === 'desktop') {
+        const localPlayer = usePlayerStore.getState()
+        const localSong = localPlayer.queue[localPlayer.currentSongIndex]
+        if (localPlayer.isPlaying && localSong && user?.id) {
+          localPlayer.setIsPlaying(false)
+          const targetDeviceId = activeRemote?.activeDeviceId || 'desktop'
+          void sendDeviceCommand(user.id, targetDeviceId, 'play', {
+            songId: localSong.id,
+            song: localSong,
+            position: localPlayer.currentTime
+          })
+        }
       }
       await remoteClient.setTargetDevice(target)
     } finally {
@@ -247,6 +266,7 @@ export default function MobileDeviceSheet({
   }
 
   const handleConnectToDevice = async (device: UserConnectedDevice) => {
+    useConnectedDeviceStore.getState().setPlaybackTarget('desktop')
     if (device.local_ip) {
       const targetUrl = `http://${device.local_ip}:${device.port || 4788}`
       remoteClient.configure(targetUrl, device.token || '')

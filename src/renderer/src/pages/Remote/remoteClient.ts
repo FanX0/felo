@@ -106,6 +106,21 @@ class RemoteClient {
       const data = await this.request('/v1/status')
       if (data && typeof data === 'object') {
         if (this.targetDevice === 'mobile') {
+          // If mobile is NOT playing audio locally, but desktop is actively playing, do NOT hijack or mask desktop!
+          // Respect active PC playback and switch to desktop target.
+          if (data.isPlaying && !this.mobileIsPlaying) {
+            this.targetDevice = 'desktop'
+            localStorage.setItem('felo_playback_target', 'desktop')
+            this.notifyTarget()
+            this.currentState = {
+              ...this.currentState,
+              ...data,
+              targetDevice: 'desktop'
+            }
+            this.notifyState()
+            return
+          }
+
           this.currentState = {
             ...this.currentState,
             ...data,
@@ -467,8 +482,23 @@ class RemoteClient {
               targetDevice: 'both'
             }
           } else if (this.targetDevice === 'mobile') {
-            // If phone target is active and desktop starts playing, ensure desktop stays paused
-            if (data.isPlaying) {
+            // If mobile is NOT playing audio locally, but desktop is actively playing, do NOT hijack or pause desktop!
+            // Respect active PC playback and reflect desktop as the master target.
+            if (data.isPlaying && !this.mobileIsPlaying) {
+              this.targetDevice = 'desktop'
+              localStorage.setItem('felo_playback_target', 'desktop')
+              this.notifyTarget()
+              this.currentState = {
+                ...this.currentState,
+                ...data,
+                targetDevice: 'desktop'
+              }
+              this.notifyState()
+              return
+            }
+
+            // Only if mobile is actively playing its own local audio, keep desktop paused
+            if (data.isPlaying && this.mobileIsPlaying) {
               void this.request('/v1/player/pause', {
                 method: 'POST',
                 body: JSON.stringify({})

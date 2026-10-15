@@ -49,6 +49,7 @@ declare global {
       }) => Promise<any>
       testDiscordWebhook: (url: string) => Promise<{ success: boolean; message: string }>
       updateDiscordRoomInfo: (info: { code: string; name?: string; members?: number }) => void
+      registerDiscordCommands: () => Promise<{ success: boolean; message: string; count?: number }>
 
       // Music Presence
       setupMusicPresence: () => Promise<{ success: boolean; status?: any; error?: string }>
@@ -315,6 +316,7 @@ declare global {
       }) => Promise<any>
       testDiscordWebhook: (url: string) => Promise<{ success: boolean; message: string }>
       updateDiscordRoomInfo: (info: { code: string; name?: string; members?: number }) => void
+      registerDiscordCommands: () => Promise<{ success: boolean; message: string; count?: number }>
 
       // Music Presence
       setupMusicPresence: () => Promise<{ success: boolean; status?: any; error?: string }>

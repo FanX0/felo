@@ -1659,6 +1659,7 @@ const webApi: Window['api'] = {
   }),
   updateDiscordSettings: async () => desktopOnly(),
   testDiscordWebhook: async () => ({ success: false, message: 'Webhooks are desktop only' }),
+  registerDiscordCommands: async () => ({ success: false, message: 'Discord command registration is desktop only' }),
   updateDiscordRoomInfo: () => undefined,
   setupMusicPresence: async () => ({ success: false, error: 'Desktop only' }),
   getMusicPresenceStatus: async () => ({

@@ -36,6 +36,7 @@ import { AppCapabilities } from '../../lib/appConfig'
 import { remoteClient } from '../Remote/remoteClient'
 import { remoteLibraryService } from '../../services/RemoteLibraryService'
 import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
+import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 
 type ArtistPageTrack = {
   id: string
@@ -151,7 +152,6 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
     flyoutArtist: boolean
   } | null>(null)
   const {
-    setQueue,
     togglePlay,
     enqueueSong,
     queue,
@@ -162,7 +162,6 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
     playbackContext
   } = usePlayerStore(
     useShallow((s) => ({
-      setQueue: s.setQueue,
       togglePlay: s.togglePlay,
       enqueueSong: s.enqueueSong,
       queue: s.queue,
@@ -174,6 +173,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
     }))
   )
   const { transfers } = useDownloadStore()
+  const { requestPlayQueue } = usePlaybackArbitration()
 
   const [isRemoteConnected, setIsRemoteConnected] = useState(remoteClient.getIsConnected())
 
@@ -461,7 +461,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
       route: `/artist/${encodeURIComponent(decodedName)}`
     }
 
-    setQueue(allArtistSongs, 0, artistContext)
+    requestPlayQueue(allArtistSongs, 0, artistContext)
     if (!artistTracks[0]?.localSong) {
       usePlayerStore.getState().setIsBuffering(true)
     }
@@ -478,7 +478,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
 
     if (!isShuffle) toggleShuffle()
     const randomIndex = Math.floor(Math.random() * allArtistSongs.length)
-    setQueue(allArtistSongs, randomIndex, artistContext)
+    requestPlayQueue(allArtistSongs, randomIndex, artistContext)
     if (!artistTracks[randomIndex]?.localSong) {
       usePlayerStore.getState().setIsBuffering(true)
     }
@@ -502,7 +502,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
         localSongs
       )
       if (radioStation.length > 0) {
-        setQueue(radioStation, 0, {
+        requestPlayQueue(radioStation, 0, {
           type: 'radio' as const,
           title: `${decodedName} Radio`,
           route: `/artist/${encodeURIComponent(decodedName)}`
@@ -556,7 +556,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
       route: `/artist/${encodeURIComponent(decodedName)}`
     }
 
-    setQueue(allArtistSongs, effectiveIndex, artistContext)
+    requestPlayQueue(allArtistSongs, effectiveIndex, artistContext)
   }
 
   const handleDownloadTrack = (track: ArtistPageTrack) => {

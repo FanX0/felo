@@ -30,6 +30,7 @@ import { AppCapabilities } from '../../lib/appConfig'
 import { remoteClient } from '../Remote/remoteClient'
 import { remoteLibraryService } from '../../services/RemoteLibraryService'
 import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
+import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 
 interface AlbumPageProps {
   onOpenDownloadPanel?: (target: DownloadTarget) => void
@@ -69,11 +70,11 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
   const albumArtist = decodeURIComponent(artist)
   const albumTitle = decodeURIComponent(title)
   const navigate = useNavigate()
+  const { requestPlayQueue } = usePlaybackArbitration()
   const [tracks, setTracks] = useState<AlbumTrack[]>([])
   const [librarySongs, setLibrarySongs] = useState<Song[]>([])
   const [artwork, setArtwork] = useState('')
   const {
-    setQueue,
     enqueueSong,
     togglePlay,
     queue,
@@ -396,7 +397,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
     }
 
     // Set the entire album into the player queue with Spotify-standard scoped context!
-    setQueue(allAlbumSongs, index, albumContext)
+    requestPlayQueue(allAlbumSongs, index, albumContext)
   }
 
   const handlePlayAlbum = () => {

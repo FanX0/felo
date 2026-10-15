@@ -80,6 +80,7 @@ export default function DownloadEventBridge(): null {
                 player.setIsBuffering(false)
               }
               if (transfer?.autoPlay || player.isPlaying) {
+                player.claimAudioOwnership()
                 player.setIsPlaying(true)
               }
             } else {
@@ -101,6 +102,7 @@ export default function DownloadEventBridge(): null {
                     player.setIsBuffering(false)
                   }
                   if (transfer?.autoPlay || player.isPlaying) {
+                    player.claimAudioOwnership()
                     player.setIsPlaying(true)
                   }
                 }
@@ -118,6 +120,7 @@ export default function DownloadEventBridge(): null {
                     // Update the active track in-place rather than wiping the user's queue
                     player.updateSong(completedSong, currentActive?.id)
                     player.setIsBuffering(false)
+                    player.claimAudioOwnership()
                     player.setIsPlaying(true)
                   } else {
                     player.enqueueSongNext(completedSong)

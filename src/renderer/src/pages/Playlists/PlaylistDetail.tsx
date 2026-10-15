@@ -38,6 +38,7 @@ import ArtistLinks from '../../components/Common/ArtistLinks'
 import SongCreditsModal from '../../components/Common/SongCreditsModal'
 import { parseArtists } from '../../lib/artistParser'
 import { AppCapabilities } from '../../lib/appConfig'
+import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 
 function formatDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return '0:00'
@@ -98,7 +99,6 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     currentSongIndex,
     isPlaying,
     isShuffle,
-    setQueue,
     enqueueSong,
     togglePlay,
     toggleShuffle,
@@ -109,7 +109,6 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
       currentSongIndex: s.currentSongIndex,
       isPlaying: s.isPlaying,
       isShuffle: s.isShuffle,
-      setQueue: s.setQueue,
       enqueueSong: s.enqueueSong,
       togglePlay: s.togglePlay,
       toggleShuffle: s.toggleShuffle,
@@ -118,6 +117,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   )
   const { transfers } = useDownloadStore()
   const { configured, initialized, user } = useOnlineStore()
+  const { requestPlayQueue } = usePlaybackArbitration()
   const [playlist, setPlaylist] = useState<Playlist | null>(null)
   const [librarySongs, setLibrarySongs] = useState<Song[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -339,7 +339,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     if (isCurrentPlaylist) {
       togglePlay()
     } else {
-      setQueue(allPlaylistSongs, 0, playlistContext)
+      requestPlayQueue(allPlaylistSongs, 0, playlistContext)
       if (!allPlaylistSongs[0]?.filePath || allPlaylistSongs[0].filePath.startsWith('virtual:')) {
         usePlayerStore.getState().setIsBuffering(true)
       }
@@ -350,7 +350,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     if (!allPlaylistSongs.length) return
     if (!isShuffle) toggleShuffle()
     const randomIndex = Math.floor(Math.random() * allPlaylistSongs.length)
-    setQueue(allPlaylistSongs, randomIndex, playlistContext)
+    requestPlayQueue(allPlaylistSongs, randomIndex, playlistContext)
     if (
       !allPlaylistSongs[randomIndex]?.filePath ||
       allPlaylistSongs[randomIndex].filePath.startsWith('virtual:')
@@ -398,7 +398,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
       }
     }
 
-    setQueue(allPlaylistSongs, effectiveIndex, playlistContext)
+    requestPlayQueue(allPlaylistSongs, effectiveIndex, playlistContext)
   }
 
   const handleDownloadTrack = (song: Song, autoPlay = false) => {
@@ -841,7 +841,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
                       event.stopPropagation()
                       if (isDownloaded) {
                         const dlIndex = downloadedSongs.findIndex((s) => s.id === song.id)
-                        if (dlIndex >= 0) setQueue(downloadedSongs, dlIndex, playlistContext)
+                        if (dlIndex >= 0) requestPlayQueue(downloadedSongs, dlIndex, playlistContext)
                       } else {
                         handleDownloadTrack(song)
                       }

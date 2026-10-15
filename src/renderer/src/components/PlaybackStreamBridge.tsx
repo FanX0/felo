@@ -141,6 +141,7 @@ export default function PlaybackStreamBridge(): null {
         if (localMatch && localMatch.filePath) {
           usePlayerStore.getState().updateSong(localMatch as any, currentSong.id)
           usePlayerStore.getState().setIsBuffering(false)
+          usePlayerStore.getState().claimAudioOwnership()
           usePlayerStore.getState().setIsPlaying(true)
           activeInFlightRef.current = false
           activeTransferIdRef.current = null

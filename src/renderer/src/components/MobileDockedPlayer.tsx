@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Play, Pause, SkipForward, Laptop2, Smartphone, Radio } from 'lucide-react'
 import { remoteClient, type RemotePlayerState, type PlaybackTarget } from '../pages/Remote/remoteClient'
 import { usePlayerStore } from '../hooks/usePlayerStore'
@@ -19,6 +19,8 @@ interface MobileDockedPlayerProps {
 export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDockedPlayerProps) {
   const [remoteState, setRemoteState] = useState<RemotePlayerState>(() => remoteClient.getState())
   const [isRemoteConnected, setIsRemoteConnected] = useState(() => remoteClient.getIsConnected())
+  const touchStartXRef = useRef<number | null>(null)
+  const touchStartYRef = useRef<number | null>(null)
 
   const user = useOnlineStore((s) => s.user)
   const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
@@ -30,6 +32,8 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
   const localCurrentTime = usePlayerStore((s) => s.currentTime)
   const localDuration = usePlayerStore((s) => s.duration)
   const localSong = localQueue[localIndex]
+  const isAudioActive = usePlayerStore((s) => s.isAudioActive)
+  const isLocalAudioOwner = isAudioActive && localIsPlaying
 
   const [, setTick] = useState(0)
 
@@ -44,7 +48,7 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
 
   // Cloud Realtime active device check
   const isCloudRemoteActive = Boolean(
-    !localIsPlaying &&
+    !isLocalAudioOwner &&
       activeRemote &&
       (myDeviceId ? activeRemote.activeDeviceId !== myDeviceId : true) &&
       activeRemote.song
@@ -133,9 +137,6 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
     onOpenDevices()
   }
 
-  const [touchStartX, setTouchStartX] = useState<number | null>(null)
-  const [touchStartY, setTouchStartY] = useState<number | null>(null)
-
   const handleNext = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (isCloudRemoteActive && activeRemote && user?.id) {
@@ -158,14 +159,14 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
   }
 
   const handleTouchStart = (e: React.TouchEvent) => {
-    setTouchStartX(e.touches[0].clientX)
-    setTouchStartY(e.touches[0].clientY)
+    touchStartXRef.current = e.touches[0].clientX
+    touchStartYRef.current = e.touches[0].clientY
   }
 
   const handleTouchEnd = (e: React.TouchEvent) => {
-    if (touchStartX === null || touchStartY === null) return
-    const deltaX = e.changedTouches[0].clientX - touchStartX
-    const deltaY = e.changedTouches[0].clientY - touchStartY
+    if (touchStartXRef.current === null || touchStartYRef.current === null) return
+    const deltaX = e.changedTouches[0].clientX - touchStartXRef.current
+    const deltaY = e.changedTouches[0].clientY - touchStartYRef.current
     if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 45) {
       if (deltaX < 0) {
         // Swipe left -> Next
@@ -175,8 +176,8 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
         handlePrevious()
       }
     }
-    setTouchStartX(null)
-    setTouchStartY(null)
+    touchStartXRef.current = null
+    touchStartYRef.current = null
   }
 
   return (

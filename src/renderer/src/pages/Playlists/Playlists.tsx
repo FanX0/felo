@@ -16,7 +16,7 @@ import {
   X
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 import { toMediaUrl } from '../../lib/media'
 import HighlightMatch from '../../components/Common/HighlightMatch'
 import { AppCapabilities, isPublicMode } from '../../lib/appConfig'
@@ -24,7 +24,7 @@ import { Playlist } from './types'
 
 export default function Playlists() {
   const navigate = useNavigate()
-  const setQueue = usePlayerStore((s) => s.setQueue)
+  const { requestPlayQueue } = usePlaybackArbitration()
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchOpen, setIsSearchOpen] = useState(false)
@@ -84,7 +84,14 @@ export default function Playlists() {
 
   const playPlaylist = async (playlistId: string) => {
     const playlist = (await window.api.getPlaylist(playlistId)) as Playlist | null
-    if (playlist?.songs?.length) setQueue(playlist.songs, 0)
+    if (playlist?.songs?.length) {
+      void requestPlayQueue(playlist.songs, 0, {
+        type: 'playlist',
+        id: playlistId,
+        title: playlist.name,
+        route: `/playlists/${playlistId}`
+      })
+    }
   }
 
   const renamePlaylist = async (playlistId: string) => {

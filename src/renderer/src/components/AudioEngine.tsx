@@ -6,6 +6,7 @@ import { toMediaUrl } from '../lib/media'
 import { recordCertifiedScrobble } from '../lib/playbackEvents'
 import type { Song } from '../pages/Library/Library'
 import { remoteClient } from '../pages/Remote/remoteClient'
+import { resolveSongAudioUrl } from '../lib/songAudioResolver'
 
 function shouldMaskMediaSession(): boolean {
   const { isPrivateSession, maskMediaSession } = usePrivateSessionStore.getState()
@@ -42,7 +43,44 @@ function getArtworkEntries(srcs: string[], type: string): MediaImage[] {
   )
 }
 
+function safeSetMediaMetadata(metadata: {
+  title: string
+  artist: string
+  album?: string
+  artwork?: MediaImage[]
+} | null): void {
+  if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
+  try {
+    if (!metadata) {
+      navigator.mediaSession.metadata = null
+      return
+    }
+    if (typeof MediaMetadata === 'undefined') return
 
+    const safeArtwork = (metadata.artwork || []).filter((art) => {
+      if (!art || !art.src) return false
+      return /^(https?:|data:|blob:|\/|\.\/)/i.test(art.src)
+    })
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: metadata.title || '',
+      artist: metadata.artist || '',
+      album: metadata.album || 'Felo',
+      artwork: safeArtwork
+    })
+  } catch (err) {
+    console.warn('[AudioEngine] safeSetMediaMetadata error ignored:', err)
+  }
+}
+
+function safeSetPlaybackState(state: 'none' | 'paused' | 'playing'): void {
+  if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
+  try {
+    navigator.mediaSession.playbackState = state
+  } catch {
+    // ignore
+  }
+}
 
 async function getArtworkSource(song?: Song) {
   const artworkUrl = toMediaUrl(song?.artworkPath) || song?.artworkUrl
@@ -66,10 +104,11 @@ function updateMediaPosition(audio: HTMLAudioElement): void {
   if (!Number.isFinite(audio.duration) || audio.duration <= 0) return
 
   try {
+    const curTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0
     navigator.mediaSession.setPositionState({
       duration: audio.duration,
       playbackRate: audio.playbackRate || 1,
-      position: Math.min(audio.currentTime, audio.duration)
+      position: Math.max(0, Math.min(curTime, audio.duration))
     })
   } catch (error) {
     console.warn('Failed to update media position state:', error)
@@ -126,21 +165,30 @@ export default function AudioEngine() {
   )
 
   const startPlayback = (audio: HTMLAudioElement) => {
+    if (!audio.src) return
     remoteClient.pauseMobileAudio()
-    audio.play().then(
-      () => undefined,
-      (error) => {
-        if (error instanceof DOMException && error.name === 'AbortError') return
-        // If we are currently changing sources or audio is still decoding/fetching metadata,
-        // play() naturally rejects before the browser decodes data.
-        // DO NOT reset isPlaying to false in that case! onCanPlay will resume playback.
-        if (isChangingSourceRef.current || audio.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-          return
-        }
-        console.warn('Playback failed:', error)
-        usePlayerStore.getState().setIsPlaying(false)
+    try {
+      const playPromise = audio.play()
+      if (playPromise !== undefined) {
+        playPromise.then(
+          () => undefined,
+          (error) => {
+            if (error instanceof DOMException && error.name === 'AbortError') return
+            // If we are currently changing sources or audio is still decoding/fetching metadata,
+            // play() naturally rejects before the browser decodes data.
+            // DO NOT reset isPlaying to false in that case! onCanPlay will resume playback.
+            if (isChangingSourceRef.current || audio.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+              return
+            }
+            console.warn('Playback failed:', error)
+            usePlayerStore.getState().setIsPlaying(false)
+          }
+        )
       }
-    )
+    } catch (err) {
+      console.warn('Synchronous play() exception:', err)
+      usePlayerStore.getState().setIsPlaying(false)
+    }
   }
 
   const resumePendingPlayback = (audio: HTMLAudioElement) => {
@@ -156,32 +204,33 @@ export default function AudioEngine() {
     if (!audio) return
 
     const syncAudio = (state: ReturnType<typeof usePlayerStore.getState>) => {
-      const song = state.queue[state.currentSongIndex]
-      const isVirtual = !song?.filePath || song.filePath.startsWith('virtual:')
-      if (isVirtual) {
-        currentSourceRef.current = null
-        retryCountRef.current = 0
-        if ('mediaSession' in navigator) {
+      try {
+        const song = state.queue[state.currentSongIndex]
+        const playableUrl = song ? resolveSongAudioUrl(song) : null
+        const isVirtual = !playableUrl
+        if (isVirtual) {
+          currentSourceRef.current = null
+          retryCountRef.current = 0
           if (song) {
             if (shouldMaskMediaSession()) {
-              navigator.mediaSession.metadata = new MediaMetadata({
+              safeSetMediaMetadata({
                 title: 'Private Session',
                 artist: 'Felo',
                 album: 'Private Listening',
                 artwork: []
               })
-              navigator.mediaSession.playbackState = (state.isPlaying && state.isAudioActive) || state.isBuffering ? 'playing' : 'paused'
+              safeSetPlaybackState((state.isPlaying && state.isAudioActive) || state.isBuffering ? 'playing' : 'paused')
             } else {
-              navigator.mediaSession.metadata = new MediaMetadata({
+              safeSetMediaMetadata({
                 title: song.title || 'Buffering Track...',
                 artist: song.artist || '',
                 album: song.album || 'Felo',
                 artwork: []
               })
-              navigator.mediaSession.playbackState = (state.isPlaying && state.isAudioActive) || state.isBuffering ? 'playing' : 'paused'
+              safeSetPlaybackState((state.isPlaying && state.isAudioActive) || state.isBuffering ? 'playing' : 'paused')
               void getArtworkSource(song).then((artwork) => {
                 if (!artwork || shouldMaskMediaSession()) return
-                navigator.mediaSession.metadata = new MediaMetadata({
+                safeSetMediaMetadata({
                   title: song.title || 'Buffering Track...',
                   artist: song.artist || '',
                   album: song.album || 'Felo',
@@ -190,72 +239,73 @@ export default function AudioEngine() {
               })
             }
           } else {
-            navigator.mediaSession.metadata = null
-            navigator.mediaSession.playbackState = 'none'
+            safeSetMediaMetadata(null)
+            safeSetPlaybackState('none')
           }
+          if (audio.src) {
+            audio.pause()
+            audio.removeAttribute('src')
+            audio.load()
+          }
+          return
         }
-        if (audio.src) {
-          audio.pause()
-          audio.removeAttribute('src')
-          audio.load()
+
+        const sourceUrl = playableUrl ?? ''
+        if (currentSourceRef.current !== sourceUrl) {
+          currentSourceRef.current = sourceUrl
+          isChangingSourceRef.current = true
+          retryCountRef.current = 0
+          scrobbledSongIdRef.current = null
+          playTimeAccumulatedRef.current = 0
+          lastPlayTickRef.current = performance.now()
+          audio.src = sourceUrl
+          audio.currentTime = 0
+          audio.playbackRate = 1.0
+          setCurrentTime(0)
+          setDuration(song.duration || 0)
         }
-        return
-      }
 
-      const sourceUrl = toMediaUrl(song.filePath) ?? ''
-      if (currentSourceRef.current !== sourceUrl) {
-        currentSourceRef.current = sourceUrl
-        isChangingSourceRef.current = true
-        retryCountRef.current = 0
-        scrobbledSongIdRef.current = null
-        playTimeAccumulatedRef.current = 0
-        lastPlayTickRef.current = performance.now()
-        audio.src = sourceUrl
-        audio.currentTime = 0
-        setCurrentTime(0)
-        setDuration(song.duration || 0)
-      }
-
-      if ('mediaSession' in navigator) {
         if (shouldMaskMediaSession()) {
-          navigator.mediaSession.metadata = new MediaMetadata({
+          safeSetMediaMetadata({
             title: 'Private Session',
             artist: 'Felo',
             album: 'Private Listening',
             artwork: []
           })
-          navigator.mediaSession.playbackState = state.isPlaying && state.isAudioActive ? 'playing' : 'paused'
+          safeSetPlaybackState(state.isPlaying && state.isAudioActive ? 'playing' : 'paused')
           updateMediaPosition(audio)
         } else {
           const metadataGeneration = ++mediaMetadataGenerationRef.current
-          navigator.mediaSession.metadata = new MediaMetadata({
+          safeSetMediaMetadata({
             title: song.title || 'Unknown Track',
             artist: song.artist || 'Unknown Artist',
             album: song.album || 'Felo',
             artwork: []
           })
-          navigator.mediaSession.playbackState = state.isPlaying && state.isAudioActive ? 'playing' : 'paused'
+          safeSetPlaybackState(state.isPlaying && state.isAudioActive ? 'playing' : 'paused')
           updateMediaPosition(audio)
 
           void getArtworkSource(song).then((artwork) => {
             if (metadataGeneration !== mediaMetadataGenerationRef.current || shouldMaskMediaSession()) return
-            navigator.mediaSession.metadata = new MediaMetadata({
+            safeSetMediaMetadata({
               title: song.title || 'Unknown Track',
               artist: song.artist || 'Unknown Artist',
               album: song.album || 'Felo',
               artwork: artwork ? getArtworkEntries(artwork.srcs, artwork.type) : []
             })
-            navigator.mediaSession.playbackState = usePlayerStore.getState().isPlaying && usePlayerStore.getState().isAudioActive ? 'playing' : 'paused'
+            safeSetPlaybackState(usePlayerStore.getState().isPlaying && usePlayerStore.getState().isAudioActive ? 'playing' : 'paused')
             updateMediaPosition(audio)
           })
         }
-      }
 
-      // ONLY play audio if this tab is the designated active audio instance
-      if (state.isPlaying && state.isAudioActive) {
-        startPlayback(audio)
-      } else {
-        audio.pause()
+        // ONLY play audio if this tab is the designated active audio instance
+        if (state.isPlaying && state.isAudioActive) {
+          startPlayback(audio)
+        } else {
+          audio.pause()
+        }
+      } catch (syncErr) {
+        console.warn('[AudioEngine syncAudio caught error]:', syncErr)
       }
     }
 
@@ -317,8 +367,8 @@ export default function AudioEngine() {
       setHandler('seekbackward', null)
       setHandler('seekforward', null)
       setHandler('seekto', null)
-      navigator.mediaSession.metadata = null
-      navigator.mediaSession.playbackState = 'none'
+      safeSetMediaMetadata(null)
+      safeSetPlaybackState('none')
     }
   }, [playNext, playPrevious, seek, setIsPlaying])
 
@@ -368,17 +418,17 @@ export default function AudioEngine() {
         if (!usePlayerStore.getState().isPlaying) {
           setIsPlaying(true)
         }
-        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'
+        safeSetPlaybackState('playing')
         updateMediaPosition(event.currentTarget)
       }}
       onPause={(event) => {
         const storeState = usePlayerStore.getState()
         const activeSong = storeState.queue[storeState.currentSongIndex]
-        const isVirtual = !activeSong?.filePath || activeSong.filePath.startsWith('virtual:')
+        const isVirtual = !resolveSongAudioUrl(activeSong)
         if (!isVirtual && !storeState.isBuffering) {
           setIsBuffering(false)
         }
-        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
+        safeSetPlaybackState('paused')
         // Synchronize store if paused externally (Bluetooth, OS controls, etc.)
         // ONLY if this tab is the active audio owner!
         if (
@@ -448,7 +498,7 @@ export default function AudioEngine() {
         const storeState = usePlayerStore.getState()
         if (!storeState.isAudioActive) return
         const activeSong = storeState.queue[storeState.currentSongIndex]
-        const isVirtual = !activeSong?.filePath || activeSong.filePath.startsWith('virtual:')
+        const isVirtual = !resolveSongAudioUrl(activeSong)
         if (isVirtual || !event.currentTarget.src) {
           // Virtual track or cleared audio source; ignore synthetic DOM error
           return

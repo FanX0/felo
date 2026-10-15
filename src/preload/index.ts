@@ -72,6 +72,8 @@ const api = {
     ipcRenderer.invoke('discord:test-webhook', url),
   updateDiscordRoomInfo: (info: { code: string; name?: string; members?: number }): void =>
     ipcRenderer.send('discord:update-room-info', info),
+  registerDiscordCommands: (): Promise<{ success: boolean; message: string; count?: number }> =>
+    ipcRenderer.invoke('discord:register-commands'),
   // Library
   selectFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:openDirectory'),
   scanLibrary: (folderPath: string): Promise<number> =>

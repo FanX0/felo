@@ -35,8 +35,10 @@ export default function CrossTabSyncBridge(): null {
         const deviceKey = await getDeterministicDeviceKey()
         if (isDisposed) return
 
+        // Scoped to deterministic machine key so tabs on the SAME physical computer coordinate,
+        // while different physical devices (PC vs Phone) manage remote playback via DevicePresenceBridge.
         const channelTopic = user?.id
-          ? `user_sync_${user.id}`
+          ? `device_sync_${deviceKey}_${user.id}`
           : `device_sync_${deviceKey}`
 
         const supabase = getSupabase()

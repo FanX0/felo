@@ -2111,71 +2111,95 @@ export class DownloadService {
       videoUrl = request.resultId
     } else if (request.resultId.startsWith('ytsearch')) {
       videoUrl = request.resultId
-    } else {
-      if (!/^[a-zA-Z0-9_-]{11}$/.test(request.resultId)) {
-        throw new Error('Invalid YouTube video ID format.')
-      }
+    } else if (/^[a-zA-Z0-9_-]{11}$/.test(request.resultId)) {
       videoUrl = `https://www.youtube.com/watch?v=${request.resultId}`
+    } else {
+      videoUrl = `ytsearch1:${request.artist} ${request.title}`
     }
 
-    const args = [
-      ...prefixArgs,
-      '-x',
-      '--audio-format',
-      'mp3',
-      '--audio-quality',
-      '0',
-      '--no-playlist',
-      '--newline',
-      '--format',
-      'bestaudio/best',
-      '--retries',
-      '3',
-      '--fragment-retries',
-      '3',
-      '--socket-timeout',
-      '30',
-      '--no-warnings',
-      '--force-overwrites',
-      '--embed-metadata',
-      '--write-thumbnail',
-      '-o',
-      path.join(stagingDirectory, '%(title)s.%(ext)s')
-    ]
+    const buildArgs = (targetUrl: string) => {
+      const list = [
+        ...prefixArgs,
+        '-x',
+        '--audio-format',
+        'mp3',
+        '--audio-quality',
+        '0',
+        '--no-playlist',
+        '--newline',
+        '--format',
+        'bestaudio/best',
+        '--retries',
+        '3',
+        '--fragment-retries',
+        '3',
+        '--socket-timeout',
+        '30',
+        '--no-warnings',
+        '--no-check-certificates',
+        '--extractor-args',
+        'youtube:player_client=android,web',
+        '--force-overwrites',
+        '--embed-metadata',
+        '--write-thumbnail',
+        '-o',
+        path.join(stagingDirectory, '%(title)s.%(ext)s')
+      ]
 
-    if (ffmpegLoc && ffmpegLoc !== 'ffmpeg') {
-      args.push('--ffmpeg-location', ffmpegLoc)
+      if (ffmpegLoc && ffmpegLoc !== 'ffmpeg') {
+        list.push('--ffmpeg-location', ffmpegLoc)
+      }
+
+      list.push('--', targetUrl)
+      return list
     }
 
-    // Use '--' delimiter to prevent command line argument/flag injection
-    args.push('--', videoUrl)
+    const progressHandler = (chunk: string) => {
+      const percentMatch = /\[download\]\s+(\d+(?:\.\d+)?)%/i.exec(chunk)
+      if (percentMatch) {
+        const pct = parseFloat(percentMatch[1])
+        const scaled = Math.min(90, 10 + Math.floor(pct * 0.8))
+        emitProgress({
+          transferId: request.transferId,
+          status: 'downloading',
+          progress: scaled,
+          message: `Downloading YouTube audio (${pct.toFixed(0)}%)...`
+        })
+      } else if (chunk.includes('[ExtractAudio]')) {
+        emitProgress({
+          transferId: request.transferId,
+          status: 'downloading',
+          progress: 92,
+          message: 'Converting audio with ffmpeg...'
+        })
+      }
+    }
 
-    await runCommand(
-      command,
-      args,
-      (chunk) => {
-        const percentMatch = /\[download\]\s+(\d+(?:\.\d+)?)%/i.exec(chunk)
-        if (percentMatch) {
-          const pct = parseFloat(percentMatch[1])
-          const scaled = Math.min(90, 10 + Math.floor(pct * 0.8))
-          emitProgress({
-            transferId: request.transferId,
-            status: 'downloading',
-            progress: scaled,
-            message: `Downloading YouTube audio (${pct.toFixed(0)}%)...`
-          })
-        } else if (chunk.includes('[ExtractAudio]')) {
-          emitProgress({
-            transferId: request.transferId,
-            status: 'downloading',
-            progress: 92,
-            message: 'Converting audio with ffmpeg...'
-          })
-        }
-      },
-      180000,
-      signal
-    )
+    let downloadSucceeded = false
+    try {
+      await runCommand(command, buildArgs(videoUrl), progressHandler, 180000, signal)
+      const initialFiles = getAudioFiles(stagingDirectory)
+      if (initialFiles.length > 0) {
+        downloadSucceeded = true
+      }
+    } catch (primaryErr) {
+      console.warn('[DownloadService] Primary YouTube attempt failed, checking fallback:', primaryErr)
+    }
+
+    if (!downloadSucceeded && !signal.aborted && !videoUrl.startsWith('ytsearch')) {
+      const fallbackUrl = `ytsearch1:${request.artist} ${request.title}`
+      emitProgress({
+        transferId: request.transferId,
+        status: 'downloading',
+        progress: 15,
+        message: 'Direct video unavailable, searching YouTube fallback...'
+      })
+      try {
+        await runCommand(command, buildArgs(fallbackUrl), progressHandler, 180000, signal)
+      } catch (fallbackErr) {
+        console.warn('[DownloadService] YouTube search fallback also failed:', fallbackErr)
+      }
+    }
 
     if (signal.aborted) throw new Error('Download cancelled')
 

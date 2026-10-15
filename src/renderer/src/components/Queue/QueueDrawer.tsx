@@ -16,6 +16,9 @@ import {
 } from 'lucide-react'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
+import { useOnlineStore } from '../../hooks/useOnlineStore'
+import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
+import { sendDeviceCommand } from '../../hooks/useConnectedDeviceStore'
 import { toMediaUrl } from '../../lib/media'
 import type { Song } from '../../pages/Library/Library'
 import ArtistLinks from '../Common/ArtistLinks'
@@ -35,13 +38,14 @@ function formatDuration(seconds?: number): string {
 }
 
 export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
+  const user = useOnlineStore((s) => s.user)
+  const { isExternalDevicePlaying, activeRemoteDevice, requestPlayQueue } = usePlaybackArbitration()
   const queue = usePlayerStore((s) => s.queue)
   const currentSongIndex = usePlayerStore((s) => s.currentSongIndex)
   const isPlaying = usePlayerStore((s) => s.isPlaying)
   const isBuffering = usePlayerStore((s) => s.isBuffering)
   const isShuffle = usePlayerStore((s) => s.isShuffle)
   const playbackContext = usePlayerStore((s) => s.playbackContext)
-  const playSong = usePlayerStore((s) => s.playSong)
   const togglePlay = usePlayerStore((s) => s.togglePlay)
   const reorderQueue = usePlayerStore((s) => s.reorderQueue)
   const bumpSongToPriority = usePlayerStore((s) => s.bumpSongToPriority)
@@ -64,7 +68,22 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
     setTouchStartY(null)
   }
 
-  const currentSong: Song | undefined = queue[currentSongIndex]
+  const activeSong = (isExternalDevicePlaying && activeRemoteDevice?.song) ? activeRemoteDevice.song : queue[currentSongIndex]
+  const isDisplayPlaying = isExternalDevicePlaying && activeRemoteDevice ? activeRemoteDevice.isPlaying : isPlaying
+
+  const handleTogglePlay = () => {
+    if (isExternalDevicePlaying && activeRemoteDevice) {
+      void sendDeviceCommand(
+        user?.id || '',
+        activeRemoteDevice.activeDeviceId,
+        activeRemoteDevice.isPlaying ? 'pause' : 'play'
+      )
+      return
+    }
+    togglePlay()
+  }
+
+  const currentSong: Song | undefined = activeSong
 
   const upcomingSongs = useMemo(() => {
     if (currentSongIndex < 0 || currentSongIndex >= queue.length - 1) return []
@@ -120,8 +139,8 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
             {upcomingSongs.length > 0 && (
               <button
                 type="button"
-                onClick={clearUpcomingQueue}
-                title="Clear upcoming queue"
+                onClick={() => clearUpcomingQueue(true)}
+                title="Clear upcoming queue (preserves active priority requests)"
                 className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold text-text-muted transition-colors hover:bg-white/10 hover:text-danger cursor-pointer whitespace-nowrap active:scale-95"
               >
                 <Trash2 className="h-3.5 w-3.5" />
@@ -166,11 +185,11 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
                 />
                 <button
                   type="button"
-                  onClick={togglePlay}
-                  title={isPlaying ? 'Pause' : 'Play'}
+                  onClick={handleTogglePlay}
+                  title={isDisplayPlaying ? 'Pause' : 'Play'}
                   className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity text-white"
                 >
-                  {isPlaying ? (
+                  {isDisplayPlaying ? (
                     <Pause className="h-5 w-5 fill-current" />
                   ) : (
                     <Play className="h-5 w-5 fill-current" />
@@ -229,7 +248,7 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
                   <div
                     key={`${song.id}-${actualIndex}`}
                     className="group flex items-center gap-3 rounded-md px-2.5 py-2 hover:bg-white/10 transition-colors cursor-pointer"
-                    onClick={() => playSong(actualIndex)}
+                    onClick={() => requestPlayQueue(queue, actualIndex, playbackContext)}
                     title={`Jump to "${song.title}"`}
                   >
                     <span className="w-5 text-center text-xs text-text-muted group-hover:hidden">

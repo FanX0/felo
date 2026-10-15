@@ -29,6 +29,8 @@ type Command = {
     artistName?: string
     albumTitle?: string
     index?: number
+    forceNew?: boolean
+    preferredCode?: string
   }
 }
 
@@ -40,7 +42,9 @@ function summary(song?: Song) {
         artist: song.artist,
         album: song.album,
         duration: song.duration,
-        artworkPath: song.artworkPath
+        artworkPath: song.artworkPath,
+        isPriority: Boolean(song.isPriority),
+        requestedBy: song.requestedBy
       }
     : null
 }
@@ -101,6 +105,15 @@ export default function PlaybackControlBridge() {
           (useListeningStore.getState().joinedRoom &&
            useListeningStore.getState().joinedRoom?.host_id === useOnlineStore.getState().user?.id)
         ),
+        listeningRoomCode:
+          useListeningStore.getState().hostRoom?.code ||
+          useListeningStore.getState().joinedRoom?.code ||
+          undefined,
+        listeningRoomName:
+          useListeningStore.getState().hostRoom?.name ||
+          useListeningStore.getState().joinedRoom?.name ||
+          undefined,
+        listeningRoomMembers: useListeningStore.getState().memberCount,
         isPrivateSession: usePrivateSessionStore.getState().isPrivateSession
       }
     }
@@ -120,6 +133,16 @@ export default function PlaybackControlBridge() {
         state.isShuffle !== prev.isShuffle || state.repeatMode !== prev.repeatMode
 
       if (songChanged || playbackChanged || volumeChanged || queueChanged || modeChanged) {
+        publish()
+      }
+    })
+    const unsubscribeListeningStore = useListeningStore.subscribe((state, prev) => {
+      const roomChanged =
+        state.hostRoom?.code !== prev.hostRoom?.code ||
+        state.joinedRoom?.code !== prev.joinedRoom?.code ||
+        state.memberCount !== prev.memberCount ||
+        state.hostRoom?.is_active !== prev.hostRoom?.is_active
+      if (roomChanged) {
         publish()
       }
     })
@@ -386,6 +409,28 @@ export default function PlaybackControlBridge() {
                   player.toggleRepeat()
               }
               break
+            case 'ensureRoom': {
+              const listening = useListeningStore.getState()
+              const online = useOnlineStore.getState()
+              if (!online.user) {
+                result = { ok: false, error: 'NOT_LOGGED_IN' }
+                window.api.respondToExternalPlayerCommand(requestId, result)
+                return
+              }
+              let room = listening.hostRoom
+              if (!room || !room.code || !room.is_active || command.forceNew) {
+                room = await listening.ensureHostRoom(true, Boolean(command.forceNew), command.preferredCode)
+              }
+              const code = room?.code || null
+              const name = room?.name || 'Listen Together'
+              const members = listening.memberCount || 1
+              if (code) {
+                window.api?.updateDiscordRoomInfo?.({ code, name, members })
+              }
+              result = { ok: Boolean(code), code, name, members, state: publish() }
+              window.api.respondToExternalPlayerCommand(requestId, result)
+              return
+            }
             default:
               throw new Error('UNKNOWN_COMMAND')
           }
@@ -454,6 +499,7 @@ export default function PlaybackControlBridge() {
       disposed = true
       window.clearInterval(interval)
       unsubscribeStore()
+      unsubscribeListeningStore()
       unsubscribePrivateStore()
       audioEvents.forEach((event) => audio?.removeEventListener(event, onAudioChange))
       removeCommandListener()

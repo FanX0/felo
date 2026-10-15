@@ -23,9 +23,15 @@ import MobileNavBar from './components/MobileNavBar'
 import MobileDockedPlayer from './components/MobileDockedPlayer'
 import MobileNowPlaying from './pages/Remote/MobileNowPlaying'
 import MobileDeviceSheet from './pages/Remote/MobileDeviceSheet'
+import MobileLyricsSheet from './pages/Remote/MobileLyricsSheet'
 import DevicePresenceBridge from './components/DevicePresenceBridge'
+import PlaybackTransferModal from './components/PlaybackTransferModal'
 import { remoteClient, type RemotePlayerState } from './pages/Remote/remoteClient'
-import { useConnectedDeviceStore, getInterpolatedPosition } from './hooks/useConnectedDeviceStore'
+import {
+  useConnectedDeviceStore,
+  getInterpolatedPosition,
+  sendDeviceCommand
+} from './hooks/useConnectedDeviceStore'
 import { toMediaUrl } from './lib/media'
 import { AppCapabilities, isElectron } from './lib/appConfig'
 import { useIsMobile } from './hooks/useIsMobile'
@@ -126,6 +132,7 @@ function App() {
   // Mobile & Remote Player State
   const [isMobileNowPlayingOpen, setIsMobileNowPlayingOpen] = useState(false)
   const [isMobileDeviceSheetOpen, setIsMobileDeviceSheetOpen] = useState(false)
+  const [isMobileLyricsSheetOpen, setIsMobileLyricsSheetOpen] = useState(false)
   const [remoteState, setRemoteState] = useState<RemotePlayerState>(() => remoteClient.getState())
   const [isRemoteConnected, setIsRemoteConnected] = useState(() => remoteClient.getIsConnected())
 
@@ -150,8 +157,10 @@ function App() {
 
   const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
   const myDeviceId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : null
+  const isAudioActive = usePlayerStore((s) => s.isAudioActive)
+  const isLocalAudioOwner = isAudioActive && localIsPlaying
   const isCloudRemoteActive = Boolean(
-    !localIsPlaying &&
+    !isLocalAudioOwner &&
       activeRemote &&
       activeRemote.song &&
       (myDeviceId ? activeRemote.activeDeviceId !== myDeviceId : true)
@@ -1048,6 +1057,7 @@ function App() {
         )}
         <LibraryScanPill />
         <PlaybackNoticeToast />
+        <PlaybackTransferModal />
       </div>
 
       {isMobileScreen ? (
@@ -1073,8 +1083,7 @@ function App() {
                 }}
                 onOpenDevices={() => setIsMobileDeviceSheetOpen(true)}
                 onOpenLyrics={() => {
-                  setIsMobileNowPlayingOpen(false)
-                  navigate('/lyrics')
+                  setIsMobileLyricsSheetOpen(true)
                 }}
                 onOpenSleepTimer={() => {
                   // Sleep timer trigger if needed
@@ -1087,6 +1096,27 @@ function App() {
             isConnected={isRemoteConnected || Boolean(isCloudRemoteActive)}
             isOpen={isMobileDeviceSheetOpen}
             onClose={() => setIsMobileDeviceSheetOpen(false)}
+          />
+          <MobileLyricsSheet
+            song={activePlayerState.song}
+            currentTime={activePlayerState.position}
+            isPlaying={activePlayerState.isPlaying}
+            isOpen={isMobileLyricsSheetOpen}
+            onClose={() => setIsMobileLyricsSheetOpen(false)}
+            onExpand={() => {
+              setIsMobileLyricsSheetOpen(false)
+              setIsMobileNowPlayingOpen(false)
+              navigate('/lyrics')
+            }}
+            onSeek={(seconds) => {
+              if (isRemoteConnected) {
+                void remoteClient.seek(seconds)
+              } else if (isCloudRemoteActive && activeRemote && user?.id) {
+                void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'seek', { seconds })
+              } else {
+                usePlayerStore.getState().seek(seconds)
+              }
+            }}
           />
         </>
       ) : (

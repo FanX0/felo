@@ -1,4 +1,5 @@
 import { useDownloadStore } from '../hooks/useDownloadStore'
+import { usePlayerStore } from '../hooks/usePlayerStore'
 import {
   DEFAULT_DOWNLOAD_PRIORITY,
   DOWNLOAD_PRIORITY_SETTING,
@@ -45,6 +46,27 @@ export async function downloadTrackInBackground(
       const librarySongs = (await window.api?.getSongs?.()) || []
       const localMatch = findMatchingLibrarySong(song.title, song.artist || '', librarySongs)
       if (localMatch?.filePath && !localMatch.filePath.startsWith('virtual:')) {
+        if (autoPlay || playAction === 'play_now') {
+          const player = usePlayerStore.getState()
+          const currentSong = player.queue[player.currentSongIndex]
+          const isCurrentVirtual = !currentSong?.filePath || currentSong.filePath.startsWith('virtual:')
+
+          if (isCurrentVirtual || currentSong?.id === song.id || currentSong?.title.toLowerCase() === song.title.toLowerCase()) {
+            player.updateSong(localMatch, currentSong?.id || song.id)
+            player.setIsBuffering(false)
+            player.claimAudioOwnership()
+            player.setIsPlaying(true)
+          } else if (player.queue.length === 0) {
+            player.setQueue([localMatch], 0)
+            player.claimAudioOwnership()
+            player.setIsPlaying(true)
+          } else {
+            player.enqueueSongPriority(localMatch)
+            player.claimAudioOwnership()
+            player.playSong(player.currentSongIndex === -1 ? 0 : player.currentSongIndex + 1)
+            player.setIsPlaying(true)
+          }
+        }
         return { success: true, transferId: '', message: 'Already exists in library' }
       }
     } catch {}

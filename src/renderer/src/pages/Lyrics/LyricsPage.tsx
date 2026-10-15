@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import '@uimaxbai/am-lyrics/am-lyrics.js'
-import { Check, Languages, ListMusic, Music2, Sparkles } from 'lucide-react'
+import { Check, Languages, ListMusic, Music2, Sparkles, Laptop2 } from 'lucide-react'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
-import { getActiveAudioTime } from '../../lib/audioBridge'
+import { useActiveLyricsPlayback } from '../../hooks/useActiveLyricsPlayback'
+import { remoteClient } from '../Remote/remoteClient'
 
 interface ParsedLyric {
   time: number
@@ -72,7 +73,7 @@ function isPlaceholderMetadata(value?: string) {
   )
 }
 
-function resolveSongMetadata(song?: { title: string; artist: string; album?: string }) {
+function resolveSongMetadata(song?: { title: string; artist: string; album?: string } | null) {
   let title = cleanMetadata(song?.title || '')
   let artist = isPlaceholderMetadata(song?.artist) ? '' : cleanMetadata(song?.artist || '')
   const album = isPlaceholderMetadata(song?.album) ? '' : cleanMetadata(song?.album || '')
@@ -393,19 +394,28 @@ function ClassicLyricsDisplay({
   plainLyrics,
   onSeek,
   translations,
-  romanizations
+  romanizations,
+  getCurrentTime,
+  currentTime: propCurrentTime,
+  isPlaying = false
 }: {
   lyrics: ParsedLyric[]
   plainLyrics: string
   onSeek: (time: number) => void
   translations: string[]
   romanizations: string[]
+  getCurrentTime?: () => number
+  currentTime?: number
+  isPlaying?: boolean
 }) {
-  const currentTime = usePlayerStore((s) => s.currentTime)
   const containerRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef<HTMLButtonElement>(null)
   const isUserScrollingRef = useRef(false)
   const userScrollTimeoutRef = useRef<any>(null)
+  const getCurrentTimeRef = useRef(getCurrentTime)
+  getCurrentTimeRef.current = getCurrentTime
+
+  const [currentIndex, setCurrentIndex] = useState(-1)
 
   const handleUserScroll = useCallback(() => {
     isUserScrollingRef.current = true
@@ -415,15 +425,35 @@ function ClassicLyricsDisplay({
     }, 3500)
   }, [])
 
-  const currentIndex = useMemo(() => {
-    if (lyrics.length === 0) return -1
-    let index = -1
-    for (let i = 0; i < lyrics.length; i++) {
-      if (lyrics[i].time <= currentTime) index = i
-      else break
+  // Smoothly track active line without forcing parent re-renders
+  useEffect(() => {
+    const updateIndex = () => {
+      const time = getCurrentTimeRef.current
+        ? getCurrentTimeRef.current()
+        : propCurrentTime !== undefined
+          ? propCurrentTime
+          : usePlayerStore.getState().currentTime
+
+      if (lyrics.length === 0) {
+        setCurrentIndex(-1)
+        return
+      }
+
+      let index = -1
+      for (let i = 0; i < lyrics.length; i++) {
+        if (lyrics[i].time <= time) index = i
+        else break
+      }
+      setCurrentIndex((prev) => (prev === index ? prev : index))
     }
-    return index
-  }, [lyrics, currentTime])
+
+    updateIndex()
+
+    if (!isPlaying) return
+
+    const interval = setInterval(updateIndex, 100)
+    return () => clearInterval(interval)
+  }, [lyrics, isPlaying, propCurrentTime])
 
   useEffect(() => {
     if (!containerRef.current || !activeRef.current) return
@@ -527,13 +557,10 @@ function ClassicLyricsDisplay({
 }
 
 export default function LyricsPage() {
-  const queue = usePlayerStore((s) => s.queue)
-  const currentSongIndex = usePlayerStore((s) => s.currentSongIndex)
-  const duration = usePlayerStore((s) => s.duration)
-  const isPlaying = usePlayerStore((s) => s.isPlaying)
-  const seek = usePlayerStore((s) => s.seek)
-  const setIsPlaying = usePlayerStore((s) => s.setIsPlaying)
-  const currentSong = queue[currentSongIndex]
+  const activePlayback = useActiveLyricsPlayback()
+  const currentSong = activePlayback.song
+  const duration = activePlayback.duration
+  const isPlaying = activePlayback.isPlaying
   const [lyricsEngine, setLyricsEngine] = useState<'am' | 'classic'>(getStoredMode)
   const [lyricsData, setLyricsData] = useState<LyricsData | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -552,16 +579,20 @@ export default function LyricsPage() {
   const lyricsDataRef = useRef<LyricsData | null>(null)
   lyricsDataRef.current = lyricsData
 
+  const getCurrentTimeRef = useRef(activePlayback.getCurrentTime)
+  getCurrentTimeRef.current = activePlayback.getCurrentTime
+  const isPlayingRef = useRef(isPlaying)
+  isPlayingRef.current = isPlaying
+
   const handleSeek = useCallback(
     (seconds: number) => {
-      seek(Math.max(0, seconds))
-      setIsPlaying(true)
+      activePlayback.seek(Math.max(0, seconds))
     },
-    [seek, setIsPlaying]
+    [activePlayback]
   )
 
   const resolvedMetadata = useMemo(
-    () => resolveSongMetadata(currentSong),
+    () => resolveSongMetadata(currentSong || undefined),
     [currentSong?.title, currentSong?.artist, currentSong?.album]
   )
   const lookupDuration = currentSong?.duration || (duration > 0 ? Math.round(duration) : undefined)
@@ -630,13 +661,43 @@ export default function LyricsPage() {
       setIsRomanized(false)
 
       try {
-        const result = await window.api?.fetchLyrics?.({
-          title: resolvedMetadata.title || currentSong.title,
-          artist: resolvedMetadata.artist,
-          album: resolvedMetadata.album,
-          duration: lookupDuration,
-          filePath: currentSong.filePath
-        })
+        let result: any = null
+
+        // 0. Check localStorage cached lyrics from DevicePresenceBridge (broadcast from host PC)
+        if (!result && currentSong.id) {
+          const cachedStr = localStorage.getItem(`felo_lyrics_${currentSong.id}`)
+          if (cachedStr) {
+            try {
+              const cached = JSON.parse(cachedStr)
+              if (cached.syncedLyrics || cached.plainLyrics) {
+                result = cached
+              }
+            } catch {}
+          }
+        }
+
+        // 1. If connected to desktop LAN, try desktop's local lyrics first (embedded tags / local .lrc)
+        if (!result && activePlayback.isRemote && remoteClient.getIsConnected() && currentSong.id) {
+          try {
+            const lanLyrics = await remoteClient.getLyrics(currentSong.id)
+            if (lanLyrics && (lanLyrics.syncedLyrics || lanLyrics.plainLyrics)) {
+              result = lanLyrics
+            }
+          } catch {
+            // fallback to webApi
+          }
+        }
+
+        // 2. Fetch via LRCLIB / local file resolver
+        if (!result) {
+          result = await window.api?.fetchLyrics?.({
+            title: resolvedMetadata.title || currentSong.title,
+            artist: resolvedMetadata.artist,
+            album: resolvedMetadata.album,
+            duration: lookupDuration,
+            filePath: currentSong.filePath
+          })
+        }
         if (controller.signal.aborted) return
         if (!result) throw new Error('No lyrics found')
 
@@ -678,7 +739,7 @@ export default function LyricsPage() {
     element.showTranslation = translations.length > 0
     element.showRomanization = isRomanized && romanizations.length > 0
     element.ttml = amLyricsTtml || undefined
-    element.currentTime = usePlayerStore.getState().currentTime * 1000
+    element.currentTime = getCurrentTimeRef.current() * 1000
     element.requestUpdate?.()
   }, [
     lyricsEngine,
@@ -696,49 +757,55 @@ export default function LyricsPage() {
   ])
 
   useEffect(() => {
+    if (lyricsEngine !== 'am') return
+
     const element = amLyricsRef.current
-    if (!element || lyricsEngine !== 'am') return
 
     // Immediately sync to the latest position
-    const liveTime = getActiveAudioTime()
-    const initialMs = (liveTime > 0 ? liveTime : usePlayerStore.getState().currentTime) * 1000
-    element.currentTime = initialMs
-
-    if (!isPlaying) return
+    const initialSec = getCurrentTimeRef.current()
+    const initialMs = initialSec * 1000
+    if (element) {
+      element.currentTime = initialMs
+    }
 
     let rafId: number
     let lastTimeMs = initialMs
 
     const syncLoop = () => {
+      const nowMs = getCurrentTimeRef.current() * 1000
       const el = amLyricsRef.current
+
       if (el) {
-        const audioSec = getActiveAudioTime()
-        const nowMs = (audioSec > 0 ? audioSec : usePlayerStore.getState().currentTime) * 1000
         // High frequency update threshold: 3ms (~300fps)
         if (Math.abs(nowMs - lastTimeMs) >= 3) {
           el.currentTime = nowMs
           lastTimeMs = nowMs
         }
       }
+
+      if (isPlayingRef.current) {
+        rafId = requestAnimationFrame(syncLoop)
+      }
+    }
+
+    if (isPlaying) {
       rafId = requestAnimationFrame(syncLoop)
     }
 
-    rafId = requestAnimationFrame(syncLoop)
     return () => {
-      cancelAnimationFrame(rafId)
+      if (rafId) cancelAnimationFrame(rafId)
     }
-  }, [lyricsEngine, isPlaying])
+  }, [lyricsEngine, isPlaying, currentSong?.id])
 
+  // Sync position while paused or on position jump
   useEffect(() => {
-    if (isPlaying || lyricsEngine !== 'am') return
-    const unsubscribe = usePlayerStore.subscribe((state) => {
-      const element = amLyricsRef.current
-      if (element) {
-        element.currentTime = state.currentTime * 1000
-      }
-    })
-    return unsubscribe
-  }, [isPlaying, lyricsEngine])
+    if (isPlaying) return
+    const currentSec = getCurrentTimeRef.current()
+    const element = amLyricsRef.current
+    if (element && lyricsEngine === 'am') {
+      element.currentTime = currentSec * 1000
+    }
+  }, [isPlaying, activePlayback.currentTime, lyricsEngine])
 
   const handleAmLineClick = useCallback(
     (event: Event) => {
@@ -872,6 +939,18 @@ export default function LyricsPage() {
     <div className="relative h-full overflow-hidden bg-[#101014] text-text">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_36%,rgba(255,255,255,0.08),transparent_30%),linear-gradient(to_bottom,rgba(0,0,0,0.08),rgba(0,0,0,0.2))]" />
 
+      {/* Remote playing device indicator */}
+      {activePlayback.isRemote && (
+        <div className="absolute left-3 top-3 sm:left-7 sm:top-5 z-20 flex items-center gap-2">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/50 border border-white/15 text-xs text-zinc-300 backdrop-blur-xl shadow-lg">
+            <Laptop2 className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="font-semibold truncate max-w-[140px] sm:max-w-[240px]">
+              {activePlayback.activeDeviceName}
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="absolute right-3 top-3 sm:right-7 sm:top-5 z-20 flex items-center gap-2 sm:gap-3">
         <div className="flex rounded-[10px] border border-white/15 bg-white/10 p-0.5 shadow-lg backdrop-blur-xl">
           <button
@@ -967,7 +1046,7 @@ export default function LyricsPage() {
           <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/15 border-t-white" />
         </div>
       ) : (
-        <div className="relative z-10 mx-auto h-full max-w-[960px] px-10">
+        <div className="relative z-10 mx-auto h-full max-w-[960px] px-4 sm:px-10">
           <div
             className={`h-full w-full items-center ${
               lyricsEngine === 'am' ? 'flex' : 'hidden'
@@ -992,6 +1071,8 @@ export default function LyricsPage() {
               onSeek={handleSeek}
               translations={translations}
               romanizations={isRomanized ? romanizations : []}
+              getCurrentTime={activePlayback.getCurrentTime}
+              isPlaying={isPlaying}
             />
           </div>
         </div>

@@ -7,10 +7,28 @@ import { usePlayerStore } from './usePlayerStore'
 import { useDownloadStore } from './useDownloadStore'
 import { DEFAULT_DOWNLOAD_PRIORITY, DOWNLOAD_PRIORITY_SETTING, STREAMING_ACCOUNTS_SETTING } from '../lib/downloadConfig'
 import { WebRTCAudioHost, WebRTCAudioClient, type WebRTCAudioStats } from '../lib/webrtcAudioStream'
-import { scoreProviderMatch } from '../lib/songMatching'
+import { scoreProviderMatch, cleanSearchQuery } from '../lib/songMatching'
+import { setAudioPlaybackRate, getAudioPlaybackRate } from '../lib/audioBridge'
+import { toMediaUrl } from '../lib/media'
+import { resolveSongAudioUrl } from '../lib/songAudioResolver'
 
 let _activeAudioHost: WebRTCAudioHost | null = null
 let _activeAudioClient: WebRTCAudioClient | null = null
+
+export function broadcastHostLosslessTrack(song?: Song | null): void {
+  if (!_activeAudioHost) return
+  const mediaUrl = resolveSongAudioUrl(song) || toMediaUrl(song?.filePath)
+  if (!mediaUrl) return
+  const ext = (song?.filePath || song?.title || '').toLowerCase()
+  const mimeType = ext.endsWith('.flac')
+    ? 'audio/flac'
+    : ext.endsWith('.wav')
+    ? 'audio/wav'
+    : ext.endsWith('.ogg')
+    ? 'audio/ogg'
+    : 'audio/mpeg'
+  void _activeAudioHost.broadcastLosslessTrack(mediaUrl, mimeType)
+}
 
 function makeCode(): string {
   return Math.random().toString(36).slice(2, 8).toUpperCase()
@@ -48,7 +66,7 @@ export function fromSharedSong(song: SharedSong): Song {
   }
 }
 
-export type SyncStatus = 'idle' | 'synced' | 'missing_song' | 'buffering'
+export type SyncStatus = 'idle' | 'synced' | 'missing_song' | 'buffering' | 'host_reconnecting'
 
 const AUTO_DOWNLOAD_STORAGE_KEY = 'fanxmusic:listen_together:auto_download'
 const SUBSTITUTES_STORAGE_KEY = 'fanxmusic:listen_together:substitutes'
@@ -102,7 +120,7 @@ interface ListeningStoreState {
   setDiscordPriorityEnabled: (enabled: boolean) => void
 
   // Room / Listen Along lifecycle
-  ensureHostRoom: (enabled: boolean, forceNew?: boolean) => Promise<ListeningRoom | null>
+  ensureHostRoom: (enabled: boolean, forceNew?: boolean, preferredCode?: string) => Promise<ListeningRoom | null>
   listenAlongWithFriend: (friendId: string) => Promise<ListeningRoom>
   joinRoomById: (roomId: string) => Promise<ListeningRoom>
   joinRoomByCode: (code: string) => Promise<ListeningRoom>
@@ -118,6 +136,7 @@ interface ListeningStoreState {
   handleHostDisconnect: () => Promise<void>
   transferHost: (newHostId: string) => Promise<void>
   preloadNextQueueTracks: (room: ListeningRoom) => Promise<void>
+  checkHostHealth: () => Promise<void>
 
   // Device audio streaming state
   isDeviceAudioSharing: boolean
@@ -131,6 +150,8 @@ interface ListeningStoreState {
   deviceAudioStats: WebRTCAudioStats | null
   deviceAudioVolume: number
   deviceAudioClientLevel: number
+  losslessStreamBlobUrl: string | null
+  isLosslessMasterActive: boolean
 
   setDeviceAudioBitrate: (bitrate: number) => void
   toggleDeviceAudioMute: () => void
@@ -168,16 +189,18 @@ function findSongMatchIndex(songs: Song[], targetTitle: string, targetArtist: st
   const nArtist = normalizeSongValue(targetArtist)
   if (!nTitle) return -1
 
-  // 1. Exact normalized match
+  // 1. Exact normalized match (only real files on disk)
   let idx = songs.findIndex((s) => {
+    if (!s.filePath || String(s.filePath).startsWith('virtual:')) return false
     const sTitle = normalizeSongValue(s.title || '')
     const sArtist = normalizeSongValue(s.artist || '')
     return sTitle === nTitle && (!nArtist || !sArtist || sArtist === nArtist)
   })
   if (idx >= 0) return idx
 
-  // 2. Fuzzy substring match (title match + artist match)
+  // 2. Fuzzy substring match (title match + artist match, only real files on disk)
   idx = songs.findIndex((s) => {
+    if (!s.filePath || String(s.filePath).startsWith('virtual:')) return false
     const sTitle = normalizeSongValue(s.title || '')
     const sArtist = normalizeSongValue(s.artist || '')
     const titleMatch = sTitle && nTitle && (sTitle.includes(nTitle) || nTitle.includes(sTitle))
@@ -250,12 +273,14 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
   deviceAudioLevel: 0,
   deviceAudioPeerCount: 0,
   deviceAudioClientState: 'idle',
-  deviceAudioBitrate: 320000,
+  deviceAudioBitrate: 510000,
   isDeviceAudioMuted: false,
   isAutoplayBlocked: false,
   deviceAudioStats: null,
   deviceAudioVolume: 1.0,
   deviceAudioClientLevel: 0,
+  losslessStreamBlobUrl: null,
+  isLosslessMasterActive: false,
 
   setDeviceAudioBitrate: (bitrate: number) => {
     set({ deviceAudioBitrate: bitrate })
@@ -354,7 +379,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
 
   // ─── HOST ROOM LIFECYCLE ──────────────────────────────────────────
 
-  ensureHostRoom: async (enabled: boolean, forceNew = false): Promise<ListeningRoom | null> => {
+  ensureHostRoom: async (enabled: boolean, forceNew = false, preferredCode?: string): Promise<ListeningRoom | null> => {
     if (_ensureLock) return get().hostRoom
     _ensureLock = true
 
@@ -388,19 +413,26 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         .map(toSharedSong)
 
       const isDeviceSharing = get().isDeviceAudioSharing
-      const deviceSong: SharedSong = {
-        title: 'Live System Audio',
-        artist: profile?.display_name || user.email?.split('@')[0] || 'Host',
-        album: 'Device Audio Stream',
-        isDeviceStream: true,
-        streamType: 'device_audio',
-        discordPriorityEnabled: get().discordPriorityEnabled
-      }
+      const deviceSong: SharedSong = currentSong
+        ? {
+            ...toSharedSong(currentSong),
+            isDeviceStream: true,
+            streamType: 'device_audio',
+            discordPriorityEnabled: get().discordPriorityEnabled
+          }
+        : {
+            title: 'Live System Audio',
+            artist: profile?.display_name || user.email?.split('@')[0] || 'Host',
+            album: 'Device Audio Stream',
+            isDeviceStream: true,
+            streamType: 'device_audio',
+            discordPriorityEnabled: get().discordPriorityEnabled
+          }
 
       const roomPayload = {
         name: `${profile?.display_name || user.email?.split('@')[0] || 'Friend'}'s session`,
         song: isDeviceSharing ? deviceSong : currentSong ? toSharedSong(currentSong) : null,
-        queue: isDeviceSharing ? [] : upcomingQueue,
+        queue: isDeviceSharing && !currentSong ? [] : upcomingQueue,
         position_seconds: Math.round(playerState.currentTime || 0),
         is_playing: isDeviceSharing ? true : Boolean(playerState.isPlaying && currentSong),
         is_active: true,
@@ -446,7 +478,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
           .update({ is_active: false, is_playing: false, updated_at: new Date().toISOString() })
           .eq('host_id', user.id)
 
-        let code = makeCode()
+        let code = (preferredCode || '').trim().toUpperCase() || makeCode()
         let createdRoom: any = null
         let lastError: any = null
 
@@ -528,7 +560,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         .from('listening_room_members')
         .upsert({ room_id: targetRoom.id, user_id: user.id })
 
-      set({ joinedRoom: targetRoom as ListeningRoom, hostRoom: null, hostRoomStopped: true })
+      set({ joinedRoom: targetRoom as ListeningRoom, hostRoom: null, hostRoomStopped: true, lastHostUpdate: Date.now() })
       await get().handleHostSongChange(targetRoom as ListeningRoom)
       void get().refreshMemberCount(targetRoom.id)
       return targetRoom as ListeningRoom
@@ -570,7 +602,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
 
         if (memberError) throw memberError
 
-        set({ joinedRoom: targetRoom as ListeningRoom, hostRoom: null, hostRoomStopped: true })
+        set({ joinedRoom: targetRoom as ListeningRoom, hostRoom: null, hostRoomStopped: true, lastHostUpdate: Date.now() })
         await get().handleHostSongChange(targetRoom as ListeningRoom)
       } else {
         set({ hostRoom: targetRoom as ListeningRoom, joinedRoom: null, hostRoomStopped: false, syncStatus: 'idle' })
@@ -618,11 +650,12 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
           .upsert({ room_id: targetRoom.id, user_id: user.id })
 
         if (memberError) throw memberError
-        set({ joinedRoom: targetRoom as ListeningRoom, hostRoom: null })
+        set({ joinedRoom: targetRoom as ListeningRoom, hostRoom: null, lastHostUpdate: Date.now() })
         await get().handleHostSongChange(targetRoom as ListeningRoom)
       } else {
         set({ hostRoom: targetRoom as ListeningRoom, joinedRoom: null, syncStatus: 'idle' })
       }
+
 
       void get().refreshMemberCount(targetRoom.id)
       return targetRoom as ListeningRoom
@@ -745,8 +778,6 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         await get().connectToDeviceStream(room)
         set({ syncStatus: 'synced', missingSong: null })
         return
-      } else if (get().isReceivingDeviceStream) {
-        get().disconnectFromDeviceStream()
       }
 
       const playerState = usePlayerStore.getState()
@@ -755,6 +786,9 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       // Step 1: Check if user mapped a custom substitute song for this host track
       const substitute = get().substitutes[songKey]
       if (substitute) {
+        if (get().isReceivingDeviceStream) {
+          get().disconnectFromDeviceStream()
+        }
         let currentQueue = playerState.queue
         let subIndex = currentQueue.findIndex((s) => s.id === substitute.id)
         if (subIndex < 0) {
@@ -764,13 +798,16 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         _lastSyncedSongId = substitute.id
         usePlayerStore.getState().setQueue(currentQueue, subIndex)
 
-        const elapsed = room.is_playing
-          ? Math.max(0, (Date.now() - new Date(room.updated_at).getTime()) / 1000)
-          : 0
-        const targetTime = room.position_seconds + elapsed
+        const now = Date.now()
+        const dbElapsed = Math.max(0, (now - new Date(room.updated_at).getTime()) / 1000)
+        const elapsed = room.is_playing && dbElapsed < 30 ? dbElapsed : 0
+        const rawTarget = room.position_seconds + elapsed
+        const duration = substitute.duration || room.song?.duration || 0
+        const targetTime = duration > 0 ? Math.min(duration, Math.max(0, rawTarget)) : Math.max(0, rawTarget)
         if (Math.abs(usePlayerStore.getState().currentTime - targetTime) > 3) {
           usePlayerStore.getState().seek(targetTime)
         }
+        setAudioPlaybackRate(1.0)
         usePlayerStore.getState().setIsPlaying(room.is_playing)
         set({ syncStatus: 'synced', missingSong: null })
         return
@@ -780,8 +817,14 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       const allLocalSongs = ((await window.api?.getSongs?.()) || []) as Song[]
       const matchedIndex = findSongMatchIndex(allLocalSongs, room.song.title, room.song.artist)
 
-      // Step 3: Song not found locally -> trigger auto-download
+      // Step 3: Song not found locally
       if (matchedIndex < 0) {
+        // If guest is currently tuned into the live audio broadcast, maintain the stream seamlessly
+        if (get().isReceivingDeviceStream) {
+          set({ syncStatus: 'synced', missingSong: null })
+          return
+        }
+
         set({
           syncStatus: 'missing_song',
           missingSong: room.song
@@ -793,7 +836,9 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
             _autoDownloadRequests.add(requestKey)
             void (async () => {
               try {
-                const query = `${room.song!.artist} ${room.song!.title}`.trim()
+                const query =
+                  cleanSearchQuery(room.song!.artist, room.song!.title) ||
+                  `${room.song!.artist || ''} ${room.song!.title}`.trim()
                 const savedPriority = await window.api?.getSetting?.(DOWNLOAD_PRIORITY_SETTING)
                 const savedAccounts = await window.api?.getSetting?.(STREAMING_ACCOUNTS_SETTING)
                 const priority = Array.isArray(savedPriority) && savedPriority.length > 0
@@ -802,12 +847,19 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
                 const accounts = savedAccounts && typeof savedAccounts === 'object' ? savedAccounts : {}
 
                 for (const source of priority) {
+                  if (source === 'qobuz' && !accounts.qobuzSecret && !accounts.qobuzUser) continue
+                  if (source === 'deezer' && !accounts.deezerArl) continue
+                  if (source === 'soulseek' && !accounts.soulseekUser && !accounts.soulseekPassword) continue
+
                   try {
+                    let timer: ReturnType<typeof setTimeout> | undefined
                     const searchPromise = window.api?.searchDownloadSource?.(source, query, accounts)
-                    const timeoutPromise = new Promise<never>((_, reject) =>
-                      setTimeout(() => reject(new Error(`Room track search timed out on ${source}`)), 12000)
-                    )
-                    const results = await Promise.race([searchPromise, timeoutPromise])
+                    const timeoutPromise = new Promise<never>((_, reject) => {
+                      timer = setTimeout(() => reject(new Error(`Room track search timed out on ${source}`)), 12000)
+                    })
+                    const results = await Promise.race([searchPromise, timeoutPromise]).finally(() => {
+                      if (timer) clearTimeout(timer)
+                    })
                     const bestHit = findBestDownloadMatch(
                       results,
                       room.song!.title,
@@ -817,6 +869,12 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
                     if (!bestHit) continue
 
                     const transferId = `room-${room.id}-${Date.now()}`
+                    const safeArtwork =
+                      bestHit.artworkUrl && /^https?:\/\//i.test(bestHit.artworkUrl)
+                        ? bestHit.artworkUrl
+                        : room.song?.artworkUrl && /^https?:\/\//i.test(room.song.artworkUrl)
+                          ? room.song.artworkUrl
+                          : undefined
 
                     // Register in the sidebar download panel so the user can see progress (silent background mode)
                     useDownloadStore.getState().queueTransfer(
@@ -825,7 +883,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
                         source: source as any,
                         sourceName: bestHit.sourceName || source,
                         title: bestHit.title || room.song!.title,
-                        artist: bestHit.artist || room.song!.artist,
+                        artist: bestHit.artist || room.song!.artist || 'Unknown Artist',
                         quality: bestHit.quality || 'FLAC',
                         size: bestHit.size || '...',
                         conflictMode: 'keep_both',
@@ -844,12 +902,12 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
                       source,
                       resultId: String(bestHit.id),
                       title: bestHit.title || room.song!.title,
-                      artist: bestHit.artist || room.song!.artist,
+                      artist: bestHit.artist || room.song!.artist || 'Unknown Artist',
                       songId: '',
                       conflictMode: 'keep_both',
                       accounts,
                       autoPlay: true,
-                      artworkUrl: bestHit.artworkUrl || room.song?.artworkUrl,
+                      artworkUrl: safeArtwork,
                       album: bestHit.album || room.song?.album
                     })
                     return
@@ -872,6 +930,9 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       }
 
       // Step 4: Construct the Session Queue preserving the room's shared queue
+      if (get().isReceivingDeviceStream) {
+        get().disconnectFromDeviceStream()
+      }
       const matchedSong = allLocalSongs[matchedIndex]
       let sessionQueue: Song[] = []
       let targetIndex = 0
@@ -919,13 +980,17 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       }
 
       // Step 6: Seek to host position (latency compensated)
-      const elapsed = room.is_playing
-        ? Math.max(0, (Date.now() - new Date(room.updated_at).getTime()) / 1000)
-        : 0
-      const targetTime = room.position_seconds + elapsed
+      const now = Date.now()
+      const dbElapsed = Math.max(0, (now - new Date(room.updated_at).getTime()) / 1000)
+      const elapsed = room.is_playing && dbElapsed < 30 ? dbElapsed : 0
+      const rawTarget = room.position_seconds + elapsed
+      const duration = matchedSong.duration || room.song?.duration || 0
+      const targetTime = duration > 0 ? Math.min(duration, Math.max(0, rawTarget)) : Math.max(0, rawTarget)
       if (Math.abs(usePlayerStore.getState().currentTime - targetTime) > 3) {
         usePlayerStore.getState().seek(targetTime)
       }
+      setAudioPlaybackRate(1.0)
+
 
       usePlayerStore.getState().setIsPlaying(room.is_playing)
       set({ syncStatus: 'synced', missingSong: null })
@@ -976,7 +1041,9 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
 
         void (async () => {
           try {
-            const query = `${upcomingSong.artist} ${upcomingSong.title}`.trim()
+            const query =
+              cleanSearchQuery(upcomingSong.artist, upcomingSong.title) ||
+              `${upcomingSong.artist || ''} ${upcomingSong.title}`.trim()
             const savedPriority = await window.api?.getSetting?.(DOWNLOAD_PRIORITY_SETTING)
             const savedAccounts = await window.api?.getSetting?.(STREAMING_ACCOUNTS_SETTING)
             const priority = Array.isArray(savedPriority) && savedPriority.length > 0
@@ -985,12 +1052,19 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
             const accounts = savedAccounts && typeof savedAccounts === 'object' ? savedAccounts : {}
 
             for (const source of priority) {
+              if (source === 'qobuz' && !accounts.qobuzSecret && !accounts.qobuzUser) continue
+              if (source === 'deezer' && !accounts.deezerArl) continue
+              if (source === 'soulseek' && !accounts.soulseekUser && !accounts.soulseekPassword) continue
+
               try {
+                let timer: ReturnType<typeof setTimeout> | undefined
                 const searchPromise = window.api?.searchDownloadSource?.(source, query, accounts)
-                const timeoutPromise = new Promise<never>((_, reject) =>
-                  setTimeout(() => reject(new Error(`Preload track search timed out on ${source}`)), 12000)
-                )
-                const results = await Promise.race([searchPromise, timeoutPromise])
+                const timeoutPromise = new Promise<never>((_, reject) => {
+                  timer = setTimeout(() => reject(new Error(`Preload track search timed out on ${source}`)), 12000)
+                })
+                const results = await Promise.race([searchPromise, timeoutPromise]).finally(() => {
+                  if (timer) clearTimeout(timer)
+                })
                 const bestHit = findBestDownloadMatch(
                   results,
                   upcomingSong.title,
@@ -1000,6 +1074,12 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
                 if (!bestHit) continue
 
                 const transferId = `preload-${room.id}-${Date.now()}`
+                const safeArtwork =
+                  bestHit.artworkUrl && /^https?:\/\//i.test(bestHit.artworkUrl)
+                    ? bestHit.artworkUrl
+                    : upcomingSong.artworkUrl && /^https?:\/\//i.test(upcomingSong.artworkUrl)
+                      ? upcomingSong.artworkUrl
+                      : undefined
 
                 useDownloadStore.getState().queueTransfer(
                   {
@@ -1007,7 +1087,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
                     source: source as any,
                     sourceName: bestHit.sourceName || source,
                     title: bestHit.title || upcomingSong.title,
-                    artist: bestHit.artist || upcomingSong.artist,
+                    artist: bestHit.artist || upcomingSong.artist || 'Unknown Artist',
                     quality: bestHit.quality || 'FLAC',
                     size: bestHit.size || '...',
                     conflictMode: 'keep_both',
@@ -1026,12 +1106,12 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
                   source,
                   resultId: String(bestHit.id),
                   title: bestHit.title || upcomingSong.title,
-                  artist: bestHit.artist || upcomingSong.artist,
+                  artist: bestHit.artist || upcomingSong.artist || 'Unknown Artist',
                   songId: '',
                   conflictMode: 'keep_both',
                   accounts,
                   autoPlay: false,
-                  artworkUrl: bestHit.artworkUrl || upcomingSong.artworkUrl,
+                  artworkUrl: safeArtwork,
                   album: bestHit.album || upcomingSong.album
                 })
                 return
@@ -1053,7 +1133,7 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
 
   handleHostPauseResume: (room: ListeningRoom): void => {
     const user = useOnlineStore.getState().user
-    if (room.host_id === user?.id) return
+    if (room.host_id === user?.id || _isSessionSyncing) return
 
     set({ lastHostUpdate: Date.now() })
 
@@ -1065,21 +1145,137 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
     const currentStatus = get().syncStatus
     if (currentStatus === 'missing_song') return
 
+    // If room is back to life, recover from host_reconnecting
+    if (currentStatus === 'host_reconnecting') {
+      set({ syncStatus: 'synced' })
+    }
+
     usePlayerStore.getState().setIsPlaying(room.is_playing)
 
     if (room.is_playing) {
-      const elapsed = Math.max(0, (Date.now() - new Date(room.updated_at).getTime()) / 1000)
-      const targetTime = room.position_seconds + elapsed
-      const diff = Math.abs(usePlayerStore.getState().currentTime - targetTime)
-      if (diff > 4.5) {
+      const now = Date.now()
+      const dbElapsed = Math.max(0, (now - new Date(room.updated_at).getTime()) / 1000)
+      // Clock-skew protection: only trust DB timestamp if within 30s window, else assume real-time
+      const elapsed = dbElapsed < 30 ? dbElapsed : 0
+      const rawTarget = room.position_seconds + elapsed
+      const duration = room.song?.duration || 0
+      const targetTime = duration > 0 ? Math.min(duration, Math.max(0, rawTarget)) : Math.max(0, rawTarget)
+
+      const currentGuestTime = usePlayerStore.getState().currentTime
+      const diff = currentGuestTime - targetTime
+      const absDiff = Math.abs(diff)
+
+      if (absDiff > 4.0) {
+        // Large desync (> 4s): hard seek & normalize playbackRate
+        setAudioPlaybackRate(1.0)
         _isSessionSyncing = true
         usePlayerStore.getState().seek(targetTime)
         setTimeout(() => {
           _isSessionSyncing = false
         }, 300)
+      } else if (absDiff > 1.2) {
+        // Mild lag / network jitter (1.2s - 4.0s): smooth rate micro-adjustment
+        // If guest is behind host (diff < -1.2), speed up to 1.04x
+        // If guest is ahead of host (diff > 1.2), slow down to 0.96x
+        const catchUpRate = diff < 0 ? 1.04 : 0.96
+        setAudioPlaybackRate(catchUpRate)
+      } else {
+        // Tight sync (< 1.2s): maintain normal 1.0x rate
+        if (getAudioPlaybackRate() !== 1.0) {
+          setAudioPlaybackRate(1.0)
+        }
       }
+    } else {
+      setAudioPlaybackRate(1.0)
     }
   },
+
+  checkHostHealth: async (): Promise<void> => {
+    const joined = get().joinedRoom
+    const user = useOnlineStore.getState().user
+    if (!joined || !user) return
+
+    const now = Date.now()
+    // Local monotonic elapsed check: immune to client clock skew between host and guest PCs
+    const lastUpdateTs = get().lastHostUpdate || now
+    const elapsed = now - lastUpdateTs
+
+    // 1. Stage 1: Healthy (< 12 seconds since last heartbeat)
+    if (elapsed < 12_000) {
+      if (get().syncStatus === 'host_reconnecting') {
+        set({ syncStatus: 'synced' })
+        if (joined.is_playing) {
+          usePlayerStore.getState().setIsPlaying(true)
+          get().handleHostPauseResume(joined)
+        }
+      }
+      return
+    }
+
+    // 2. Stage 2: Host lag / restart (12s to 35s grace period)
+    if (elapsed < 35_000) {
+      if (get().syncStatus !== 'host_reconnecting') {
+        set({ syncStatus: 'host_reconnecting' })
+        // Temporarily pause local playback to avoid drifting while host reconnects
+        usePlayerStore.getState().setIsPlaying(false)
+        setAudioPlaybackRate(1.0)
+      }
+      return
+    }
+
+    // 3. Stage 3: Grace period expired (> 35s without host update). Elect new host or close.
+    try {
+      const { data: updatedRoom, error } = await getSupabase().rpc('elect_new_room_host', {
+        target_room_id: joined.id,
+        expected_old_host_id: joined.host_id
+      })
+
+      if (error) {
+        if (error.code === 'PGRST202') {
+          console.warn(
+            '[Watchdog] Automatic failover RPC is not installed on the server yet. Apply supabase/migrations/0014_listening_room_host_failover.sql in your Supabase SQL editor.'
+          )
+        } else {
+          console.warn('[Watchdog] elect_new_room_host RPC error:', error)
+        }
+        await get().handleHostDisconnect()
+        return
+      }
+
+      if (!updatedRoom) {
+        // Room was closed by server (no remaining members)
+        await get().handleHostDisconnect()
+        return
+      }
+
+      // If THIS user was elected as the new host
+      if (updatedRoom.host_id === user.id) {
+        set({
+          hostRoom: updatedRoom as ListeningRoom,
+          joinedRoom: null,
+          hostRoomStopped: false,
+          syncStatus: 'idle'
+        })
+        // As new host, resume playback and broadcast presence
+        usePlayerStore.getState().setIsPlaying(true)
+        await get().ensureHostRoom(true, true)
+      } else {
+        // Another member was elected as the new host
+        const newHostRoom = updatedRoom as ListeningRoom
+        set({
+          joinedRoom: newHostRoom,
+          syncStatus: 'synced',
+          lastHostUpdate: Date.now()
+        })
+        await get().handleHostSongChange(newHostRoom)
+      }
+    } catch (failoverErr) {
+      console.warn('[Watchdog] Failover error:', failoverErr)
+      await get().handleHostDisconnect()
+    }
+  },
+
+
 
   handleHostDisconnect: async (): Promise<void> => {
     const joined = get().joinedRoom
@@ -1142,16 +1338,13 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
     const room = await get().ensureHostRoom(true)
     if (!room) throw new Error('Could not create or retrieve host room.')
 
-    // 2. Pause local file player so sound doesn't echo/conflict
-    usePlayerStore.getState().setIsPlaying(false)
-
-    // 3. Stop existing audio host if any
+    // 2. Stop existing audio host if any
     if (_activeAudioHost) {
       _activeAudioHost.stop()
       _activeAudioHost = null
     }
 
-    const bitrate = get().deviceAudioBitrate || 320000
+    const bitrate = get().deviceAudioBitrate || 510000
 
     try {
       set({
@@ -1179,12 +1372,22 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       await audioHost.start()
       _activeAudioHost = audioHost
 
+      const playerState = usePlayerStore.getState()
+      const currentTrack = playerState.queue[playerState.currentSongIndex]
+      if (currentTrack) {
+        broadcastHostLosslessTrack(currentTrack)
+      }
+
       // 4. Broadcast to listening_rooms that host is now streaming device audio
       const deviceSong: SharedSong = {
-        title: 'System / Device Audio',
-        artist: user.user_metadata?.display_name || user.email || 'Host',
-        album: 'Live Stream',
-        duration: 0,
+        title: currentTrack?.title || 'System / Device Audio',
+        artist: currentTrack?.artist || user.user_metadata?.display_name || user.email || 'Host',
+        album: currentTrack?.album || 'Live Stream',
+        duration: currentTrack?.duration || 0,
+        artworkUrl:
+          currentTrack?.artworkPath && /^https?:\/\//i.test(currentTrack.artworkPath)
+            ? currentTrack.artworkPath
+            : undefined,
         isDeviceStream: true,
         streamType: 'device_audio'
       }
@@ -1298,6 +1501,48 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
         onLevelChange: (level) => {
           set({ deviceAudioClientLevel: level })
         },
+        onLosslessReady: (blobUrl) => {
+          const currentBlob = get().losslessStreamBlobUrl
+          if (currentBlob && currentBlob !== blobUrl) {
+            try {
+              URL.revokeObjectURL(currentBlob)
+            } catch {}
+          }
+          set({ losslessStreamBlobUrl: blobUrl, isLosslessMasterActive: true })
+
+          // If listener is in device streaming mode, hand over to bit-perfect RAM playback
+          const state = get()
+          const currentRoom = state.joinedRoom
+          if (currentRoom?.song) {
+            // Mute the WebRTC Opus stream to prevent double audio playback / echo
+            _activeAudioClient?.setMutedForLossless(true)
+
+            const inMemorySong: Song = {
+              id: `ephemeral-${currentRoom.song.localId || 'lossless'}`,
+              title: currentRoom.song.title,
+              artist: currentRoom.song.artist,
+              album: currentRoom.song.album || 'Studio Master Stream',
+              duration: currentRoom.song.duration || 0,
+              artworkPath: currentRoom.song.artworkUrl || '',
+              filePath: blobUrl
+            }
+            usePlayerStore.getState().setQueue([inMemorySong], 0)
+
+            // Precise latency-compensated seeking: calculate time elapsed since host's last update
+            const now = Date.now()
+            const dbElapsed = Math.max(0, (now - new Date(currentRoom.updated_at).getTime()) / 1000)
+            const elapsed = currentRoom.is_playing && dbElapsed < 30 ? dbElapsed : 0
+            const rawTarget = (currentRoom.position_seconds || 0) + elapsed
+            const duration = currentRoom.song.duration || 0
+            const targetPos = duration > 0 ? Math.min(duration, Math.max(0, rawTarget)) : Math.max(0, rawTarget)
+
+            if (targetPos > 0) {
+              usePlayerStore.getState().seek(targetPos)
+            }
+            usePlayerStore.getState().setIsPlaying(currentRoom.is_playing)
+            set({ syncStatus: 'synced', missingSong: null })
+          }
+        },
         onError: (err) => {
           console.error('[WebRTCAudioClient] Error:', err)
           set({ error: err.message, deviceAudioClientState: 'disconnected' })
@@ -1325,18 +1570,33 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       _activeAudioClient.disconnect()
       _activeAudioClient = null
     }
+    const currentBlob = get().losslessStreamBlobUrl
+    if (currentBlob) {
+      try {
+        URL.revokeObjectURL(currentBlob)
+      } catch {}
+    }
     set({
       isReceivingDeviceStream: false,
       isAutoplayBlocked: false,
       deviceAudioClientState: 'idle',
       deviceAudioStats: null,
-      deviceAudioClientLevel: 0
+      deviceAudioClientLevel: 0,
+      losslessStreamBlobUrl: null,
+      isLosslessMasterActive: false
     })
   },
 
   cleanupOnLeave: () => {
     get().disconnectFromDeviceStream()
+    setAudioPlaybackRate(1.0)
     _lastSyncedSongId = null
+    const currentBlob = get().losslessStreamBlobUrl
+    if (currentBlob) {
+      try {
+        URL.revokeObjectURL(currentBlob)
+      } catch {}
+    }
     set({
       joinedRoom: null,
       syncStatus: 'idle',
@@ -1344,7 +1604,9 @@ export const useListeningStore = create<ListeningStoreState>((set, get) => ({
       lastHostUpdate: 0,
       isAutoplayBlocked: false,
       deviceAudioStats: null,
-      deviceAudioClientLevel: 0
+      deviceAudioClientLevel: 0,
+      losslessStreamBlobUrl: null,
+      isLosslessMasterActive: false
     })
   }
 }))
@@ -1371,7 +1633,8 @@ if (typeof window !== 'undefined') {
 
   usePlayerStore.subscribe((playerState, prevPlayerState) => {
     const state = useListeningStore.getState()
-    if (_isSessionSyncing || state.isReceivingDeviceStream) return
+    if (_isSessionSyncing || state.isReceivingDeviceStream || state.syncStatus === 'host_reconnecting') return
+
 
     const joined = state.joinedRoom
     if (!joined) {
@@ -1424,6 +1687,15 @@ if (typeof window !== 'undefined') {
       void useListeningStore.getState().leaveJoinedRoom().finally(() => {
         _leaving = false
       })
+    }
+  })
+
+  // When host changes track while broadcasting audio, stream new track chunks to connected listeners
+  usePlayerStore.subscribe((playerState, prevPlayerState) => {
+    const currentSong = playerState.queue[playerState.currentSongIndex]
+    const prevSong = prevPlayerState.queue[prevPlayerState.currentSongIndex]
+    if (currentSong && currentSong.id !== prevSong?.id && _activeAudioHost) {
+      broadcastHostLosslessTrack(currentSong)
     }
   })
 }

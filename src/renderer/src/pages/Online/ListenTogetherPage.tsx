@@ -29,14 +29,17 @@ import {
   ClipboardPaste,
   Star,
   Trash2,
-  Zap
+  Zap,
+  SkipForward
 } from 'lucide-react'
 import QRCode from 'qrcode'
 import { useSearchParams, NavLink } from 'react-router-dom'
 import OnlineGate from '../../components/Online/OnlineGate'
+import { AppCapabilities } from '../../lib/appConfig'
 import { useListeningStore } from '../../hooks/useListeningStore'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { useDownloadStore } from '../../hooks/useDownloadStore'
 import { useShallow } from 'zustand/react/shallow'
 import { useRoomChatStore } from '../../hooks/useRoomChatStore'
 import RoomChat from '../../components/RoomChat/RoomChat'
@@ -84,12 +87,14 @@ function getSongKey(song?: any): string {
 function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProps): ReactElement {
   const { user } = useOnlineStore()
   const [searchParams, setSearchParams] = useSearchParams()
+  const transfers = useDownloadStore((state) => state.transfers)
   const {
     isPlaying,
     currentTime,
     queue,
     currentSongIndex,
     playSong,
+    playNext,
     bumpSongToPriority,
     removeSongFromQueueByIndex
   } = usePlayerStore(
@@ -99,6 +104,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       queue: s.queue,
       currentSongIndex: s.currentSongIndex,
       playSong: s.playSong,
+      playNext: s.playNext,
       bumpSongToPriority: s.bumpSongToPriority,
       removeSongFromQueueByIndex: s.removeSongFromQueueByIndex
     }))
@@ -137,6 +143,8 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   const deviceAudioStats = useListeningStore((state) => state.deviceAudioStats)
   const deviceAudioVolume = useListeningStore((state) => state.deviceAudioVolume)
   const deviceAudioClientLevel = useListeningStore((state) => state.deviceAudioClientLevel)
+  const isLosslessMasterActive = useListeningStore((state) => state.isLosslessMasterActive)
+  const connectToDeviceStream = useListeningStore((state) => state.connectToDeviceStream)
   const setDeviceAudioBitrate = useListeningStore((state) => state.setDeviceAudioBitrate)
   const toggleDeviceAudioMute = useListeningStore((state) => state.toggleDeviceAudioMute)
   const setDeviceAudioVolume = useListeningStore((state) => state.setDeviceAudioVolume)
@@ -183,16 +191,16 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   }, [queue, currentSongIndex])
 
   const upcomingTracks = useMemo(() => {
-    if (currentSongIndex < 0) return queue.map((song, idx) => ({ song, idx }))
-    return queue.slice(currentSongIndex + 1).map((song, i) => ({ song, idx: currentSongIndex + 1 + i }))
+    if (currentSongIndex < 0) return queue.filter(Boolean).map((song, idx) => ({ song, idx }))
+    return queue.slice(currentSongIndex + 1).filter(Boolean).map((song, i) => ({ song, idx: currentSongIndex + 1 + i }))
   }, [queue, currentSongIndex])
 
   const priorityTracksList = useMemo(() => {
-    return upcomingTracks.filter((t) => t.song.isPriority)
+    return upcomingTracks.filter((t) => Boolean(t?.song?.isPriority))
   }, [upcomingTracks])
 
   const backgroundTracksList = useMemo(() => {
-    return upcomingTracks.filter((t) => !t.song.isPriority)
+    return upcomingTracks.filter((t) => Boolean(t?.song && !t.song.isPriority))
   }, [upcomingTracks])
 
   const shareUrl = useMemo(() => {
@@ -241,12 +249,33 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       .finally(() => setBusy(false))
   }, [searchParams, user?.id, joinRoomById, setSearchParams])
 
-  // 1b. Handle ?code=... direct join link from URL (e.g. invite code link)
+  // 1b. Handle ?code=... direct join link from URL (e.g. invite code link or host auto-provision)
   useEffect(() => {
     const requestedCode = searchParams.get('code')
+    const shouldHost = searchParams.get('host') === 'true'
     if (!user || !requestedCode || directJoinAttempt.current === requestedCode) return
     directJoinAttempt.current = requestedCode
     setBusy(true)
+
+    if (shouldHost) {
+      setMessage(`Starting session as host for room ${requestedCode}...`)
+      void ensureHostRoom(true, true, requestedCode)
+        .then((room) => {
+          if (room) {
+            setMessage(`Started hosting room ${room.code}!`)
+          } else {
+            setMessage('Could not initialize room.')
+          }
+          setSearchParams({}, { replace: true })
+          setTimeout(() => setMessage(''), 3000)
+        })
+        .catch((err) => {
+          setMessage(err instanceof Error ? err.message : 'Could not host session.')
+        })
+        .finally(() => setBusy(false))
+      return
+    }
+
     setMessage('Joining session with room code...')
 
     void joinRoomByCode(requestedCode)
@@ -259,7 +288,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
         setMessage(err instanceof Error ? err.message : 'Could not join session.')
       })
       .finally(() => setBusy(false))
-  }, [searchParams, user?.id, joinRoomByCode, setSearchParams])
+  }, [searchParams, user?.id, joinRoomByCode, ensureHostRoom, setSearchParams])
 
   // 1c. Re-attach existing active host room if user already has one active
   useEffect(() => {
@@ -408,40 +437,6 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
           }))
         )
       })
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'listening_rooms', filter: `id=eq.${joinedRoom.id}` },
-        (payload) => {
-          const next = payload.new as ListeningRoom
-          if (!next.is_active) {
-            setMessage('Host ended the session.')
-            void handleHostDisconnect()
-            return
-          }
-
-          const currentRoom = useListeningStore.getState().joinedRoom
-          const songChanged =
-            next.song?.title !== currentRoom?.song?.title ||
-            next.song?.artist !== currentRoom?.song?.artist ||
-            next.song?.localId !== currentRoom?.song?.localId
-
-          useListeningStore.getState().setJoinedRoom(next)
-
-          if (songChanged) {
-            void handleHostSongChange(next)
-          } else {
-            handleHostPauseResume(next)
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'DELETE', schema: 'public', table: 'listening_rooms', filter: `id=eq.${joinedRoom.id}` },
-        () => {
-          setMessage('Host ended the listening session.')
-          void handleHostDisconnect()
-        }
-      )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'listening_room_members', filter: `room_id=eq.${joinedRoom.id}` },
@@ -676,6 +671,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       album: missingSong.album || '',
       duration: missingSong.duration || 0,
       artworkPath: missingSong.artworkUrl,
+      artworkUrl: missingSong.artworkUrl,
       isOnline: true,
       autoDownload: true,
       autoPlay: true
@@ -847,7 +843,11 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                     <span className="text-sm font-black text-white">Live System Audio Stream</span>
                     <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-mono font-bold text-emerald-300 flex items-center gap-1">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
-                      {deviceAudioClientState === 'connected' ? 'Ultra-Low Latency Opus Stereo' : deviceAudioClientState}
+                      {isLosslessMasterActive
+                        ? '✨ Bit-Perfect Lossless Master (FLAC in RAM)'
+                        : deviceAudioClientState === 'connected'
+                          ? '510 kbps Studio Ultra Opus'
+                          : deviceAudioClientState}
                     </span>
                   </div>
                   <p className="text-xs text-text-muted mt-0.5">
@@ -916,43 +916,131 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
         )}
 
         {/* Missing Song Alert Banner */}
-        {syncStatus === 'missing_song' && missingSong && !activeSubstitute && !isReceivingDeviceStream && !joinedRoom.song?.isDeviceStream && (
+        {syncStatus === 'missing_song' && missingSong && !activeSubstitute && !isReceivingDeviceStream && !joinedRoom.song?.isDeviceStream && (() => {
+          if (!AppCapabilities.downloads) {
+            // Public Web Deployment: Clean, ephemeral streaming mode (no download buttons/scrapers)
+            return (
+              <div className="mt-6 flex items-center justify-between rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4 animate-fade-in shadow-lg">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400">
+                    <Radio className="h-5 w-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-white">
+                      "{missingSong.title}" • Live Lossless Stream
+                    </p>
+                    <p className="text-xs text-emerald-200/80 mt-0.5">
+                      Streamed live from host in studio quality (510 kbps Opus • Ephemeral in RAM).
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => void connectToDeviceStream(joinedRoom)}
+                    className="flex items-center gap-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-3.5 py-2 text-xs transition-all shadow-md active:scale-95 cursor-pointer"
+                  >
+                    <Radio className="h-3.5 w-3.5" />
+                    <span>Tune In Live</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openReplaceModal}
+                    className="flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 hover:bg-white/20 px-3.5 py-2 text-xs font-bold text-white transition-all cursor-pointer"
+                  >
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                    <span>Use Local File</span>
+                  </button>
+                </div>
+              </div>
+            )
+          }
+
+          // Private Desktop App: Full personal download and offline library archiving
+          const activeMissingDownload = transfers.find((t) => {
+            const matchTitle = t.title.toLowerCase() === missingSong.title.toLowerCase()
+            return matchTitle && (t.status === 'downloading' || t.status === 'queued')
+          })
+
+          return (
+            <div className="mt-6 flex items-center justify-between rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 animate-fade-in shadow-lg">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-400">
+                  {activeMissingDownload ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <AlertTriangle className="h-5 w-5" />
+                  )}
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-white">
+                    "{missingSong.title}" is missing locally
+                  </p>
+                  <p className="text-xs text-amber-200/70 mt-0.5">
+                    {activeMissingDownload
+                      ? `Downloading from ${activeMissingDownload.sourceName || activeMissingDownload.source} (${activeMissingDownload.progress}%)... Will play automatically.`
+                      : autoDownloadMissing
+                        ? 'Acquiring track in the background... It will start playing automatically once ready.'
+                        : 'Download the track or choose a local substitute to keep listening.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={openReplaceModal}
+                  className="flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 hover:bg-white/20 px-3.5 py-2 text-xs font-bold text-white transition-all"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  <span>Replace</span>
+                </button>
+
+                {activeMissingDownload ? (
+                  <div className="flex items-center gap-1.5 rounded-full bg-amber-500/20 border border-amber-500/40 px-4 py-2 text-xs font-bold text-amber-300">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>{activeMissingDownload.progress}%</span>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleDownloadMissingSong}
+                    className="flex items-center gap-1.5 rounded-full bg-amber-500 hover:bg-amber-400 px-4 py-2 text-xs font-black text-black transition-all"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    <span>Download</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* Host Reconnecting Alert Banner */}
+        {syncStatus === 'host_reconnecting' && (
           <div className="mt-6 flex items-center justify-between rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 animate-fade-in shadow-lg">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-400">
-                <AlertTriangle className="h-5 w-5" />
+                <Loader2 className="h-5 w-5 animate-spin" />
               </div>
               <div>
                 <p className="text-sm font-bold text-white">
-                  "{missingSong.title}" is missing locally
+                  Host connection interrupted
                 </p>
                 <p className="text-xs text-amber-200/70 mt-0.5">
-                  {autoDownloadMissing
-                    ? 'Downloading track in the background... It will start playing automatically once ready.'
-                    : 'Download the track or choose a local substitute to keep listening.'}
+                  Holding playback in place while host reconnects (grace period active). If host does not return, a new host will be automatically elected.
                 </p>
               </div>
             </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={openReplaceModal}
-                className="flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 hover:bg-white/20 px-3.5 py-2 text-xs font-bold text-white transition-all"
-              >
-                <SlidersHorizontal className="h-3.5 w-3.5" />
-                <span>Replace</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleDownloadMissingSong}
-                className="flex items-center gap-1.5 rounded-full bg-amber-500 hover:bg-amber-400 px-4 py-2 text-xs font-black text-black transition-all"
-              >
-                <Download className="h-3.5 w-3.5" />
-                <span>Download</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => void leaveJoinedRoom()}
+              className="flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 hover:bg-white/20 px-3.5 py-2 text-xs font-bold text-white transition-all shrink-0 ml-4"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              <span>Leave</span>
+            </button>
           </div>
         )}
 
@@ -1081,11 +1169,15 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
             {/* Live Session Queue from Host */}
             {joinedRoom.queue && joinedRoom.queue.length > 0 && (() => {
               const currentSong = joinedRoom.song
+              const currentIdx = joinedRoom.queue.findIndex(
+                (s) => s.title === currentSong?.title && s.artist === currentSong?.artist
+              )
+              const baseTrackNum = currentIdx >= 0 ? currentIdx + 1 : 1
               const priorityTracks = joinedRoom.queue.filter(
-                (s) => s.isPriority && !(s.title === currentSong?.title && s.artist === currentSong?.artist)
+                (s) => Boolean(s?.isPriority && !(s.title === currentSong?.title && s.artist === currentSong?.artist))
               )
               const backgroundTracks = joinedRoom.queue.filter(
-                (s) => !s.isPriority && !(s.title === currentSong?.title && s.artist === currentSong?.artist)
+                (s) => Boolean(s && !s.isPriority && !(s.title === currentSong?.title && s.artist === currentSong?.artist))
               )
 
               return (
@@ -1097,7 +1189,29 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                         Live Session Queue
                       </h3>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const supabase = getSupabase()
+                            const sender = user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'Listener'
+                            await supabase.from('listening_room_commands').insert({
+                              room_code: joinedRoom.code,
+                              command: 'skip',
+                              payload: {},
+                              sender_name: sender
+                            })
+                            setMessage('Requested to skip current track!')
+                            setTimeout(() => setMessage(''), 3000)
+                          } catch {}
+                        }}
+                        className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold bg-white/10 hover:bg-white text-white hover:text-black border border-white/20 transition-all cursor-pointer shadow-xs active:scale-95"
+                        title="Vote / request to skip to next track"
+                      >
+                        <SkipForward className="h-3 w-3 fill-current" />
+                        <span>Skip Track</span>
+                      </button>
                       <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold border ${
                         joinedRoom.song?.discordPriorityEnabled !== false
                           ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
@@ -1111,8 +1225,58 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                     </div>
                   </div>
 
+                  {/* Tier 1: 🟢 NOW PLAYING LIVE SHOWCASE (Box 1) */}
+                  {currentSong && (
+                    <div className="mb-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3.5 flex items-center justify-between gap-3 shadow-sm">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400">
+                          <Radio className="h-4 w-4 animate-pulse" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="rounded-md bg-emerald-400 text-black px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider">
+                              TRACK #{baseTrackNum}
+                            </span>
+                            <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
+                              PLAYING NOW
+                            </span>
+                            {currentSong.isPriority ? (
+                              <span className="rounded-full bg-amber-400/20 border border-amber-400/40 px-2 py-0.5 text-[9px] font-bold text-amber-300">
+                                Source: 🌟 Priority Request (by {currentSong.requestedBy || 'Discord'})
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-medium text-text-muted">
+                                Source: 📁 Host Local Playlist (#{baseTrackNum})
+                              </span>
+                            )}
+                          </div>
+                          <p className="truncate text-xs font-black text-white mt-0.5">{currentSong.title}</p>
+                          <p className="truncate text-[10px] text-text-muted">{currentSong.artist}</p>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="text-xs font-mono font-bold text-emerald-300">
+                          {formatTime(currentTime)} / {formatTime(currentSong.duration || 0)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Visual Flow Arrow Connector: Box 1 -> Box 2/3 */}
+                  {currentSong && listenerQueueTab === 'all' && (priorityTracks.length > 0 || backgroundTracks.length > 0) && (
+                    <div className="flex items-center justify-center my-2.5 gap-2 text-text-muted/50">
+                      <div className="h-px bg-border/40 flex-1" />
+                      <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-amber-300 bg-surface px-3 py-0.5 rounded-full border border-amber-500/30">
+                        <span>↓</span>
+                        <span>{priorityTracks.length > 0 ? 'Next in Queue (Priority Requests)' : 'Next in Queue (Host Playlist)'}</span>
+                        <span>↓</span>
+                      </span>
+                      <div className="h-px bg-border/40 flex-1" />
+                    </div>
+                  )}
+
                   {/* Filter Tabs for Listeners */}
-                  <div className="flex items-center gap-1.5 mb-3 overflow-x-auto pb-1 scrollbar-none">
+                  <div className="flex items-center gap-1.5 mb-3 mt-1 overflow-x-auto pb-1 scrollbar-none">
                     <button
                       type="button"
                       onClick={() => setListenerQueueTab('all')}
@@ -1151,12 +1315,18 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                     </button>
                   </div>
 
-                  {/* Priority Requests Section for Listeners */}
+                  {/* Priority Requests Section for Listeners (Box 2) */}
                   {(listenerQueueTab === 'all' || listenerQueueTab === 'priority') && priorityTracks.length > 0 && (
-                    <div className="mb-3 rounded-xl border border-amber-500/35 bg-amber-500/10 p-3">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-amber-300 uppercase tracking-wider mb-2">
-                        <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-                        <span>Up Next (Priority Requests)</span>
+                    <div className="mb-2 rounded-xl border border-amber-500/35 bg-amber-500/10 p-3">
+                      <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-amber-500/20">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-amber-300 uppercase tracking-wider">
+                          <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                          <span>Priority / Important Requests (Discord)</span>
+                          <span className="rounded-full bg-amber-400/20 px-1.5 py-0.2 text-[9px] font-bold text-amber-300 border border-amber-400/30">
+                            {priorityTracks.length}
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-medium text-amber-300/80">Plays immediately next</span>
                       </div>
                       <div className="divide-y divide-amber-500/20 space-y-1">
                         {priorityTracks.map((song, pIdx) => {
@@ -1164,16 +1334,21 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                           return (
                             <div key={`${song.title}-${song.artist}-${pIdx}`} className="flex items-center justify-between py-1.5 text-xs">
                               <div className="flex items-center gap-2 min-w-0 flex-1">
-                                <span className="rounded-md bg-amber-400/20 px-1 py-0.5 text-[9px] font-black text-amber-300 shrink-0">
-                                  NEXT #{pIdx + 1}
+                                <span className="rounded-md bg-amber-400/20 px-1.5 py-0.5 text-[9px] font-mono font-black text-amber-300 shrink-0">
+                                  TRACK #{baseTrackNum + 1 + pIdx}
                                 </span>
                                 <div className="min-w-0 flex-1">
-                                  <p className="truncate font-bold text-amber-100">{song.title}</p>
-                                  <p className="truncate text-[10px] text-text-muted">{song.artist} • by {song.requestedBy || 'Request'}</p>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <p className="truncate font-bold text-amber-100">🌟 {song.title}</p>
+                                    <span className="text-[10px] text-amber-300/90 font-medium">
+                                      • Requested by @{song.requestedBy || 'Discord'}
+                                    </span>
+                                  </div>
+                                  <p className="truncate text-[10px] text-text-muted">{song.artist}</p>
                                 </div>
                               </div>
                               <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                                <span className="text-[10px] font-mono opacity-60">{formatTime(song.duration || 0)}</span>
+                                <span className="text-[10px] font-mono opacity-60">[{formatTime(song.duration || 0)}]</span>
                                 <button
                                   type="button"
                                   onClick={async () => {
@@ -1211,12 +1386,25 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                     </div>
                   )}
 
-                  {/* Background Playlist Preview for Listeners */}
+                  {/* Visual Flow Arrow Connector: Box 2 -> Box 3 */}
+                  {listenerQueueTab === 'all' && priorityTracks.length > 0 && backgroundTracks.length > 0 && (
+                    <div className="flex items-center justify-center my-2.5 gap-2 text-text-muted/50">
+                      <div className="h-px bg-border/40 flex-1" />
+                      <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-text-muted bg-surface px-3 py-0.5 rounded-full border border-border/40">
+                        <span>↓</span>
+                        <span>Host Local Playlist resumes automatically after requests</span>
+                        <span>↓</span>
+                      </span>
+                      <div className="h-px bg-border/40 flex-1" />
+                    </div>
+                  )}
+
+                  {/* Background Playlist Preview for Listeners (Box 3) */}
                   {(listenerQueueTab === 'all' || listenerQueueTab === 'local') && backgroundTracks.length > 0 && (
                     <div className="rounded-xl border border-border/40 bg-surface/40 p-3">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-xs font-bold text-text-muted uppercase tracking-wider">
-                          📜 Background Playlist ({backgroundTracks.length} tracks)
+                          📜 Background Local Playlist ({backgroundTracks.length} tracks • Resumes automatically)
                         </span>
                       </div>
                       <div className="divide-y divide-border/20 space-y-1 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
@@ -1225,14 +1413,21 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                           return (
                             <div key={`${song.title}-${song.artist}-${bIdx}`} className="flex items-center justify-between py-1 text-xs group hover:bg-white/5 rounded-lg px-1 transition-colors">
                               <div className="flex items-center gap-2 min-w-0 flex-1">
-                                <span className="text-[10px] font-bold opacity-60 w-4 text-center">{bIdx + 1}</span>
+                                <span className="rounded-md bg-surface border border-border/40 px-1 py-0.5 text-[9px] font-mono font-bold text-text-muted shrink-0">
+                                  TRACK #{baseTrackNum + 1 + priorityTracks.length + bIdx}
+                                </span>
                                 <div className="min-w-0 flex-1">
-                                  <p className="truncate font-medium text-text">{song.title}</p>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <p className="truncate font-medium text-text">{song.title}</p>
+                                    <span className="text-[10px] text-text-muted font-mono opacity-80">
+                                      (Local #{bIdx + 1})
+                                    </span>
+                                  </div>
                                   <p className="truncate text-[10px] text-text-muted">{song.artist}</p>
                                 </div>
                               </div>
                               <div className="flex items-center gap-1 shrink-0 ml-2">
-                                <span className="text-[10px] font-mono opacity-60 mr-1">{formatTime(song.duration || 0)}</span>
+                                <span className="text-[10px] font-mono opacity-60 mr-1">[{formatTime(song.duration || 0)}]</span>
                                 <button
                                   type="button"
                                   onClick={async () => {
@@ -1260,7 +1455,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                         })}
                         {backgroundTracks.length > 5 && (
                           <div className="pt-2 text-center text-[10px] text-text-muted font-medium">
-                            + {backgroundTracks.length - 5} more songs in host background playlist
+                            ... (Remaining {backgroundTracks.length - 5} Local Tracks)
                           </div>
                         )}
                       </div>
@@ -1711,7 +1906,13 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                         </span>
                       ) : (
                         <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-mono font-bold text-emerald-300">
-                          {deviceAudioBitrate === 320000 ? '320 kbps Studio Stereo' : deviceAudioBitrate === 192000 ? '192 kbps Balanced' : '96 kbps Saver'} (48kHz)
+                          {deviceAudioBitrate >= 510000
+                            ? '510 kbps Studio Ultra'
+                            : deviceAudioBitrate === 320000
+                              ? '320 kbps Studio Stereo'
+                              : deviceAudioBitrate === 192000
+                                ? '192 kbps Balanced'
+                                : '96 kbps Saver'} (48kHz)
                         </span>
                       )}
                     </div>
@@ -1755,7 +1956,8 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                 <div className="flex items-center gap-1.5 text-[11px]">
                   <span className="font-bold text-text-muted text-[10px] uppercase tracking-wider mr-1">Quality:</span>
                   {[
-                    { label: 'Studio 320k', value: 320000, desc: 'Lossless stereo' },
+                    { label: 'Studio Ultra 510k', value: 510000, desc: 'Lossless transparent studio master' },
+                    { label: 'Studio 320k', value: 320000, desc: 'High-fidelity stereo' },
                     { label: 'Balanced 192k', value: 192000, desc: 'Optimal for normal Wi-Fi' },
                     { label: 'Saver 96k', value: 96000, desc: 'Low bandwidth / mobile' }
                   ].map((preset) => (
@@ -1893,48 +2095,95 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                 <span className={`inline-block h-2 w-2 rounded-full ${discordPriorityEnabled ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)]' : 'bg-zinc-600'}`} />
               </button>
 
+              <button
+                type="button"
+                onClick={() => {
+                  playNext(true)
+                  void ensureHostRoom(true)
+                }}
+                className="flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-xs font-bold bg-white/10 hover:bg-white text-white hover:text-black border border-white/20 transition-all cursor-pointer shadow-xs active:scale-95"
+                title="Skip to next track in queue"
+              >
+                <SkipForward className="h-3.5 w-3.5 fill-current" />
+                <span>Skip Track</span>
+              </button>
+
               <span className="rounded-full bg-surface-elevated px-2.5 py-0.5 text-[10px] font-medium text-text-muted border border-border/60">
                 {queue.length} Tracks Total
               </span>
             </div>
           </div>
 
-          {/* Tier 1: 🟢 NOW PLAYING LIVE SHOWCASE */}
+          {/* Tier 1: 🟢 NOW PLAYING LIVE SHOWCASE (Box 1) */}
           {currentPlayingTrack && (
-            <div className="mb-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3.5 flex items-center justify-between gap-3 shadow-sm">
-              <div className="flex items-center gap-3 min-w-0 flex-1">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400">
-                  <Radio className="h-5 w-5 animate-pulse" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
-                      NOW PLAYING LIVE
-                    </span>
-                    {currentPlayingTrack.isPriority ? (
-                      <span className="rounded-full bg-amber-400/20 border border-amber-400/40 px-2 py-0.5 text-[9px] font-bold text-amber-300">
-                        🌟 Requested by {currentPlayingTrack.requestedBy || 'Discord User'}
-                      </span>
-                    ) : (
-                      <span className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-medium text-text-muted">
-                        📁 Host Playlist
-                      </span>
-                    )}
+            <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400">
+                    <Radio className="h-5 w-5 animate-pulse" />
                   </div>
-                  <p className="truncate text-sm font-black text-white mt-0.5">{currentPlayingTrack.title}</p>
-                  <p className="truncate text-xs text-text-muted">{currentPlayingTrack.artist}</p>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="rounded-md bg-emerald-400 text-black px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider">
+                        TRACK #{currentSongIndex + 1}
+                      </span>
+                      <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
+                        PLAYING NOW
+                      </span>
+                      {currentPlayingTrack.isPriority ? (
+                        <span className="rounded-full bg-amber-400/20 border border-amber-400/40 px-2 py-0.5 text-[9px] font-bold text-amber-300">
+                          Source: 🌟 Priority Request (by {currentPlayingTrack.requestedBy || 'Discord'})
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-medium text-text-muted">
+                          Source: 📁 Local Playlist (#{currentSongIndex + 1})
+                        </span>
+                      )}
+                    </div>
+                    <p className="truncate text-sm font-black text-white mt-1">{currentPlayingTrack.title}</p>
+                    <p className="truncate text-xs text-text-muted">{currentPlayingTrack.artist}</p>
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className="text-xs font-mono font-bold text-emerald-300">
+                    {formatTime(currentTime)} / {formatTime(currentPlayingTrack.duration || 0)}
+                  </span>
                 </div>
               </div>
-              <div className="text-right shrink-0">
-                <span className="text-xs font-mono font-bold text-emerald-300">
-                  {formatTime(currentTime)} / {formatTime(currentPlayingTrack.duration || 0)}
-                </span>
+
+              {/* Progress Bar */}
+              <div className="mt-3 w-full">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-emerald-400 transition-all duration-300 ease-linear"
+                    style={{
+                      width: `${
+                        currentPlayingTrack.duration
+                          ? Math.min(100, Math.max(0, (currentTime / currentPlayingTrack.duration) * 100))
+                          : 0
+                      }%`
+                    }}
+                  />
+                </div>
               </div>
             </div>
           )}
 
+          {/* Visual Flow Arrow Connector: Box 1 -> Box 2/3 */}
+          {currentPlayingTrack && hostQueueTab === 'all' && (priorityTracksList.length > 0 || backgroundTracksList.length > 0) && (
+            <div className="flex items-center justify-center my-2.5 gap-2">
+              <div className="h-px bg-border/40 flex-1" />
+              <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-amber-300 bg-surface-elevated px-3 py-1 rounded-full border border-amber-500/30 shadow-xs">
+                <span>↓</span>
+                <span>{priorityTracksList.length > 0 ? 'Next in Queue (Priority Requests)' : 'Next in Queue (Local Playlist)'}</span>
+                <span>↓</span>
+              </span>
+              <div className="h-px bg-border/40 flex-1" />
+            </div>
+          )}
+
           {/* Queue Source Segregation Tabs */}
-          <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-1 scrollbar-none">
+          <div className="flex items-center gap-2 mb-3 mt-1 overflow-x-auto pb-1 scrollbar-none">
             <button
               type="button"
               onClick={() => setHostQueueTab('all')}
@@ -1973,39 +2222,42 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
             </button>
           </div>
 
-          {/* Tier 2: 🌟 UP NEXT FROM DISCORD (PRIORITY REQUESTS) */}
+          {/* Tier 2: 🌟 UP NEXT FROM DISCORD (PRIORITY REQUESTS) (Box 2) */}
           {(hostQueueTab === 'all' || hostQueueTab === 'priority') && priorityTracksList.length > 0 && (
-            <div className="mb-4 rounded-xl border border-amber-500/35 bg-amber-500/10 p-3.5 shadow-sm">
+            <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 p-3.5 shadow-sm">
               <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-amber-500/20">
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-amber-400" />
                   <span className="text-xs font-black uppercase tracking-wider text-amber-300">
-                    Up Next from Discord ({priorityTracksList.length} Request{priorityTracksList.length > 1 ? 's' : ''})
+                    Priority / Important Requests (Discord)
+                  </span>
+                  <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-[9px] font-bold text-amber-300 border border-amber-400/30">
+                    {priorityTracksList.length}
                   </span>
                 </div>
                 <span className="text-[10px] font-bold text-amber-300/80">
-                  Plays immediately next in order
+                  Plays immediately in sequential order
                 </span>
               </div>
               <div className="divide-y divide-amber-500/15 space-y-1">
                 {priorityTracksList.map(({ song, idx }, pIdx) => (
                   <div key={`${song.id}-${idx}`} className="flex items-center justify-between py-2 text-left group">
-                    <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <span className="rounded-md bg-amber-500/20 border border-amber-500/30 px-1.5 py-0.5 text-[9px] font-black text-amber-300 shrink-0">
-                        NEXT #{pIdx + 1}
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      <span className="rounded-md bg-amber-500/20 border border-amber-500/30 px-1.5 py-0.5 text-[9px] font-mono font-black text-amber-300 shrink-0">
+                        TRACK #{currentSongIndex + 2 + pIdx}
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <p className="truncate text-xs font-bold text-amber-100">{song.title}</p>
+                          <p className="truncate text-xs font-bold text-amber-100">🌟 {song.title}</p>
                           <span className="text-[10px] text-amber-300/90 font-medium">
-                            • by {song.requestedBy || 'Discord'}
+                            • Requested by @{song.requestedBy || 'Discord'}
                           </span>
                         </div>
                         <p className="truncate text-[10px] text-text-muted">{song.artist}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0 ml-2">
-                      <span className="text-[10px] font-mono opacity-70">{formatTime(song.duration || 0)}</span>
+                      <span className="text-[10px] font-mono opacity-70">[{formatTime(song.duration || 0)}]</span>
                       <button
                         type="button"
                         onClick={() => {
@@ -2044,14 +2296,27 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
             </div>
           )}
 
-          {/* Tier 3: 📜 BACKGROUND PLAYLIST (RESUMES AUTOMATICALLY) */}
+          {/* Visual Flow Arrow Connector: Box 2 -> Box 3 */}
+          {hostQueueTab === 'all' && priorityTracksList.length > 0 && backgroundTracksList.length > 0 && (
+            <div className="flex items-center justify-center my-2.5 gap-2">
+              <div className="h-px bg-border/40 flex-1" />
+              <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-text-muted bg-surface-elevated px-3 py-1 rounded-full border border-border/40 shadow-xs">
+                <span>↓</span>
+                <span>Background Local Playlist resumes automatically after requests</span>
+                <span>↓</span>
+              </span>
+              <div className="h-px bg-border/40 flex-1" />
+            </div>
+          )}
+
+          {/* Tier 3: 📜 BACKGROUND LOCAL PLAYLIST (Box 3) */}
           {(hostQueueTab === 'all' || hostQueueTab === 'local') && backgroundTracksList.length > 0 && (
             <div className="rounded-xl border border-border/50 bg-surface/50 p-3.5">
               <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-border/40">
                 <div className="flex items-center gap-2">
                   <ListMusic className="h-4 w-4 text-text-muted" />
                   <span className="text-xs font-bold uppercase tracking-wider text-text-muted">
-                    Upcoming Playlist ({backgroundTracksList.length} tracks • Resumes automatically)
+                    Background Local Playlist ({backgroundTracksList.length} tracks • Resumes automatically)
                   </span>
                 </div>
                 {backgroundTracksList.length > 4 && (
@@ -2071,17 +2336,22 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                       key={`${song.id}-${idx}`}
                       className="flex items-center justify-between py-1.5 text-left group hover:bg-white/5 rounded-lg px-2 transition-colors"
                     >
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <span className="w-5 text-center text-[10px] font-bold text-text-muted opacity-70">
-                          {bIdx + 1}
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        <span className="rounded-md bg-surface-elevated border border-border/60 px-1.5 py-0.5 text-[9px] font-mono font-bold text-text-muted shrink-0">
+                          TRACK #{currentSongIndex + 2 + priorityTracksList.length + bIdx}
                         </span>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-xs font-medium text-text">{song.title}</p>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="truncate text-xs font-medium text-text">{song.title}</p>
+                            <span className="text-[10px] text-text-muted font-mono opacity-80">
+                              (Local #{bIdx + 1})
+                            </span>
+                          </div>
                           <p className="truncate text-[10px] text-text-muted">{song.artist}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0 ml-2">
-                        <span className="text-[10px] font-mono opacity-60">{formatTime(song.duration || 0)}</span>
+                        <span className="text-[10px] font-mono opacity-60">[{formatTime(song.duration || 0)}]</span>
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
                             type="button"
@@ -2120,6 +2390,11 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
                       </div>
                     </div>
                   )
+                )}
+                {!showAllQueue && backgroundTracksList.length > 4 && (
+                  <div className="pt-2 text-center text-[10px] text-text-muted font-medium">
+                    ... (Remaining {backgroundTracksList.length - 4} Local Tracks)
+                  </div>
                 )}
               </div>
             </div>

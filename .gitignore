@@ -27,3 +27,5 @@ resources/hermes/
 scripts/*.cjs
 README.private.md
 .wrangler/
+worker-configuration.d.ts
+test-*.js

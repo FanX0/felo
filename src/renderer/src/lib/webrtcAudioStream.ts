@@ -31,10 +31,11 @@ export interface WebRTCAudioStats {
 /**
  * Modifies an SDP description to set the Opus codec parameters for studio music quality:
  * - Full stereo (stereo=1, sprop-stereo=1)
- * - Configurable bitrate (default 320 kbps CBR)
+ * - Studio Ultra bitrate (default 510 kbps CBR - maximum mathematical Opus limit)
  * - In-band Forward Error Correction (useinbandfec=1)
+ * - Studio frame pacing (minptime=10, maxptime=20)
  */
-export function enhanceOpusSdp(sdp: string, bitrateBps = 320000): string {
+export function enhanceOpusSdp(sdp: string, bitrateBps = 510000): string {
   try {
     const match = /a=rtpmap:(\d+)\s+opus\/48000\/2/i.exec(sdp)
     if (!match) return sdp
@@ -43,7 +44,7 @@ export function enhanceOpusSdp(sdp: string, bitrateBps = 320000): string {
     const fmtpRegex = new RegExp(`^a=fmtp:${pt}\\s+(.*)$`, 'm')
     const fmtpMatch = fmtpRegex.exec(sdp)
 
-    let customParams = 'stereo=1;sprop-stereo=1;useinbandfec=1'
+    let customParams = 'stereo=1;sprop-stereo=1;useinbandfec=1;minptime=10;maxptime=20'
     if (bitrateBps > 0) {
       customParams += `;maxaveragebitrate=${bitrateBps};cbr=1`
     }
@@ -185,8 +186,13 @@ export class AudioLevelMonitor {
       const bufferLength = this.analyser.frequencyBinCount
       const dataArray = new Uint8Array(bufferLength)
 
-      const updateLevel = (): void => {
+      let lastUpdate = 0
+      const updateLevel = (now: number): void => {
         if (!this.analyser) return
+        this.rafId = requestAnimationFrame(updateLevel)
+        if (now - lastUpdate < 50) return
+        lastUpdate = now
+
         this.analyser.getByteFrequencyData(dataArray)
         let sum = 0
         for (let i = 0; i < bufferLength; i++) {
@@ -195,7 +201,6 @@ export class AudioLevelMonitor {
         const average = sum / bufferLength
         const percentage = Math.min(100, Math.round((average / 128) * 100))
         this.callback(percentage)
-        this.rafId = requestAnimationFrame(updateLevel)
       }
 
       this.rafId = requestAnimationFrame(updateLevel)
@@ -247,15 +252,20 @@ export interface WebRTCAudioHostOptions {
 export class WebRTCAudioHost {
   private roomCode: string
   private userId: string
-  private bitrateBps = 320000
+  private bitrateBps = 510000
   private isMuted = false
   private rawStream: MediaStream | null = null
   private audioTrack: MediaStreamTrack | null = null
   private audioOnlyStream: MediaStream | null = null
   private peers = new Map<string, RTCPeerConnection>()
+  private peerDataChannels = new Map<string, RTCDataChannel>()
   private peerPendingCandidates = new Map<string, RTCIceCandidateInit[]>()
   private channel: RealtimeChannel | null = null
   private levelMonitor: AudioLevelMonitor | null = null
+  private activeTrackUrl: string | null = null
+  private activeTrackMimeType = 'audio/flac'
+  private peerStreamAbortControllers = new Map<string, AbortController>()
+  private peerDisconnectTimers = new Map<string, any>()
 
   public onLevelChange?: (level: number) => void
   public onPeerCountChange?: (count: number) => void
@@ -384,13 +394,48 @@ export class WebRTCAudioHost {
     }
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+      const state = pc.connectionState
+      if (state === 'connected') {
+        const timer = this.peerDisconnectTimers.get(peerId)
+        if (timer) {
+          clearTimeout(timer)
+          this.peerDisconnectTimers.delete(peerId)
+        }
+      } else if (state === 'failed' || state === 'closed') {
+        const timer = this.peerDisconnectTimers.get(peerId)
+        if (timer) {
+          clearTimeout(timer)
+          this.peerDisconnectTimers.delete(peerId)
+        }
         this.removePeer(peerId)
+      } else if (state === 'disconnected') {
+        if (!this.peerDisconnectTimers.has(peerId)) {
+          const timer = setTimeout(() => {
+            this.peerDisconnectTimers.delete(peerId)
+            if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+              this.removePeer(peerId)
+            }
+          }, 4000)
+          this.peerDisconnectTimers.set(peerId, timer)
+        }
       }
     }
 
     // Add audio track to peer connection
     pc.addTrack(this.audioTrack, this.audioOnlyStream)
+
+    // Setup DataChannel for lossless audio streaming
+    try {
+      const dc = pc.createDataChannel('felo-lossless-stream', { ordered: true })
+      this.peerDataChannels.set(peerId, dc)
+      dc.onopen = () => {
+        if (this.activeTrackUrl) {
+          void this.streamTrackToPeer(dc, peerId, this.activeTrackUrl, this.activeTrackMimeType)
+        }
+      }
+    } catch (dcErr) {
+      console.warn('[WebRTCHost] Could not create lossless data channel for peer:', dcErr)
+    }
 
     // Create offer
     const offer = await pc.createOffer()
@@ -452,7 +497,29 @@ export class WebRTCAudioHost {
   }
 
   private removePeer(peerId: string): void {
+    const timer = this.peerDisconnectTimers.get(peerId)
+    if (timer) {
+      clearTimeout(timer)
+      this.peerDisconnectTimers.delete(peerId)
+    }
+    const abortCtrl = this.peerStreamAbortControllers.get(peerId)
+    if (abortCtrl) {
+      try {
+        abortCtrl.abort()
+      } catch {}
+      this.peerStreamAbortControllers.delete(peerId)
+    }
     this.peerPendingCandidates.delete(peerId)
+    const dc = this.peerDataChannels.get(peerId)
+    if (dc) {
+      try {
+        dc.close()
+      } catch {
+        // Ignored
+      }
+      this.peerDataChannels.delete(peerId)
+    }
+
     const pc = this.peers.get(peerId)
     if (pc) {
       try {
@@ -462,6 +529,101 @@ export class WebRTCAudioHost {
       }
       this.peers.delete(peerId)
       this.onPeerCountChange?.(this.peers.size)
+    }
+  }
+
+  /**
+   * Streams audio chunks to an individual peer's DataChannel with flow control backpressure,
+   * safe 16 KB packet fragmentation, and per-peer cancellation on track change.
+   */
+  private async streamTrackToPeer(
+    dc: RTCDataChannel,
+    peerId: string,
+    audioUrl: string,
+    mimeType: string
+  ): Promise<void> {
+    if (dc.readyState !== 'open') return
+
+    // Cancel any previous stream reader in progress for this peer
+    const prevAbort = this.peerStreamAbortControllers.get(peerId)
+    if (prevAbort) {
+      try {
+        prevAbort.abort()
+      } catch {}
+      this.peerStreamAbortControllers.delete(peerId)
+    }
+
+    const abortCtrl = new AbortController()
+    this.peerStreamAbortControllers.set(peerId, abortCtrl)
+
+    try {
+      const response = await fetch(audioUrl, { signal: abortCtrl.signal })
+      if (!response.ok || !response.body) return
+      const totalSize = parseInt(response.headers.get('content-length') || '0', 10)
+
+      if (abortCtrl.signal.aborted || dc.readyState !== 'open') return
+
+      const startMsg = JSON.stringify({ type: 'start', mimeType, totalSize })
+      dc.send(startMsg)
+
+      const reader = response.body.getReader()
+      const CHUNK_SIZE = 16384 // 16 KB safe WebRTC SCTP chunk size
+
+      while (true) {
+        if (abortCtrl.signal.aborted || dc.readyState !== 'open') {
+          try {
+            await reader.cancel()
+          } catch {}
+          break
+        }
+
+        const { done, value } = await reader.read()
+        if (done) break
+
+        if (value && value.byteLength > 0) {
+          // Slice the Uint8Array into 16 KB safe WebRTC chunks
+          for (let offset = 0; offset < value.byteLength; offset += CHUNK_SIZE) {
+            if (abortCtrl.signal.aborted || dc.readyState !== 'open') break
+
+            // Flow control: wait if bufferedAmount exceeds 2MB
+            while (dc.readyState === 'open' && !abortCtrl.signal.aborted && dc.bufferedAmount > 2097152) {
+              await new Promise((r) => setTimeout(r, 40))
+            }
+
+            if (abortCtrl.signal.aborted || dc.readyState !== 'open') break
+
+            const slice = value.subarray(offset, Math.min(offset + CHUNK_SIZE, value.byteLength))
+            dc.send(slice)
+          }
+        }
+      }
+
+      if (!abortCtrl.signal.aborted && dc.readyState === 'open') {
+        dc.send(JSON.stringify({ type: 'end' }))
+      }
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        console.warn(`[WebRTCHost] Error streaming track to peer ${peerId}:`, err)
+      }
+    } finally {
+      if (this.peerStreamAbortControllers.get(peerId) === abortCtrl) {
+        this.peerStreamAbortControllers.delete(peerId)
+      }
+    }
+  }
+
+  /**
+   * Broadcasts the pristine, bit-perfect lossless audio stream chunks directly through WebRTC DataChannels.
+   * Chunks are held ephemerally in RAM on the listener's client and never written to disk.
+   */
+  async broadcastLosslessTrack(audioUrl: string, mimeType = 'audio/flac'): Promise<void> {
+    this.activeTrackUrl = audioUrl
+    this.activeTrackMimeType = mimeType
+
+    for (const [peerId, dc] of this.peerDataChannels) {
+      if (dc.readyState === 'open') {
+        void this.streamTrackToPeer(dc, peerId, audioUrl, mimeType)
+      }
     }
   }
 
@@ -482,6 +644,27 @@ export class WebRTCAudioHost {
     this.levelMonitor?.stop()
     this.levelMonitor = null
 
+    for (const [, abortCtrl] of this.peerStreamAbortControllers) {
+      try {
+        abortCtrl.abort()
+      } catch {}
+    }
+    this.peerStreamAbortControllers.clear()
+
+    for (const [, timer] of this.peerDisconnectTimers) {
+      clearTimeout(timer)
+    }
+    this.peerDisconnectTimers.clear()
+
+    for (const [, dc] of this.peerDataChannels) {
+      try {
+        dc.close()
+      } catch {
+        // Ignored
+      }
+    }
+    this.peerDataChannels.clear()
+
     for (const [, pc] of this.peers) {
       try {
         pc.close()
@@ -498,6 +681,7 @@ export class WebRTCAudioHost {
     }
     this.audioTrack = null
     this.audioOnlyStream = null
+    this.activeTrackUrl = null
   }
 }
 
@@ -511,6 +695,7 @@ export interface WebRTCAudioClientOptions {
   onConnectionStateChange?: (state: 'connecting' | 'connected' | 'disconnected' | 'stopped') => void
   onAutoplayBlocked?: (blocked: boolean) => void
   onStats?: (stats: WebRTCAudioStats) => void
+  onLosslessReady?: (blobUrl: string, mimeType: string) => void
   onError?: (err: Error) => void
 }
 
@@ -526,11 +711,19 @@ export class WebRTCAudioClient {
   private statsTimer: any = null
   private prevBytesReceived = 0
   private prevTimestamp = 0
+  private handshakeRetryTimer: any = null
+
+  private losslessChunks: ArrayBuffer[] = []
+  private losslessMimeType = 'audio/flac'
+  private losslessTotalSize = 0
+  private losslessReceivedSize = 0
+  private losslessBlobUrl: string | null = null
 
   public onLevelChange?: (level: number) => void
   public onStateChange?: (state: 'connecting' | 'connected' | 'disconnected' | 'stopped') => void
   public onAutoplayBlocked?: (blocked: boolean) => void
   public onStats?: (stats: WebRTCAudioStats) => void
+  public onLosslessReady?: (blobUrl: string, mimeType: string) => void
   public onError?: (err: Error) => void
 
   constructor(roomCode: string, userId: string, hostId: string, options?: WebRTCAudioClientOptions) {
@@ -543,7 +736,21 @@ export class WebRTCAudioClient {
       if (options.onConnectionStateChange) this.onStateChange = options.onConnectionStateChange
       if (options.onAutoplayBlocked) this.onAutoplayBlocked = options.onAutoplayBlocked
       if (options.onStats) this.onStats = options.onStats
+      if (options.onLosslessReady) this.onLosslessReady = options.onLosslessReady
       if (options.onError) this.onError = options.onError
+    }
+  }
+
+  setMutedForLossless(muted: boolean): void {
+    if (this.audioElement) {
+      this.audioElement.muted = muted
+    }
+  }
+
+  private stopHandshakeRetry(): void {
+    if (this.handshakeRetryTimer) {
+      clearInterval(this.handshakeRetryTimer)
+      this.handshakeRetryTimer = null
     }
   }
 
@@ -566,6 +773,7 @@ export class WebRTCAudioClient {
 
       try {
         if (msg.type === 'offer' && msg.targetId === this.userId && msg.offer && msg.senderId === this.hostId) {
+          this.stopHandshakeRetry()
           await this.handleOffer(msg.offer)
         } else if (msg.type === 'ice-candidate' && msg.targetId === this.userId && msg.candidate && msg.senderId === this.hostId) {
           if (this.pc && this.pc.remoteDescription) {
@@ -586,18 +794,44 @@ export class WebRTCAudioClient {
       }
     })
 
-    await this.channel.subscribe()
-
-    // Announce to host that we want to join the device audio stream
-    await this.channel.send({
-      type: 'broadcast',
-      event: 'signal',
-      payload: {
-        type: 'join-stream',
-        senderId: this.userId,
-        targetId: this.hostId
-      } satisfies WebRTCSignalMessage
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => resolve(), 4000)
+      this.channel!.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          clearTimeout(timeout)
+          resolve()
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          clearTimeout(timeout)
+          reject(new Error(`Realtime subscription error: ${status}`))
+        }
+      })
     })
+
+    const sendJoin = async () => {
+      if (!this.channel) return
+      await this.channel.send({
+        type: 'broadcast',
+        event: 'signal',
+        payload: {
+          type: 'join-stream',
+          senderId: this.userId,
+          targetId: this.hostId
+        } satisfies WebRTCSignalMessage
+      })
+    }
+
+    await sendJoin()
+
+    this.stopHandshakeRetry()
+    let attempts = 0
+    this.handshakeRetryTimer = setInterval(async () => {
+      if (this.pc?.remoteDescription || this.pc?.connectionState === 'connected' || attempts >= 2) {
+        this.stopHandshakeRetry()
+        return
+      }
+      attempts++
+      await sendJoin()
+    }, 2500)
   }
 
   private async handleOffer(offer: RTCSessionDescriptionInit): Promise<void> {
@@ -610,6 +844,12 @@ export class WebRTCAudioClient {
     }
 
     this.pc = new RTCPeerConnection({ iceServers: DEFAULT_ICE_SERVERS })
+
+    this.pc.ondatachannel = (event) => {
+      if (event.channel.label === 'felo-lossless-stream') {
+        this.setupLosslessDataChannel(event.channel)
+      }
+    }
 
     this.pc.onicecandidate = (event) => {
       if (event.candidate && this.channel) {
@@ -763,7 +1003,67 @@ export class WebRTCAudioClient {
     }
   }
 
+  private setupLosslessDataChannel(channel: RTCDataChannel): void {
+    channel.binaryType = 'arraybuffer'
+    channel.onmessage = (event) => {
+      if (typeof event.data === 'string') {
+        try {
+          const meta = JSON.parse(event.data)
+          if (meta.type === 'start') {
+            this.clearLosslessBuffer()
+            this.losslessMimeType = meta.mimeType || 'audio/flac'
+            this.losslessTotalSize = meta.totalSize || 0
+            this.losslessReceivedSize = 0
+            this.setMutedForLossless(false)
+          } else if (meta.type === 'end') {
+            this.activateLosslessPlayback()
+          }
+        } catch {}
+      } else if (event.data instanceof ArrayBuffer) {
+        this.losslessChunks.push(event.data)
+        this.losslessReceivedSize += event.data.byteLength
+        // When received known complete stream, activate in-memory lossless stream
+        if (
+          !this.losslessBlobUrl &&
+          this.losslessTotalSize > 0 &&
+          this.losslessReceivedSize >= this.losslessTotalSize
+        ) {
+          this.activateLosslessPlayback()
+        }
+      }
+    }
+  }
+
+  private activateLosslessPlayback(): void {
+    if (this.losslessChunks.length === 0) return
+    try {
+      const blob = new Blob(this.losslessChunks, { type: this.losslessMimeType })
+      if (this.losslessBlobUrl) {
+        URL.revokeObjectURL(this.losslessBlobUrl)
+      }
+      this.losslessBlobUrl = URL.createObjectURL(blob)
+      this.onLosslessReady?.(this.losslessBlobUrl, this.losslessMimeType)
+    } catch (err) {
+      console.warn('[WebRTCClient] Error activating lossless buffer:', err)
+    }
+  }
+
+  private clearLosslessBuffer(): void {
+    if (this.losslessBlobUrl) {
+      try {
+        URL.revokeObjectURL(this.losslessBlobUrl)
+      } catch {}
+      this.losslessBlobUrl = null
+    }
+    this.losslessChunks = []
+    this.losslessReceivedSize = 0
+    this.losslessTotalSize = 0
+    this.setMutedForLossless(false)
+  }
+
   disconnect(): void {
+    this.stopHandshakeRetry()
+    this.clearLosslessBuffer()
     this.stopStatsMonitoring()
     this.pendingCandidates = []
     if (this.channel) {
