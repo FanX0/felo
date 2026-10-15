@@ -230,6 +230,8 @@ export default function MobileDeviceSheet({
         activeRemote.activeDeviceId !== myDeviceId &&
         user?.id
       ) {
+        useConnectedDeviceStore.getState().claimPlayback()
+        useConnectedDeviceStore.getState().setDevicePlaybackMode('local')
         // Pause active remote desktop
         await sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'pause')
 
@@ -249,7 +251,9 @@ export default function MobileDeviceSheet({
             }, 80)
           }
         }
+        useConnectedDeviceStore.getState().clearRemotePlayback()
       } else if (target === 'desktop') {
+        useConnectedDeviceStore.getState().setDevicePlaybackMode('remote_controller')
         const localPlayer = usePlayerStore.getState()
         const localSong = localPlayer.queue[localPlayer.currentSongIndex]
         if (localPlayer.isPlaying && localSong && user?.id) {

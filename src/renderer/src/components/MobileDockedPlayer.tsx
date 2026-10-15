@@ -1,21 +1,14 @@
 import { useEffect, useState, useRef } from 'react'
 import { Play, Pause, SkipForward, Laptop2, Smartphone, Radio, Globe } from 'lucide-react'
-import { remoteClient, type RemotePlayerState, type PlaybackTarget } from '../pages/Remote/remoteClient'
+import { remoteClient, type RemotePlayerState } from '../pages/Remote/remoteClient'
 import { usePlayerStore } from '../hooks/usePlayerStore'
 import { useOnlineStore } from '../hooks/useOnlineStore'
 import {
   useConnectedDeviceStore,
-  sendDeviceCommand,
-  getInterpolatedPosition
+  sendDeviceCommand
 } from '../hooks/useConnectedDeviceStore'
-import { toMediaUrl } from '../lib/media'
-import {
-  getDeviceDisplayName,
-  getCurrentDeviceId,
-  getDeviceCategory,
-  isPcDevice,
-  detectDeviceInfo
-} from '../lib/deviceInfo'
+import { getCurrentDeviceId } from '../lib/deviceInfo'
+import { resolveEffectivePlaybackState } from '../lib/playbackStateResolver'
 
 interface MobileDockedPlayerProps {
   onExpand: () => void
@@ -37,9 +30,8 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
   const localIsPlaying = usePlayerStore((s) => s.isPlaying)
   const localCurrentTime = usePlayerStore((s) => s.currentTime)
   const localDuration = usePlayerStore((s) => s.duration)
-  const localSong = localQueue[localIndex]
+  const localVolume = usePlayerStore((s) => s.volume)
   const isAudioActive = usePlayerStore((s) => s.isAudioActive)
-  const isLocalAudioOwner = isAudioActive && localIsPlaying
 
   const [, setTick] = useState(0)
 
@@ -52,92 +44,55 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
     }
   }, [])
 
-  // Cloud Realtime active device check
-  const isCloudRemoteActive = Boolean(
-    !isLocalAudioOwner &&
-      activeRemote &&
-      (myDeviceId ? activeRemote.activeDeviceId !== myDeviceId : true) &&
-      activeRemote.song
-  )
+  // Unified resolution
+  const unified = resolveEffectivePlaybackState({
+    localPlayer: {
+      queue: localQueue,
+      currentSongIndex: localIndex,
+      isPlaying: localIsPlaying,
+      currentTime: localCurrentTime,
+      duration: localDuration,
+      volume: localVolume,
+      isAudioActive
+    },
+    activeRemote,
+    lanState: remoteState,
+    isLanConnected: isRemoteConnected,
+    myDeviceId
+  })
 
+  // Timer tick for remote playing progress interpolation
   useEffect(() => {
-    if (!isCloudRemoteActive || !activeRemote?.isPlaying) return undefined
+    if (!unified.isRemote || !unified.isPlaying) return undefined
     const timer = setInterval(() => setTick((t) => t + 1), 1000)
     return () => clearInterval(timer)
-  }, [isCloudRemoteActive, activeRemote?.isPlaying])
+  }, [unified.isRemote, unified.isPlaying])
 
-  // Determine active song source
-  const hasLanRemoteSong = Boolean(!isLocalAudioOwner && isRemoteConnected && remoteState.song)
-  const hasLocalSong = Boolean(localSong)
-
-  if (!isCloudRemoteActive && !hasLanRemoteSong && !hasLocalSong) {
+  if (!unified.song) {
     return null
   }
 
-  let title = ''
-  let artist = ''
-  let artworkUrl: string | undefined = undefined
-  let isPlaying = false
-  let progressPercent = 0
-  let targetDevice: PlaybackTarget = 'mobile'
-  let deviceLabel = 'This Device'
-
-  if (isCloudRemoteActive && activeRemote?.song) {
-    title = activeRemote.song.title || 'Unknown Title'
-    artist = activeRemote.song.artist || 'Unknown Artist'
-    artworkUrl = activeRemote.song.artworkUrl
-    isPlaying = activeRemote.isPlaying
-    const currentPos = getInterpolatedPosition(activeRemote)
-    progressPercent =
-      activeRemote.duration > 0
-        ? Math.min(100, (currentPos / activeRemote.duration) * 100)
-        : 0
-    const activeCat = getDeviceCategory({
-      device_type: activeRemote.activeDeviceType,
-      device_category: activeRemote.activeDeviceCategory,
-      device_name: activeRemote.activeDeviceName
-    })
-    targetDevice = isPcDevice(activeCat) ? 'desktop' : 'mobile'
-    deviceLabel = activeRemote.activeDeviceName || (targetDevice === 'desktop' ? 'Felo Desktop' : 'Mobile Device')
-  } else if (hasLanRemoteSong) {
-    title = remoteState.song?.title || 'Unknown Title'
-    artist = remoteState.song?.artist || 'Unknown Artist'
-    artworkUrl = remoteState.song?.artworkUrl
-      ? remoteClient.getFullArtworkUrl(remoteState.song.artworkUrl)
-      : undefined
-    isPlaying = remoteState.isPlaying
-    progressPercent =
-      remoteState.duration > 0
-        ? Math.min(100, (remoteState.position / remoteState.duration) * 100)
-        : 0
-    targetDevice = remoteState.targetDevice || remoteClient.getTargetDevice()
-    deviceLabel =
-      targetDevice === 'desktop'
-        ? remoteState.deviceName || 'Felo Desktop'
-        : targetDevice === 'both'
-          ? 'Dual Sync'
-          : getDeviceDisplayName()
-  } else if (hasLocalSong && localSong) {
-    title = localSong.title || 'Unknown Title'
-    artist = localSong.artist || 'Unknown Artist'
-    artworkUrl = toMediaUrl(localSong.artworkPath) || localSong.artworkUrl
-    isPlaying = localIsPlaying
-    progressPercent =
-      localDuration > 0 ? Math.min(100, (localCurrentTime / localDuration) * 100) : 0
-    targetDevice = 'mobile'
-    deviceLabel = getDeviceDisplayName()
-  }
+  const title = unified.song.title || 'Unknown Title'
+  const artist = unified.song.artist || 'Unknown Artist'
+  const artworkUrl = unified.artworkUrl
+  const isPlaying = unified.isPlaying
+  const progressPercent = unified.progressPercent
+  const isRemote = unified.isRemote
+  const deviceName = unified.activeDeviceName
+  const deviceCategory = unified.activeDeviceCategory
 
   const handleTogglePlay = (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (isCloudRemoteActive && activeRemote && user?.id) {
-      void sendDeviceCommand(
-        user.id,
-        activeRemote.activeDeviceId,
-        activeRemote.isPlaying ? 'pause' : 'play'
-      )
-    } else if (hasLanRemoteSong) {
-      void remoteClient.togglePlay()
+    if (unified.isRemote) {
+      if (unified.source === 'lan') {
+        void remoteClient.togglePlay()
+      } else if (user?.id) {
+        void sendDeviceCommand(
+          user.id,
+          unified.activeDeviceId,
+          unified.isPlaying ? 'pause' : 'play'
+        )
+      }
     } else {
       usePlayerStore.getState().togglePlay()
     }
@@ -150,20 +105,24 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
 
   const handleNext = (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (isCloudRemoteActive && activeRemote && user?.id) {
-      void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'next')
-    } else if (hasLanRemoteSong) {
-      void remoteClient.next()
+    if (unified.isRemote) {
+      if (unified.source === 'lan') {
+        void remoteClient.next()
+      } else if (user?.id) {
+        void sendDeviceCommand(user.id, unified.activeDeviceId, 'next')
+      }
     } else {
       usePlayerStore.getState().playNext(true)
     }
   }
 
   const handlePrevious = () => {
-    if (isCloudRemoteActive && activeRemote && user?.id) {
-      void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'previous')
-    } else if (hasLanRemoteSong) {
-      void remoteClient.previous()
+    if (unified.isRemote) {
+      if (unified.source === 'lan') {
+        void remoteClient.previous()
+      } else if (user?.id) {
+        void sendDeviceCommand(user.id, unified.activeDeviceId, 'previous')
+      }
     } else {
       usePlayerStore.getState().playPrevious()
     }
@@ -219,33 +178,19 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
           <button
             type="button"
             onClick={handleDeviceClick}
-            className="shrink-0 flex items-center gap-1 font-semibold text-[10px] text-emerald-400 hover:text-emerald-300 transition"
+            className={`shrink-0 flex items-center gap-1 font-semibold text-[10px] transition ${
+              isRemote ? 'text-emerald-400 hover:text-emerald-300' : 'text-zinc-400 hover:text-zinc-300'
+            }`}
           >
-            {(() => {
-              if (targetDevice === 'both') return <Radio className="w-3 h-3" />
-              const cat =
-                isCloudRemoteActive && activeRemote
-                  ? getDeviceCategory({
-                      device_type: activeRemote.activeDeviceType,
-                      device_category: activeRemote.activeDeviceCategory,
-                      device_name: activeRemote.activeDeviceName
-                    })
-                  : targetDevice === 'desktop'
-                    ? 'app_pc'
-                    : detectDeviceInfo().category
-
-              if (cat === 'app_pc') return <Laptop2 className="w-3 h-3" />
-              if (cat === 'web_pc') return <Globe className="w-3.5 h-3.5" />
-              return <Smartphone className="w-3 h-3 text-zinc-300" />
-            })()}
-            <span
-              className={
-                targetDevice === 'mobile' && !isCloudRemoteActive
-                  ? 'text-zinc-300'
-                  : 'text-emerald-400'
-              }
-            >
-              {isCloudRemoteActive ? `Listening on ${deviceLabel}` : deviceLabel}
+            {deviceCategory === 'app_pc' ? (
+              <Laptop2 className="w-3 h-3 text-emerald-400" />
+            ) : deviceCategory === 'web_pc' ? (
+              <Globe className="w-3.5 h-3.5 text-emerald-400" />
+            ) : (
+              <Smartphone className={`w-3 h-3 ${isRemote ? 'text-emerald-400' : 'text-zinc-300'}`} />
+            )}
+            <span>
+              {isRemote ? `Listening on ${deviceName}` : deviceName}
             </span>
           </button>
         </div>

@@ -9,6 +9,9 @@ import { resolveRemoteSongUrls } from '../lib/songAudioResolver'
 export type { PlaybackTarget }
 export type PlaybackResolutionPreference = 'ask' | 'remote' | 'transfer'
 
+/** If no playback_state update is received within this window, activePlayback is considered stale */
+export const REMOTE_PLAYBACK_STALE_MS = 15_000
+
 export function normalizeDeviceId(id?: string): string {
   if (!id || id === 'pc' || id === 'default' || id === 'default-pc') {
     return 'default-pc'
@@ -44,6 +47,8 @@ export interface PlaybackConflictState {
   activePosition: number
 }
 
+export type DevicePlaybackMode = 'local' | 'remote_controller' | 'independent'
+
 interface ConnectedDeviceStoreState {
   activePlayback: RemotePlaybackState | null
   discoveredDevices: UserConnectedDevice[]
@@ -55,6 +60,10 @@ interface ConnectedDeviceStoreState {
   playbackTarget: PlaybackTarget
   playbackConflict: PlaybackConflictState | null
   resolutionPreference: PlaybackResolutionPreference
+  devicePlaybackMode: DevicePlaybackMode
+  claimEpoch: number
+  setDevicePlaybackMode: (mode: DevicePlaybackMode) => void
+  claimPlayback: () => number
   setPlaybackTarget: (target: PlaybackTarget) => void
   setPlaybackConflict: (conflict: PlaybackConflictState | null) => void
   setResolutionPreference: (pref: PlaybackResolutionPreference, rememberSession?: boolean) => void
@@ -101,6 +110,14 @@ export const useConnectedDeviceStore = create<ConnectedDeviceStoreState>((set, g
   playbackTarget: getInitialPlaybackTarget(),
   playbackConflict: null,
   resolutionPreference: getInitialResolutionPreference(),
+  devicePlaybackMode: 'local',
+  claimEpoch: Date.now(),
+  setDevicePlaybackMode: (devicePlaybackMode) => set({ devicePlaybackMode }),
+  claimPlayback: () => {
+    const nextEpoch = Date.now()
+    set({ claimEpoch: nextEpoch, devicePlaybackMode: 'local' })
+    return nextEpoch
+  },
   setPlaybackTarget: (playbackTarget) => {
     if (typeof window !== 'undefined') {
       localStorage.setItem('felo_playback_target', playbackTarget)
@@ -292,8 +309,10 @@ export async function sendDeviceCommand(
       else if (action === 'previous') void remoteClient.previous()
       else if (action === 'seek' && typeof data.seconds === 'number') void remoteClient.seek(data.seconds)
       else if (action === 'volume' && typeof data.volume === 'number') void remoteClient.setVolume(data.volume * 100)
+      // LAN dispatch succeeded — skip cloud broadcast to prevent duplicate command execution
+      return
     } catch {
-      // ignore
+      // LAN dispatch failed — fall through to cloud broadcast as backup
     }
   }
 

@@ -27,18 +27,12 @@ import MobileLyricsSheet from './pages/Remote/MobileLyricsSheet'
 import DevicePresenceBridge from './components/DevicePresenceBridge'
 import PlaybackTransferModal from './components/PlaybackTransferModal'
 import { remoteClient, type RemotePlayerState } from './pages/Remote/remoteClient'
+import { resolveEffectivePlaybackState } from './lib/playbackStateResolver'
 import {
   useConnectedDeviceStore,
-  getInterpolatedPosition,
   sendDeviceCommand
 } from './hooks/useConnectedDeviceStore'
-import { toMediaUrl } from './lib/media'
-import {
-  getCurrentDeviceId,
-  getDeviceDisplayName,
-  isPcDevice,
-  detectDeviceInfo
-} from './lib/deviceInfo'
+import { getCurrentDeviceId } from './lib/deviceInfo'
 import { AppCapabilities, isElectron } from './lib/appConfig'
 import { useIsMobile } from './hooks/useIsMobile'
 import { usePrivateSessionStore } from './hooks/usePrivateSessionStore'
@@ -150,7 +144,6 @@ function App() {
   const localVolume = usePlayerStore((s) => s.volume)
   const localShuffle = usePlayerStore((s) => s.isShuffle)
   const localRepeat = usePlayerStore((s) => s.repeatMode)
-  const localSong = localQueue[localIndex]
 
   useEffect(() => {
     const unsubState = remoteClient.subscribe(setRemoteState)
@@ -164,64 +157,50 @@ function App() {
   const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
   const myDeviceId = getCurrentDeviceId()
   const isAudioActive = usePlayerStore((s) => s.isAudioActive)
-  const isLocalAudioOwner = isAudioActive && localIsPlaying
-  const isCloudRemoteActive = Boolean(
-    !isLocalAudioOwner &&
-      activeRemote &&
-      activeRemote.song &&
-      (myDeviceId ? activeRemote.activeDeviceId !== myDeviceId : true)
-  )
 
-  const activePlayerState: RemotePlayerState =
-    isRemoteConnected && remoteState.song
-      ? remoteState
-      : isCloudRemoteActive && activeRemote?.song
-        ? {
-            ready: true,
-            playbackState: activeRemote.isPlaying ? 'playing' : 'paused',
-            isPlaying: activeRemote.isPlaying,
-            position: getInterpolatedPosition(activeRemote),
-            duration: activeRemote.duration,
-            volume: localVolume,
-            volumePercent: Math.round(localVolume * 100),
-            shuffle: false,
-            repeat: 'off',
-            targetDevice: isPcDevice(activeRemote.activeDeviceCategory || activeRemote.activeDeviceType)
-              ? 'desktop'
-              : 'mobile',
-            deviceName: activeRemote.activeDeviceName || 'Felo Player',
-            song: {
-              id: activeRemote.song.id,
-              title: activeRemote.song.title || 'Unknown Title',
-              artist: activeRemote.song.artist || 'Unknown Artist',
-              album: activeRemote.song.album || 'Desktop Library',
-              duration: activeRemote.song.duration || activeRemote.duration,
-              artworkUrl: activeRemote.song.artworkUrl || ''
-            }
-          }
-      : {
-          ready: true,
-          playbackState: localIsPlaying ? 'playing' : 'paused',
-          isPlaying: localIsPlaying,
-          position: localCurrentTime,
-          duration: localDuration,
-          volume: localVolume,
-          volumePercent: Math.round(localVolume * 100),
-          shuffle: localShuffle,
-          repeat: localRepeat,
-          targetDevice: isPcDevice(detectDeviceInfo().category) ? 'desktop' : 'mobile',
-          deviceName: getDeviceDisplayName(),
-          song: localSong
-            ? {
-                id: localSong.id,
-                title: localSong.title || 'Unknown Title',
-                artist: localSong.artist || 'Unknown Artist',
-                album: localSong.album || 'Unknown Album',
-                duration: localSong.duration || localDuration,
-                artworkUrl: toMediaUrl(localSong.artworkPath) || localSong.artworkUrl || ''
-              }
-            : null
+  const unified = resolveEffectivePlaybackState({
+    localPlayer: {
+      queue: localQueue,
+      currentSongIndex: localIndex,
+      isPlaying: localIsPlaying,
+      currentTime: localCurrentTime,
+      duration: localDuration,
+      volume: localVolume,
+      isAudioActive,
+      isShuffle: localShuffle,
+      repeatMode: localRepeat
+    },
+    activeRemote,
+    lanState: remoteState,
+    isLanConnected: isRemoteConnected,
+    myDeviceId
+  })
+
+  const isCloudRemoteActive = unified.source === 'cloud'
+
+  const activePlayerState: RemotePlayerState = {
+    ready: true,
+    playbackState: unified.isPlaying ? 'playing' : 'paused',
+    isPlaying: unified.isPlaying,
+    position: unified.position,
+    duration: unified.duration,
+    volume: unified.volume,
+    volumePercent: unified.volumePercent,
+    shuffle: unified.shuffle,
+    repeat: unified.repeat,
+    targetDevice: unified.targetDevice,
+    deviceName: unified.activeDeviceName,
+    song: unified.song
+      ? {
+          id: unified.song.id,
+          title: unified.song.title || 'Unknown Title',
+          artist: unified.song.artist || 'Unknown Artist',
+          album: unified.song.album || 'Library',
+          duration: unified.duration || unified.song.duration || 0,
+          artworkUrl: unified.artworkUrl || ''
         }
+      : null
+  }
 
   const topSearchInputRef = useRef<HTMLInputElement>(null)
   const searchModeRef = useRef<HTMLDivElement>(null)

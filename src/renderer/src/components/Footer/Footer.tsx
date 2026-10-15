@@ -22,14 +22,15 @@ import {
   Globe
 } from 'lucide-react'
 import RemoteControlModal from '../RemoteControlModal/RemoteControlModal'
-import { getDeviceCategory, detectDeviceInfo } from '../../lib/deviceInfo'
+import { detectDeviceInfo } from '../../lib/deviceInfo'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 import {
   useConnectedDeviceStore,
-  sendDeviceCommand,
-  getInterpolatedPosition
+  sendDeviceCommand
 } from '../../hooks/useConnectedDeviceStore'
+import { resolveEffectivePlaybackState } from '../../lib/playbackStateResolver'
+import { remoteClient, type RemotePlayerState } from '../../pages/Remote/remoteClient'
 import ArtistLinks from '../Common/ArtistLinks'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
 import { useListeningStore } from '../../hooks/useListeningStore'
@@ -196,32 +197,50 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
   const myDeviceId = getCurrentDeviceId()
   const { requestPlayQueue } = usePlaybackArbitration()
   const isAudioActive = usePlayerStore((state) => state.isAudioActive)
-  const isLocalAudioOwner = isAudioActive && isPlaying
-  const isRemoteActive = Boolean(
-    !isLocalAudioOwner &&
-      activeRemote &&
-      activeRemote.activeDeviceId !== myDeviceId &&
-      activeRemote.song &&
-      (activeRemote.isPlaying || activeRemote.position > 0)
-  )
 
-  const [remotePos, setRemotePos] = useState(0)
+  const [lanState, setLanState] = useState<RemotePlayerState>(() => remoteClient.getState())
+  const [isLanConnected, setIsLanConnected] = useState(() => remoteClient.getIsConnected())
 
   useEffect(() => {
-    if (!isRemoteActive || !activeRemote) return
-    setRemotePos(getInterpolatedPosition(activeRemote))
-    if (!activeRemote.isPlaying) return
+    const unsubState = remoteClient.subscribe(setLanState)
+    const unsubConn = remoteClient.subscribeConnection(setIsLanConnected)
+    return () => {
+      unsubState()
+      unsubConn()
+    }
+  }, [])
 
-    const timer = setInterval(() => {
-      setRemotePos(getInterpolatedPosition(activeRemote))
-    }, 1000)
+  const unified = resolveEffectivePlaybackState({
+    localPlayer: {
+      queue: usePlayerStore.getState().queue,
+      currentSongIndex,
+      isPlaying,
+      currentTime: usePlayerStore.getState().currentTime,
+      duration,
+      volume,
+      isAudioActive,
+      isShuffle,
+      repeatMode
+    },
+    activeRemote,
+    lanState,
+    isLanConnected,
+    myDeviceId
+  })
+
+  const isRemoteActive = Boolean(unified.isRemote && unified.song)
+  const [, setTick] = useState(0)
+
+  useEffect(() => {
+    if (!isRemoteActive || !unified.isPlaying) return undefined
+    const timer = setInterval(() => setTick((t) => t + 1), 1000)
     return () => clearInterval(timer)
-  }, [isRemoteActive, activeRemote?.timestamp, activeRemote?.isPlaying, activeRemote?.position])
+  }, [isRemoteActive, unified.isPlaying])
 
-  const displaySong = isRemoteActive && activeRemote?.song ? activeRemote.song : currentSong
-  const displayIsPlaying = isRemoteActive && activeRemote ? activeRemote.isPlaying : isPlaying
-  const displayDuration = isRemoteActive && activeRemote ? activeRemote.duration : duration
-  const displayCurrentTime = isRemoteActive ? remotePos : undefined
+  const displaySong = isRemoteActive && unified.song ? unified.song : currentSong
+  const displayIsPlaying = isRemoteActive ? unified.isPlaying : isPlaying
+  const displayDuration = isRemoteActive ? unified.duration : duration
+  const displayCurrentTime = isRemoteActive ? unified.position : undefined
 
   const togglePlay = usePlayerStore((state) => state.togglePlay)
   const playNext = usePlayerStore((state) => state.playNext)
@@ -310,25 +329,31 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
     if (volume > 0) {
       setPrevVolume(volume)
       setVolume(0)
-      if (isRemoteActive && activeRemote && user?.id) {
-        void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'volume', { volume: 0 })
+      if (isRemoteActive && user?.id) {
+        void sendDeviceCommand(user.id, unified.activeDeviceId, 'volume', { volume: 0 })
       }
     } else {
       const restored = prevVolume || 0.5
       setVolume(restored)
-      if (isRemoteActive && activeRemote && user?.id) {
-        void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'volume', { volume: restored })
+      if (isRemoteActive && user?.id) {
+        void sendDeviceCommand(user.id, unified.activeDeviceId, 'volume', { volume: restored })
       }
     }
   }
 
   const handlePlayClick = async () => {
-    if (isRemoteActive && activeRemote && user?.id) {
-      await sendDeviceCommand(
-        user.id,
-        activeRemote.activeDeviceId,
-        activeRemote.isPlaying ? 'pause' : 'play'
-      )
+    if (isRemoteActive) {
+      if (unified.source === 'lan') {
+        void remoteClient.togglePlay()
+        return
+      }
+      if (user?.id) {
+        await sendDeviceCommand(
+          user.id,
+          unified.activeDeviceId,
+          unified.isPlaying ? 'pause' : 'play'
+        )
+      }
       return
     }
 
@@ -351,26 +376,43 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
   }
 
   const handleNextClick = async () => {
-    if (isRemoteActive && activeRemote && user?.id) {
-      await sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'next')
+    if (isRemoteActive) {
+      if (unified.source === 'lan') {
+        void remoteClient.next()
+        return
+      }
+      if (user?.id) {
+        await sendDeviceCommand(user.id, unified.activeDeviceId, 'next')
+      }
       return
     }
     playNext(true)
   }
 
   const handlePreviousClick = async () => {
-    if (isRemoteActive && activeRemote && user?.id) {
-      await sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'previous')
+    if (isRemoteActive) {
+      if (unified.source === 'lan') {
+        void remoteClient.previous()
+        return
+      }
+      if (user?.id) {
+        await sendDeviceCommand(user.id, unified.activeDeviceId, 'previous')
+      }
       return
     }
     playPrevious()
   }
 
   const handleSeek = (time: number) => {
-    if (isRemoteActive && activeRemote && user?.id) {
-      void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'seek', { seconds: time })
-      useConnectedDeviceStore.getState().updateRemotePosition(time)
-      setRemotePos(time)
+    if (isRemoteActive) {
+      if (unified.source === 'lan') {
+        void remoteClient.seek(time)
+        return
+      }
+      if (user?.id) {
+        void sendDeviceCommand(user.id, unified.activeDeviceId, 'seek', { seconds: time })
+        useConnectedDeviceStore.getState().updateRemotePosition(time)
+      }
       return
     }
     seek(time)
@@ -708,25 +750,22 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
         </div>
 
         {/* Device Output Switcher / Remote Control */}
-        {isRemoteActive && activeRemote ? (
+        {isRemoteActive ? (
           <button
             type="button"
-            title={`Listening on ${activeRemote.activeDeviceName} (Click to switch)`}
+            title={`Listening on ${unified.activeDeviceName} (Click to switch)`}
             onClick={() => setIsRemoteModalOpen(true)}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/25 transition cursor-pointer text-xs font-semibold shrink-0"
           >
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-            {(() => {
-              const cat = getDeviceCategory({
-                device_type: activeRemote.activeDeviceType,
-                device_category: activeRemote.activeDeviceCategory,
-                device_name: activeRemote.activeDeviceName
-              })
-              if (cat === 'app_pc') return <Laptop2 className="w-3.5 h-3.5" />
-              if (cat === 'web_pc') return <Globe className="w-3.5 h-3.5" />
-              return <Smartphone className="w-3.5 h-3.5" />
-            })()}
-            <span className="truncate max-w-[120px]">{activeRemote.activeDeviceName}</span>
+            {unified.activeDeviceCategory === 'app_pc' ? (
+              <Laptop2 className="w-3.5 h-3.5" />
+            ) : unified.activeDeviceCategory === 'web_pc' ? (
+              <Globe className="w-3.5 h-3.5" />
+            ) : (
+              <Smartphone className="w-3.5 h-3.5" />
+            )}
+            <span className="truncate max-w-[120px]">{unified.activeDeviceName}</span>
           </button>
         ) : (
           <button

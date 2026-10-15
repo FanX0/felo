@@ -8,9 +8,10 @@ import {
 import { useOnlineStore } from './useOnlineStore'
 import { resolveSongAudioUrl } from '../lib/songAudioResolver'
 import { remoteClient } from '../pages/Remote/remoteClient'
-import { getCurrentDeviceId, detectDeviceInfo } from '../lib/deviceInfo'
+import { getCurrentDeviceId, detectDeviceInfo, isPcDevice } from '../lib/deviceInfo'
 import { isLocalSong } from '../lib/songUtils'
 import { isElectron } from '../lib/appConfig'
+import { resolveEffectivePlaybackState } from '../lib/playbackStateResolver'
 
 export function usePlaybackArbitration() {
   const user = useOnlineStore((s) => s.user)
@@ -21,40 +22,53 @@ export function usePlaybackArbitration() {
   const setResolutionPreference = useConnectedDeviceStore((s) => s.setResolutionPreference)
 
   const myDeviceId = getCurrentDeviceId()
-  const localIsPlaying = usePlayerStore((s) => s.isPlaying)
-  const localIsAudioActive = usePlayerStore((s) => s.isAudioActive)
+  const localPlayerState = usePlayerStore((s) => ({
+    queue: s.queue,
+    currentSongIndex: s.currentSongIndex,
+    isPlaying: s.isPlaying,
+    currentTime: s.currentTime,
+    duration: s.duration,
+    volume: s.volume,
+    isAudioActive: s.isAudioActive,
+    isShuffle: s.isShuffle,
+    repeatMode: s.repeatMode
+  }))
 
-  // Local device is only genuinely playing audio if local audio engine is active and playing
-  const isLocalAudioOwner = Boolean(localIsPlaying && localIsAudioActive)
-
-  // Determine effective remote device: Cloud Realtime activeRemote or local LAN remoteClient
   const lanState = remoteClient.getState()
   const isLanConnected = remoteClient.getIsConnected()
+
+  // Use unified resolver across local, LAN, and Cloud Realtime
+  const unified = resolveEffectivePlaybackState({
+    localPlayer: localPlayerState,
+    activeRemote,
+    lanState,
+    isLanConnected,
+    myDeviceId
+  })
+
+  const isExternalDevicePlaying = Boolean(
+    unified.isRemote &&
+      unified.isPlaying &&
+      unified.song &&
+      (!myDeviceId || unified.activeDeviceId !== myDeviceId)
+  )
+
   const effectiveRemote =
-    activeRemote ||
-    (isLanConnected && lanState.song
+    unified.isRemote && unified.song
       ? {
-          activeDeviceId: 'desktop',
-          activeDeviceName: lanState.deviceName || 'Felo Desktop',
-          activeDeviceType: 'desktop' as const,
-          isPlaying: lanState.isPlaying,
-          song: lanState.song as any,
-          position: lanState.position,
-          duration: lanState.duration,
+          activeDeviceId: unified.activeDeviceId,
+          activeDeviceName: unified.activeDeviceName,
+          activeDeviceType: isPcDevice(unified.activeDeviceCategory)
+            ? ('desktop' as const)
+            : ('mobile' as const),
+          activeDeviceCategory: unified.activeDeviceCategory,
+          isPlaying: unified.isPlaying,
+          song: unified.song,
+          position: unified.position,
+          duration: unified.duration,
           timestamp: Date.now()
         }
-      : null)
-
-  // An external device is actively playing music if:
-  // 1. effectiveRemote exists, is playing, has a song, and activeDeviceId is not our own
-  // 2. We are not currently the active local audio producer
-  const isExternalDevicePlaying = Boolean(
-    !isLocalAudioOwner &&
-      effectiveRemote &&
-      effectiveRemote.isPlaying &&
-      effectiveRemote.song &&
-      (myDeviceId ? effectiveRemote.activeDeviceId !== myDeviceId : true)
-  )
+      : null
 
   const startLocalPlayback = useCallback(
     (queue: Song[], index = 0, context?: PlaybackContext | null, seekTo?: number) => {
@@ -191,6 +205,7 @@ export function usePlaybackArbitration() {
       }
 
       if (action === 'remote') {
+        useConnectedDeviceStore.getState().setDevicePlaybackMode('remote_controller')
         if (playbackConflict.pendingSong) {
           void sendDeviceCommand(
             user?.id || '',
@@ -203,6 +218,8 @@ export function usePlaybackArbitration() {
           )
         }
       } else if (action === 'transfer') {
+        useConnectedDeviceStore.getState().claimPlayback()
+        useConnectedDeviceStore.getState().setDevicePlaybackMode('local')
         void sendDeviceCommand(
           user?.id || '',
           playbackConflict.activeDeviceId,
@@ -227,6 +244,8 @@ export function usePlaybackArbitration() {
         }
       } else if (action === 'resume_remote_here') {
         // Transfer the currently playing song from the remote PC to this device at the exact current position
+        useConnectedDeviceStore.getState().claimPlayback()
+        useConnectedDeviceStore.getState().setDevicePlaybackMode('local')
         void sendDeviceCommand(
           user?.id || '',
           playbackConflict.activeDeviceId,

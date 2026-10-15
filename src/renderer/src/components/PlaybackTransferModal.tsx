@@ -1,4 +1,4 @@
-import { type ReactElement } from 'react'
+import { useState, useEffect, type ReactElement } from 'react'
 import { Laptop2, Smartphone, Globe, Radio, X, Music } from 'lucide-react'
 import { usePlaybackArbitration } from '../hooks/usePlaybackArbitration'
 import { toMediaUrl } from '../lib/media'
@@ -7,6 +7,20 @@ import { getDeviceCategory, getDeviceCategoryLabel } from '../lib/deviceInfo'
 
 export default function PlaybackTransferModal(): ReactElement | null {
   const { playbackConflict, resolveConflict } = usePlaybackArbitration()
+  const [rememberSession, setRememberSession] = useState(false)
+  const [livePos, setLivePos] = useState(0)
+
+  useEffect(() => {
+    if (!playbackConflict) return
+    setLivePos(playbackConflict.activePosition || 0)
+    const timer = setInterval(() => {
+      setLivePos((p) => {
+        const dur = playbackConflict.activeSong?.duration || 0
+        return dur > 0 && p < dur ? p + 1 : p
+      })
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [playbackConflict?.activePosition, playbackConflict?.activeSong?.duration])
 
   if (!playbackConflict) return null
 
@@ -20,11 +34,20 @@ export default function PlaybackTransferModal(): ReactElement | null {
       device_name: activeDeviceName
     })
   const activeCategoryLabel = getDeviceCategoryLabel(activeCategory)
-
   const activeArtwork = activeSong ? activeSong.artworkUrl || toMediaUrl(activeSong.artworkPath) : null
 
+  const formatTime = (seconds: number) => {
+    if (!seconds || isNaN(seconds)) return '0:00'
+    const mins = Math.floor(seconds / 60)
+    const secs = Math.floor(seconds % 60)
+    return `${mins}:${secs.toString().padStart(2, '0')}`
+  }
+
+  const activeDuration = activeSong?.duration || 0
+  const activeProgress = activeDuration > 0 ? Math.min(100, (livePos / activeDuration) * 100) : 0
+
   return (
-    <div className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="w-full sm:max-w-md bg-[#161618] sm:rounded-2xl rounded-t-2xl border border-white/10 shadow-2xl p-5 overflow-hidden flex flex-col gap-4 text-text animate-in slide-in-from-bottom-4 duration-200">
         {/* Header */}
         <div className="flex items-center justify-between pb-1 border-b border-white/5">
@@ -60,25 +83,43 @@ export default function PlaybackTransferModal(): ReactElement | null {
           </button>
         </div>
 
-        {/* Current Active PC Track Card */}
+        {/* Current Active Track Card with Live Progress */}
         {activeSong && (
-          <div className="flex items-center gap-3 p-2.5 rounded-xl bg-white/[0.03] border border-white/5">
-            <div className="w-11 h-11 rounded-lg bg-surface-elevated overflow-hidden shrink-0 flex items-center justify-center border border-white/10 relative">
-              {activeArtwork ? (
-                <img src={activeArtwork} alt={activeSong.title} className="w-full h-full object-cover" />
-              ) : (
-                <Music className="w-5 h-5 text-text-muted" />
-              )}
-              <span className="absolute bottom-1 right-1 w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-[10px] uppercase font-bold tracking-wider text-emerald-400 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping inline-block" />
-                Now Playing on {activeDeviceName}
+          <div className="flex flex-col gap-2 p-2.5 rounded-xl bg-white/[0.03] border border-white/5">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-lg bg-surface-elevated overflow-hidden shrink-0 flex items-center justify-center border border-white/10 relative">
+                {activeArtwork ? (
+                  <img src={activeArtwork} alt={activeSong.title} className="w-full h-full object-cover" />
+                ) : (
+                  <Music className="w-5 h-5 text-text-muted" />
+                )}
+                <span className="absolute bottom-1 right-1 w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               </div>
-              <div className="text-xs font-semibold text-white truncate">{activeSong.title}</div>
-              <div className="text-[11px] text-text-muted truncate">{activeSong.artist || 'Unknown Artist'}</div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[10px] uppercase font-bold tracking-wider text-emerald-400 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping inline-block" />
+                  Now Playing on {activeDeviceName}
+                </div>
+                <div className="text-xs font-semibold text-white truncate">{activeSong.title}</div>
+                <div className="text-[11px] text-text-muted truncate">{activeSong.artist || 'Unknown Artist'}</div>
+              </div>
             </div>
+
+            {/* Live Progress Bar */}
+            {activeDuration > 0 && (
+              <div className="space-y-1 pt-1">
+                <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-400 transition-all duration-300"
+                    style={{ width: `${activeProgress}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-[10px] font-mono text-zinc-500">
+                  <span>{formatTime(livePos)}</span>
+                  <span>{formatTime(activeDuration)}</span>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -94,10 +135,10 @@ export default function PlaybackTransferModal(): ReactElement | null {
 
         {/* Choices */}
         <div className="flex flex-col gap-2">
-          {/* Choice: Move Playback to This Device (Primary if pending song is local) */}
+          {/* Choice: Move Playback to This Device */}
           <button
             type="button"
-            onClick={() => resolveConflict('transfer')}
+            onClick={() => resolveConflict('transfer', rememberSession)}
             className={`w-full flex items-center gap-3 p-3.5 rounded-xl text-left transition-all group cursor-pointer ${
               isPendingLocal
                 ? 'bg-emerald-500/15 border border-emerald-500/40 hover:bg-emerald-500/25'
@@ -127,11 +168,11 @@ export default function PlaybackTransferModal(): ReactElement | null {
             </div>
           </button>
 
-          {/* Choice: Play on Remote (Primary if online stream, disabled/muted if local only) */}
+          {/* Choice: Play on Remote */}
           <button
             type="button"
             disabled={isPendingLocal}
-            onClick={() => !isPendingLocal && resolveConflict('remote')}
+            onClick={() => !isPendingLocal && resolveConflict('remote', rememberSession)}
             className={`w-full flex items-center gap-3 p-3.5 rounded-xl text-left transition-all group ${
               isPendingLocal
                 ? 'bg-white/[0.02] border border-white/5 opacity-50 cursor-not-allowed'
@@ -145,7 +186,11 @@ export default function PlaybackTransferModal(): ReactElement | null {
                   : 'bg-emerald-500/20 text-emerald-400 group-hover:scale-105'
               }`}
             >
-              <Laptop2 className="w-5 h-5" />
+              {activeCategory === 'web_pc' ? (
+                <Globe className="w-5 h-5" />
+              ) : (
+                <Laptop2 className="w-5 h-5" />
+              )}
             </div>
             <div className="flex-1 min-w-0">
               <div
@@ -163,12 +208,11 @@ export default function PlaybackTransferModal(): ReactElement | null {
             </div>
           </button>
 
-
           {/* Choice 3: Take Over Current Track from PC */}
           {activeSong && (
             <button
               type="button"
-              onClick={() => resolveConflict('resume_remote_here')}
+              onClick={() => resolveConflict('resume_remote_here', rememberSession)}
               className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.06] text-left transition-all group cursor-pointer"
             >
               <div className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center shrink-0">
@@ -179,14 +223,23 @@ export default function PlaybackTransferModal(): ReactElement | null {
                   Resume "{activeSong.title}" here
                 </div>
                 <div className="text-[11px] text-text-muted truncate">
-                  Transfer current track and resume from{' '}
-                  {Math.floor(playbackConflict.activePosition / 60)}:
-                  {String(Math.floor(playbackConflict.activePosition % 60)).padStart(2, '0')}
+                  Transfer current track and resume from {formatTime(livePos)}
                 </div>
               </div>
             </button>
           )}
         </div>
+
+        {/* Remember Session Toggle */}
+        <label className="flex items-center gap-2 px-1 cursor-pointer select-none text-xs text-zinc-400 hover:text-zinc-200 transition">
+          <input
+            type="checkbox"
+            checked={rememberSession}
+            onChange={(e) => setRememberSession(e.target.checked)}
+            className="w-3.5 h-3.5 rounded border-white/20 bg-white/5 text-emerald-500 focus:ring-0 focus:ring-offset-0 cursor-pointer accent-emerald-500"
+          />
+          <span>Remember my choice for this session</span>
+        </label>
 
         {/* Cancel Button */}
         <button

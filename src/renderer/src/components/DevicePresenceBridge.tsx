@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useOnlineStore } from '../hooks/useOnlineStore'
 import { usePlayerStore } from '../hooks/usePlayerStore'
-import { useConnectedDeviceStore } from '../hooks/useConnectedDeviceStore'
+import { useConnectedDeviceStore, REMOTE_PLAYBACK_STALE_MS } from '../hooks/useConnectedDeviceStore'
 import { getSupabase, isSupabaseConfigured } from '../lib/supabase'
 import { toMediaUrl } from '../lib/media'
 import {
@@ -36,6 +36,9 @@ export default function DevicePresenceBridge() {
   const heartbeatTimerRef = useRef<any>(null)
   const channelRef = useRef<any>(null)
   const wasPlayingRef = useRef(false)
+  const broadcastTimerRef = useRef<any>(null)
+  const lastBroadcastHashRef = useRef<string>('')
+  const staleCleanupTimerRef = useRef<any>(null)
 
   const isPlaying = usePlayerStore((s) => s.isPlaying)
   const isAudioActive = usePlayerStore((s) => s.isAudioActive)
@@ -110,6 +113,21 @@ export default function DevicePresenceBridge() {
         timestamp: Date.now()
       }
     })
+  }
+
+  // Debounced version to prevent broadcast storms during rapid state transitions
+  const debouncedBroadcast = (playing: boolean) => {
+    if (broadcastTimerRef.current) clearTimeout(broadcastTimerRef.current)
+    broadcastTimerRef.current = setTimeout(() => {
+      broadcastTimerRef.current = null
+      const player = usePlayerStore.getState()
+      const song = player.queue[player.currentSongIndex]
+      const pos = getActiveAudioTime() || player.currentTime
+      const hash = `${song?.id || ''}:${playing}:${Math.floor(pos)}`
+      if (hash === lastBroadcastHashRef.current) return
+      lastBroadcastHashRef.current = hash
+      broadcastCurrentState(playing)
+    }, 120)
   }
 
   useEffect(() => {
@@ -579,10 +597,8 @@ export default function DevicePresenceBridge() {
           const store = useConnectedDeviceStore.getState()
 
           if (payload.song) {
-            const playerState = usePlayerStore.getState()
-            if (!playerState.isPlaying || !playerState.isAudioActive) {
-              store.setPlaybackTarget('desktop')
-            }
+            // Do NOT auto-hijack playbackTarget — that is managed exclusively by
+            // user action or playback arbitration to prevent silent preference override
 
             store.setRemotePlayback({
               ...payload,
@@ -624,16 +640,85 @@ export default function DevicePresenceBridge() {
               ...existing.filter((d) => d.id !== payload.activeDeviceId)
             ])
           } else {
+            // Device stopped playing or sent empty song — fully clear remote playback
+            // to prevent ghost/stale activePlayback state from lingering
             const currentActive = store.activePlayback
             if (currentActive && currentActive.activeDeviceId === payload.activeDeviceId) {
-              store.setRemotePlayback({
-                ...currentActive,
-                isPlaying: false,
-                position: payload.position ?? currentActive.position,
-                timestamp: Date.now()
-              })
+              store.clearRemotePlayback()
             }
           }
+        }
+      )
+      .on(
+        'broadcast',
+        { event: 'playback_claim' },
+        ({ payload }: { payload: any }) => {
+          if (!payload || payload.deviceId === deviceId) return
+          const player = usePlayerStore.getState()
+          const store = useConnectedDeviceStore.getState()
+
+          const amPlayingLocally = Boolean(player.isPlaying && player.isAudioActive)
+
+          if (amPlayingLocally) {
+            // Remote claimed playback. If remote claim epoch is newer than our claimEpoch, yield:
+            if (payload.claimEpoch > store.claimEpoch) {
+              player.setIsPlaying(false)
+              store.setDevicePlaybackMode('remote_controller')
+              store.setRemotePlayback({
+                activeDeviceId: payload.deviceId,
+                activeDeviceName: payload.deviceName,
+                activeDeviceType: payload.deviceType,
+                activeDeviceCategory: payload.deviceCategory,
+                isPlaying: true,
+                song: payload.song,
+                position: payload.position ?? 0,
+                duration: payload.duration ?? 0,
+                timestamp: Date.now()
+              })
+              void channel.send({
+                type: 'broadcast',
+                event: 'playback_claim_ack',
+                payload: {
+                  acknowledgerDeviceId: deviceId,
+                  claimerDeviceId: payload.deviceId,
+                  claimEpoch: payload.claimEpoch,
+                  accepted: true
+                }
+              })
+              return
+            }
+          } else {
+            // Local device is not playing, accept remote claim
+            store.setRemotePlayback({
+              activeDeviceId: payload.deviceId,
+              activeDeviceName: payload.deviceName,
+              activeDeviceType: payload.deviceType,
+              activeDeviceCategory: payload.deviceCategory,
+              isPlaying: true,
+              song: payload.song,
+              position: payload.position ?? 0,
+              duration: payload.duration ?? 0,
+              timestamp: Date.now()
+            })
+            void channel.send({
+              type: 'broadcast',
+              event: 'playback_claim_ack',
+              payload: {
+                acknowledgerDeviceId: deviceId,
+                claimerDeviceId: payload.deviceId,
+                claimEpoch: payload.claimEpoch,
+                accepted: true
+              }
+            })
+          }
+        }
+      )
+      .on(
+        'broadcast',
+        { event: 'playback_claim_ack' },
+        ({ payload }: { payload: any }) => {
+          if (!payload || payload.claimerDeviceId !== deviceId) return
+          // Claim successfully acknowledged by remote peer
         }
       )
       .subscribe((status) => {
@@ -662,7 +747,18 @@ export default function DevicePresenceBridge() {
 
     channelRef.current = channel
 
-    // 4. Mark offline on unload
+    // 4. Stale activePlayback TTL cleanup
+    // If no playback_state update arrives within REMOTE_PLAYBACK_STALE_MS,
+    // the remote playback is considered abandoned (device crashed/disconnected)
+    staleCleanupTimerRef.current = setInterval(() => {
+      const store = useConnectedDeviceStore.getState()
+      const ap = store.activePlayback
+      if (ap && Date.now() - ap.timestamp > REMOTE_PLAYBACK_STALE_MS) {
+        store.clearRemotePlayback()
+      }
+    }, 5_000)
+
+    // 5. Mark offline on unload
     const handleUnload = () => {
       void publishPresence(false)
     }
@@ -672,6 +768,12 @@ export default function DevicePresenceBridge() {
       if (heartbeatTimerRef.current) {
         clearInterval(heartbeatTimerRef.current)
       }
+      if (staleCleanupTimerRef.current) {
+        clearInterval(staleCleanupTimerRef.current)
+      }
+      if (broadcastTimerRef.current) {
+        clearTimeout(broadcastTimerRef.current)
+      }
       channelRef.current = null
       window.removeEventListener('beforeunload', handleUnload)
       void supabase.removeChannel(channel)
@@ -679,23 +781,40 @@ export default function DevicePresenceBridge() {
     }
   }, [isElectron, isDesktopDevice, deviceType, user?.id])
 
-  // Broadcast immediate state change (play, pause, song switch)
+  // Broadcast immediate state change (play, pause, song switch) — debounced
   useEffect(() => {
     if (!channelRef.current || !user?.id) return
 
     if (isPlaying && isAudioActive && currentSong) {
       useConnectedDeviceStore.getState().clearRemotePlayback()
-      broadcastCurrentState(true)
+      const newEpoch = useConnectedDeviceStore.getState().claimPlayback()
+      void channelRef.current.send({
+        type: 'broadcast',
+        event: 'playback_claim',
+        payload: {
+          deviceId: deviceIdRef.current,
+          deviceName: getDeviceName(deviceInfo, isElectron),
+          deviceCategory: deviceInfo.category,
+          deviceType: isPcDevice(deviceInfo.category) ? 'desktop' : 'mobile',
+          song: currentSong,
+          position: getActiveAudioTime() || usePlayerStore.getState().currentTime,
+          duration: usePlayerStore.getState().duration || currentSong.duration || 0,
+          claimEpoch: newEpoch,
+          timestamp: Date.now()
+        }
+      })
+      debouncedBroadcast(true)
     } else if (!isPlaying && wasPlayingRef.current && isAudioActive) {
+      // Pause events should propagate immediately (no debounce)
       broadcastCurrentState(false)
     }
     wasPlayingRef.current = isPlaying && isAudioActive
   }, [isPlaying, isAudioActive, currentSong?.id, isElectron, isDesktopDevice, deviceType, user?.id])
 
-  // Broadcast immediate seek changes so remote peers jump instantly
+  // Broadcast immediate seek changes so remote peers jump — debounced
   useEffect(() => {
     if (!channelRef.current || !user?.id || seekRequest === null || !isAudioActive) return
-    broadcastCurrentState(isPlaying)
+    debouncedBroadcast(isPlaying)
   }, [seekRequest, isPlaying, isAudioActive, user?.id])
 
   // Listen to audio DOM seeked event for native browser / manual scrub events
@@ -704,7 +823,7 @@ export default function DevicePresenceBridge() {
     if (!audio || !isAudioActive) return
     const onSeeked = () => {
       if (channelRef.current && user?.id && isAudioActive) {
-        broadcastCurrentState(isPlaying)
+        debouncedBroadcast(isPlaying)
       }
     }
     audio.addEventListener('seeked', onSeeked)
