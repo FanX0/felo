@@ -4,46 +4,35 @@ import { usePlayerStore } from '../hooks/usePlayerStore'
 import { useConnectedDeviceStore } from '../hooks/useConnectedDeviceStore'
 import { getSupabase, isSupabaseConfigured } from '../lib/supabase'
 import { toMediaUrl } from '../lib/media'
-import { detectDeviceInfo } from '../lib/deviceInfo'
+import {
+  detectDeviceInfo,
+  getCurrentDeviceId,
+  getDeviceCategory,
+  isPcDevice,
+  type DeviceCategory,
+  type DeviceInfo
+} from '../lib/deviceInfo'
 import { remoteClient } from '../pages/Remote/remoteClient'
 import { getActiveAudioElement, getActiveAudioTime } from '../lib/audioBridge'
 
-function getIsDesktop(isElectron: boolean): boolean {
-  if (isElectron) return true
-  if (typeof window === 'undefined') return true
-  const info = detectDeviceInfo()
-  return info.type === 'desktop'
-}
-
-function getOrCreateDeviceId(isDesktop: boolean): string {
-  if (typeof window === 'undefined') return 'felo-desktop-main'
-  let id = localStorage.getItem('felo_device_id')
-  if (!id) {
-    const prefix = isDesktop ? 'desktop' : 'mobile'
-    id = `${prefix}-${Math.random().toString(36).substring(2, 10)}-${Date.now().toString(36)}`
-    localStorage.setItem('felo_device_id', id)
+function getDeviceName(info: DeviceInfo, isElectron: boolean, ip?: string): string {
+  if (info.customName) {
+    return info.customName
   }
-  return id
-}
-
-function getDeviceName(isElectron: boolean, isDesktop: boolean, ip?: string): string {
   if (isElectron) {
-    return `${ip ? 'Felo Desktop' : 'Felo Player'} (${ip || 'LAN'})`
+    return `Felo Desktop (${info.os}${ip ? ` • ${ip}` : ''})`
   }
-  if (typeof window === 'undefined') return 'Felo Web Player'
-  const info = detectDeviceInfo()
-  if (isDesktop) {
-    return `${info.name} (${info.browser})`
-  }
-  return info.name || 'Web Player'
+  return info.canonicalName
 }
 
 export default function DevicePresenceBridge() {
   const user = useOnlineStore((s) => s.user)
   const isElectron = typeof window !== 'undefined' && Boolean((window as any).electron)
-  const isDesktopDevice = getIsDesktop(isElectron)
-  const deviceType: 'desktop' | 'mobile' = isDesktopDevice ? 'desktop' : 'mobile'
-  const deviceIdRef = useRef<string>(getOrCreateDeviceId(isDesktopDevice))
+  const deviceInfo = detectDeviceInfo()
+  const deviceCategory: DeviceCategory = deviceInfo.category
+  const isDesktopDevice = isPcDevice(deviceCategory)
+  const deviceType: DeviceCategory = deviceCategory
+  const deviceIdRef = useRef<string>(getCurrentDeviceId())
   const heartbeatTimerRef = useRef<any>(null)
   const channelRef = useRef<any>(null)
   const wasPlayingRef = useRef(false)
@@ -64,7 +53,7 @@ export default function DevicePresenceBridge() {
 
     const song = player.queue[player.currentSongIndex] || currentSong
     const deviceId = deviceIdRef.current
-    const devName = getDeviceName(isElectron, isDesktopDevice)
+    const devName = getDeviceName(deviceInfo, isElectron)
 
     const rc = remoteControlInfoRef.current
     const streamBase = rc?.ip && rc?.port ? `http://${rc.ip}:${rc.port}/v1/audio/` : ''
@@ -100,7 +89,8 @@ export default function DevicePresenceBridge() {
       payload: {
         activeDeviceId: deviceId,
         activeDeviceName: devName,
-        activeDeviceType: deviceType,
+        activeDeviceType: deviceCategory,
+        activeDeviceCategory: deviceCategory,
         isPlaying: playing,
         song: song
           ? {
@@ -130,7 +120,7 @@ export default function DevicePresenceBridge() {
 
     const publishPresence = async (isActive = true) => {
       try {
-        let deviceName = getDeviceName(isElectron, isDesktopDevice)
+        let deviceName = getDeviceName(deviceInfo, isElectron)
         let localIp: string | null = null
         let port: number | null = null
         let token: string | null = null
@@ -143,16 +133,17 @@ export default function DevicePresenceBridge() {
             localIp = info.ip || null
             port = info.port || 4788
             token = info.token || null
-            isRunning = isActive && Boolean(info.enabled && info.running)
-            deviceName = getDeviceName(isElectron, isDesktopDevice, info.ip)
+            deviceName = getDeviceName(deviceInfo, isElectron, info.ip)
           }
         }
+        // Desktop presence reflects that the desktop Felo application is active
+        isRunning = isActive
 
         const payload = {
           id: deviceId,
           user_id: user.id,
           device_name: deviceName,
-          device_type: deviceType,
+          device_type: deviceCategory,
           local_ip: localIp,
           port: port,
           token: token,
@@ -180,10 +171,13 @@ export default function DevicePresenceBridge() {
 
     // 3. Bidirectional Realtime Channel
     const chunksRef = new Map<string, { total: number; chunks: Map<number, any[]> }>()
+    const processedChunksRef = new Set<string>()
 
-    // Mobile / Web: Load cached songs and discover active devices immediately
-    if (!isElectron && user.id) {
-      useConnectedDeviceStore.getState().loadCachedPcSongs(user.id)
+    // Discover active devices and load cached songs immediately
+    if (user.id) {
+      if (!isElectron) {
+        useConnectedDeviceStore.getState().loadCachedPcSongs(user.id)
+      }
 
       const refreshDiscovered = () => {
         void supabase
@@ -196,16 +190,17 @@ export default function DevicePresenceBridge() {
               useConnectedDeviceStore.getState().setDiscoveredDevices(data)
 
               // Auto-configure remoteClient with the desktop's local IP and token if available
-              const activeDesktop = data.find((d: any) => d.device_type === 'desktop' && d.local_ip)
-              if (activeDesktop && activeDesktop.local_ip) {
-                const currentBase = remoteClient.getBaseUrl()
-                if (
-                  !currentBase ||
-                  currentBase.includes('workers.dev') ||
-                  currentBase.includes('localhost')
-                ) {
+              if (!isElectron) {
+                const activeDesktop = data.find(
+                  (d: any) =>
+                    (d.device_type === 'app_pc' || d.device_type === 'desktop') && d.local_ip
+                )
+                if (activeDesktop && activeDesktop.local_ip) {
                   const targetUrl = `http://${activeDesktop.local_ip}:${activeDesktop.port || 4788}`
-                  remoteClient.configure(targetUrl, activeDesktop.token || '')
+                  const currentBase = remoteClient.getBaseUrl()
+                  if (!currentBase || !currentBase.includes(activeDesktop.local_ip)) {
+                    remoteClient.configure(targetUrl, activeDesktop.token || '')
+                  }
                 }
               }
             }
@@ -239,8 +234,245 @@ export default function DevicePresenceBridge() {
       window.addEventListener('beforeunload', prevCleanup)
     }
 
-    const channel = supabase
-      .channel(`user_playback_sync_${user.id}`)
+    const channel = supabase.channel(`user_playback_sync_${user.id}`)
+
+    const sanitizeSongsForCache = (songsToCache: any[]) => {
+      return songsToCache.map((s: any) => {
+        const isLan = (u?: string) =>
+          Boolean(
+            u &&
+              /^https?:\/\/(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.|127\.0\.0\.1|localhost)/i.test(
+                u
+              )
+          )
+        return {
+          id: s.id,
+          title: s.title,
+          artist: s.artist,
+          artists: s.artists,
+          album: s.album,
+          duration: s.duration,
+          genre: s.genre,
+          trackNumber: s.trackNumber,
+          artworkUrl: isLan(s.artworkUrl) ? undefined : s.artworkUrl,
+          artworkPath: isLan(s.artworkPath) ? undefined : s.artworkPath,
+          audioUrl: isLan(s.audioUrl) ? undefined : s.audioUrl,
+          filePath: isLan(s.filePath) ? undefined : s.filePath,
+          isOnline: true
+        }
+      })
+    }
+
+    const handleLibraryRequest = async (payload?: any) => {
+      const isTargetMe =
+        payload?.targetDeviceId === deviceId ||
+        ((!payload?.targetDeviceId ||
+          payload.targetDeviceId === 'default-pc' ||
+          payload.targetDeviceId === 'pc') &&
+          (isElectron || isDesktopDevice))
+      if (!isTargetMe) return
+
+      try {
+        let rawSongs: any[] = []
+        if (window.api?.getSongs) {
+          try {
+            rawSongs = (await window.api.getSongs()) || []
+          } catch (e) {
+            console.warn('[DevicePresenceBridge] window.api.getSongs failed:', e)
+          }
+        }
+        if (rawSongs.length === 0) {
+          // Mobile/web device fallback: share active player queue if available
+          const currentQueue = usePlayerStore.getState().queue || []
+          if (currentQueue.length > 0) {
+            rawSongs = currentQueue
+          }
+        }
+        if (rawSongs.length === 0) return
+
+        let streamBase = ''
+        let downloadBase = ''
+        let artworkBase = ''
+        let tokenParam = ''
+        if (window.api?.getRemoteControlInfo) {
+          const info = await window.api.getRemoteControlInfo()
+          if (info && info.ip && info.port) {
+            remoteControlInfoRef.current = info
+            streamBase = `http://${info.ip}:${info.port}/v1/audio/`
+            downloadBase = `http://${info.ip}:${info.port}/v1/download/`
+            artworkBase = `http://${info.ip}:${info.port}/v1/artwork/`
+            tokenParam = info.token ? `?token=${encodeURIComponent(info.token)}` : ''
+          }
+        }
+        const cleanSongs = rawSongs.map((s: any) => {
+          let artworkUrl = s.artworkUrl
+          if (!artworkUrl || artworkUrl.startsWith('media:') || artworkUrl.startsWith('blob:')) {
+            if (artworkBase) {
+              artworkUrl = `${artworkBase}${encodeURIComponent(s.id)}${tokenParam}`
+            } else {
+              artworkUrl = s.artworkUrl || toMediaUrl(s.artworkPath) || undefined
+            }
+          }
+          const audioUrl = streamBase
+            ? `${streamBase}${encodeURIComponent(s.id)}${tokenParam}`
+            : (s.audioUrl || (s.filePath && /^(https?:)/i.test(s.filePath) ? s.filePath : undefined))
+          return {
+            id: s.id,
+            title: s.title,
+            artist: s.artist,
+            artists: s.artists,
+            album: s.album,
+            duration: s.duration,
+            filePath: audioUrl || s.filePath,
+            artworkUrl,
+            artworkPath: artworkUrl,
+            audioUrl,
+            downloadUrl: downloadBase
+              ? `${downloadBase}${encodeURIComponent(s.id)}${tokenParam}`
+              : s.downloadUrl,
+            genre: s.genre,
+            bitrate: s.bitrate,
+            sampleRate: s.sampleRate,
+            bitDepth: s.bitDepth,
+            codec: s.codec,
+            trackNumber: s.trackNumber,
+            dateAdded: s.dateAdded,
+            isOnline: true
+          }
+        })
+
+        const CHUNK_SIZE = 60
+        const totalChunks = Math.ceil(cleanSongs.length / CHUNK_SIZE) || 1
+        const transferId = `${deviceId}-${Date.now().toString(36)}`
+
+        for (let i = 0; i < totalChunks; i++) {
+          const chunk = cleanSongs.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
+          const respPayload = {
+            transferId,
+            deviceId,
+            requesterDeviceId: payload?.requesterDeviceId,
+            chunkIndex: i,
+            totalChunks,
+            songs: chunk,
+            totalSongs: cleanSongs.length
+          }
+          await channel.send({
+            type: 'broadcast',
+            event: 'device_library_response',
+            payload: respPayload
+          })
+          if (totalChunks > 1) {
+            await new Promise((r) => setTimeout(r, 75))
+          }
+        }
+      } catch (err) {
+        console.warn('[DevicePresence] Failed to stream device library to peer:', err)
+      }
+    }
+
+    const handleLibraryResponse = (payload: any) => {
+      if (!payload || payload.deviceId === deviceId) return
+      if (payload.requesterDeviceId && payload.requesterDeviceId !== deviceId) return
+
+      const {
+        transferId = 'default',
+        chunkIndex = 0,
+        totalChunks = 1,
+        songs: chunkSongs,
+        deviceId: sourceDeviceId
+      } = payload
+      if (!Array.isArray(chunkSongs)) return
+
+      // Deduplicate chunk receipt
+      const chunkKey = `${transferId}:${chunkIndex}`
+      if (processedChunksRef.has(chunkKey)) return
+      processedChunksRef.add(chunkKey)
+      if (processedChunksRef.size > 500) {
+        const first = processedChunksRef.values().next().value
+        if (first) processedChunksRef.delete(first)
+      }
+
+      if (totalChunks <= 1) {
+        useConnectedDeviceStore
+          .getState()
+          .setDeviceLibrarySongs(sourceDeviceId || 'default', chunkSongs)
+        if (user?.id) {
+          try {
+            const compactChunk = sanitizeSongsForCache(chunkSongs)
+            const serialized = JSON.stringify(compactChunk)
+            if (
+              !sourceDeviceId ||
+              sourceDeviceId === 'default' ||
+              sourceDeviceId === 'pc' ||
+              sourceDeviceId === 'default-pc'
+            ) {
+              localStorage.setItem(`felo_cached_pc_songs_${user.id}`, serialized)
+            }
+            if (sourceDeviceId) {
+              localStorage.setItem(
+                `felo_cached_songs_${user.id}_${sourceDeviceId}`,
+                serialized
+              )
+            }
+          } catch {
+            // Ignore storage limits
+          }
+        }
+        return
+      }
+
+      let transfer = chunksRef.get(transferId)
+      if (!transfer) {
+        transfer = { total: totalChunks, chunks: new Map() }
+        chunksRef.set(transferId, transfer)
+      }
+      transfer.chunks.set(chunkIndex, chunkSongs)
+
+      // Progressive merge: immediately assemble and display currently received tracks
+      const currentAssembled: any[] = []
+      for (let i = 0; i < transfer.total; i++) {
+        const part = transfer.chunks.get(i)
+        if (part && Array.isArray(part)) {
+          currentAssembled.push(...part)
+        }
+      }
+      if (currentAssembled.length > 0) {
+        useConnectedDeviceStore
+          .getState()
+          .setDeviceLibrarySongs(sourceDeviceId || 'default', currentAssembled)
+      }
+
+      if (transfer.chunks.size >= transfer.total) {
+        chunksRef.delete(transferId)
+        if (user?.id) {
+          try {
+            const compactAssembled = sanitizeSongsForCache(currentAssembled)
+            const serialized = JSON.stringify(compactAssembled)
+            if (
+              !sourceDeviceId ||
+              sourceDeviceId === 'default' ||
+              sourceDeviceId === 'pc' ||
+              sourceDeviceId === 'default-pc'
+            ) {
+              localStorage.setItem(
+                `felo_cached_pc_songs_${user.id}`,
+                serialized
+              )
+            }
+            if (sourceDeviceId) {
+              localStorage.setItem(
+                `felo_cached_songs_${user.id}_${sourceDeviceId}`,
+                serialized
+              )
+            }
+          } catch {
+            // Ignore storage limits
+          }
+        }
+      }
+    }
+
+    channel
       .on(
         'broadcast',
         { event: 'command' },
@@ -315,132 +547,18 @@ export default function DevicePresenceBridge() {
           }
         }
       )
-      .on(
-        'broadcast',
-        { event: 'request_pc_library' },
-        async ({ payload }: { payload?: any }) => {
-          // Only Desktop with Electron local SQLite library responds
-          if (!isElectron || !window.api?.getSongs) return
-          if (
-            payload?.targetDeviceId &&
-            payload.targetDeviceId !== 'default-pc' &&
-            payload.targetDeviceId !== 'pc' &&
-            payload.targetDeviceId !== deviceId
-          ) {
-            return
-          }
-          try {
-            const rawSongs = (await window.api.getSongs()) || []
-            let streamBase = ''
-            let downloadBase = ''
-            let tokenParam = ''
-            if (window.api?.getRemoteControlInfo) {
-              const info = await window.api.getRemoteControlInfo()
-              if (info && info.ip && info.port) {
-                remoteControlInfoRef.current = info
-                streamBase = `http://${info.ip}:${info.port}/v1/audio/`
-                downloadBase = `http://${info.ip}:${info.port}/v1/download/`
-                tokenParam = info.token ? `?token=${encodeURIComponent(info.token)}` : ''
-              }
-            }
-            const cleanSongs = rawSongs.map((s: any) => ({
-              id: s.id,
-              title: s.title,
-              artist: s.artist,
-              artists: s.artists,
-              album: s.album,
-              duration: s.duration,
-              artworkUrl: s.artworkUrl || toMediaUrl(s.artworkPath) || undefined,
-              audioUrl: streamBase ? `${streamBase}${encodeURIComponent(s.id)}${tokenParam}` : undefined,
-              downloadUrl: downloadBase ? `${downloadBase}${encodeURIComponent(s.id)}${tokenParam}` : undefined,
-              genre: s.genre,
-              bitrate: s.bitrate,
-              sampleRate: s.sampleRate,
-              bitDepth: s.bitDepth,
-              codec: s.codec,
-              trackNumber: s.trackNumber,
-              dateAdded: s.dateAdded,
-              isOnline: true
-            }))
-
-            const CHUNK_SIZE = 250
-            const totalChunks = Math.ceil(cleanSongs.length / CHUNK_SIZE) || 1
-            const transferId = `${deviceId}-${Date.now().toString(36)}`
-
-            for (let i = 0; i < totalChunks; i++) {
-              const chunk = cleanSongs.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
-              await channel.send({
-                type: 'broadcast',
-                event: 'pc_library_response',
-                payload: {
-                  transferId,
-                  deviceId,
-                  chunkIndex: i,
-                  totalChunks,
-                  songs: chunk,
-                  totalSongs: cleanSongs.length
-                }
-              })
-              if (totalChunks > 1) {
-                await new Promise((r) => setTimeout(r, 40))
-              }
-            }
-          } catch (err) {
-            console.warn('[DevicePresence] Failed to stream PC library to peer:', err)
-          }
-        }
-      )
-      .on(
-        'broadcast',
-        { event: 'pc_library_response' },
-        ({ payload }: { payload: any }) => {
-          if (!payload || payload.deviceId === deviceId) return
-          const { transferId = 'default', chunkIndex = 0, totalChunks = 1, songs: chunkSongs, deviceId: sourceDeviceId } = payload
-          if (!Array.isArray(chunkSongs)) return
-
-          if (totalChunks <= 1) {
-            useConnectedDeviceStore.getState().setDeviceLibrarySongs(sourceDeviceId || 'default', chunkSongs)
-            if (user?.id) {
-              try {
-                localStorage.setItem(`felo_cached_pc_songs_${user.id}`, JSON.stringify(chunkSongs))
-                if (sourceDeviceId) {
-                  localStorage.setItem(`felo_cached_songs_${user.id}_${sourceDeviceId}`, JSON.stringify(chunkSongs))
-                }
-              } catch {
-                // Ignore storage limits
-              }
-            }
-            return
-          }
-
-          let transfer = chunksRef.get(transferId)
-          if (!transfer) {
-            transfer = { total: totalChunks, chunks: new Map() }
-            chunksRef.set(transferId, transfer)
-          }
-          transfer.chunks.set(chunkIndex, chunkSongs)
-
-          if (transfer.chunks.size >= transfer.total) {
-            const assembled: any[] = []
-            for (let i = 0; i < transfer.total; i++) {
-              const part = transfer.chunks.get(i) || []
-              assembled.push(...part)
-            }
-            chunksRef.delete(transferId)
-            useConnectedDeviceStore.getState().setDeviceLibrarySongs(sourceDeviceId || 'default', assembled)
-            if (user?.id) {
-              try {
-                localStorage.setItem(`felo_cached_pc_songs_${user.id}`, JSON.stringify(assembled))
-                if (sourceDeviceId) {
-                  localStorage.setItem(`felo_cached_songs_${user.id}_${sourceDeviceId}`, JSON.stringify(assembled))
-                }
-              } catch {
-                // Ignore storage limits
-              }
-            }
-          }
-        }
-      )
+      .on('broadcast', { event: 'request_pc_library' }, async ({ payload }: { payload?: any }) => {
+        await handleLibraryRequest(payload)
+      })
+      .on('broadcast', { event: 'request_device_library' }, async ({ payload }: { payload?: any }) => {
+        await handleLibraryRequest(payload)
+      })
+      .on('broadcast', { event: 'pc_library_response' }, ({ payload }: { payload: any }) => {
+        handleLibraryResponse(payload)
+      })
+      .on('broadcast', { event: 'device_library_response' }, ({ payload }: { payload: any }) => {
+        handleLibraryResponse(payload)
+      })
       .on(
         'broadcast',
         { event: 'request_playback_state' },
@@ -448,8 +566,8 @@ export default function DevicePresenceBridge() {
           if (reqPayload?.requesterDeviceId === deviceId) return
           const player = usePlayerStore.getState()
           const song = player.queue[player.currentSongIndex]
-          if (song && player.isPlaying) {
-            broadcastCurrentState(true)
+          if (song && player.isAudioActive) {
+            broadcastCurrentState(player.isPlaying)
           }
         }
       )
@@ -490,8 +608,14 @@ export default function DevicePresenceBridge() {
             const updated = {
               id: payload.activeDeviceId,
               user_id: user.id,
-              device_name: payload.activeDeviceName || 'Felo Desktop',
-              device_type: payload.activeDeviceType || 'desktop',
+              device_name: payload.activeDeviceName || 'Felo Player',
+              device_type: payload.activeDeviceCategory || payload.activeDeviceType || 'desktop',
+              device_category:
+                payload.activeDeviceCategory ||
+                getDeviceCategory({
+                  device_type: payload.activeDeviceType,
+                  device_name: payload.activeDeviceName
+                }),
               last_seen_at: new Date(payload.timestamp || Date.now()).toISOString(),
               is_active: true
             }

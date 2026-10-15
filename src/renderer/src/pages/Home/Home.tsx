@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { Plus, FolderOpen } from 'lucide-react'
 import type { Song } from '../Library/Library'
 import type { HomeProps, HomeTabType, HomeSongItem, HomeAlbumItem } from './types'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
@@ -7,6 +8,7 @@ import { findMatchingLibrarySong } from '../../lib/songMatching'
 import type { PersonalizedMix } from '../../services/PersonalizationService'
 import { AppCapabilities } from '../../lib/appConfig'
 import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
+import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
 
 // Custom Hooks
 import { useHomeData } from './hooks/useHomeData'
@@ -56,6 +58,43 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
     librarySongs,
     setLibrarySongs
   )
+  // Add local folder from mobile/web/desktop
+  const handleAddFolder = useCallback(async () => {
+    try {
+      if (!window.api?.selectFolder) return
+      const folderPath = await window.api.selectFolder()
+      if (folderPath) {
+        await window.api.scanLibrary(folderPath)
+        const latest = (await window.api?.getSongs?.()) as Song[] | undefined
+        if (latest) setLibrarySongs(latest)
+      }
+    } catch (err) {
+      console.error('Failed to scan library folder from Home:', err)
+    }
+  }, [setLibrarySongs])
+
+  // Select individual audio files from mobile/web storage
+  const handleAddFiles = useCallback(async () => {
+    try {
+      if (window.api?.selectFiles) {
+        const folderToken = await window.api.selectFiles()
+        if (folderToken) {
+          await window.api.scanLibrary(folderToken)
+          const latest = (await window.api?.getSongs?.()) as Song[] | undefined
+          if (latest) setLibrarySongs(latest)
+        }
+      } else if (window.api?.selectFolder) {
+        const folderToken = await window.api.selectFolder({ forceFiles: true })
+        if (folderToken) {
+          await window.api.scanLibrary(folderToken)
+          const latest = (await window.api?.getSongs?.()) as Song[] | undefined
+          if (latest) setLibrarySongs(latest)
+        }
+      }
+    } catch (err) {
+      console.error('Failed to select files from Home:', err)
+    }
+  }, [setLibrarySongs])
 
   // Play a song from home/charts: plays local file if available, or queues online download
   const handlePlaySong = useCallback(
@@ -64,8 +103,10 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
 
       if (!localSong?.filePath) {
         try {
-          const latestSongs = (await window.api?.getSongs?.()) as Song[] | undefined
-          if (latestSongs) {
+          const latestSongs = window.api?.getSongs
+            ? ((await window.api.getSongs()) as Song[] | undefined)
+            : useConnectedDeviceStore.getState().pcLibrarySongs
+          if (latestSongs && latestSongs.length > 0) {
             setLibrarySongs(latestSongs)
             localSong = findMatchingLibrarySong(song.title, song.artist, latestSongs)
           }
@@ -179,7 +220,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
   )
 
   return (
-    <div className="relative min-h-full w-full bg-canvas text-white select-none pb-28">
+    <div className="relative min-h-full flex-1 w-full bg-canvas text-white select-none pb-28">
       {/* Top Segmented Navigation Tabs */}
       <HomeTabs activeTab={activeTab} onTabChange={(tab) => {
         setActiveTab(tab)
@@ -210,6 +251,50 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                   isRefreshing={isRefreshing}
                   onRefresh={() => void fetchFeed()}
                 />
+
+                {/* Prompt to Add Local Songs if library is empty */}
+                {librarySongs.length === 0 && (
+                  <div className="relative overflow-hidden rounded-2xl border border-emerald-500/25 bg-gradient-to-r from-emerald-950/40 via-surface-elevated to-surface p-5 sm:p-6 shadow-xl">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <FolderOpen className="h-5 w-5 text-emerald-400" />
+                          <h3 className="font-bold text-white text-base tracking-tight">
+                            Add Local Music to Your Library
+                          </h3>
+                        </div>
+                        <p className="text-xs sm:text-sm text-zinc-400 max-w-xl">
+                          No songs loaded on this device yet. Select your music folder or audio files from local storage to play offline anytime with lossless audio.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={handleAddFolder}
+                          className="flex h-10 items-center gap-2 rounded-full bg-emerald-500 hover:bg-emerald-400 px-5 text-xs font-bold text-black transition-all hover:scale-[1.02] shadow-md cursor-pointer"
+                        >
+                          <Plus className="h-4 w-4 stroke-[3]" />
+                          <span>Add Music Folder</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleAddFiles}
+                          className="flex h-10 items-center gap-2 rounded-full border border-white/20 bg-surface-elevated px-4 text-xs font-semibold text-white hover:bg-hover transition-all cursor-pointer"
+                        >
+                          <FolderOpen className="h-3.5 w-3.5 text-emerald-400" />
+                          <span>Select Audio Files</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => navigate('/library')}
+                          className="flex h-10 items-center gap-2 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 px-3.5 text-xs font-medium text-zinc-300 transition-all cursor-pointer"
+                        >
+                          <span>Open Library</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* 6-card "Jump Back In" quick-access grid */}
                 <QuickAccessGrid
@@ -266,11 +351,30 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                   />
                 ) : (
                   !AppCapabilities.onlineDiscovery && (
-                    <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-8 text-center text-sm text-zinc-400">
-                      <p className="font-semibold text-white">No local songs in your library yet</p>
-                      <p className="mt-1 text-xs text-zinc-500">
-                        Scan local folders or import audio in the Library tab to listen offline.
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-8 text-center text-sm text-zinc-400">
+                      <FolderOpen className="mx-auto h-8 w-8 text-emerald-400 mb-2 opacity-80" />
+                      <p className="font-bold text-white text-base">No local songs in your library yet</p>
+                      <p className="mt-1 text-xs text-zinc-400 max-w-md mx-auto mb-4">
+                        Add a music folder or audio files from your device storage to start listening.
                       </p>
+                      <div className="flex flex-wrap items-center justify-center gap-3">
+                        <button
+                          type="button"
+                          onClick={handleAddFolder}
+                          className="flex h-9 items-center gap-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 px-4 text-xs font-bold text-black transition-all shadow-md cursor-pointer"
+                        >
+                          <Plus className="h-4 w-4 stroke-[3]" />
+                          <span>Add Music Folder</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleAddFiles}
+                          className="flex h-9 items-center gap-1.5 rounded-full border border-white/20 bg-surface-elevated px-4 text-xs font-medium text-white hover:bg-hover transition-all cursor-pointer"
+                        >
+                          <FolderOpen className="h-3.5 w-3.5 text-emerald-400" />
+                          <span>Select Audio Files</span>
+                        </button>
+                      </div>
                     </div>
                   )
                 )}

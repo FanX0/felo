@@ -120,14 +120,18 @@ export interface RoomChatMessage {
   sender_avatar_url?: string | null
 }
 
+export type DeviceCategory = 'app_pc' | 'web_pc' | 'app_mobile' | 'web_mobile'
+
 export interface UserConnectedDevice {
   id: string
   user_id: string
   device_name: string
-  device_type?: string
+  device_type?: DeviceCategory | 'desktop' | 'mobile' | string
+  device_category?: DeviceCategory
   local_ip?: string
   port?: number
   token?: string
   last_seen_at: string
   is_active: boolean
 }
+

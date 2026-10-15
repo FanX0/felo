@@ -311,10 +311,19 @@ export default function MobileNowPlaying({
 
         <div className="flex flex-col items-center text-center">
           <span className="text-[10px] font-bold tracking-widest text-zinc-400 uppercase">
-            {isBothTarget ? 'Dual Sync Audio' : isMobileTarget ? `Playing on ${getDeviceDisplayName()}` : 'Playing on Desktop'}
+            {isBothTarget
+              ? 'Dual Sync Audio'
+              : activeRemote?.activeDeviceName
+                ? `Playing on ${activeRemote.activeDeviceName}`
+                : isMobileTarget
+                  ? `Playing on ${getDeviceDisplayName()}`
+                  : state.deviceName || 'Playing on Desktop'}
           </span>
           <span className="text-xs font-semibold text-zinc-200 truncate max-w-[200px]">
-            {song?.album || (isBothTarget ? 'PC + Phone' : isMobileTarget ? getDeviceDisplayName() : 'Desktop Library')}
+            {song?.album ||
+              (isBothTarget
+                ? 'PC + Phone'
+                : activeRemote?.activeDeviceName || (isMobileTarget ? getDeviceDisplayName() : 'Desktop Library'))}
           </span>
         </div>
 

@@ -189,21 +189,15 @@ async function readPersistedFiles(
 
 async function replacePersistedFiles(
   root: BrowserRoot,
-  files: Array<{ file: File; relativePath: string }>
+  files: Array<{ file: File; relativePath: string }>,
+  append = true
 ): Promise<void> {
   const database = await openBrowserLibraryDatabase()
   return new Promise((resolve, reject) => {
     const transaction = database.transaction(WEB_LIBRARY_FILES_STORE, 'readwrite')
     const store = transaction.objectStore(WEB_LIBRARY_FILES_STORE)
-    const cursorRequest = store.index('rootId').openKeyCursor(IDBKeyRange.only(root.id))
-    cursorRequest.onsuccess = () => {
-      const cursor = cursorRequest.result
-      if (cursor) {
-        store.delete(cursor.primaryKey)
-        cursor.continue()
-        return
-      }
 
+    const saveFiles = () => {
       files.forEach(({ file, relativePath }) => {
         const record: PersistedBrowserFile = {
           id: persistedFileId(root, file, relativePath),
@@ -214,6 +208,22 @@ async function replacePersistedFiles(
         store.put(record)
       })
     }
+
+    if (append) {
+      saveFiles()
+    } else {
+      const cursorRequest = store.index('rootId').openKeyCursor(IDBKeyRange.only(root.id))
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result
+        if (cursor) {
+          store.delete(cursor.primaryKey)
+          cursor.continue()
+          return
+        }
+        saveFiles()
+      }
+    }
+
     transaction.oncomplete = () => resolve()
     transaction.onerror = () => reject(transaction.error)
     transaction.onabort = () => reject(transaction.error)
@@ -1138,53 +1148,143 @@ async function collectDirectoryFiles(
   return files
 }
 
-function pickDirectoryWithInput(): Promise<FileList | null> {
+function pickFilesWithInput(options?: {
+  directory?: boolean
+  accept?: string
+}): Promise<FileList | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input')
     input.type = 'file'
     input.multiple = true
-    input.setAttribute('webkitdirectory', '')
-    input.style.display = 'none'
-    input.addEventListener(
-      'change',
-      () => {
-        resolve(input.files)
+    if (options?.directory) {
+      input.setAttribute('webkitdirectory', '')
+      input.setAttribute('directory', '')
+    }
+    if (options?.accept) {
+      input.accept = options.accept
+    }
+    input.style.position = 'fixed'
+    input.style.top = '-9999px'
+    input.style.left = '-9999px'
+    input.style.opacity = '0'
+
+    let resolved = false
+    const cleanup = () => {
+      if (!resolved) {
+        resolved = true
+        window.removeEventListener('focus', onFocusCheck)
         input.remove()
-      },
-      { once: true }
-    )
+      }
+    }
+
+    const handleChange = () => {
+      const files = input.files
+      cleanup()
+      resolve(files)
+    }
+
+    const handleCancel = () => {
+      cleanup()
+      resolve(null)
+    }
+
+    input.addEventListener('change', handleChange, { once: true })
+    input.addEventListener('cancel', handleCancel, { once: true })
+
+    const onFocusCheck = () => {
+      setTimeout(() => {
+        if (!resolved) {
+          cleanup()
+          resolve(null)
+        }
+      }, 1000)
+    }
+    window.addEventListener('focus', onFocusCheck, { once: true })
+
     document.body.appendChild(input)
     input.click()
   })
 }
 
-async function selectBrowserFolder(): Promise<string | null> {
+async function selectBrowserFiles(options?: { accept?: string }): Promise<string | null> {
+  try {
+    const files = await pickFilesWithInput({
+      directory: false,
+      accept: options?.accept || 'audio/*,.mp3,.flac,.m4a,.wav,.ogg,.opus,.aac,.wma'
+    })
+    if (!files || files.length === 0) return null
+    pendingDirectoryHandle = undefined
+    pendingFiles = Array.from(files)
+      .filter(isAudioFile)
+      .map((file) => ({
+        file,
+        relativePath:
+          (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
+      }))
+    if (pendingFiles.length === 0) return null
+    const folderFromPath = pendingFiles[0]?.relativePath.includes('/')
+      ? pendingFiles[0].relativePath.split('/')[0]
+      : null
+    pendingFolderName = folderFromPath || 'Device Music'
+    return WEB_FOLDER_TOKEN
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') return null
+    throw error
+  }
+}
+
+async function selectBrowserFolder(options?: { forceFiles?: boolean }): Promise<string | null> {
   try {
     const browserWindow = window as Window & {
       showDirectoryPicker?: () => Promise<BrowserDirectoryHandle>
     }
-    if (browserWindow.showDirectoryPicker) {
-      const directory = await browserWindow.showDirectoryPicker()
-      if (navigator.storage?.persist) {
-        void navigator.storage.persist().catch(() => false)
+    if (!options?.forceFiles && browserWindow.showDirectoryPicker) {
+      try {
+        const directory = await browserWindow.showDirectoryPicker()
+        if (navigator.storage?.persist) {
+          void navigator.storage.persist().catch(() => false)
+        }
+        pendingDirectoryHandle = directory
+        pendingFolderName = directory.name || 'Browser folder'
+        pendingFiles = await collectDirectoryFiles(directory)
+        return pendingFiles.length ? WEB_FOLDER_TOKEN : null
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return null
+        throw error
       }
-      pendingDirectoryHandle = directory
-      pendingFolderName = directory.name || 'Browser folder'
-      pendingFiles = await collectDirectoryFiles(directory)
-    } else {
-      pendingDirectoryHandle = undefined
-      const files = await pickDirectoryWithInput()
-      if (!files?.length) return null
-      pendingFiles = Array.from(files)
-        .filter(isAudioFile)
-        .map((file) => ({
-          file,
-          relativePath:
-            (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
-        }))
-      pendingFolderName = pendingFiles[0]?.relativePath.split('/')[0] || 'Browser folder'
     }
-    return pendingFiles.length ? WEB_FOLDER_TOKEN : null
+
+    // Try directory input fallback if not forced to files
+    if (!options?.forceFiles) {
+      try {
+        const dirFiles = await pickFilesWithInput({
+          directory: true,
+          accept: 'audio/*,.mp3,.flac,.m4a,.wav,.ogg,.opus,.aac,.wma'
+        })
+        if (dirFiles && dirFiles.length > 0) {
+          pendingDirectoryHandle = undefined
+          pendingFiles = Array.from(dirFiles)
+            .filter(isAudioFile)
+            .map((file) => ({
+              file,
+              relativePath:
+                (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
+            }))
+          if (pendingFiles.length > 0) {
+            pendingFolderName =
+              pendingFiles[0]?.relativePath.includes('/')
+                ? pendingFiles[0].relativePath.split('/')[0]
+                : 'Browser folder'
+            return WEB_FOLDER_TOKEN
+          }
+        }
+      } catch (e) {
+        console.warn('Directory input failed, falling back to files:', e)
+      }
+    }
+
+    // Direct audio files picker (standard on mobile browsers / WebView)
+    return await selectBrowserFiles()
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') return null
     throw error
@@ -1349,9 +1449,12 @@ function emitBrowserScanProgress(progress: any) {
 
 async function addBrowserFiles(
   root: BrowserRoot,
-  files: Array<{ file: File; relativePath: string }>
+  files: Array<{ file: File; relativePath: string }>,
+  append = true
 ): Promise<number> {
-  clearSongsForRoot(root.id)
+  if (!append) {
+    clearSongsForRoot(root.id)
+  }
 
   let nextFileIndex = 0
   let processedFiles = 0
@@ -1447,9 +1550,9 @@ async function scanBrowserFolder(folderToken: string): Promise<number> {
     percent: 0
   })
 
-  const count = await addBrowserFiles(root, pendingFiles)
+  const count = await addBrowserFiles(root, pendingFiles, true)
   try {
-    await replacePersistedFiles(root, pendingFiles)
+    await replacePersistedFiles(root, pendingFiles, true)
   } catch (error) {
     console.warn('Unable to cache the browser library for offline restoration:', error)
   }
@@ -1670,6 +1773,7 @@ const webApi: Window['api'] = {
   }),
   launchMusicPresence: async () => ({ success: false, error: 'Desktop only' }),
   selectFolder: selectBrowserFolder,
+  selectFiles: selectBrowserFiles,
   scanLibrary: scanBrowserFolder,
   cancelLibraryScan: async () => {
     browserScanCancelled = true

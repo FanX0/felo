@@ -104,6 +104,10 @@ export default function CreatePlaylistModal({
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     if (!name.trim()) return
+    if (!window.api?.createPlaylist) {
+      setError('Creating playlists is only supported on desktop.')
+      return
+    }
     try {
       setIsSaving(true)
       setError('')
@@ -168,7 +172,8 @@ export default function CreatePlaylistModal({
           className="mt-5 min-h-[76px] w-full resize-y rounded-lg border border-white/15 bg-white/5 px-4 py-4 text-sm outline-none placeholder:text-[#8c95a3] focus:border-white/30"
         />
 
-        <section className="mt-6 rounded-lg border border-white/10 bg-[#181818] p-5">
+        {AppCapabilities.playlistImport && (
+          <section className="mt-6 rounded-lg border border-white/10 bg-[#181818] p-5">
           <div className="flex items-center justify-between border-b border-white/10 pb-3">
             {formats.map((format) => (
               <button
@@ -215,7 +220,10 @@ export default function CreatePlaylistModal({
                   Use{' '}
                   <button
                     type="button"
-                    onClick={() => void window.api.openExternal('https://exportify.app/')}
+                    onClick={() => {
+                      if (window.api?.openExternal) void window.api.openExternal('https://exportify.app/')
+                      else window.open('https://exportify.app/', '_blank')
+                    }}
                     className="font-bold text-white underline transition-colors hover:text-white/80"
                   >
                     Exportify
@@ -227,11 +235,11 @@ export default function CreatePlaylistModal({
                   Use{' '}
                   <button
                     type="button"
-                    onClick={() =>
-                      void window.api.openExternal(
-                        'https://www.tunemymusic.com/transfer/spotify-to-apple-music'
-                      )
-                    }
+                    onClick={() => {
+                      const url = 'https://www.tunemymusic.com/transfer/spotify-to-apple-music'
+                      if (window.api?.openExternal) void window.api.openExternal(url)
+                      else window.open(url, '_blank')
+                    }}
                     className="font-bold text-white underline transition-colors hover:text-white/80"
                   >
                     TuneMyMusic
@@ -344,6 +352,7 @@ export default function CreatePlaylistModal({
             your local library by title and artist. Unmatched tracks are not added automatically.
           </div>
         </section>
+        )}
 
         {error && (
           <div className="mt-4 rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">

@@ -221,7 +221,7 @@ function Artwork({
 export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode {
   const isMobile = useIsMobile()
   const { searchQuery, setSearchQuery, searchMode, setSearchMode } = useAppStore()
-  const { setQueue, queue, playSong, playbackContext } = usePlayerStore()
+  const { queue, playbackContext } = usePlayerStore()
   const { transfers } = useDownloadStore()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -430,12 +430,32 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
           if (isOffline && searchMode !== 'local') {
             setError('You are offline. Showing results from your local library.')
           }
-          const [songs, artists, albums, playlists] = await Promise.all([
-            window.api.searchSongs(query),
-            window.api.searchArtists(query),
-            window.api.searchAlbums?.(query) || Promise.resolve([]),
-            window.api.getPlaylists?.() || Promise.resolve([])
-          ])
+          let songs: any[] = []
+          let artists: any[] = []
+          let albums: any[] = []
+          let playlists: any[] = []
+
+          if (window.api?.searchSongs) {
+            const results = await Promise.all([
+              window.api.searchSongs(query),
+              window.api.searchArtists ? window.api.searchArtists(query) : Promise.resolve([]),
+              window.api.searchAlbums ? window.api.searchAlbums(query) : Promise.resolve([]),
+              window.api.getPlaylists ? window.api.getPlaylists() : Promise.resolve([])
+            ])
+            songs = results[0] || []
+            artists = results[1] || []
+            albums = results[2] || []
+            playlists = results[3] || []
+          } else {
+            const pcSongs = useConnectedDeviceStore.getState().pcLibrarySongs
+            const q = query.toLowerCase()
+            songs = pcSongs.filter(
+              (s) =>
+                s.title.toLowerCase().includes(q) ||
+                s.artist.toLowerCase().includes(q) ||
+                (s.album && s.album.toLowerCase().includes(q))
+            )
+          }
 
           const mappedSongs: SearchItem[] = (songs || []).map((song: Song) => ({
             id: song.id,
@@ -451,9 +471,10 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
 
           let remoteSongsList: SearchItem[] = []
           if (mappedSongs.length === 0) {
-            if (remoteClient.getIsConnected()) {
+            const hasLanHost = Boolean(remoteClient.getBaseUrl() && !remoteClient.getBaseUrl().includes('localhost'))
+            if (remoteClient.getIsConnected() || hasLanHost) {
               try {
-                const remoteRes = await remoteLibraryService.getSongs({ q: query, limit: 20 })
+                const remoteRes = await remoteLibraryService.getSongs({ q: query, limit: 30 })
                 remoteSongsList = (remoteRes.songs || []).map((s) => ({
                   id: s.id,
                   title: s.title,
@@ -613,9 +634,28 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
 
     if (item.type === 'Playlist') {
       try {
-        const playlistData = await window.api.getPlaylist(item.id)
-        if (playlistData?.tracks && playlistData.tracks.length > 0) {
-          const playlistQueue: Song[] = playlistData.tracks.map((t: any, idx: number) => {
+        let playlistTracks: any[] = []
+        if (window.api?.getPlaylist) {
+          const playlistData = await window.api.getPlaylist(item.id)
+          playlistTracks = playlistData?.tracks || []
+        } else {
+          const hasLanHost = Boolean(remoteClient.getBaseUrl() && !remoteClient.getBaseUrl().includes('localhost'))
+          if (remoteClient.getIsConnected() || hasLanHost) {
+            const res = await remoteLibraryService.getPlaylistTracks(item.id)
+            playlistTracks = res.tracks.map((r) => ({
+              id: r.id,
+              title: r.title,
+              artist: r.artist,
+              album: r.album,
+              duration: r.duration,
+              coverArt: r.artworkUrl,
+              audioUrl: r.audioUrl || remoteClient.getAudioStreamUrl(r.id)
+            }))
+          }
+        }
+
+        if (playlistTracks && playlistTracks.length > 0) {
+          const playlistQueue: Song[] = playlistTracks.map((t: any, idx: number) => {
             const local = librarySongs.find(
               (s) =>
                 (t.matchedSongId && s.id === t.matchedSongId) || (t.songId && s.id === t.songId)
@@ -628,10 +668,11 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
               album: t.album || item.title,
               duration: t.duration || 0,
               artworkPath: t.coverArt || item.thumbnail,
-              filePath: `virtual:${t.title} - ${t.artist}`
+              artworkUrl: t.coverArt || item.thumbnail,
+              filePath: t.audioUrl || `virtual:${t.title} - ${t.artist}`
             }
           })
-          setQueue(playlistQueue, 0, {
+          void requestPlayQueue(playlistQueue, 0, {
             type: 'playlist',
             title: item.title,
             subtitle: `${playlistQueue.length} tracks`,
@@ -653,7 +694,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
         return artist === targetArtist || artist.includes(targetArtist)
       })
       if (artistTracks.length > 0) {
-        setQueue(artistTracks, 0, {
+        void requestPlayQueue(artistTracks, 0, {
           type: 'artist',
           title: item.title,
           subtitle: `${artistTracks.length} tracks`,
@@ -671,7 +712,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
         (song) => song.album?.toLowerCase() === targetAlbum
       )
       if (albumTracks.length > 0) {
-        setQueue(albumTracks, 0, {
+        void requestPlayQueue(albumTracks, 0, {
           type: 'album',
           title: item.title,
           subtitle: item.artist || 'Unknown Artist',
@@ -698,7 +739,10 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
               (!item.artist || !s.artist || s.artist.toLowerCase() === item.artist.toLowerCase()))
         )
         if (existingIdx >= 0) {
-          playSong(existingIdx)
+          requestPlayQueue(queue, existingIdx, {
+            type: 'search',
+            title: `Search: "${searchQuery}"`
+          })
           return
         }
       }
@@ -755,7 +799,10 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
       return
     }
 
-    if (item.url) void window.api.openExternal(item.url)
+    if (item.url) {
+      if (window.api?.openExternal) void window.api.openExternal(item.url)
+      else window.open(item.url, '_blank')
+    }
   }
 
   const handleDownloadItem = (item: SearchItem) => {
@@ -876,7 +923,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
   const isZeroQuery = !searchQuery.trim()
 
   return (
-    <div className="h-full flex flex-col select-none overflow-hidden">
+    <div className="h-full flex-1 flex flex-col select-none overflow-hidden">
       {/* Mobile-Only Persistent Sticky Search Input Bar */}
       <div
         className={cn(
@@ -922,7 +969,7 @@ export default function Search({ onOpenDownloadPanel }: SearchProps): ReactNode 
       {/* Main Scrollable View */}
       <div
         className={cn(
-          'flex-1 overflow-y-auto select-none px-4 sm:px-8 pb-14',
+          'flex-1 overflow-y-auto select-none px-4 sm:px-8 pb-36 md:pb-14',
           isZeroQuery ? 'pt-4 sm:pt-6 space-y-6 sm:space-y-10' : 'pt-4 sm:pt-6 space-y-4 sm:space-y-6'
         )}
       >

@@ -40,6 +40,8 @@ export function useIsMobile(): boolean {
     }
 
     window.addEventListener('resize', updateMatches)
+    window.addEventListener('orientationchange', updateMatches)
+    window.visualViewport?.addEventListener('resize', updateMatches)
 
     return () => {
       if (mql.removeEventListener) {
@@ -48,6 +50,8 @@ export function useIsMobile(): boolean {
         mql.removeListener(updateMatches)
       }
       window.removeEventListener('resize', updateMatches)
+      window.removeEventListener('orientationchange', updateMatches)
+      window.visualViewport?.removeEventListener('resize', updateMatches)
     }
   }, [])
 

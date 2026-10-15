@@ -26,7 +26,7 @@ import {
 import { NavLink, useNavigate, useParams } from 'react-router-dom'
 import OnlineGate from '../../components/Online/OnlineGate'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
-import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 import { useListeningStore } from '../../hooks/useListeningStore'
 import { getSupabase } from '../../lib/supabase'
 import { toMediaUrl } from '../../lib/media'
@@ -376,7 +376,7 @@ function FullListeningHistoryModal({
   onClose: () => void
   initialTab?: 'recent' | 'mostPlayed' | 'artists'
 }): ReactElement {
-  const setQueue = usePlayerStore((s) => s.setQueue)
+  const { requestPlaySong } = usePlaybackArbitration()
   const [activeTab, setActiveTab] = useState<'recent' | 'mostPlayed' | 'artists'>(initialTab)
   const [searchQuery, setSearchQuery] = useState('')
   const [page, setPage] = useState(1)
@@ -612,7 +612,7 @@ function FullListeningHistoryModal({
                       return (
                         <div
                           key={`${song.id}-${idx}`}
-                          onClick={() => setQueue([song as Song], 0)}
+                          onClick={() => requestPlaySong(song as Song)}
                           className="group flex items-center gap-3 rounded-xl border border-border/30 bg-surface-elevated/30 p-2.5 text-left transition-all hover:bg-hover hover:border-border cursor-pointer"
                         >
                           <span className="w-6 text-center text-xs font-black text-text-muted">
@@ -642,7 +642,7 @@ function FullListeningHistoryModal({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation()
-                              setQueue([song as Song], 0)
+                              requestPlaySong(song as Song)
                             }}
                             title="Play track"
                             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface-elevated text-text opacity-0 group-hover:opacity-100 transition-opacity hover:bg-hover"
@@ -681,7 +681,7 @@ function ProfileWorkspace(): ReactElement {
   const { username } = useParams<{ username?: string }>()
   const navigate = useNavigate()
   const { user, profile: ownProfile } = useOnlineStore()
-  const setQueue = usePlayerStore((s) => s.setQueue)
+  const { requestPlaySong } = usePlaybackArbitration()
   const [viewedProfile, setViewedProfile] = useState<OnlineProfile | null>(null)
   const [relationship, setRelationship] = useState<FriendRequest | null>(null)
   const [playlists, setPlaylists] = useState<SharedPlaylist[]>([])
@@ -730,11 +730,11 @@ function ProfileWorkspace(): ReactElement {
     } catch {}
 
     if (localSong?.filePath) {
-      setQueue([localSong], 0)
+      void requestPlaySong(localSong)
       return
     }
 
-    setQueue([song as Song], 0)
+    void requestPlaySong(song as Song)
   }
 
 
@@ -1031,13 +1031,13 @@ function ProfileWorkspace(): ReactElement {
 
   if (loading)
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full flex-1 items-center justify-center">
         <Loader2 className="h-7 w-7 animate-spin text-text-muted" />
       </div>
     )
   if (!viewedProfile) {
     return (
-      <div className="flex h-full flex-col items-center justify-center text-center">
+      <div className="flex h-full flex-1 flex-col items-center justify-center text-center">
         <UserRound className="h-12 w-12 text-text-muted" />
         <h1 className="mt-4 text-2xl font-black text-text">Profile not found</h1>
         <NavLink
@@ -1051,7 +1051,7 @@ function ProfileWorkspace(): ReactElement {
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-canvas">
+    <div className="h-full flex-1 overflow-y-auto bg-canvas">
       <header className="flex min-h-[240px] sm:min-h-[300px] items-end bg-gradient-to-b from-surface-elevated/80 to-canvas px-4 sm:px-10 pb-6 sm:pb-7 pt-6 sm:pt-12">
         <div className="flex min-w-0 flex-col items-center gap-4 sm:gap-6 sm:flex-row sm:items-end w-full sm:w-auto">
           <ProfileAvatar profile={viewedProfile} large />

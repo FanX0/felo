@@ -18,9 +18,11 @@ import {
   ListMusic,
   Loader2,
   Smartphone,
-  Laptop2
+  Laptop2,
+  Globe
 } from 'lucide-react'
 import RemoteControlModal from '../RemoteControlModal/RemoteControlModal'
+import { getDeviceCategory, detectDeviceInfo } from '../../lib/deviceInfo'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 import {
@@ -31,9 +33,11 @@ import {
 import ArtistLinks from '../Common/ArtistLinks'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
 import { useListeningStore } from '../../hooks/useListeningStore'
+import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toMediaUrl } from '../../lib/media'
+import { getCurrentDeviceId } from '../../lib/deviceInfo'
 import { ArtworkImage } from '../../pages/Home/components/ArtworkImage'
 import type { DownloadTarget } from '../DownloadPanel/DownloadPanel'
 import { AppCapabilities } from '../../lib/appConfig'
@@ -189,7 +193,8 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
 
   const user = useOnlineStore((state) => state.user)
   const activeRemote = useConnectedDeviceStore((state) => state.activePlayback)
-  const myDeviceId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : null
+  const myDeviceId = getCurrentDeviceId()
+  const { requestPlayQueue } = usePlaybackArbitration()
   const isAudioActive = usePlayerStore((state) => state.isAudioActive)
   const isLocalAudioOwner = isAudioActive && isPlaying
   const isRemoteActive = Boolean(
@@ -218,7 +223,6 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
   const displayDuration = isRemoteActive && activeRemote ? activeRemote.duration : duration
   const displayCurrentTime = isRemoteActive ? remotePos : undefined
 
-  const setQueue = usePlayerStore((state) => state.setQueue)
   const togglePlay = usePlayerStore((state) => state.togglePlay)
   const playNext = usePlayerStore((state) => state.playNext)
   const playPrevious = usePlayerStore((state) => state.playPrevious)
@@ -337,7 +341,7 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
       const songs = await window.api?.getSongs?.()
       if (songs?.length) {
         const sorted = [...songs].sort((a, b) => (b.dateAdded || 0) - (a.dateAdded || 0))
-        setQueue(sorted, 0)
+        requestPlayQueue(sorted, 0)
       } else if (queueLength > 0) {
         togglePlay()
       }
@@ -442,6 +446,11 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
               className="flex items-center gap-1.5 mb-0.5 text-[11px] font-bold text-emerald-400 hover:text-emerald-300 transition text-left cursor-pointer no-drag group"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+              {activeRemote.activeDeviceType === 'mobile' ? (
+                <Smartphone className="w-3 h-3 shrink-0" />
+              ) : (
+                <Laptop2 className="w-3 h-3 shrink-0" />
+              )}
               <span className="truncate">Listening on {activeRemote.activeDeviceName}</span>
             </button>
           ) : (playbackContext || prefetchingTransfer) ? (
@@ -707,16 +716,21 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/25 transition cursor-pointer text-xs font-semibold shrink-0"
           >
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-            {activeRemote.activeDeviceType === 'mobile' ? (
-              <Smartphone className="w-3.5 h-3.5" />
-            ) : (
-              <Laptop2 className="w-3.5 h-3.5" />
-            )}
+            {(() => {
+              const cat = getDeviceCategory({
+                device_type: activeRemote.activeDeviceType,
+                device_category: activeRemote.activeDeviceCategory,
+                device_name: activeRemote.activeDeviceName
+              })
+              if (cat === 'app_pc') return <Laptop2 className="w-3.5 h-3.5" />
+              if (cat === 'web_pc') return <Globe className="w-3.5 h-3.5" />
+              return <Smartphone className="w-3.5 h-3.5" />
+            })()}
             <span className="truncate max-w-[120px]">{activeRemote.activeDeviceName}</span>
           </button>
         ) : (
           <button
-            title="Connect to a Device (Output & Remote Control)"
+            title={`Listening on ${detectDeviceInfo().name} (Click to connect devices)`}
             onClick={() => setIsRemoteModalOpen(true)}
             className={`hover:text-text transition-colors p-1 relative ${
               connectedPhones > 0 ? 'text-white' : ''

@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { Play, Pause, SkipForward, Laptop2, Smartphone, Radio } from 'lucide-react'
+import { Play, Pause, SkipForward, Laptop2, Smartphone, Radio, Globe } from 'lucide-react'
 import { remoteClient, type RemotePlayerState, type PlaybackTarget } from '../pages/Remote/remoteClient'
 import { usePlayerStore } from '../hooks/usePlayerStore'
 import { useOnlineStore } from '../hooks/useOnlineStore'
@@ -9,7 +9,13 @@ import {
   getInterpolatedPosition
 } from '../hooks/useConnectedDeviceStore'
 import { toMediaUrl } from '../lib/media'
-import { getDeviceDisplayName } from '../lib/deviceInfo'
+import {
+  getDeviceDisplayName,
+  getCurrentDeviceId,
+  getDeviceCategory,
+  isPcDevice,
+  detectDeviceInfo
+} from '../lib/deviceInfo'
 
 interface MobileDockedPlayerProps {
   onExpand: () => void
@@ -24,7 +30,7 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
 
   const user = useOnlineStore((s) => s.user)
   const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
-  const myDeviceId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : null
+  const myDeviceId = getCurrentDeviceId()
 
   const localQueue = usePlayerStore((s) => s.queue)
   const localIndex = usePlayerStore((s) => s.currentSongIndex)
@@ -61,7 +67,7 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
   }, [isCloudRemoteActive, activeRemote?.isPlaying])
 
   // Determine active song source
-  const hasLanRemoteSong = Boolean(isRemoteConnected && remoteState.song)
+  const hasLanRemoteSong = Boolean(!isLocalAudioOwner && isRemoteConnected && remoteState.song)
   const hasLocalSong = Boolean(localSong)
 
   if (!isCloudRemoteActive && !hasLanRemoteSong && !hasLocalSong) {
@@ -86,8 +92,13 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
       activeRemote.duration > 0
         ? Math.min(100, (currentPos / activeRemote.duration) * 100)
         : 0
-    targetDevice = activeRemote.activeDeviceType === 'desktop' ? 'desktop' : 'mobile'
-    deviceLabel = activeRemote.activeDeviceName || 'Felo Desktop'
+    const activeCat = getDeviceCategory({
+      device_type: activeRemote.activeDeviceType,
+      device_category: activeRemote.activeDeviceCategory,
+      device_name: activeRemote.activeDeviceName
+    })
+    targetDevice = isPcDevice(activeCat) ? 'desktop' : 'mobile'
+    deviceLabel = activeRemote.activeDeviceName || (targetDevice === 'desktop' ? 'Felo Desktop' : 'Mobile Device')
   } else if (hasLanRemoteSong) {
     title = remoteState.song?.title || 'Unknown Title'
     artist = remoteState.song?.artist || 'Unknown Artist'
@@ -188,7 +199,7 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
       onKeyDown={(e) => e.key === 'Enter' && onExpand()}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
-      className="md:hidden fixed bottom-[calc(3.8rem+env(safe-area-inset-bottom,0px))] left-2.5 right-2.5 z-40 bg-[#282828]/95 hover:bg-[#323232]/95 backdrop-blur-xl border border-white/10 rounded-xl p-2 shadow-2xl flex items-center gap-3 transition active:scale-[0.99] select-none cursor-pointer group"
+      className="fixed bottom-[calc(3.8rem+env(safe-area-inset-bottom,0px))] left-2.5 right-2.5 z-40 bg-[#282828]/95 hover:bg-[#323232]/95 backdrop-blur-xl border border-white/10 rounded-xl p-2 shadow-2xl flex items-center gap-3 transition active:scale-[0.99] select-none cursor-pointer group"
     >
       {/* Artwork */}
       <div className="w-10 h-10 rounded-lg bg-zinc-800 overflow-hidden shrink-0 flex items-center justify-center border border-white/5 relative">
@@ -210,14 +221,30 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
             onClick={handleDeviceClick}
             className="shrink-0 flex items-center gap-1 font-semibold text-[10px] text-emerald-400 hover:text-emerald-300 transition"
           >
-            {targetDevice === 'desktop' ? (
-              <Laptop2 className="w-3 h-3" />
-            ) : targetDevice === 'both' ? (
-              <Radio className="w-3 h-3" />
-            ) : (
-              <Smartphone className="w-3 h-3 text-zinc-300" />
-            )}
-            <span className={targetDevice === 'mobile' ? 'text-zinc-300' : 'text-emerald-400'}>
+            {(() => {
+              if (targetDevice === 'both') return <Radio className="w-3 h-3" />
+              const cat =
+                isCloudRemoteActive && activeRemote
+                  ? getDeviceCategory({
+                      device_type: activeRemote.activeDeviceType,
+                      device_category: activeRemote.activeDeviceCategory,
+                      device_name: activeRemote.activeDeviceName
+                    })
+                  : targetDevice === 'desktop'
+                    ? 'app_pc'
+                    : detectDeviceInfo().category
+
+              if (cat === 'app_pc') return <Laptop2 className="w-3 h-3" />
+              if (cat === 'web_pc') return <Globe className="w-3.5 h-3.5" />
+              return <Smartphone className="w-3 h-3 text-zinc-300" />
+            })()}
+            <span
+              className={
+                targetDevice === 'mobile' && !isCloudRemoteActive
+                  ? 'text-zinc-300'
+                  : 'text-emerald-400'
+              }
+            >
               {isCloudRemoteActive ? `Listening on ${deviceLabel}` : deviceLabel}
             </span>
           </button>

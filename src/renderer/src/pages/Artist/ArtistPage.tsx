@@ -186,6 +186,12 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
     const loadSongs = async () => {
       try {
         let data = (await window.api?.getSongs?.()) || []
+        if (data.length === 0) {
+          const pcSongs = useConnectedDeviceStore.getState().pcLibrarySongs
+          if (pcSongs && pcSongs.length > 0) {
+            data = pcSongs
+          }
+        }
         const hasArtistSongs = data.some((song) => {
           if (
             song.artists?.some(
@@ -199,7 +205,8 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
           return artistNameMatches(song.artist || '', decodedName)
         })
 
-        if (!hasArtistSongs && remoteClient.getIsConnected()) {
+        const hasLanHost = Boolean(remoteClient.getBaseUrl() && !remoteClient.getBaseUrl().includes('localhost'))
+        if (!hasArtistSongs && (remoteClient.getIsConnected() || hasLanHost)) {
           const remoteTracks = await remoteLibraryService.getArtistTracks(decodedName)
           if (remoteTracks && remoteTracks.length > 0) {
             const mappedRemote: Song[] = remoteTracks.map((r) => ({
@@ -545,7 +552,11 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
             artistNameMatches(item.artist, track.artist))
       )
       if (existingQueueIndex >= 0) {
-        usePlayerStore.getState().playSong(existingQueueIndex)
+        requestPlayQueue(queue, existingQueueIndex, {
+          type: 'artist' as const,
+          title: decodedName,
+          route: `/artist/${encodeURIComponent(decodedName)}`
+        })
         return
       }
     }
@@ -807,7 +818,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
   }
 
   return (
-    <div className="h-full overflow-y-auto select-none bg-[#121212] text-white pb-36 md:pb-12">
+    <div className="h-full flex-1 overflow-y-auto select-none bg-[#121212] text-white pb-36 md:pb-12">
       <section
         className="relative flex h-[260px] sm:h-[360px] flex-col justify-end overflow-hidden bg-[#242424] px-4 sm:px-10 pb-6 sm:pb-9"
         style={

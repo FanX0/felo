@@ -24,8 +24,13 @@ import {
   sendDeviceCommand
 } from '../../hooks/useConnectedDeviceStore'
 import { getSupabase, isSupabaseConfigured } from '../../lib/supabase'
+import {
+  detectDeviceInfo,
+  getDeviceCategory,
+  getDeviceCategoryLabel,
+  isPcDevice
+} from '../../lib/deviceInfo'
 import type { UserConnectedDevice } from '../../online/types'
-import { detectDeviceInfo } from '../../lib/deviceInfo'
 
 interface RemoteControlModalProps {
   isOpen: boolean
@@ -382,20 +387,23 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
                       )}
                     </div>
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <h4 className="text-sm font-bold text-white truncate">
                           {currentTarget === 'mobile'
-                            ? `${deviceInfo.model} (This Device)`
+                            ? `${deviceInfo.name} (This Device)`
                             : currentTarget === 'both'
                               ? 'Play on Both (Dual Sync)'
                               : desktopDisplayName}
                         </h4>
+                        {currentTarget === 'mobile' && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300">
+                            {deviceInfo.categoryLabel}
+                          </span>
+                        )}
                       </div>
                       <p className="text-xs text-emerald-400/90 font-medium truncate mt-0.5">
                         {currentTarget === 'mobile'
-                          ? deviceInfo.isMobile
-                            ? 'Playing on phone speakers'
-                            : 'Playing directly in browser'
+                          ? `Playing locally on ${deviceInfo.name}`
                           : currentTarget === 'both'
                             ? `Synchronized audio on ${deviceInfo.model} + PC`
                             : isWebConnected
@@ -461,41 +469,62 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
                     </button>
                   )}
 
-                  {/* Discovered Desktops from same account */}
+                  {/* Discovered Devices from same account */}
                   {user && discoveredDevices.length > 0 &&
-                    discoveredDevices.map((dev) => {
-                      const isCurrent =
-                        currentTarget === 'desktop' &&
-                        isWebConnected &&
-                        remoteClient.getBaseUrl().includes(dev.local_ip || '')
-                      if (isCurrent) return null
+                    discoveredDevices
+                      .filter((dev) => dev.id !== myDeviceId)
+                      .map((dev) => {
+                        const devCategory = getDeviceCategory(dev)
+                        const devLabel = getDeviceCategoryLabel(devCategory)
+                        const isDevPc = isPcDevice(devCategory)
+                        const isCurrent =
+                          currentTarget === 'desktop' &&
+                          isWebConnected &&
+                          dev.local_ip &&
+                          remoteClient.getBaseUrl().includes(dev.local_ip)
+                        if (isCurrent) return null
 
-                      return (
-                        <button
-                          key={dev.id}
-                          type="button"
-                          onClick={() => handleConnectToDiscovered(dev)}
-                          className="w-full p-3.5 rounded-xl text-left transition flex items-center justify-between border bg-white/[0.03] border-white/5 hover:bg-white/[0.06] hover:border-white/20 cursor-pointer"
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center text-white shrink-0">
-                              <Laptop2 className="w-5 h-5 text-white" />
+                        return (
+                          <button
+                            key={dev.id}
+                            type="button"
+                            onClick={() => handleConnectToDiscovered(dev)}
+                            className="w-full p-3.5 rounded-xl text-left transition flex items-center justify-between border bg-white/[0.03] border-white/5 hover:bg-white/[0.06] hover:border-white/20 cursor-pointer"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center text-white shrink-0">
+                                {devCategory === 'app_pc' ? (
+                                  <Laptop2 className="w-5 h-5 text-indigo-400" />
+                                ) : devCategory === 'web_pc' ? (
+                                  <Globe className="w-5 h-5 text-sky-400" />
+                                ) : devCategory === 'app_mobile' ? (
+                                  <Smartphone className="w-5 h-5 text-emerald-400" />
+                                ) : (
+                                  <Smartphone className="w-5 h-5 text-amber-400" />
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <h5 className="text-xs font-bold text-white truncate">
+                                    {dev.device_name || (isDevPc ? 'Felo Desktop' : 'Mobile Device')}
+                                  </h5>
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-white/10 text-zinc-300 border border-white/10">
+                                    {devLabel}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-zinc-400 truncate mt-0.5">
+                                  {dev.local_ip
+                                    ? `Ready on Wi-Fi • ${dev.local_ip}`
+                                    : 'Connected via Felo Account'}
+                                </p>
+                              </div>
                             </div>
-                            <div className="min-w-0">
-                              <h5 className="text-xs font-bold text-white truncate">
-                                {dev.device_name || 'Felo Desktop'}
-                              </h5>
-                              <p className="text-[11px] text-zinc-400 truncate">
-                                Ready on local Wi-Fi • {dev.local_ip}
-                              </p>
-                            </div>
-                          </div>
-                          <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-white/10 hover:bg-white/20 text-white transition">
-                            Switch to PC
-                          </span>
-                        </button>
-                      )
-                    })}
+                            <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-white/10 hover:bg-white/20 text-white transition">
+                              {isDevPc ? 'Switch to PC' : 'Switch Device'}
+                            </span>
+                          </button>
+                        )
+                      })}
 
                   {/* Play on Both (Dual Sync) Option */}
                   {currentTarget !== 'both' && (
@@ -736,22 +765,25 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
                 </button>
               </div>
 
-              {/* Connected Mobile Devices for Spotify Connect bidirectional control */}
-              {discoveredDevices.filter((d) => d.device_type !== 'desktop').length > 0 && (
+              {/* Connected Devices across account for bidirectional playback control */}
+              {discoveredDevices.filter((d) => d.id !== myDeviceId).length > 0 && (
                 <div className="w-full mt-4 space-y-2 border-t border-white/10 pt-3 text-left">
                   <div className="flex items-center justify-between px-0.5">
                     <span className="text-[11px] font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
-                      <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+                      <Radio className="w-3.5 h-3.5 text-emerald-400" />
                       <span>
-                        Active Mobile Devices ({discoveredDevices.filter((d) => d.device_type !== 'desktop').length})
+                        Available Devices ({discoveredDevices.filter((d) => d.id !== myDeviceId).length})
                       </span>
                     </span>
                   </div>
                   {discoveredDevices
-                    .filter((d) => d.device_type !== 'desktop')
+                    .filter((d) => d.id !== myDeviceId)
                     .map((dev) => {
                       const isThisDevPlaying =
-                        activeRemote?.activeDeviceId === dev.id && activeRemote.isPlaying
+                        Boolean(activeRemote?.activeDeviceId === dev.id && activeRemote?.isPlaying)
+                      const devCategory = getDeviceCategory(dev)
+                      const devLabel = getDeviceCategoryLabel(devCategory)
+                      const isDevPc = isPcDevice(devCategory)
 
                       return (
                         <div
@@ -767,14 +799,25 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
                               className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
                                 isThisDevPlaying
                                   ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                  : 'bg-emerald-500/10 text-emerald-400'
+                                  : 'bg-white/5 text-zinc-300'
                               }`}
                             >
-                              <Smartphone className="w-4 h-4" />
+                              {devCategory === 'app_pc' ? (
+                                <Laptop2 className="w-4 h-4" />
+                              ) : devCategory === 'web_pc' ? (
+                                <Globe className="w-4 h-4" />
+                              ) : (
+                                <Smartphone className="w-4 h-4" />
+                              )}
                             </div>
                             <div className="min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <p className="text-xs font-bold text-white truncate">{dev.device_name}</p>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <p className="text-xs font-bold text-white truncate">
+                                  {dev.device_name || (isDevPc ? 'Felo Desktop' : 'Mobile Device')}
+                                </p>
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-white/10 text-zinc-300 border border-white/10">
+                                  {devLabel}
+                                </span>
                                 {isThisDevPlaying && (
                                   <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300">
                                     Currently Playing
@@ -788,7 +831,9 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
                               >
                                 {isThisDevPlaying
                                   ? 'Active audio output'
-                                  : 'Ready for playback transfer'}
+                                  : dev.local_ip
+                                    ? `Wi-Fi IP: ${dev.local_ip}`
+                                    : 'Ready for playback transfer'}
                               </p>
                             </div>
                           </div>
@@ -810,7 +855,11 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
                                   : 'bg-emerald-500 hover:bg-emerald-400 text-black'
                               }`}
                             >
-                              {transferredDeviceId === dev.id ? '✓ Playing on Phone' : 'Transfer to Phone'}
+                              {transferredDeviceId === dev.id
+                                ? '✓ Transferred'
+                                : isDevPc
+                                  ? 'Transfer to PC'
+                                  : 'Transfer to Phone'}
                             </button>
                           )}
                         </div>

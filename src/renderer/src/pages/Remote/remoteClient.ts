@@ -51,6 +51,8 @@ class RemoteClient {
   private mobileAudio: HTMLAudioElement | null = null
   private mobileIsPlaying = false
   private currentMobileSongId: string | null = null
+  private targetLockUntil = 0
+  private pendingMobilePlay = false
 
   private currentState: RemotePlayerState = {
     ready: false,
@@ -82,6 +84,13 @@ class RemoteClient {
       // Reconnection & instant state refresh on tab focus / phone unlock
       window.addEventListener('visibilitychange', this.handleVisibilityChange)
       window.addEventListener('online', this.handleOnline)
+
+      // Auto-connect on startup if pairing token and host URL are available
+      if (this.token && this.baseUrl) {
+        setTimeout(() => {
+          this.connect()
+        }, 80)
+      }
     }
   }
 
@@ -107,8 +116,8 @@ class RemoteClient {
       if (data && typeof data === 'object') {
         if (this.targetDevice === 'mobile') {
           // If mobile is NOT playing audio locally, but desktop is actively playing, do NOT hijack or mask desktop!
-          // Respect active PC playback and switch to desktop target.
-          if (data.isPlaying && !this.mobileIsPlaying) {
+          // Respect active PC playback and switch to desktop target (only if target lock is expired).
+          if (Date.now() >= this.targetLockUntil && data.isPlaying && !this.mobileIsPlaying) {
             this.targetDevice = 'desktop'
             localStorage.setItem('felo_playback_target', 'desktop')
             this.notifyTarget()
@@ -133,7 +142,7 @@ class RemoteClient {
           this.currentState = {
             ...this.currentState,
             ...data,
-            isPlaying: data.isPlaying || this.mobileIsPlaying,
+            isPlaying: Boolean(data.isPlaying || this.mobileIsPlaying),
             playbackState: data.isPlaying || this.mobileIsPlaying ? 'playing' : 'paused',
             targetDevice: 'both'
           }
@@ -262,6 +271,7 @@ class RemoteClient {
     if (this.targetDevice === target) return
     this.targetDevice = target
     this.currentState.targetDevice = target
+    this.targetLockUntil = Date.now() + 4000
     localStorage.setItem('felo_playback_target', target)
     this.notifyTarget()
 
@@ -285,13 +295,29 @@ class RemoteClient {
       if (currentSong?.id) {
         this.currentMobileSongId = currentSong.id
         audio.src = this.getAudioStreamUrl(currentSong.id)
-        audio.currentTime = currentPos
-        if (wasPlaying) {
-          try {
-            await audio.play()
-          } catch (e) {
-            console.warn('[RemoteClient] Autoplay prevented, waiting for user click:', e)
+
+        const seekAndPlay = async () => {
+          if (currentPos > 0) {
+            audio.currentTime = currentPos
           }
+          if (wasPlaying) {
+            try {
+              await audio.play()
+              this.mobileIsPlaying = true
+              this.currentState = { ...this.currentState, isPlaying: true, playbackState: 'playing' }
+              this.notifyState()
+            } catch (e) {
+              console.warn('[RemoteClient] Autoplay prevented, waiting for user click:', e)
+            }
+          }
+        }
+
+        if (audio.readyState >= 1) {
+          await seekAndPlay()
+        } else {
+          audio.addEventListener('loadedmetadata', () => {
+            void seekAndPlay()
+          }, { once: true })
         }
       }
     } else if (target === 'both') {
@@ -302,7 +328,30 @@ class RemoteClient {
       if (currentSong?.id) {
         this.currentMobileSongId = currentSong.id
         audio.src = this.getAudioStreamUrl(currentSong.id)
-        audio.currentTime = currentPos
+
+        const seekAndPlayMobile = async () => {
+          if (currentPos > 0) {
+            audio.currentTime = currentPos
+          }
+          if (wasPlaying) {
+            try {
+              await audio.play()
+              this.mobileIsPlaying = true
+              this.currentState = { ...this.currentState, isPlaying: true, playbackState: 'playing' }
+              this.notifyState()
+            } catch (e) {
+              console.warn('[RemoteClient] Both target mobile audio autoplay prevented:', e)
+            }
+          }
+        }
+
+        if (audio.readyState >= 1) {
+          void seekAndPlayMobile()
+        } else {
+          audio.addEventListener('loadedmetadata', () => {
+            void seekAndPlayMobile()
+          }, { once: true })
+        }
       }
 
       if (wasPlaying && currentSong) {
@@ -318,24 +367,17 @@ class RemoteClient {
         } catch {
           // ignore
         }
-
-        try {
-          await audio.play()
-          this.mobileIsPlaying = true
-        } catch (e) {
-          console.warn('[RemoteClient] Both target mobile audio autoplay prevented:', e)
-        }
       }
     } else {
       // 3. Target: DESKTOP ONLY
       // Pause mobile audio and resume desktop playback at current time
       if (this.mobileAudio) {
-        const currentPos = this.mobileAudio.currentTime
-        const wasPlaying = this.mobileIsPlaying
+        const capturedPos = this.mobileAudio.currentTime || currentPos
+        const wasMobilePlaying = this.mobileIsPlaying || wasPlaying
         this.mobileAudio.pause()
         this.mobileIsPlaying = false
 
-        if (wasPlaying && this.currentState.song) {
+        if (wasMobilePlaying && this.currentState.song) {
           try {
             await this.request('/v1/player/play', {
               method: 'POST',
@@ -343,7 +385,7 @@ class RemoteClient {
             })
             await this.request('/v1/player/seek', {
               method: 'POST',
-              body: JSON.stringify({ seconds: Math.max(0, currentPos) })
+              body: JSON.stringify({ seconds: Math.max(0, capturedPos) })
             })
           } catch {
             // ignore
@@ -454,15 +496,34 @@ class RemoteClient {
               this.currentMobileSongId = data.song.id
               const audio = this.initMobileAudio()
               audio.src = this.getAudioStreamUrl(data.song.id)
-              audio.currentTime = data.position || 0
-              if (data.isPlaying) {
-                void audio.play().catch(() => undefined)
+              const targetPos = data.position || 0
+              const handleLoaded = () => {
+                if (targetPos > 0) {
+                  audio.currentTime = targetPos
+                }
+                if (data.isPlaying) {
+                  void audio.play().then(() => {
+                    this.mobileIsPlaying = true
+                    this.currentState = { ...this.currentState, isPlaying: true, playbackState: 'playing' }
+                    this.notifyState()
+                  }).catch(() => undefined)
+                }
+              }
+              if (audio.readyState >= 1) {
+                handleLoaded()
+              } else {
+                audio.addEventListener('loadedmetadata', handleLoaded, { once: true })
               }
             } else if (this.mobileAudio) {
               if (data.isPlaying && this.mobileAudio.paused) {
-                void this.mobileAudio.play().catch(() => undefined)
+                void this.mobileAudio.play().then(() => {
+                  this.mobileIsPlaying = true
+                  this.currentState = { ...this.currentState, isPlaying: true, playbackState: 'playing' }
+                  this.notifyState()
+                }).catch(() => undefined)
               } else if (!data.isPlaying && !this.mobileAudio.paused) {
                 this.mobileAudio.pause()
+                this.mobileIsPlaying = false
               }
 
               // Synchronization drift correction: if phone audio drifts > 400ms from desktop, gently align
@@ -483,8 +544,8 @@ class RemoteClient {
             }
           } else if (this.targetDevice === 'mobile') {
             // If mobile is NOT playing audio locally, but desktop is actively playing, do NOT hijack or pause desktop!
-            // Respect active PC playback and reflect desktop as the master target.
-            if (data.isPlaying && !this.mobileIsPlaying) {
+            // Respect active PC playback and reflect desktop as the master target (only if target lock is expired).
+            if (Date.now() >= this.targetLockUntil && data.isPlaying && !this.mobileIsPlaying) {
               this.targetDevice = 'desktop'
               localStorage.setItem('felo_playback_target', 'desktop')
               this.notifyTarget()
@@ -511,8 +572,13 @@ class RemoteClient {
               const audio = this.initMobileAudio()
               audio.src = this.getAudioStreamUrl(data.song.id)
               audio.currentTime = 0
-              if (this.mobileIsPlaying) {
-                void audio.play().catch(() => undefined)
+              const shouldPlay = this.mobileIsPlaying || this.pendingMobilePlay
+              this.pendingMobilePlay = false
+              if (shouldPlay) {
+                this.mobileIsPlaying = true
+                void audio.play().catch((e) => {
+                  console.warn('[RemoteClient] Mobile autoplay next song failed:', e)
+                })
               }
             }
 
@@ -620,7 +686,7 @@ class RemoteClient {
   // --- Playback Commands ---
 
   public async play(songId?: string, volumePercent?: number) {
-    if (!this.isConnected && this.targetDevice !== 'both') {
+    if (!this.isConnected) {
       const player = usePlayerStore.getState()
       if (songId) {
         const idx = player.queue.findIndex((s) => s.id === songId)
@@ -639,6 +705,7 @@ class RemoteClient {
     }
 
     if (this.targetDevice === 'both') {
+      this.targetLockUntil = Date.now() + 4000
       // 1. Tell desktop to play
       try {
         await this.request('/v1/player/play', {
@@ -655,7 +722,17 @@ class RemoteClient {
       if (targetSongId && targetSongId !== this.currentMobileSongId) {
         this.currentMobileSongId = targetSongId
         audio.src = this.getAudioStreamUrl(targetSongId)
-        audio.currentTime = this.currentState.position || 0
+        const targetPos = songId ? 0 : (this.currentState.position || 0)
+        const handleLoaded = () => {
+          if (targetPos > 0) {
+            audio.currentTime = targetPos
+          }
+        }
+        if (audio.readyState >= 1) {
+          handleLoaded()
+        } else {
+          audio.addEventListener('loadedmetadata', handleLoaded, { once: true })
+        }
       }
       try {
         await audio.play()
@@ -670,11 +747,29 @@ class RemoteClient {
     }
 
     if (this.targetDevice === 'mobile') {
+      this.targetLockUntil = Date.now() + 4000
       const audio = this.initMobileAudio()
+      const targetSongId = songId || this.currentState.song?.id
+
+      if (targetSongId && targetSongId !== this.currentMobileSongId) {
+        this.currentMobileSongId = targetSongId
+        audio.src = this.getAudioStreamUrl(targetSongId)
+        if (songId) {
+          audio.currentTime = 0
+        } else if (this.currentState.position > 0) {
+          const pos = this.currentState.position
+          const handleLoaded = () => {
+            audio.currentTime = pos
+          }
+          if (audio.readyState >= 1) {
+            handleLoaded()
+          } else {
+            audio.addEventListener('loadedmetadata', handleLoaded, { once: true })
+          }
+        }
+      }
+
       if (songId) {
-        this.currentMobileSongId = songId
-        audio.src = this.getAudioStreamUrl(songId)
-        audio.currentTime = 0
         // Also tell desktop to sync current song metadata/queue while staying paused
         void this.request('/v1/player/play', {
           method: 'POST',
@@ -682,9 +777,21 @@ class RemoteClient {
         }).then(() => {
           return this.request('/v1/player/pause', { method: 'POST', body: JSON.stringify({}) })
         }).catch(() => undefined)
+      } else {
+        // Ensure desktop stays paused
+        void this.request('/v1/player/pause', {
+          method: 'POST',
+          body: JSON.stringify({})
+        }).catch(() => undefined)
       }
-      await audio.play()
-      this.mobileIsPlaying = true
+
+      try {
+        await audio.play()
+        this.mobileIsPlaying = true
+      } catch (e) {
+        console.warn('[RemoteClient] Mobile audio play failed:', e)
+      }
+
       this.currentState = { ...this.currentState, isPlaying: true, playbackState: 'playing' }
       this.notifyState()
       return { ok: true }
@@ -697,12 +804,13 @@ class RemoteClient {
   }
 
   public async pause() {
-    if (!this.isConnected && this.targetDevice !== 'both') {
+    if (!this.isConnected) {
       usePlayerStore.getState().setIsPlaying(false)
       return { ok: true }
     }
 
     if (this.targetDevice === 'both') {
+      this.targetLockUntil = Date.now() + 4000
       try {
         await this.request('/v1/player/pause', {
           method: 'POST',
@@ -722,6 +830,7 @@ class RemoteClient {
     }
 
     if (this.targetDevice === 'mobile') {
+      this.targetLockUntil = Date.now() + 4000
       if (this.mobileAudio) {
         this.mobileAudio.pause()
       }
@@ -738,7 +847,7 @@ class RemoteClient {
   }
 
   public async togglePlay() {
-    if (!this.isConnected && this.targetDevice !== 'both') {
+    if (!this.isConnected) {
       usePlayerStore.getState().togglePlay()
       return { ok: true }
     }
@@ -767,7 +876,7 @@ class RemoteClient {
   }
 
   public async next() {
-    if (!this.isConnected && this.targetDevice !== 'both') {
+    if (!this.isConnected) {
       usePlayerStore.getState().playNext(true)
       return { ok: true }
     }
@@ -780,6 +889,8 @@ class RemoteClient {
     }
 
     if (this.targetDevice === 'mobile') {
+      this.targetLockUntil = Date.now() + 4000
+      this.pendingMobilePlay = true
       // Advance desktop queue and pause desktop
       try {
         await this.request('/v1/player/next', {
@@ -803,7 +914,7 @@ class RemoteClient {
   }
 
   public async previous() {
-    if (!this.isConnected && this.targetDevice !== 'both') {
+    if (!this.isConnected) {
       usePlayerStore.getState().playPrevious()
       return { ok: true }
     }
@@ -816,6 +927,8 @@ class RemoteClient {
     }
 
     if (this.targetDevice === 'mobile') {
+      this.targetLockUntil = Date.now() + 4000
+      this.pendingMobilePlay = true
       // Step back on desktop queue and pause desktop
       try {
         await this.request('/v1/player/previous', {
@@ -840,7 +953,7 @@ class RemoteClient {
 
   public async seek(seconds: number) {
     const safeSeconds = Math.max(0, seconds)
-    if (!this.isConnected && this.targetDevice !== 'both') {
+    if (!this.isConnected) {
       usePlayerStore.getState().seek(safeSeconds)
       return { ok: true }
     }
@@ -879,7 +992,7 @@ class RemoteClient {
 
   public async setVolume(percent: number) {
     const safePercent = Math.max(0, Math.min(100, Math.round(percent)))
-    if (!this.isConnected && this.targetDevice !== 'both') {
+    if (!this.isConnected) {
       usePlayerStore.getState().setVolume(safePercent / 100)
       return { ok: true }
     }
@@ -920,7 +1033,7 @@ class RemoteClient {
   }
 
   public async setMode(shuffle?: boolean, repeat?: 'off' | 'all' | 'one') {
-    if (!this.isConnected && this.targetDevice !== 'both') {
+    if (!this.isConnected) {
       const player = usePlayerStore.getState()
       if (shuffle !== undefined && player.isShuffle !== shuffle) {
         player.toggleShuffle()
@@ -941,7 +1054,7 @@ class RemoteClient {
   }
 
   public async playIndex(index: number) {
-    if (!this.isConnected && this.targetDevice !== 'both') {
+    if (!this.isConnected) {
       usePlayerStore.getState().playSong(index)
       return { ok: true }
     }
@@ -954,6 +1067,8 @@ class RemoteClient {
     }
 
     if (this.targetDevice === 'mobile') {
+      this.targetLockUntil = Date.now() + 4000
+      this.pendingMobilePlay = true
       try {
         await this.request('/v1/player/play-index', {
           method: 'POST',

@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 import { useShallow } from 'zustand/react/shallow'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
 import { toMediaUrl } from '../../lib/media'
@@ -80,13 +81,13 @@ interface SourceResult {
 }
 
 export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProps) {
-  const { queue, currentSongIndex, isPlaying, togglePlay, setQueue } = usePlayerStore(
+  const { requestPlaySong } = usePlaybackArbitration()
+  const { queue, currentSongIndex, isPlaying, togglePlay } = usePlayerStore(
     useShallow((s) => ({
       queue: s.queue,
       currentSongIndex: s.currentSongIndex,
       isPlaying: s.isPlaying,
-      togglePlay: s.togglePlay,
-      setQueue: s.setQueue
+      togglePlay: s.togglePlay
     }))
   )
   const { transfers, queueTransfer, updateTransfer } = useDownloadStore()
@@ -231,7 +232,7 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
       if (!isPlaying) togglePlay()
       return
     }
-    setQueue([replaceTargetSong as any], 0)
+    requestPlaySong(replaceTargetSong as any)
   }
 
   const handleSearch = async (

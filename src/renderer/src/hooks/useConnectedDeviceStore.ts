@@ -1,17 +1,26 @@
 import { create } from 'zustand'
 import type { Song } from '../pages/Library/Library'
-import type { UserConnectedDevice } from '../online/types'
+import type { UserConnectedDevice, DeviceCategory } from '../online/types'
 import { getSupabase } from '../lib/supabase'
 import type { PlaybackContext } from './usePlayerStore'
-import { remoteClient } from '../pages/Remote/remoteClient'
+import { remoteClient, type PlaybackTarget } from '../pages/Remote/remoteClient'
+import { resolveRemoteSongUrls } from '../lib/songAudioResolver'
 
-export type PlaybackTarget = 'desktop' | 'mobile' | 'both'
+export type { PlaybackTarget }
 export type PlaybackResolutionPreference = 'ask' | 'remote' | 'transfer'
+
+export function normalizeDeviceId(id?: string): string {
+  if (!id || id === 'pc' || id === 'default' || id === 'default-pc') {
+    return 'default-pc'
+  }
+  return id
+}
 
 export interface RemotePlaybackState {
   activeDeviceId: string
   activeDeviceName: string
-  activeDeviceType: 'desktop' | 'mobile'
+  activeDeviceType: 'desktop' | 'mobile' | DeviceCategory
+  activeDeviceCategory?: DeviceCategory
   isPlaying: boolean
   song: Song | null
   position: number
@@ -30,6 +39,7 @@ export interface PlaybackConflictState {
   pendingContext?: PlaybackContext | null
   activeDeviceId: string
   activeDeviceName: string
+  activeDeviceCategory?: DeviceCategory
   activeSong: Song | null
   activePosition: number
 }
@@ -40,6 +50,7 @@ interface ConnectedDeviceStoreState {
   pcLibrarySongs: Song[]
   deviceLibraries: Record<string, Song[]>
   isLoadingPcLibrary: boolean
+  isLoadingDeviceLibrary: Record<string, boolean>
   pcLibraryUpdatedAt: number | null
   playbackTarget: PlaybackTarget
   playbackConflict: PlaybackConflictState | null
@@ -59,7 +70,7 @@ interface ConnectedDeviceStoreState {
   requestPcLibrary: (userId: string, targetDeviceId?: string) => Promise<void>
 }
 
-let pcLibraryTimeoutTimer: any = null
+const deviceLibraryTimers = new Map<string, any>()
 
 function getInitialPlaybackTarget(): PlaybackTarget {
   if (typeof window === 'undefined') return 'desktop'
@@ -71,10 +82,10 @@ function getInitialPlaybackTarget(): PlaybackTarget {
 }
 
 function getInitialResolutionPreference(): PlaybackResolutionPreference {
-  if (typeof window === 'undefined') return 'ask'
-  const saved = sessionStorage.getItem('felo_playback_resolution_pref') as PlaybackResolutionPreference
-  if (saved === 'remote' || saved === 'transfer' || saved === 'ask') {
-    return saved
+  if (typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
+    try {
+      sessionStorage.removeItem('felo_playback_resolution_pref')
+    } catch {}
   }
   return 'ask'
 }
@@ -85,6 +96,7 @@ export const useConnectedDeviceStore = create<ConnectedDeviceStoreState>((set, g
   pcLibrarySongs: [],
   deviceLibraries: {},
   isLoadingPcLibrary: false,
+  isLoadingDeviceLibrary: {},
   pcLibraryUpdatedAt: null,
   playbackTarget: getInitialPlaybackTarget(),
   playbackConflict: null,
@@ -112,27 +124,57 @@ export const useConnectedDeviceStore = create<ConnectedDeviceStoreState>((set, g
   setDiscoveredDevices: (discoveredDevices) => set({ discoveredDevices }),
   clearRemotePlayback: () => set({ activePlayback: null }),
   setPcLibrarySongs: (pcLibrarySongs) => {
-    if (pcLibraryTimeoutTimer) clearTimeout(pcLibraryTimeoutTimer)
+    const existing = deviceLibraryTimers.get('default-pc')
+    if (existing) {
+      clearTimeout(existing)
+      deviceLibraryTimers.delete('default-pc')
+    }
+    const resolved = resolveRemoteSongUrls(pcLibrarySongs, get().discoveredDevices)
     set((state) => ({
-      pcLibrarySongs,
-      deviceLibraries: { ...state.deviceLibraries, default: pcLibrarySongs },
+      pcLibrarySongs: resolved,
+      deviceLibraries: {
+        ...state.deviceLibraries,
+        default: resolved,
+        'default-pc': resolved,
+        pc: resolved
+      },
       isLoadingPcLibrary: false,
+      isLoadingDeviceLibrary: {
+        ...state.isLoadingDeviceLibrary,
+        'default-pc': false
+      },
       pcLibraryUpdatedAt: Date.now()
     }))
   },
   setDeviceLibrarySongs: (deviceId, songs) => {
-    if (pcLibraryTimeoutTimer) clearTimeout(pcLibraryTimeoutTimer)
+    const canonicalId = normalizeDeviceId(deviceId)
+    const isDefaultPc = canonicalId === 'default-pc'
+    const existing = deviceLibraryTimers.get(canonicalId)
+    if (existing) {
+      clearTimeout(existing)
+      deviceLibraryTimers.delete(canonicalId)
+    }
+    const resolved = resolveRemoteSongUrls(songs, get().discoveredDevices)
     set((state) => ({
-      pcLibrarySongs: songs,
-      deviceLibraries: { ...state.deviceLibraries, [deviceId]: songs },
-      isLoadingPcLibrary: false,
+      pcLibrarySongs: isDefaultPc ? resolved : state.pcLibrarySongs,
+      deviceLibraries: {
+        ...state.deviceLibraries,
+        [canonicalId]: resolved,
+        ...(isDefaultPc ? { default: resolved, 'default-pc': resolved, pc: resolved } : {})
+      },
+      isLoadingPcLibrary: isDefaultPc ? false : state.isLoadingPcLibrary,
+      isLoadingDeviceLibrary: {
+        ...state.isLoadingDeviceLibrary,
+        [canonicalId]: false
+      },
       pcLibraryUpdatedAt: Date.now()
     }))
   },
   getDeviceSongs: (deviceId) => {
+    const canonicalId = normalizeDeviceId(deviceId)
     const state = get()
-    if (deviceId && state.deviceLibraries[deviceId]?.length > 0) {
-      return state.deviceLibraries[deviceId]
+    if (canonicalId in state.deviceLibraries) {
+      return state.deviceLibraries[canonicalId]
     }
     return state.pcLibrarySongs
   },
@@ -140,45 +182,83 @@ export const useConnectedDeviceStore = create<ConnectedDeviceStoreState>((set, g
   loadCachedPcSongs: (userId?: string, deviceId?: string) => {
     if (typeof window === 'undefined') return []
     try {
-      const specificKey = userId && deviceId ? `felo_cached_songs_${userId}_${deviceId}` : null
+      const canonicalId = normalizeDeviceId(deviceId)
+      const isSpecific = canonicalId !== 'default-pc'
+      const specificKey = userId && isSpecific ? `felo_cached_songs_${userId}_${canonicalId}` : null
       const defaultKey = userId ? `felo_cached_pc_songs_${userId}` : 'felo_cached_pc_songs'
-      const cached =
-        (specificKey ? localStorage.getItem(specificKey) : null) || localStorage.getItem(defaultKey)
+      const cached = isSpecific
+        ? (specificKey ? localStorage.getItem(specificKey) : null)
+        : localStorage.getItem(defaultKey)
       if (cached) {
         const parsed = JSON.parse(cached) as Song[]
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        if (Array.isArray(parsed)) {
+          const resolved = resolveRemoteSongUrls(parsed, get().discoveredDevices)
           set((state) => ({
-            pcLibrarySongs: parsed,
-            deviceLibraries: deviceId
-              ? { ...state.deviceLibraries, [deviceId]: parsed }
-              : state.deviceLibraries
+            pcLibrarySongs: !isSpecific ? resolved : state.pcLibrarySongs,
+            deviceLibraries: {
+              ...state.deviceLibraries,
+              [canonicalId]: resolved,
+              ...(!isSpecific ? { default: resolved, 'default-pc': resolved, pc: resolved } : {})
+            }
           }))
-          return parsed
+          return resolved
         }
       }
     } catch (err) {
-      console.warn('[useConnectedDeviceStore] Failed to load cached PC songs:', err)
+      console.warn('[useConnectedDeviceStore] Failed to load cached songs:', err)
     }
     return []
   },
   requestPcLibrary: async (userId: string, targetDeviceId?: string) => {
     if (!userId) return
-    set({ isLoadingPcLibrary: true })
-    if (pcLibraryTimeoutTimer) clearTimeout(pcLibraryTimeoutTimer)
-    pcLibraryTimeoutTimer = setTimeout(() => {
-      set({ isLoadingPcLibrary: false })
+    const canonicalId = normalizeDeviceId(targetDeviceId)
+    const isDefaultPc = canonicalId === 'default-pc'
+
+    const existing = deviceLibraryTimers.get(canonicalId)
+    if (existing) {
+      clearTimeout(existing)
+    }
+
+    set((state) => ({
+      isLoadingPcLibrary: isDefaultPc ? true : state.isLoadingPcLibrary,
+      isLoadingDeviceLibrary: {
+        ...state.isLoadingDeviceLibrary,
+        [canonicalId]: true
+      }
+    }))
+
+    const timer = setTimeout(() => {
+      deviceLibraryTimers.delete(canonicalId)
+      set((state) => ({
+        isLoadingPcLibrary: isDefaultPc ? false : state.isLoadingPcLibrary,
+        isLoadingDeviceLibrary: {
+          ...state.isLoadingDeviceLibrary,
+          [canonicalId]: false
+        }
+      }))
     }, 6000)
+    deviceLibraryTimers.set(canonicalId, timer)
+
     try {
       const supabase = getSupabase()
       const myId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : undefined
+      const payload = { requesterDeviceId: myId, targetDeviceId: canonicalId }
+      // Send single deduplicated request_device_library event
       await supabase.channel(`user_playback_sync_${userId}`).send({
         type: 'broadcast',
-        event: 'request_pc_library',
-        payload: { requesterDeviceId: myId, targetDeviceId }
+        event: 'request_device_library',
+        payload
       })
     } catch (err) {
-      console.warn('[useConnectedDeviceStore] Failed to request PC library:', err)
-      set({ isLoadingPcLibrary: false })
+      console.warn('[useConnectedDeviceStore] Failed to request device library:', err)
+      deviceLibraryTimers.delete(canonicalId)
+      set((state) => ({
+        isLoadingPcLibrary: isDefaultPc ? false : state.isLoadingPcLibrary,
+        isLoadingDeviceLibrary: {
+          ...state.isLoadingDeviceLibrary,
+          [canonicalId]: false
+        }
+      }))
     }
   }
 }))

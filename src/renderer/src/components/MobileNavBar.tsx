@@ -37,7 +37,12 @@ export default function MobileNavBar() {
   const handleNav = (targetPath: string, isActive: boolean) => {
     triggerHaptic()
     if (isActive) {
-      window.scrollTo({ top: 0, behavior: 'smooth' })
+      const scrollContainer = document.querySelector<HTMLElement>('main section')
+      if (scrollContainer) {
+        scrollContainer.scrollTo({ top: 0, behavior: 'smooth' })
+      } else {
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+      }
       if (targetPath === '/search') {
         const input = document.querySelector<HTMLInputElement>('input[type="search"]')
         input?.focus()
@@ -50,7 +55,7 @@ export default function MobileNavBar() {
   return (
     <nav
       aria-label="Mobile Navigation"
-      className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#121212]/95 backdrop-blur-xl border-t border-white/10 px-2 py-1 flex items-center justify-around pb-[max(0.6rem,env(safe-area-inset-bottom,0px))] text-[11px] font-medium select-none shadow-2xl touch-manipulation"
+      className="fixed bottom-0 left-0 right-0 z-40 bg-[#121212]/95 backdrop-blur-xl border-t border-white/10 px-2 py-1 flex items-center justify-around pb-[max(0.6rem,env(safe-area-inset-bottom,0px))] text-[11px] font-medium select-none shadow-2xl touch-manipulation"
     >
       {/* 1. Home */}
       <button

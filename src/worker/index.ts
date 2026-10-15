@@ -379,7 +379,7 @@ export const SLASH_COMMANDS = [
   },
   {
     name: 'play',
-    description: 'Play a song in the connected Felo room (auto-downloads if not in local library)',
+    description: 'Play a song in the connected Felo room',
     options: [
       {
         name: 'query',
@@ -939,7 +939,7 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 `This Discord channel is now linked to Room **\`${code}\`**.\n\n` +
                 (song ? `🎶 **Now Playing:** **${song.title}** by **${song.artist}**\n\n` : '') +
                 `👉 **Anyone in this channel can now control music with:**\n` +
-                `• \`/play <song>\` — Search & play (auto-downloads if missing!)\n` +
+                `• \`/play <song>\` — Search & play in the room\n` +
                 `• \`/skip\` — Skip to next song\n` +
                 `• \`/pause\` & \`/resume\` — Pause or resume\n` +
                 `• \`/nowplaying\` — Show active track & progress bar\n` +
@@ -1083,7 +1083,7 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 `• 🎧 **Lossless Hi-Res Audio** (FLAC / 320kbps MP3)\n` +
                 `• 🌐 **Listen Together** (Real-time P2P sync across friends)\n` +
                 `• 🤖 **Universal Discord Bot** (Control player from any server)\n` +
-                `• 📥 **On-Demand Auto-Download & Fast Audio Tagging**`,
+                `• ⚡ **Real-Time Synchronized Playback & Queue Control**`,
               color: 0x10b981,
               footer: { text: 'Felo Desktop Music • Windows, macOS & Linux' }
             }
@@ -1137,7 +1137,7 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 `---\n\n` +
                 `### ⚡ Essential Commands\n` +
                 `• \`/connect <code>\` — Link channel to your active Felo room\n` +
-                `• \`/play <query>\` — Search & queue any song (auto-downloads if missing!)\n` +
+                `• \`/play <query>\` — Search & queue any song in the room\n` +
                 `• \`/jumpto <pos>\` — Jump to track #N and play immediately\n` +
                 `• \`/bump <pos>\` — Bump track #N to Priority #1 (plays next)\n` +
                 `• \`/remove <pos>\` — Remove track #N from queue\n` +
@@ -1419,7 +1419,7 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                   `ℹ️ **What you can do:**\n` +
                   `• 🔍 **Check Spelling:** Make sure the song name or artist is spelled correctly.\n` +
                   `• 📜 **Browse Queue:** Run \`/queue\` to view available songs in the host's playlist.\n` +
-                  `• 📥 **Import to Felo:** Host can download or add this track in the desktop app.\n` +
+                  `• 🎵 **Queue in Felo:** Host can play or add this track in the room.\n` +
                   `• 🌐 **Listen Live:** Tune in to the active room via the web player.`,
                 color: 0xef4444,
                 footer: { text: `Searched for "${query}" • Felo Music` }
@@ -1611,7 +1611,6 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
             ? Boolean((fullQueue[0] as any)?.discordPriorityEnabled)
             : true
 
-      const isCurrentlyPlaying = Boolean(room?.is_playing && room?.song)
       const curRemaining = Math.max(0, (room?.song?.duration || 0) - (room?.position_seconds || 0))
       const waitMin = Math.floor(curRemaining / 60)
       const waitSec = (curRemaining % 60).toString().padStart(2, '0')

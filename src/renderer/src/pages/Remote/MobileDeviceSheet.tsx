@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Laptop2,
   Smartphone,
+  Globe,
   X,
   Wifi,
   ShieldCheck,
@@ -23,7 +24,13 @@ import {
   sendDeviceCommand
 } from '../../hooks/useConnectedDeviceStore'
 import { getSupabase, isSupabaseConfigured } from '../../lib/supabase'
-import { detectDeviceInfo, getDeviceDisplayName } from '../../lib/deviceInfo'
+import {
+  detectDeviceInfo,
+  getDeviceDisplayName,
+  getDeviceCategory,
+  getDeviceCategoryLabel,
+  isPcDevice
+} from '../../lib/deviceInfo'
 import { resolveSongAudioUrl } from '../../lib/songAudioResolver'
 import type { UserConnectedDevice } from '../../online/types'
 
@@ -55,7 +62,7 @@ export default function MobileDeviceSheet({
   const storeDiscovered = useConnectedDeviceStore((s) => s.discoveredDevices)
   const myDeviceId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : null
 
-  // Discovered desktop devices from Supabase DB
+  // Discovered desktop and mobile devices from Supabase DB
   const [dbDevices, setDbDevices] = useState<UserConnectedDevice[]>([])
   const [isLoadingDevices, setIsLoadingDevices] = useState(false)
 
@@ -76,14 +83,10 @@ export default function MobileDeviceSheet({
 
       if (!error && Array.isArray(data)) {
         const now = Date.now()
-        // Accept desktop devices or any active device heartbeat under 5 minutes
+        // Accept any active device heartbeat under 5 minutes
         const activeList = data.filter((d: any) => {
           const age = now - new Date(d.last_seen_at).getTime()
-          const isDesktop =
-            d.device_type === 'desktop' ||
-            !d.device_type ||
-            /PC|Mac|Desktop|Windows/i.test(d.device_name || '')
-          return age < 300_000 && isDesktop && d.id !== myDeviceId
+          return age < 300_000 && d.id !== myDeviceId
         })
         setDbDevices(activeList)
       }
@@ -266,17 +269,21 @@ export default function MobileDeviceSheet({
   }
 
   const handleConnectToDevice = async (device: UserConnectedDevice) => {
-    useConnectedDeviceStore.getState().setPlaybackTarget('desktop')
+    const category = getDeviceCategory(device)
     if (device.local_ip) {
       const targetUrl = `http://${device.local_ip}:${device.port || 4788}`
       remoteClient.configure(targetUrl, device.token || '')
+      useConnectedDeviceStore.getState().setPlaybackTarget('desktop')
       await handleSelectDevice('desktop')
     } else if (user?.id && activeRemote?.activeDeviceId === device.id) {
       // Cloud-only handover
-      await handleSelectDevice('desktop')
+      useConnectedDeviceStore.getState().setPlaybackTarget(isPcDevice(category) ? 'desktop' : 'mobile')
+      await sendDeviceCommand(user.id, device.id, 'play')
+    } else if (user?.id) {
+      useConnectedDeviceStore.getState().setPlaybackTarget(isPcDevice(category) ? 'desktop' : 'mobile')
       await sendDeviceCommand(user.id, device.id, 'play')
     } else {
-      await handleSelectDevice('desktop')
+      await handleSelectDevice(isPcDevice(category) ? 'desktop' : 'mobile')
     }
   }
 
@@ -321,7 +328,7 @@ export default function MobileDeviceSheet({
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        {/* SECTION 1: CONNECTED & DISCOVERED DESKTOP DEVICES */}
+        {/* SECTION 1: CONNECTED & DISCOVERED DEVICES */}
         <div className="space-y-3">
           <div className="flex items-center justify-between px-1">
             <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
@@ -342,6 +349,9 @@ export default function MobileDeviceSheet({
           {allDevices.length > 0 ? (
             <div className="space-y-2.5">
               {allDevices.map((device) => {
+                const devCategory = getDeviceCategory(device)
+                const devLabel = getDeviceCategoryLabel(devCategory)
+                const isDevPc = isPcDevice(devCategory)
                 const isDevicePlaying =
                   activeRemote?.activeDeviceId === device.id && activeRemote.isPlaying
                 const isLanMatch =
@@ -370,17 +380,44 @@ export default function MobileDeviceSheet({
                             : 'bg-zinc-800 text-zinc-400'
                         }`}
                       >
-                        <Laptop2
-                          className={`w-6 h-6 ${isDeviceActive && (state.isPlaying || isDevicePlaying) ? 'animate-pulse' : ''}`}
-                        />
+                        {devCategory === 'app_pc' ? (
+                          <Laptop2
+                            className={`w-6 h-6 ${isDeviceActive && (state.isPlaying || isDevicePlaying) ? 'animate-pulse' : ''}`}
+                          />
+                        ) : devCategory === 'web_pc' ? (
+                          <Globe
+                            className={`w-6 h-6 ${isDeviceActive && (state.isPlaying || isDevicePlaying) ? 'animate-pulse' : ''}`}
+                          />
+                        ) : devCategory === 'app_mobile' ? (
+                          <Smartphone
+                            className={`w-6 h-6 ${isDeviceActive && (state.isPlaying || isDevicePlaying) ? 'animate-pulse' : ''}`}
+                          />
+                        ) : (
+                          <Smartphone
+                            className={`w-6 h-6 ${isDeviceActive && (state.isPlaying || isDevicePlaying) ? 'animate-pulse' : ''}`}
+                          />
+                        )}
                       </div>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <h4 className="text-sm font-bold text-white truncate">
-                            {device.device_name || 'Felo Desktop'}
+                            {device.device_name || (isDevPc ? 'Felo Desktop' : 'Mobile Device')}
                           </h4>
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                              devCategory === 'app_pc'
+                                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                                : devCategory === 'web_pc'
+                                  ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                                  : devCategory === 'app_mobile'
+                                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                            }`}
+                          >
+                            {devLabel}
+                          </span>
                           {isDeviceActive && (
-                            <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300">
                               {isDevicePlaying ? 'Currently Playing' : 'Active Output'}
                             </span>
                           )}
@@ -394,8 +431,10 @@ export default function MobileDeviceSheet({
                             ? `${activeRemote.song.title} • ${activeRemote.song.artist}`
                             : isDeviceActive
                               ? state.isPlaying || isDevicePlaying
-                                ? 'Playing on PC speakers'
-                                : 'Desktop speakers ready'
+                                ? isDevPc
+                                  ? 'Playing on PC speakers'
+                                  : 'Playing on device'
+                                : 'Ready for playback'
                               : device.local_ip
                                 ? `Wi-Fi IP: ${device.local_ip}`
                                 : 'Connected via Felo Account'}
@@ -418,10 +457,10 @@ export default function MobileDeviceSheet({
             <div className="p-5 rounded-2xl bg-zinc-900/60 border border-white/5 text-center flex flex-col items-center">
               <Laptop2 className="w-8 h-8 text-zinc-600 mb-2" />
               <p className="text-xs font-semibold text-zinc-300">
-                No active Felo Desktop players found
+                No active Felo players found
               </p>
               <p className="text-[11px] text-zinc-500 max-w-xs mt-1 leading-relaxed">
-                Open Felo on your computer and start playing. Make sure both devices are on the same Wi-Fi or logged into the same account.
+                Open Felo on your computer or phone. Make sure both devices are on the same Wi-Fi or signed in to the same account.
               </p>
             </div>
           )}
@@ -434,7 +473,7 @@ export default function MobileDeviceSheet({
           </h3>
 
           <div className="space-y-3">
-            {/* 1. Mobile Device (This Phone / Browser) Card */}
+            {/* 1. Mobile / Current Device Card */}
             <button
               type="button"
               onClick={() => handleSelectDevice('mobile')}
@@ -453,18 +492,31 @@ export default function MobileDeviceSheet({
                       : 'bg-zinc-800 text-zinc-400'
                   }`}
                 >
-                  <Smartphone
-                    className={`w-6 h-6 ${currentTarget === 'mobile' && state.isPlaying ? 'animate-pulse' : ''}`}
-                  />
+                  {deviceInfo.category === 'app_pc' ? (
+                    <Laptop2
+                      className={`w-6 h-6 ${currentTarget === 'mobile' && state.isPlaying ? 'animate-pulse' : ''}`}
+                    />
+                  ) : deviceInfo.category === 'web_pc' ? (
+                    <Globe
+                      className={`w-6 h-6 ${currentTarget === 'mobile' && state.isPlaying ? 'animate-pulse' : ''}`}
+                    />
+                  ) : (
+                    <Smartphone
+                      className={`w-6 h-6 ${currentTarget === 'mobile' && state.isPlaying ? 'animate-pulse' : ''}`}
+                    />
+                  )}
                 </div>
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <h4 className="text-sm font-bold text-white truncate">{thisDeviceName}</h4>
                     {currentTarget === 'mobile' && (
-                      <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-white/20 text-white">
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-white/20 text-white">
                         This Device
                       </span>
                     )}
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-zinc-800 text-zinc-300 border border-white/10">
+                      {deviceInfo.categoryLabel}
+                    </span>
                   </div>
                   <p
                     className={`text-xs mt-0.5 truncate ${
@@ -473,7 +525,7 @@ export default function MobileDeviceSheet({
                   >
                     {currentTarget === 'mobile'
                       ? state.isPlaying
-                        ? `Playing on ${thisDeviceName} speakers`
+                        ? `Playing on ${thisDeviceName}`
                         : `${thisDeviceName} output active`
                       : `Stream audio directly to ${thisDeviceName}`}
                   </p>

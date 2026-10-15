@@ -21,7 +21,7 @@ import {
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useDownloadStore, type TransferItem } from '../../hooks/useDownloadStore'
-import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 import { toMediaUrl } from '../../lib/media'
 import { STREAMING_ACCOUNTS_SETTING } from '../../lib/downloadConfig'
 import type { Playlist } from '../../pages/Playlists/types'
@@ -53,7 +53,7 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
     removeTransfer,
     clearTransfers
   } = useDownloadStore()
-  const setQueue = usePlayerStore((s) => s.setQueue)
+  const { requestPlaySong } = usePlaybackArbitration()
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -536,7 +536,7 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
                             {transfer.status === 'completed' && transfer.song && (
                               <button
                                 type="button"
-                                onClick={() => setQueue([transfer.song! as any], 0)}
+                                onClick={() => requestPlaySong(transfer.song! as any)}
                                 title="Play downloaded song"
                                 className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-black transition-all hover:scale-105 hover:bg-white/90"
                               >

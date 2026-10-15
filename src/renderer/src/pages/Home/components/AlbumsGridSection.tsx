@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
-import { Download } from 'lucide-react'
+import { Disc3, Download } from 'lucide-react'
+import { AppCapabilities } from '../../../lib/appConfig'
 import type { HomeAlbumItem } from '../types'
 import { UnifiedMediaCard } from './UnifiedMediaCard'
 
@@ -41,8 +42,8 @@ export function AlbumsGridSection({ albums, title, subtitle }: AlbumsGridSection
                 `/album/${encodeURIComponent(album.artist)}/${encodeURIComponent(album.title)}`
               )
             }}
-            actionTitle="View & download album tracks"
-            actionIcon={<Download className="h-4 w-4" />}
+            actionTitle={AppCapabilities.downloads ? 'View & download album tracks' : 'View album tracks'}
+            actionIcon={AppCapabilities.downloads ? <Download className="h-4 w-4" /> : <Disc3 className="h-4 w-4" />}
           />
         ))}
       </div>

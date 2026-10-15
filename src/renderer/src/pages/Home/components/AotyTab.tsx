@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { RotateCw, Download, Trophy } from 'lucide-react'
+import { RotateCw, Disc3, Download, Trophy } from 'lucide-react'
+import { AppCapabilities } from '../../../lib/appConfig'
 import { UnifiedMediaCard } from './UnifiedMediaCard'
 
 type AotyCategory = 'must-hear' | 'highest-rated' | 'new-releases' | 'anticipated'
@@ -121,8 +122,8 @@ export function AotyTab() {
                   `/album/${encodeURIComponent(album.artist)}/${encodeURIComponent(album.title)}`
                 )
               }}
-              actionTitle="View & download album tracks"
-              actionIcon={<Download className="h-4 w-4" />}
+              actionTitle={AppCapabilities.downloads ? 'View & download album tracks' : 'View album tracks'}
+              actionIcon={AppCapabilities.downloads ? <Download className="h-4 w-4" /> : <Disc3 className="h-4 w-4" />}
             />
           ))}
         </div>

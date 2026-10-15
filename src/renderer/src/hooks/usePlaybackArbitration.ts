@@ -8,6 +8,9 @@ import {
 import { useOnlineStore } from './useOnlineStore'
 import { resolveSongAudioUrl } from '../lib/songAudioResolver'
 import { remoteClient } from '../pages/Remote/remoteClient'
+import { getCurrentDeviceId, detectDeviceInfo } from '../lib/deviceInfo'
+import { isLocalSong } from '../lib/songUtils'
+import { isElectron } from '../lib/appConfig'
 
 export function usePlaybackArbitration() {
   const user = useOnlineStore((s) => s.user)
@@ -17,7 +20,7 @@ export function usePlaybackArbitration() {
   const resolutionPreference = useConnectedDeviceStore((s) => s.resolutionPreference)
   const setResolutionPreference = useConnectedDeviceStore((s) => s.setResolutionPreference)
 
-  const myDeviceId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : null
+  const myDeviceId = getCurrentDeviceId()
   const localIsPlaying = usePlayerStore((s) => s.isPlaying)
   const localIsAudioActive = usePlayerStore((s) => s.isAudioActive)
 
@@ -78,10 +81,48 @@ export function usePlaybackArbitration() {
     (queue: Song[], index = 0, context?: PlaybackContext | null) => {
       if (!queue.length) return
       const targetSong = queue[index] || queue[0]
+      const isTargetLocal = isLocalSong(targetSong, context)
+      const thisDeviceType =
+        isElectron || detectDeviceInfo().type === 'desktop' ? 'desktop' : 'mobile'
 
+      // Industry Standard UX (Spotify Connect / Apple Music style):
+      // When a user clicks a local song, turn playback to THIS DEVICE by default.
+      // Local tracks reside on this machine/device and cannot play on remote devices.
+      if (isTargetLocal) {
+        if (isExternalDevicePlaying && effectiveRemote) {
+          // Pause the active external playback device
+          void sendDeviceCommand(user?.id || '', effectiveRemote.activeDeviceId, 'pause')
+
+          // Dispatch sleek notification toast
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('felo:device-toast', {
+                detail: {
+                  title: 'Switched to This Device',
+                  message: `Playing local track • Paused ${effectiveRemote.activeDeviceName || 'Remote Device'}`
+                }
+              })
+            )
+          }
+        }
+
+        // Synchronize playback target to this device
+        useConnectedDeviceStore.getState().setPlaybackTarget(thisDeviceType)
+        void remoteClient.setTargetDevice(thisDeviceType)
+
+        // Clear remote playback state to eliminate UI lag/flicker in player controls
+        if (effectiveRemote) {
+          useConnectedDeviceStore.getState().clearRemotePlayback()
+        }
+
+        // Immediately start local playback on this device
+        startLocalPlayback(queue, index, context)
+        return
+      }
+
+      // If the song is NOT local (e.g. streaming or remote library), apply standard arbitration
       if (isExternalDevicePlaying && effectiveRemote) {
         if (resolutionPreference === 'remote') {
-          // User preference: send command to remote device
           void sendDeviceCommand(user?.id || '', effectiveRemote.activeDeviceId, 'play', {
             songId: targetSong.id,
             song: targetSong
@@ -90,20 +131,25 @@ export function usePlaybackArbitration() {
         }
 
         if (resolutionPreference === 'transfer') {
-          // User preference: transfer playback to this device
           void sendDeviceCommand(user?.id || '', effectiveRemote.activeDeviceId, 'pause')
+          useConnectedDeviceStore.getState().setPlaybackTarget(thisDeviceType)
+          void remoteClient.setTargetDevice(thisDeviceType)
+          useConnectedDeviceStore.getState().clearRemotePlayback()
           startLocalPlayback(queue, index, context)
           return
         }
 
-        // Default: 'ask' -> Trigger Conflict Modal
+        // First-in Priority: The active playing device has authority.
+        // Secondary devices must always prompt the user to choose:
+        // Remote control master device OR transfer playback to this device.
         setPlaybackConflict({
           pendingSong: targetSong,
           pendingQueue: queue,
           pendingIndex: index,
           pendingContext: context,
           activeDeviceId: effectiveRemote.activeDeviceId,
-          activeDeviceName: effectiveRemote.activeDeviceName || 'Felo Desktop',
+          activeDeviceName: effectiveRemote.activeDeviceName || 'Active Device',
+          activeDeviceCategory: (effectiveRemote as any).activeDeviceCategory,
           activeSong: effectiveRemote.song,
           activePosition: effectiveRemote.position
         })
@@ -116,10 +162,10 @@ export function usePlaybackArbitration() {
     [
       isExternalDevicePlaying,
       effectiveRemote,
-      user?.id,
       resolutionPreference,
       setPlaybackConflict,
-      startLocalPlayback
+      startLocalPlayback,
+      user?.id
     ]
   )
 
@@ -136,6 +182,9 @@ export function usePlaybackArbitration() {
       rememberSession = false
     ) => {
       if (!playbackConflict) return
+
+      const thisDeviceType =
+        isElectron || detectDeviceInfo().type === 'desktop' ? 'desktop' : 'mobile'
 
       if (rememberSession && (action === 'remote' || action === 'transfer')) {
         setResolutionPreference(action, true)
@@ -159,6 +208,10 @@ export function usePlaybackArbitration() {
           playbackConflict.activeDeviceId,
           'pause'
         )
+        useConnectedDeviceStore.getState().setPlaybackTarget(thisDeviceType)
+        void remoteClient.setTargetDevice(thisDeviceType)
+        useConnectedDeviceStore.getState().clearRemotePlayback()
+
         if (playbackConflict.pendingQueue && playbackConflict.pendingQueue.length > 0) {
           startLocalPlayback(
             playbackConflict.pendingQueue,
@@ -179,6 +232,10 @@ export function usePlaybackArbitration() {
           playbackConflict.activeDeviceId,
           'pause'
         )
+        useConnectedDeviceStore.getState().setPlaybackTarget(thisDeviceType)
+        void remoteClient.setTargetDevice(thisDeviceType)
+        useConnectedDeviceStore.getState().clearRemotePlayback()
+
         if (playbackConflict.activeSong) {
           startLocalPlayback(
             [playbackConflict.activeSong],

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { remoteClient, type RemotePlayerState } from './remoteClient'
+import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
 import MobileNowPlaying from './MobileNowPlaying'
 import MobileQueueSheet from './MobileQueueSheet'
 import MobileSearchSheet from './MobileSearchSheet'
@@ -15,6 +16,7 @@ export default function RemotePhoneView() {
   const [isDevicesOpen, setIsDevicesOpen] = useState(false)
   const [isLyricsOpen, setIsLyricsOpen] = useState(false)
   const [isSleepTimerOpen, setIsSleepTimerOpen] = useState(false)
+  const activePlayback = useConnectedDeviceStore((s) => s.activePlayback)
 
   // Sleep Timer state
   const [sleepTimer, setSleepTimer] = useState<{
@@ -157,10 +159,12 @@ export default function RemotePhoneView() {
         onClose={() => setIsQueueOpen(false)}
       />
 
-      {/* Search Desktop Library Overlay Sheet */}
+      {/* Search Library Overlay Sheet */}
       <MobileSearchSheet
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
+        targetDeviceId={activePlayback?.activeDeviceId}
+        targetDeviceName={activePlayback?.activeDeviceName}
       />
 
       {/* Spotify Connect Devices Overlay Sheet */}

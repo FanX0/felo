@@ -16,6 +16,7 @@ import OnlineGate from '../../components/Online/OnlineGate'
 import { useAppStore } from '../../hooks/useAppStore'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
+import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 import { useShallow } from 'zustand/react/shallow'
 import { useListeningStore } from '../../hooks/useListeningStore'
 import { useDirectChatStore } from '../../hooks/useDirectChatStore'
@@ -72,11 +73,11 @@ interface ChatPageProps {
 
 function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
   const { user } = useOnlineStore()
-  const { queue, currentSongIndex, setQueue } = usePlayerStore(
+  const { requestPlayQueue } = usePlaybackArbitration()
+  const { queue, currentSongIndex } = usePlayerStore(
     useShallow((s) => ({
       queue: s.queue,
-      currentSongIndex: s.currentSongIndex,
-      setQueue: s.setQueue
+      currentSongIndex: s.currentSongIndex
     }))
   )
   const { setSearchQuery } = useAppStore()
@@ -223,7 +224,7 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
         candidate.artist.toLowerCase() === song.artist.toLowerCase()
     )
     if (match && songs) {
-      setQueue(songs, songs.indexOf(match))
+      void requestPlayQueue(songs, songs.indexOf(match))
     } else if (onOpenDownloadPanel) {
       onOpenDownloadPanel({
         id: song.localId || `shared-${song.artist}-${song.title}`,
@@ -259,7 +260,7 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
   })
 
   return (
-    <div className="relative flex h-full w-full select-none overflow-hidden bg-canvas">
+    <div className="relative flex h-full flex-1 w-full select-none overflow-hidden bg-canvas">
       {/* ─── LEFT SIDEBAR: CONVERSATIONS & FRIENDS ───────────────────────── */}
       <aside className="flex w-80 flex-col border-r border-border/80 bg-surface/50 backdrop-blur-sm">
         {/* Sidebar Header */}

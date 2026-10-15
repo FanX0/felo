@@ -58,7 +58,7 @@ export default function AccountPage(): ReactElement {
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center px-4 sm:px-6 py-6 pb-36 md:py-10">
+    <div className="flex flex-1 min-h-full w-full items-center justify-center px-4 sm:px-6 py-6 pb-36 md:py-10">
       <div className="w-full max-w-md">
         <div className="mb-7 flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-elevated text-text">

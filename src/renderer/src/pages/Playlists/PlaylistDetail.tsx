@@ -39,6 +39,9 @@ import SongCreditsModal from '../../components/Common/SongCreditsModal'
 import { parseArtists } from '../../lib/artistParser'
 import { AppCapabilities } from '../../lib/appConfig'
 import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
+import { remoteClient } from '../Remote/remoteClient'
+import { remoteLibraryService } from '../../services/RemoteLibraryService'
+import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
 
 function formatDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return '0:00'
@@ -147,7 +150,35 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   const loadPlaylist = async () => {
     setIsLoading(true)
     try {
-      setPlaylist((await window.api.getPlaylist(id)) as Playlist | null)
+      if (window.api?.getPlaylist) {
+        setPlaylist((await window.api.getPlaylist(id)) as Playlist | null)
+      } else {
+        const hasLanHost = Boolean(remoteClient.getBaseUrl() && !remoteClient.getBaseUrl().includes('localhost'))
+        if (remoteClient.getIsConnected() || hasLanHost) {
+          const res = await remoteLibraryService.getPlaylistTracks(id)
+          setPlaylist({
+            id: res.playlist.id,
+            name: res.playlist.name,
+            description: res.playlist.description,
+            dateCreated: (res.playlist as any).dateModified ? (res.playlist as any).dateModified * 1000 : Date.now(),
+            dateModified: (res.playlist as any).dateModified ? (res.playlist as any).dateModified * 1000 : Date.now(),
+            songCount: res.tracks.length,
+            songs: res.tracks.map((r, idx) => ({
+              id: r.id,
+              title: r.title,
+              artist: r.artist,
+              album: r.album,
+              duration: r.duration,
+              filePath: r.audioUrl || remoteClient.getAudioStreamUrl(r.id),
+              artworkUrl: r.artworkUrl,
+              artworkPath: r.artworkUrl,
+              isOnline: true,
+              playlistDateAdded: Date.now(),
+              playlistSortOrder: idx
+            }))
+          })
+        }
+      }
     } catch (err) {
       console.error('Failed to load playlist:', err)
       setPlaylist(null)
@@ -162,12 +193,20 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     failedSongIdsRef.current.clear()
     currentDownloadingSongIdRef.current = null
     void loadPlaylist()
-    window.api
-      .getSongs()
-      .then((songs) => setLibrarySongs(songs || []))
-      .catch(console.error)
+    if (window.api?.getSongs) {
+      window.api
+        .getSongs()
+        .then((songs) => setLibrarySongs(songs || []))
+        .catch(console.error)
+    } else {
+      const pcSongs = useConnectedDeviceStore.getState().pcLibrarySongs
+      setLibrarySongs(pcSongs || [])
+    }
 
     const refreshPlaylistAndLibrary = async () => {
+      if (!window.api?.getPlaylist || !window.api?.getSongs) {
+        return { nextPlaylist: playlist, nextSongs: librarySongs }
+      }
       const [nextPlaylist, nextSongs] = await Promise.all([
         window.api.getPlaylist(id) as Promise<Playlist | null>,
         window.api.getSongs()
@@ -393,7 +432,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
             item.artist?.toLowerCase() === song.artist?.toLowerCase())
       )
       if (existingQueueIndex >= 0) {
-        usePlayerStore.getState().playSong(existingQueueIndex)
+        requestPlayQueue(queue, existingQueueIndex, playlistContext)
         return
       }
     }
@@ -444,11 +483,13 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   }
 
   const removeSong = async (songId: string) => {
+    if (!window.api?.removeSongFromPlaylist) return
     const updated = await window.api.removeSongFromPlaylist(id, songId)
     setPlaylist(updated)
   }
 
   const renamePlaylist = async () => {
+    if (!window.api?.renamePlaylist) return
     const nextName = renameValue.trim()
     if (!nextName || !playlist) return
     setIsRenaming(true)
@@ -466,6 +507,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   }
 
   const deletePlaylist = async () => {
+    if (!window.api?.deletePlaylist) return
     if (!playlist) return
     if (!window.confirm(`Remove "${playlist.name}"? Songs will remain in your library.`)) return
     try {
@@ -563,7 +605,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   }
 
   return (
-    <div className="relative min-h-full overflow-x-hidden bg-[#121212] text-white pb-36 md:pb-12">
+    <div className="relative min-h-full flex-1 overflow-x-hidden bg-[#121212] text-white pb-36 md:pb-12">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-[450px] bg-[linear-gradient(180deg,rgba(91,43,7,0.92)_0%,rgba(47,24,7,0.7)_55%,rgba(18,18,18,0.96)_100%)]" />
 
       <header className="relative z-10 flex flex-col sm:flex-row items-center sm:items-end text-center sm:text-left gap-5 sm:gap-8 px-4 sm:px-6 md:px-10 pb-6 sm:pb-8 pt-6 sm:pt-10">
@@ -1222,6 +1264,7 @@ function AddSongsModal({
   }, [librarySongs, playlistIds, query])
 
   const addSong = async (songId: string) => {
+    if (!window.api?.addSongToPlaylist) return
     try {
       setAddingId(songId)
       onUpdated(await window.api.addSongToPlaylist(playlist.id, songId))

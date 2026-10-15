@@ -4,7 +4,7 @@
 
 // True when running inside Electron desktop container
 export const isElectron =
-  typeof window !== 'undefined' && Boolean((window as any).electron || (window as any).api)
+  typeof window !== 'undefined' && Boolean((window as any).electron)
 
 // Public local-first mode is active on open-source releases & web deployments (where window.api is undefined or VITE_APP_MODE is 'public')
 export const isPublicMode =
@@ -21,6 +21,9 @@ export const AppCapabilities = {
 
   // Direct file downloads & provider scrapers (Enabled ONLY in private desktop app)
   downloads: !isPublicMode,
+
+  // External playlist import (CSV, JSPF, XSPF, XML, M3U) with automated downloading (private desktop only)
+  playlistImport: !isPublicMode,
 
   // Local audio playback and library management
   localLibrary: true,

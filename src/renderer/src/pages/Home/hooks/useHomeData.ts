@@ -15,6 +15,7 @@ import {
 import { findMatchingLibrarySong, normalizeForMatching } from '../../../lib/songMatching'
 import { toMediaUrl } from '../../../lib/media'
 import { AppCapabilities } from '../../../lib/appConfig'
+import { useConnectedDeviceStore } from '../../../hooks/useConnectedDeviceStore'
 
 const LIKED_SONGS_KEY = 'felo_home_liked_songs'
 
@@ -79,12 +80,21 @@ export function useHomeData() {
     }
   })
 
-  // Load local library songs
+  // Load local library songs (with mobile PC library fallback)
   const loadLibraryStatus = useCallback(async () => {
     try {
-      const songs = await window.api?.getSongs?.()
-      const localSongs = (songs || []) as Song[]
-      setLibrarySongs(localSongs)
+      if (window.api?.getSongs) {
+        const songs = await window.api.getSongs()
+        setLibrarySongs((songs || []) as Song[])
+      } else {
+        const pcSongs = useConnectedDeviceStore.getState().pcLibrarySongs
+        if (pcSongs && pcSongs.length > 0) {
+          setLibrarySongs(pcSongs)
+        } else {
+          const cached = useConnectedDeviceStore.getState().loadCachedPcSongs()
+          setLibrarySongs(cached || [])
+        }
+      }
     } catch (error) {
       console.warn('Unable to load homepage library status:', error)
     }

@@ -66,7 +66,8 @@ declare global {
       fetchDeezerRecommendations: (artistName: string) => Promise<any[]>
 
       // Library
-      selectFolder: () => Promise<string | null>
+      selectFolder: (options?: { forceFiles?: boolean }) => Promise<string | null>
+      selectFiles?: (options?: { accept?: string }) => Promise<string | null>
       scanLibrary: (folderPath: string) => Promise<number>
       getSongs: () => Promise<any[]>
 

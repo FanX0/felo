@@ -48,34 +48,102 @@ type PendingCommand = { resolve: (value: unknown) => void; timer: NodeJS.Timeout
 
 export function getLocalIpAddress(): string {
   const interfaces = os.networkInterfaces()
-  // Prefer standard Wi-Fi / Ethernet IPv4 non-internal interfaces
+  const candidates: Array<{ address: string; score: number; name: string }> = []
+
+  const VIRTUAL_BLACKLIST = [
+    'virtual',
+    'pseudo',
+    'loopback',
+    'vethernet',
+    'hyper-v',
+    'wsl',
+    'vmware',
+    'vmnet',
+    'vbox',
+    'virtualbox',
+    'docker',
+    'tailscale',
+    'zerotier',
+    'wireguard',
+    'tun',
+    'tap',
+    'teredo',
+    'bluetooth',
+    'vpn',
+    'ppp'
+  ]
+
   for (const name of Object.keys(interfaces)) {
+    const lowerName = name.toLowerCase()
+    const isVirtual = VIRTUAL_BLACKLIST.some((term) => lowerName.includes(term))
     const list = interfaces[name] || []
+
     for (const iface of list) {
       if (iface.family === 'IPv4' && !iface.internal) {
-        // Exclude virtual/docker/WSL adapters if possible, but keep standard 192.168 / 10. / 172.
-        if (
-          !name.toLowerCase().includes('virtual') &&
-          !name.toLowerCase().includes('pseudo') &&
-          !name.toLowerCase().includes('loopback')
-        ) {
-          return iface.address
+        const ip = iface.address
+        // Skip APIPA automatic private IPs (169.254.x.x) and loopback
+        if (ip.startsWith('169.254.') || ip.startsWith('127.')) {
+          continue
         }
+
+        let score = 0
+
+        // Prioritize physical adapters by name
+        if (
+          lowerName.includes('wi-fi') ||
+          lowerName.includes('wifi') ||
+          lowerName.includes('wlan') ||
+          lowerName.includes('wireless')
+        ) {
+          score += 100
+        } else if (
+          lowerName.includes('ethernet') ||
+          lowerName.includes('eth') ||
+          lowerName.includes('en0') ||
+          lowerName.includes('lan')
+        ) {
+          score += 80
+        }
+
+        // Severe penalty for virtual or VPN interfaces
+        if (isVirtual) {
+          score -= 100
+        }
+
+        // Subnet preference
+        if (ip.startsWith('192.168.')) {
+          score += 50 // Standard home Wi-Fi/LAN
+        } else if (ip.startsWith('10.')) {
+          score += 30 // Private Class A
+        } else if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(ip)) {
+          score += 10 // Private Class B (often WSL / Docker)
+        }
+
+        candidates.push({ address: ip, score, name })
       }
     }
   }
 
-  // Fallback to any non-internal IPv4
-  for (const name of Object.keys(interfaces)) {
-    const list = interfaces[name] || []
-    for (const iface of list) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address
-      }
-    }
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => b.score - a.score)
+    return candidates[0].address
   }
 
   return '127.0.0.1'
+}
+
+function getDesktopPlatformName(): string {
+  const p = process.platform
+  if (p === 'win32') return 'Windows'
+  if (p === 'darwin') return 'macOS'
+  if (p === 'linux') return 'Linux'
+  return 'Desktop'
+}
+
+export function getDefaultDesktopName(): string {
+  const osName = getDesktopPlatformName()
+  const host = os.hostname()
+  return host ? `Felo Desktop (${osName} • ${host})` : `Felo Desktop (${osName})`
 }
 
 export class RemoteControlService {
@@ -102,7 +170,7 @@ export class RemoteControlService {
     repeat: 'off',
     queueLength: 0,
     queueIndex: 0,
-    deviceName: os.hostname() || 'Felo Desktop',
+    deviceName: getDefaultDesktopName(),
     connectedClients: 0
   }
 
@@ -130,7 +198,7 @@ export class RemoteControlService {
       queueIndex: Number(status.queueIndex) || 0,
       shuffle: Boolean(status.shuffle),
       repeat: status.repeat || 'off',
-      deviceName: os.hostname() || 'Felo Desktop',
+      deviceName: getDefaultDesktopName(),
       connectedClients: this.sseClients.size
     }
 
@@ -299,7 +367,7 @@ export class RemoteControlService {
       cloudflareUrl,
       cloudflareQrDataUrl,
       connectedClients: this.sseClients.size,
-      deviceName: os.hostname() || 'Felo Desktop'
+      deviceName: getDefaultDesktopName()
     }
   }
 

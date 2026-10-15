@@ -159,12 +159,31 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
   }, [tracks, albumArtist, albumTitle, artwork])
 
   useEffect(() => {
-    const loadLibrarySongs = () =>
-      window.api.getSongs().then((songs) => setLibrarySongs(songs || [])).catch(console.error)
+    const loadLibrarySongs = () => {
+      if (window.api?.getSongs) {
+        window.api.getSongs().then((songs) => setLibrarySongs(songs || [])).catch(console.error)
+      } else {
+        const pcSongs = useConnectedDeviceStore.getState().pcLibrarySongs
+        if (pcSongs && pcSongs.length > 0) {
+          setLibrarySongs(pcSongs)
+        } else {
+          const cached = useConnectedDeviceStore.getState().loadCachedPcSongs()
+          setLibrarySongs(cached || [])
+        }
+      }
+    }
 
     void loadLibrarySongs()
     window.addEventListener('felo:library-updated', loadLibrarySongs)
-    return () => window.removeEventListener('felo:library-updated', loadLibrarySongs)
+    const unsub = useConnectedDeviceStore.subscribe((state) => {
+      if (!window.api?.getSongs && state.pcLibrarySongs.length > 0) {
+        setLibrarySongs(state.pcLibrarySongs)
+      }
+    })
+    return () => {
+      window.removeEventListener('felo:library-updated', loadLibrarySongs)
+      unsub()
+    }
   }, [])
 
   useEffect(() => {
@@ -187,7 +206,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
           duration: local.duration
             ? `${Math.floor(local.duration / 60)}:${String(local.duration % 60).padStart(2, '0')}`
             : null,
-          thumbnail: toMediaUrl(local.artworkPath) || '',
+          thumbnail: local.artworkUrl || toMediaUrl(local.artworkPath) || '',
           localSong: local
         }))
         if (!cancelled) {
@@ -200,7 +219,8 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
         setLoading(true)
       }
 
-      if (localAlbumSongs.length === 0 && remoteClient.getIsConnected()) {
+      const hasLanHost = Boolean(remoteClient.getBaseUrl() && !remoteClient.getBaseUrl().includes('localhost'))
+      if (localAlbumSongs.length === 0 && (remoteClient.getIsConnected() || hasLanHost)) {
         try {
           const remoteTracks = await remoteLibraryService.getAlbumTracks(albumTitle)
           if (remoteTracks.length > 0 && !cancelled) {
@@ -219,7 +239,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                 artist: r.artist,
                 album: r.album,
                 duration: r.duration,
-                filePath: remoteClient.getAudioStreamUrl(r.id),
+                filePath: r.audioUrl || remoteClient.getAudioStreamUrl(r.id),
                 artworkPath: r.artworkUrl,
                 artworkUrl: r.artworkUrl,
                 isOnline: true
@@ -275,47 +295,49 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
 
       setError('')
       try {
-        const results = await window.api.searchAppleMusic(`${albumArtist} ${albumTitle}`)
-        const songs = (results?.Songs || []) as any[]
-        const matching = songs.filter(
-          (song) =>
-            song?.title &&
-            (!song.album || song.album.toLowerCase() === albumTitle.toLowerCase()) &&
-            (!song.artist || song.artist.toLowerCase().includes(albumArtist.toLowerCase()))
-        )
-        const selected = matching.length ? matching : songs.filter((song) =>
-          song?.artist?.toLowerCase().includes(albumArtist.toLowerCase())
-        )
-
-        if (selected.length > 0) {
-          const exactMatches = new Map(
-            librarySongs.map((local) => [
-              `${normalizeTrack(local.title)}::${normalizeTrack(local.artist || '')}`,
-              local
-            ])
+        if (window.api?.searchAppleMusic) {
+          const results = await window.api.searchAppleMusic(`${albumArtist} ${albumTitle}`)
+          const songs = (results?.Songs || []) as any[]
+          const matching = songs.filter(
+            (song) =>
+              song?.title &&
+              (!song.album || song.album.toLowerCase() === albumTitle.toLowerCase()) &&
+              (!song.artist || song.artist.toLowerCase().includes(albumArtist.toLowerCase()))
           )
-          const titleMatches = new Map<string, Song>()
-          librarySongs.forEach((local) => {
-            const key = normalizeTrack(local.title)
-            if (!titleMatches.has(key)) titleMatches.set(key, local)
-          })
-          const mapped = selected.map((song) => {
-            const localSong =
-              exactMatches.get(`${normalizeTrack(String(song.title))}::${normalizeTrack(String(song.artist || ''))}`) ||
-              titleMatches.get(normalizeTrack(String(song.title)))
-            return {
-              id: String(localSong?.id || song.id || `${song.title}-${song.artist}`),
-              title: String(song.title),
-              artist: String(song.artist || localSong?.artist || albumArtist),
-              album: String(song.album || localSong?.album || albumTitle),
-              duration: song.duration || (localSong?.duration ? `${Math.floor(localSong.duration / 60)}:${String(localSong.duration % 60).padStart(2, '0')}` : null),
-              thumbnail: String(song.thumbnail || toMediaUrl(localSong?.artworkPath) || ''),
-              localSong
+          const selected = matching.length ? matching : songs.filter((song) =>
+            song?.artist?.toLowerCase().includes(albumArtist.toLowerCase())
+          )
+
+          if (selected.length > 0) {
+            const exactMatches = new Map(
+              librarySongs.map((local) => [
+                `${normalizeTrack(local.title)}::${normalizeTrack(local.artist || '')}`,
+                local
+              ])
+            )
+            const titleMatches = new Map<string, Song>()
+            librarySongs.forEach((local) => {
+              const key = normalizeTrack(local.title)
+              if (!titleMatches.has(key)) titleMatches.set(key, local)
+            })
+            const mapped = selected.map((song) => {
+              const localSong =
+                exactMatches.get(`${normalizeTrack(String(song.title))}::${normalizeTrack(String(song.artist || ''))}`) ||
+                titleMatches.get(normalizeTrack(String(song.title)))
+              return {
+                id: String(localSong?.id || song.id || `${song.title}-${song.artist}`),
+                title: String(song.title),
+                artist: String(song.artist || localSong?.artist || albumArtist),
+                album: String(song.album || localSong?.album || albumTitle),
+                duration: song.duration || (localSong?.duration ? `${Math.floor(localSong.duration / 60)}:${String(localSong.duration % 60).padStart(2, '0')}` : null),
+                thumbnail: String(song.thumbnail || toMediaUrl(localSong?.artworkPath) || ''),
+                localSong
+              }
+            })
+            if (!cancelled) {
+              setTracks(mapped)
+              setArtwork(mapped.find((song) => song.thumbnail)?.thumbnail || '')
             }
-          })
-          if (!cancelled) {
-            setTracks(mapped)
-            setArtwork(mapped.find((song) => song.thumbnail)?.thumbnail || '')
           }
         }
       } catch (err) {
@@ -334,6 +356,10 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
 
   const saveOnlineAlbum = async () => {
     if (!tracks.length || isSaving) return
+    if (!window.api?.createPlaylist) {
+      setSaveMessage('Playlist saving is only available on desktop.')
+      return
+    }
     setIsSaving(true)
     setSaveMessage('')
     try {
@@ -391,7 +417,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
             item.artist.toLowerCase() === track.artist.toLowerCase())
       )
       if (existingQueueIndex >= 0) {
-        usePlayerStore.getState().playSong(existingQueueIndex)
+        requestPlayQueue(queue, existingQueueIndex, albumContext)
         return
       }
     }
@@ -525,7 +551,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-[#121212] px-4 sm:px-8 pt-4 sm:pt-8 pb-36 md:pb-8 text-white">
+    <div className="h-full flex-1 overflow-y-auto bg-[#121212] px-4 sm:px-8 pt-4 sm:pt-8 pb-36 md:pb-8 text-white">
       <div className="flex flex-col sm:flex-row items-center sm:items-end text-center sm:text-left gap-5 sm:gap-6 border-b border-white/10 pb-6 sm:pb-8">
         <div className="flex h-36 w-36 sm:h-48 sm:w-48 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[#282828] shadow-xl">
           {artwork ? <img src={artwork} alt="" className="h-full w-full object-cover" /> : <Music2 className="h-16 w-16 text-[#777]" />}

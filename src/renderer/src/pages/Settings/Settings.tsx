@@ -35,6 +35,7 @@ import { useListeningStore } from '../../hooks/useListeningStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { useThemeStore, ACCENT_PRESETS } from '../../hooks/useThemeStore'
 import { usePrivateSessionStore } from '../../hooks/usePrivateSessionStore'
+import { AppCapabilities } from '../../lib/appConfig'
 import {
   DEFAULT_DOWNLOAD_PRIORITY,
   DOWNLOAD_LOCATION_SETTING,
@@ -308,12 +309,18 @@ export default function Settings() {
 
   const loadDownloadSettings = async () => {
     try {
+      const savedLastFmApiKey = await window.api?.getSetting?.(LASTFM_API_KEY_SETTING)
+      if (typeof savedLastFmApiKey === 'string') {
+        setLastFmApiKey(savedLastFmApiKey)
+      }
+
+      if (!AppCapabilities.downloads) return
+
       const savedPriority = await window.api?.getSetting?.(DOWNLOAD_PRIORITY_SETTING)
       const savedMode = await window.api?.getSetting?.(PLAYBACK_STORAGE_SETTING)
       const savedCacheLimit = await window.api?.getSetting?.(STREAM_CACHE_SETTING)
       const savedAccounts = await window.api?.getSetting?.(STREAMING_ACCOUNTS_SETTING)
       const savedLocation = await window.api?.getSetting?.(DOWNLOAD_LOCATION_SETTING)
-      const savedLastFmApiKey = await window.api?.getSetting?.(LASTFM_API_KEY_SETTING)
 
       if (Array.isArray(savedPriority) && savedPriority.length > 0) {
         setDownloadPriority(
@@ -334,9 +341,6 @@ export default function Settings() {
       if (typeof savedLocation === 'string' && savedLocation.trim()) {
         setDownloadLocation(savedLocation.trim())
       }
-      if (typeof savedLastFmApiKey === 'string') {
-        setLastFmApiKey(savedLastFmApiKey)
-      }
     } catch (err) {
       console.error('Failed to load download settings:', err)
     }
@@ -346,7 +350,9 @@ export default function Settings() {
     loadRoots()
     loadAppInfo()
     loadDownloadSettings()
-    checkDeps()
+    if (AppCapabilities.downloads) {
+      checkDeps()
+    }
 
     const handleLibraryUpdate = () => loadRoots()
     window.addEventListener('felo:library-updated', handleLibraryUpdate)
@@ -728,26 +734,36 @@ export default function Settings() {
     'all' | 'library' | 'providers' | 'audio' | 'integrations' | 'appearance'
   >('all')
 
+  useEffect(() => {
+    if (!AppCapabilities.downloads && activeCategory === 'providers') {
+      setActiveCategory('all')
+    }
+  }, [activeCategory])
+
+  const categories = [
+    { id: 'all', label: 'All Settings' },
+    { id: 'library', label: AppCapabilities.downloads ? 'Library & Downloads' : 'Library' },
+    ...(AppCapabilities.downloads ? [{ id: 'providers', label: 'Download Providers' }] : []),
+    { id: 'audio', label: 'Playback & Audio' },
+    { id: 'integrations', label: 'Integrations' },
+    { id: 'appearance', label: 'Appearance & System' }
+  ]
+
   return (
-    <div className="h-full overflow-y-auto select-none">
-      <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-4 sm:px-8 pt-4 sm:pt-6 pb-36 md:pb-12">
+    <div className="h-full flex-1 overflow-y-auto select-none">
+      <div className="mx-auto flex min-h-full flex-1 w-full max-w-4xl flex-col px-4 sm:px-8 pt-4 sm:pt-6 pb-36 md:pb-12">
         <div className="mb-6">
           <h1 className="text-2xl sm:text-3xl font-bold text-text tracking-tight mb-1 sm:mb-2">Settings</h1>
           <p className="text-xs sm:text-sm text-text-muted">
-            Configure your music library, download paths, provider priority, audio playback, and integrations.
+            {AppCapabilities.downloads
+              ? 'Configure your music library, download paths, provider priority, audio playback, and integrations.'
+              : 'Configure your music library, audio playback, theme appearance, and integrations.'}
           </p>
         </div>
 
         {/* Category Navigation Pills */}
         <div className="mb-6 flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden shrink-0">
-          {[
-            { id: 'all', label: 'All Settings' },
-            { id: 'library', label: 'Library & Downloads' },
-            { id: 'providers', label: 'Download Providers' },
-            { id: 'audio', label: 'Playback & Audio' },
-            { id: 'integrations', label: 'Integrations' },
-            { id: 'appearance', label: 'Appearance & System' }
-          ].map((cat) => (
+          {categories.map((cat) => (
             <button
               key={cat.id}
               type="button"
@@ -908,8 +924,10 @@ export default function Settings() {
                 </div>
               </SettingsSection>
 
-              {/* Download Location (Colocated with Library) */}
-              <SettingsSection
+              {AppCapabilities.downloads && (
+                <>
+                  {/* Download Location (Colocated with Library) */}
+                  <SettingsSection
                 icon={<FolderPlus className="w-5 h-5" />}
                 title="Download Location"
                 description="Choose where downloaded tracks, albums, and playlist files are saved on your device."
@@ -1067,11 +1085,13 @@ export default function Settings() {
                   {modeMessage && <span className="text-xs font-medium text-text-muted">{modeMessage}</span>}
                 </div>
               </SettingsSection>
+                </>
+              )}
             </>
           )}
 
           {/* SECTION GROUP 2: DOWNLOAD PROVIDERS & PRIORITY */}
-          {(activeCategory === 'all' || activeCategory === 'providers') && (
+          {AppCapabilities.downloads && (activeCategory === 'all' || activeCategory === 'providers') && (
             <>
               {/* Bulk Download Priority */}
               <SettingsSection
@@ -1457,7 +1477,7 @@ export default function Settings() {
           )}
 
           {/* Streaming Accounts & Engine */}
-          {(activeCategory === 'all' || activeCategory === 'providers') && (
+          {AppCapabilities.downloads && (activeCategory === 'all' || activeCategory === 'providers') && (
             <SettingsSection
               icon={<Headphones className="w-5 h-5" />}
               title="Streaming Accounts & Downloader Engine"
@@ -2036,7 +2056,7 @@ export default function Settings() {
                   <p className="font-semibold text-text">How to connect in Discord:</p>
                   <ol className="list-decimal list-inside space-y-0.5 text-[11px] text-text-muted">
                     <li>In your Discord server, type <code className="text-text font-mono font-bold">/connect {hostRoom?.code || '<code>'}</code></li>
-                    <li>Type <code className="text-text font-mono font-bold">/play &lt;song&gt;</code> — Felo plays it and auto-downloads missing songs online!</li>
+                    <li>Type <code className="text-text font-mono font-bold">/play &lt;song&gt;</code> — Felo plays and queues the song in the room in real-time!</li>
                   </ol>
                 </div>
               </div>
@@ -2195,7 +2215,7 @@ export default function Settings() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                     {[
                       ['/connect <code>', 'Links Discord channel to your active Felo room'],
-                      ['/play <song>', 'Autocomplete; plays song & auto-downloads if missing'],
+                      ['/play <song>', 'Autocomplete; plays and queues songs in room'],
                       ['/skip', 'Skips to next track in queue'],
                       ['/pause & /resume', 'Pauses or resumes session across group'],
                       ['/nowplaying', 'Current song, cover art, progress & room code'],

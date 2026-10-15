@@ -33,6 +33,12 @@ import {
   sendDeviceCommand
 } from './hooks/useConnectedDeviceStore'
 import { toMediaUrl } from './lib/media'
+import {
+  getCurrentDeviceId,
+  getDeviceDisplayName,
+  isPcDevice,
+  detectDeviceInfo
+} from './lib/deviceInfo'
 import { AppCapabilities, isElectron } from './lib/appConfig'
 import { useIsMobile } from './hooks/useIsMobile'
 import { usePrivateSessionStore } from './hooks/usePrivateSessionStore'
@@ -156,7 +162,7 @@ function App() {
   }, [])
 
   const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
-  const myDeviceId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : null
+  const myDeviceId = getCurrentDeviceId()
   const isAudioActive = usePlayerStore((s) => s.isAudioActive)
   const isLocalAudioOwner = isAudioActive && localIsPlaying
   const isCloudRemoteActive = Boolean(
@@ -180,8 +186,10 @@ function App() {
             volumePercent: Math.round(localVolume * 100),
             shuffle: false,
             repeat: 'off',
-            targetDevice: 'desktop',
-            deviceName: activeRemote.activeDeviceName || 'Felo Desktop',
+            targetDevice: isPcDevice(activeRemote.activeDeviceCategory || activeRemote.activeDeviceType)
+              ? 'desktop'
+              : 'mobile',
+            deviceName: activeRemote.activeDeviceName || 'Felo Player',
             song: {
               id: activeRemote.song.id,
               title: activeRemote.song.title || 'Unknown Title',
@@ -201,8 +209,8 @@ function App() {
           volumePercent: Math.round(localVolume * 100),
           shuffle: localShuffle,
           repeat: localRepeat,
-          targetDevice: 'mobile',
-          deviceName: 'This Device',
+          targetDevice: isPcDevice(detectDeviceInfo().category) ? 'desktop' : 'mobile',
+          deviceName: getDeviceDisplayName(),
           song: localSong
             ? {
                 id: localSong.id,
@@ -218,8 +226,14 @@ function App() {
   const topSearchInputRef = useRef<HTMLInputElement>(null)
   const searchModeRef = useRef<HTMLDivElement>(null)
   const profileRef = useRef<HTMLDivElement>(null)
+  const mainContentRef = useRef<HTMLElement>(null)
   const navigate = useNavigate()
   const location = useLocation()
+
+  // Reset scroll position on route change
+  useEffect(() => {
+    mainContentRef.current?.scrollTo({ top: 0, behavior: 'instant' })
+  }, [location.pathname])
 
   const toggleSidebar = (): void => {
     setIsSidebarOpen((isOpen) => {
@@ -379,8 +393,9 @@ function App() {
 
   const isRemoteMode =
     location.pathname.startsWith('/remote') ||
-    window.location.hash.toLowerCase().includes('remote') ||
-    window.location.search.toLowerCase().includes('mode=remote')
+    ((location.pathname === '/' || location.pathname === '') &&
+      (window.location.hash.toLowerCase().includes('remote') ||
+        window.location.search.toLowerCase().includes('mode=remote')))
 
   if (isRemoteMode) {
     return <RemotePhoneView />
@@ -389,7 +404,7 @@ function App() {
   return (
     <div
       className={cn(
-        'h-screen w-screen flex flex-col bg-canvas text-text font-sans antialiased overflow-hidden'
+        'fixed inset-0 w-full h-full h-[100dvh] flex flex-col bg-canvas text-text font-sans antialiased overflow-hidden'
       )}
     >
       <AudioEngine />
@@ -462,22 +477,6 @@ function App() {
               )}
             >
               <SearchIcon className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsMobileDeviceSheetOpen(true)}
-              title="Connect Device"
-              className={cn(
-                'h-9 px-3 rounded-full flex items-center gap-1.5 transition text-xs font-semibold cursor-pointer',
-                isRemoteConnected || isCloudRemoteActive
-                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                  : 'text-text-muted hover:text-text hover:bg-hover'
-              )}
-            >
-              <Radio className="w-4 h-4" />
-              <span className="text-[11px]">
-                {isRemoteConnected || isCloudRemoteActive ? 'Connected' : 'Devices'}
-              </span>
             </button>
             <button
               type="button"
@@ -891,8 +890,8 @@ function App() {
             isMobileScreen ? 'rounded-none' : 'rounded-xl'
           )}
         >
-          <section className={`flex-1 overflow-y-auto relative no-drag ${isMobileScreen ? 'pb-36' : ''}`}>
-            <div className="min-h-full w-full flex flex-col">
+          <section ref={mainContentRef} className="flex-1 overflow-y-auto relative no-drag">
+            <div className="h-full min-h-full w-full flex flex-col flex-1">
               <ErrorBoundary>
                 <Routes>
                   <Route
@@ -1120,7 +1119,7 @@ function App() {
           />
         </>
       ) : (
-        <div className="hidden md:block px-2 pb-2">
+        <div className="px-2 pb-2">
           <Footer
             isQueueOpen={isQueueOpen}
             onToggleQueue={() => setIsQueueOpen((open) => !open)}

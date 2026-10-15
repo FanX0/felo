@@ -10,6 +10,7 @@ export interface Playlist {
   name: string
   description?: string | null
   artworkPath?: string | null
+  artworkUrl?: string | null
   dateCreated: number
   dateModified: number
   songCount: number

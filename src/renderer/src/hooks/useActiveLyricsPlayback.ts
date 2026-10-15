@@ -5,6 +5,7 @@ import { useOnlineStore } from './useOnlineStore'
 import { remoteClient, type RemotePlayerState } from '../pages/Remote/remoteClient'
 import { getActiveAudioTime } from '../lib/audioBridge'
 import { toMediaUrl } from '../lib/media'
+import { getCurrentDeviceId } from '../lib/deviceInfo'
 
 export interface ActiveLyricsSong {
   id: string
@@ -23,6 +24,7 @@ export interface ActiveLyricsSong {
 export interface ActiveLyricsPlayback {
   song: ActiveLyricsSong | null
   isPlaying: boolean
+  currentTime: number
   duration: number
   isRemote: boolean
   activeDeviceId: string | null
@@ -34,7 +36,7 @@ export interface ActiveLyricsPlayback {
 
 export function useActiveLyricsPlayback(): ActiveLyricsPlayback {
   const user = useOnlineStore((s) => s.user)
-  const myDeviceId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : null
+  const myDeviceId = getCurrentDeviceId()
 
   // 1. Local Player Store
   const localQueue = usePlayerStore((s) => s.queue)
@@ -242,10 +244,17 @@ export function useActiveLyricsPlayback(): ActiveLyricsPlayback {
     }
   }, [isLanRemoteActive, isCloudRemoteActive, activeRemote, user?.id])
 
+  const currentAnchoredTime = isCloudRemoteActive && activeRemote
+    ? activeRemote.position
+    : isLanRemoteActive && remoteState
+      ? remoteState.position
+      : localCurrentTime
+
   return useMemo(
     () => ({
       song: activeSong,
       isPlaying,
+      currentTime: currentAnchoredTime,
       duration,
       isRemote,
       activeDeviceId,
@@ -259,6 +268,7 @@ export function useActiveLyricsPlayback(): ActiveLyricsPlayback {
       activeSong?.title,
       activeSong?.artist,
       isPlaying,
+      currentAnchoredTime,
       duration,
       isRemote,
       activeDeviceId,

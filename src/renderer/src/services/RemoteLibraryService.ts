@@ -165,7 +165,7 @@ class RemoteLibraryService {
 
   public async getPlaylistTracks(
     playlistId: string
-  ): Promise<{ playlist: { id: string; name: string; description?: string }; tracks: RemoteLibrarySong[] }> {
+  ): Promise<{ playlist: { id: string; name: string; description?: string; dateModified?: number }; tracks: RemoteLibrarySong[] }> {
     const token = encodeURIComponent(remoteClient.getToken())
     const res = await fetch(
       `${remoteClient.getBaseUrl()}/v1/library/playlists/${encodeURIComponent(playlistId)}?token=${token}`

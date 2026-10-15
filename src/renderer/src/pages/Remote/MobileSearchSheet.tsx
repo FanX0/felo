@@ -1,19 +1,34 @@
 import { useState, useEffect, useRef } from 'react'
-import { Search as SearchIcon, X, Play, Plus, Check, Music2, RefreshCw, Download } from 'lucide-react'
+import { Search as SearchIcon, X, Play, Plus, Check, Music2, RefreshCw, Download, Library } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { remoteClient, type RemotePlayerSong } from './remoteClient'
+import { remoteLibraryService } from '../../services/RemoteLibraryService'
+import { useConnectedDeviceStore, normalizeDeviceId } from '../../hooks/useConnectedDeviceStore'
+import { usePlayerStore } from '../../hooks/usePlayerStore'
 
 interface MobileSearchSheetProps {
   isOpen: boolean
   onClose: () => void
+  targetDeviceId?: string
+  targetDeviceName?: string
 }
 
-export default function MobileSearchSheet({ isOpen, onClose }: MobileSearchSheetProps) {
+export default function MobileSearchSheet({
+  isOpen,
+  onClose,
+  targetDeviceId,
+  targetDeviceName
+}: MobileSearchSheetProps) {
+  const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<RemotePlayerSong[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
   const [downloadedIds, setDownloadedIds] = useState<Set<string>>(new Set())
   const searchInputRef = useRef<HTMLInputElement>(null)
+
+  const canonicalTargetId = normalizeDeviceId(targetDeviceId)
+  const targetSongs = useConnectedDeviceStore((s) => s.getDeviceSongs(canonicalTargetId))
 
   useEffect(() => {
     if (isOpen) {
@@ -22,33 +37,105 @@ export default function MobileSearchSheet({ isOpen, onClose }: MobileSearchSheet
   }, [isOpen])
 
   useEffect(() => {
+    if (!isOpen) return
+
     if (!query.trim()) {
-      setResults([])
-      setIsLoading(false)
+      // If store already has target device songs, display them immediately
+      if (targetSongs.length > 0) {
+        setResults(
+          targetSongs.map((s) => ({
+            id: s.id,
+            title: s.title,
+            artist: s.artist,
+            album: s.album || '',
+            duration: s.duration,
+            artworkUrl: s.artworkUrl
+          }))
+        )
+        return
+      }
+
+      // Otherwise fetch initial batch from remote library service if desktop target
+      const isDesktopTarget = canonicalTargetId === 'default-pc'
+      if (isDesktopTarget && remoteClient.getIsConnected()) {
+        setIsLoading(true)
+        remoteLibraryService
+          .getSongs({ limit: 100 })
+          .then((res) => {
+            if (res.songs && res.songs.length > 0) {
+              setResults(
+                res.songs.map((s) => ({
+                  id: s.id,
+                  title: s.title,
+                  artist: s.artist,
+                  album: s.album || '',
+                  duration: s.duration,
+                  artworkUrl: s.artworkUrl
+                }))
+              )
+            }
+          })
+          .catch(() => undefined)
+          .finally(() => setIsLoading(false))
+      }
       return
     }
 
     const timer = setTimeout(async () => {
       setIsLoading(true)
-      try {
-        const res = await remoteClient.searchLibrary(query.trim())
-        if (res && Array.isArray(res.results)) {
-          setResults(res.results)
+      const q = query.trim().toLowerCase()
+      const localMatches = targetSongs
+        .filter(
+          (s) =>
+            s.title.toLowerCase().includes(q) ||
+            s.artist.toLowerCase().includes(q) ||
+            (s.album && s.album.toLowerCase().includes(q))
+        )
+        .map((s) => ({
+          id: s.id,
+          title: s.title,
+          artist: s.artist,
+          album: s.album || '',
+          duration: s.duration,
+          artworkUrl: s.artworkUrl
+        }))
+
+      const isDesktopTarget = canonicalTargetId === 'default-pc'
+      if (isDesktopTarget && remoteClient.getIsConnected()) {
+        try {
+          const res = await remoteClient.searchLibrary(query.trim())
+          if (res && Array.isArray(res.results) && res.results.length > 0) {
+            setResults(res.results)
+            setIsLoading(false)
+            return
+          }
+        } catch (err) {
+          console.warn('[MobileSearchSheet] LAN search failed, falling back to local results:', err)
         }
-      } catch (err) {
-        console.error('Failed to search desktop library:', err)
-      } finally {
-        setIsLoading(false)
       }
+
+      setResults(localMatches)
+      setIsLoading(false)
     }, 250)
 
     return () => clearTimeout(timer)
-  }, [query])
+  }, [query, isOpen, targetSongs, canonicalTargetId])
 
   if (!isOpen) return null
 
   const handlePlayNow = (songId: string) => {
-    void remoteClient.play(songId)
+    const isDesktopTarget = canonicalTargetId === 'default-pc'
+    if (isDesktopTarget || remoteClient.getIsConnected()) {
+      void remoteClient.play(songId)
+    } else {
+      const song = targetSongs.find((s) => s.id === songId)
+      if (song) {
+        usePlayerStore.getState().setQueue([song], 0, {
+          type: 'library',
+          title: targetDeviceName ? `${targetDeviceName} Library` : 'Device Library'
+        })
+      }
+    }
     onClose()
   }
 
@@ -102,7 +189,7 @@ export default function MobileSearchSheet({ isOpen, onClose }: MobileSearchSheet
           <input
             ref={searchInputRef}
             type="search"
-            placeholder="Search desktop library..."
+            placeholder={targetDeviceName ? `Search ${targetDeviceName} library...` : 'Search library...'}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="w-full bg-transparent text-sm text-white placeholder-zinc-400 focus:outline-none"
@@ -117,13 +204,28 @@ export default function MobileSearchSheet({ isOpen, onClose }: MobileSearchSheet
             </button>
           )}
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-sm font-medium text-zinc-300 hover:text-white px-2 py-1 cursor-pointer"
-        >
-          Cancel
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              onClose()
+              window.location.hash = ''
+              navigate('/library')
+            }}
+            className="text-xs font-semibold text-emerald-400 hover:text-emerald-300 px-2 py-1 flex items-center gap-1.5 cursor-pointer bg-emerald-500/10 border border-emerald-500/20 rounded-lg"
+            title="Open full Felo Library"
+          >
+            <Library className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Full Library</span>
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-sm font-medium text-zinc-300 hover:text-white px-2 py-1 cursor-pointer"
+          >
+            Cancel
+          </button>
+        </div>
       </header>
 
       {/* Results List */}
@@ -131,13 +233,13 @@ export default function MobileSearchSheet({ isOpen, onClose }: MobileSearchSheet
         {isLoading ? (
           <div className="py-16 flex flex-col items-center justify-center gap-2 text-zinc-500">
             <RefreshCw className="w-6 h-6 animate-spin text-white" />
-            <span className="text-xs">Searching your desktop music...</span>
+            <span className="text-xs">Loading your desktop music...</span>
           </div>
         ) : query.trim() && results.length === 0 ? (
           <div className="py-16 text-center text-zinc-500 text-xs">
             No playable tracks found on your desktop matching &quot;{query}&quot;.
           </div>
-        ) : !query.trim() ? (
+        ) : results.length === 0 ? (
           <div className="py-20 flex flex-col items-center justify-center text-center text-zinc-500 px-6">
             <SearchIcon className="w-12 h-12 opacity-30 mb-3 text-zinc-400" />
             <p className="text-sm font-semibold text-zinc-400">Search Your Desktop Library</p>
@@ -147,9 +249,11 @@ export default function MobileSearchSheet({ isOpen, onClose }: MobileSearchSheet
           </div>
         ) : (
           <div className="space-y-1">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2 px-2">
-              Songs ({results.length})
-            </h3>
+            <div className="flex items-center justify-between mb-2 px-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+                {query.trim() ? `Search Results (${results.length})` : `Your PC Songs (${results.length})`}
+              </h3>
+            </div>
             {results.map((track) => {
               const isAdded = addedIds.has(track.id)
               const isDownloaded = downloadedIds.has(track.id)

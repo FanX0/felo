@@ -21,6 +21,8 @@ import { toMediaUrl } from '../../lib/media'
 import HighlightMatch from '../../components/Common/HighlightMatch'
 import { AppCapabilities, isPublicMode } from '../../lib/appConfig'
 import { Playlist } from './types'
+import { remoteClient } from '../Remote/remoteClient'
+import { remoteLibraryService } from '../../services/RemoteLibraryService'
 
 export default function Playlists() {
   const navigate = useNavigate()
@@ -42,7 +44,27 @@ export default function Playlists() {
     try {
       setIsLoading(true)
       setError('')
-      setPlaylists((await window.api.getPlaylists()) || [])
+      if (window.api?.getPlaylists) {
+        setPlaylists((await window.api.getPlaylists()) || [])
+      } else {
+        const hasLanHost = Boolean(remoteClient.getBaseUrl() && !remoteClient.getBaseUrl().includes('localhost'))
+        if (remoteClient.getIsConnected() || hasLanHost) {
+          const remotePlaylists = await remoteLibraryService.getPlaylists()
+          setPlaylists(
+            remotePlaylists.map((p) => ({
+              id: p.id,
+              name: p.name,
+              description: p.description,
+              songCount: p.trackCount,
+              dateCreated: p.dateModified ? p.dateModified * 1000 : Date.now(),
+              dateModified: p.dateModified ? p.dateModified * 1000 : Date.now(),
+              artworkUrl: p.artworkUrl
+            }))
+          )
+        } else {
+          setPlaylists([])
+        }
+      }
     } catch (err) {
       console.error('Failed to load playlists:', err)
       setError('Failed to load playlists.')
@@ -83,7 +105,41 @@ export default function Playlists() {
   }, [playlists, searchQuery])
 
   const playPlaylist = async (playlistId: string) => {
-    const playlist = (await window.api.getPlaylist(playlistId)) as Playlist | null
+    let playlist: Playlist | null = null
+    if (window.api?.getPlaylist) {
+      playlist = (await window.api.getPlaylist(playlistId)) as Playlist | null
+    } else {
+      const hasLanHost = Boolean(remoteClient.getBaseUrl() && !remoteClient.getBaseUrl().includes('localhost'))
+      if (remoteClient.getIsConnected() || hasLanHost) {
+        try {
+          const res = await remoteLibraryService.getPlaylistTracks(playlistId)
+          playlist = {
+            id: res.playlist.id,
+            name: res.playlist.name,
+            description: res.playlist.description,
+            dateCreated: Date.now(),
+            dateModified: Date.now(),
+            songCount: res.tracks.length,
+            songs: res.tracks.map((r, idx) => ({
+              id: r.id,
+              title: r.title,
+              artist: r.artist,
+              album: r.album,
+              duration: r.duration,
+              filePath: r.audioUrl || remoteClient.getAudioStreamUrl(r.id),
+              artworkUrl: r.artworkUrl,
+              artworkPath: r.artworkUrl,
+              isOnline: true,
+              playlistDateAdded: Date.now(),
+              playlistSortOrder: idx
+            }))
+          }
+        } catch (err) {
+          console.warn('Failed to load remote playlist tracks:', err)
+        }
+      }
+    }
+
     if (playlist?.songs?.length) {
       void requestPlayQueue(playlist.songs, 0, {
         type: 'playlist',
@@ -95,6 +151,7 @@ export default function Playlists() {
   }
 
   const renamePlaylist = async (playlistId: string) => {
+    if (!window.api?.renamePlaylist) return
     const playlist = playlists.find((item) => item.id === playlistId)
     const nextName = window.prompt('Rename playlist', playlist?.name || '')?.trim()
     if (!nextName || nextName === playlist?.name) return
@@ -110,6 +167,7 @@ export default function Playlists() {
   }
 
   const deletePlaylist = async (playlistId: string) => {
+    if (!window.api?.deletePlaylist) return
     const playlist = playlists.find((item) => item.id === playlistId)
     if (
       !window.confirm(
@@ -124,7 +182,7 @@ export default function Playlists() {
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-[#121212] px-4 sm:px-6 md:px-10 pt-6 sm:pt-8 md:pt-10 pb-36 md:pb-10 text-white">
+    <div className="h-full flex-1 overflow-y-auto bg-[#121212] px-4 sm:px-6 md:px-10 pt-6 sm:pt-8 md:pt-10 pb-36 md:pb-10 text-white">
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 md:gap-8 border-b border-white/10 pb-6 md:pb-11">
         <div className="flex min-w-0 items-baseline justify-between sm:justify-start gap-3 sm:gap-5">
           <h1 className="truncate text-2xl sm:text-4xl md:text-[56px] font-black leading-tight sm:leading-none tracking-tight">
@@ -589,10 +647,14 @@ function CreatePlaylistModal({
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    window.api
-      .getSongs()
-      .then((songs) => setLibrarySongs(songs || []))
-      .catch((err) => console.error('Failed to load songs for playlist import:', err))
+    if (window.api?.getSongs) {
+      window.api
+        .getSongs()
+        .then((songs) => setLibrarySongs(songs || []))
+        .catch((err) => console.error('Failed to load songs for playlist import:', err))
+    } else {
+      setLibrarySongs(remoteClient.getIsConnected() ? [] : [])
+    }
   }, [])
 
   const matchedCount = importedTracks.filter((track) => track.matchedSongId).length
@@ -614,6 +676,10 @@ function CreatePlaylistModal({
 
   const fetchUrl = async () => {
     if (!urlInput.trim()) return
+    if (!window.api?.fetchPlaylistImportMetadata) {
+      setError('Playlist import metadata fetching is only available on desktop.')
+      return
+    }
     try {
       setIsFetchingUrl(true)
       setError('')
@@ -635,6 +701,10 @@ function CreatePlaylistModal({
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     if (!name.trim()) return
+    if (!window.api?.createPlaylist) {
+      setError('Creating playlists is only supported on desktop.')
+      return
+    }
 
     try {
       setIsSaving(true)
@@ -710,182 +780,189 @@ function CreatePlaylistModal({
           placeholder="Description (optional)"
         />
 
-        <section className="mt-7 rounded-xl border border-white/10 bg-[#181818] p-5">
-          <div className="grid grid-cols-5 border-b border-white/10">
-            {(['CSV', 'JSPF', 'XSPF', 'XML', 'M3U'] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setActiveTab(tab)}
-                className={`pb-3 text-sm font-black ${
-                  activeTab === tab
-                    ? 'border-b-2 border-white text-white'
-                    : 'text-[#9ca3af] hover:text-white'
-                }`}
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
+        {AppCapabilities.playlistImport && (
+          <section className="mt-7 rounded-xl border border-white/10 bg-[#181818] p-5">
+            <div className="grid grid-cols-5 border-b border-white/10">
+              {(['CSV', 'JSPF', 'XSPF', 'XML', 'M3U'] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  className={`pb-3 text-sm font-black ${
+                    activeTab === tab
+                      ? 'border-b-2 border-white text-white'
+                      : 'text-[#9ca3af] hover:text-white'
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
 
-          <h3 className="mt-5 text-sm font-black">Import from {activeTab}</h3>
+            <h3 className="mt-5 text-sm font-black">Import from {activeTab}</h3>
 
-          {activeTab === 'CSV' && (
-            <>
-              <div className="mt-4 grid grid-cols-3 gap-3">
-                {[
-                  ['spotify', 'Spotify'],
-                  ['apple', 'Apple Music'],
-                  ['youtube', 'YouTube Music']
-                ].map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setSelectedService(id as ImportService)}
-                    className={`rounded-lg border px-3 py-3 text-sm font-black ${
-                      selectedService === id
-                        ? 'border-white bg-white/10 text-white'
-                        : 'border-white/10 bg-white/[0.04] text-white hover:bg-white/10'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+            {activeTab === 'CSV' && (
+              <>
+                <div className="mt-4 grid grid-cols-3 gap-3">
+                  {[
+                    ['spotify', 'Spotify'],
+                    ['apple', 'Apple Music'],
+                    ['youtube', 'YouTube Music']
+                  ].map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setSelectedService(id as ImportService)}
+                      className={`rounded-lg border px-3 py-3 text-sm font-black ${
+                        selectedService === id
+                          ? 'border-white bg-white/10 text-white'
+                          : 'border-white/10 bg-white/[0.04] text-white hover:bg-white/10'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
 
+                <div className="mt-4 flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-[#d1d5db]">
+                  <ExternalLink className="h-4 w-4 shrink-0 text-text-muted" />
+                  <span>
+                    Spotify CSV works best from{' '}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.api?.openExternal) void window.api.openExternal('https://exportify.app/')
+                        else window.open('https://exportify.app/', '_blank')
+                      }}
+                      className="font-black text-white underline hover:text-white/80"
+                    >
+                      Exportify
+                    </button>
+                    . Apple Music and YouTube Music CSV exports are also accepted.
+                  </span>
+                </div>
+
+                {AppCapabilities.onlineDiscovery && !isPublicMode && (
+                  <div className="mt-4 flex gap-3">
+                    <div className="relative flex-1">
+                      <Link className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9ca3af]" />
+                      <input
+                        value={urlInput}
+                        onChange={(event) => setUrlInput(event.target.value)}
+                        className="h-12 w-full rounded-lg border border-white/15 bg-white/[0.06] pl-11 pr-4 text-white outline-none focus:border-white/40"
+                        placeholder="Paste Spotify playlist URL..."
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={fetchUrl}
+                      disabled={!urlInput.trim() || isFetchingUrl}
+                      className="rounded-lg bg-white px-5 font-black text-black hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isFetchingUrl ? 'Fetching...' : 'Fetch'}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+
+            {activeTab !== 'CSV' && (
               <div className="mt-4 flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-[#d1d5db]">
-                <ExternalLink className="h-4 w-4 shrink-0 text-text-muted" />
+                <FileText className="h-4 w-4 shrink-0 text-text-muted" />
                 <span>
-                  Spotify CSV works best from{' '}
-                  <button
-                    type="button"
-                    onClick={() => void window.api.openExternal('https://exportify.app/')}
-                    className="font-black text-white underline hover:text-white/80"
-                  >
-                    Exportify
-                  </button>
-                  . Apple Music and YouTube Music CSV exports are also accepted.
+                  Drop or browse a .{activeTab.toLowerCase()} file. Tracks are matched against your
+                  local library when the playlist is saved.
                 </span>
               </div>
+            )}
 
-              {AppCapabilities.onlineDiscovery && !isPublicMode && (
-                <div className="mt-4 flex gap-3">
-                  <div className="relative flex-1">
-                    <Link className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9ca3af]" />
-                    <input
-                      value={urlInput}
-                      onChange={(event) => setUrlInput(event.target.value)}
-                      className="h-12 w-full rounded-lg border border-white/15 bg-white/[0.06] pl-11 pr-4 text-white outline-none focus:border-white/40"
-                      placeholder="Paste Spotify playlist URL..."
-                    />
-                  </div>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(event) => {
+                event.preventDefault()
+                setIsDragActive(true)
+              }}
+              onDragLeave={() => setIsDragActive(false)}
+              onDrop={(event) => {
+                event.preventDefault()
+                setIsDragActive(false)
+                const file = event.dataTransfer.files?.[0]
+                if (file) processFile(file)
+              }}
+              className={`mt-5 flex h-36 w-full flex-col items-center justify-center rounded-xl border-2 border-dashed text-center transition-colors ${
+                isDragActive
+                  ? 'border-white bg-white/10'
+                  : 'border-white/20 bg-white/[0.03] hover:border-white/40'
+              }`}
+            >
+              <UploadCloud className="h-8 w-8 text-[#9ca3af]" />
+              <span className="mt-3 font-black">Drop your {activeTab.toLowerCase()} file here</span>
+              <span className="mt-1 text-sm text-[#9ca3af]">or click to browse files</span>
+            </button>
+
+            {importedTracks.length > 0 && (
+              <div className="mt-5 overflow-hidden rounded-lg border border-white/10 bg-[#141414]">
+                <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                  <span className="flex items-center gap-2 text-sm font-black">
+                    <CheckCircle2 className="h-4 w-4 text-text-muted" />
+                    {importedTracks.length} tracks imported · {matchedCount} local matches
+                  </span>
                   <button
                     type="button"
-                    onClick={fetchUrl}
-                    disabled={!urlInput.trim() || isFetchingUrl}
-                    className="rounded-lg bg-white px-5 font-black text-black hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() => setImportedTracks([])}
+                    className="text-xs font-black text-[#9ca3af] hover:text-red-400"
                   >
-                    {isFetchingUrl ? 'Fetching...' : 'Fetch'}
+                    Clear
                   </button>
                 </div>
-              )}
-            </>
-          )}
-
-          {activeTab !== 'CSV' && (
-            <div className="mt-4 flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-[#d1d5db]">
-              <FileText className="h-4 w-4 shrink-0 text-text-muted" />
-              <span>
-                Drop or browse a .{activeTab.toLowerCase()} file. Tracks are matched against your
-                local library when the playlist is saved.
-              </span>
-            </div>
-          )}
-
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            onDragOver={(event) => {
-              event.preventDefault()
-              setIsDragActive(true)
-            }}
-            onDragLeave={() => setIsDragActive(false)}
-            onDrop={(event) => {
-              event.preventDefault()
-              setIsDragActive(false)
-              const file = event.dataTransfer.files?.[0]
-              if (file) processFile(file)
-            }}
-            className={`mt-5 flex h-36 w-full flex-col items-center justify-center rounded-xl border-2 border-dashed text-center transition-colors ${
-              isDragActive
-                ? 'border-white bg-white/10'
-                : 'border-white/20 bg-white/[0.03] hover:border-white/40'
-            }`}
-          >
-            <UploadCloud className="h-8 w-8 text-[#9ca3af]" />
-            <span className="mt-3 font-black">Drop your {activeTab.toLowerCase()} file here</span>
-            <span className="mt-1 text-sm text-[#9ca3af]">or click to browse files</span>
-          </button>
-
-          {importedTracks.length > 0 && (
-            <div className="mt-5 overflow-hidden rounded-lg border border-white/10 bg-[#141414]">
-              <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-                <span className="flex items-center gap-2 text-sm font-black">
-                  <CheckCircle2 className="h-4 w-4 text-text-muted" />
-                  {importedTracks.length} tracks imported · {matchedCount} local matches
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setImportedTracks([])}
-                  className="text-xs font-black text-[#9ca3af] hover:text-red-400"
-                >
-                  Clear
-                </button>
-              </div>
-              <div className="max-h-52 overflow-y-auto">
-                {importedTracks.map((track, index) => (
-                  <div
-                    key={`${track.title}-${index}`}
-                    className="grid grid-cols-[28px_1fr_60px_28px] items-center gap-3 border-b border-white/[0.04] px-4 py-2 text-sm"
-                  >
-                    <span className="text-right text-[#9ca3af]">{index + 1}</span>
-                    <div className="min-w-0">
-                      <div className="truncate font-bold">{track.title}</div>
-                      <div className="truncate text-xs text-[#9ca3af]">
-                        {track.artist}
-                        {track.album ? ` · ${track.album}` : ''}
+                <div className="max-h-52 overflow-y-auto">
+                  {importedTracks.map((track, index) => (
+                    <div
+                      key={`${track.title}-${index}`}
+                      className="grid grid-cols-[28px_1fr_60px_28px] items-center gap-3 border-b border-white/[0.04] px-4 py-2 text-sm"
+                    >
+                      <span className="text-right text-[#9ca3af]">{index + 1}</span>
+                      <div className="min-w-0">
+                        <div className="truncate font-bold">{track.title}</div>
+                        <div className="truncate text-xs text-[#9ca3af]">
+                          {track.artist}
+                          {track.album ? ` · ${track.album}` : ''}
+                        </div>
                       </div>
+                      <span className="text-xs text-[#9ca3af]">
+                        {formatImportDuration(track.duration)}
+                      </span>
+                      <span
+                        title={track.matchedSongId ? 'Matched local song' : 'No local match'}
+                        className={`h-2.5 w-2.5 rounded-full ${
+                          track.matchedSongId ? 'bg-white' : 'bg-white/20'
+                        }`}
+                      />
                     </div>
-                    <span className="text-xs text-[#9ca3af]">
-                      {formatImportDuration(track.duration)}
-                    </span>
-                    <span
-                      title={track.matchedSongId ? 'Matched local song' : 'No local match'}
-                      className={`h-2.5 w-2.5 rounded-full ${
-                        track.matchedSongId ? 'bg-white' : 'bg-white/20'
-                      }`}
-                    />
-                  </div>
-                ))}
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-5 border-t border-white/10 pt-4">
+              <div className="flex gap-2 text-xs leading-5 text-[#aeb7c4]">
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
+                <p>
+                  {importedTracks.length > 0
+                    ? `All ${importedTracks.length} tracks will be added to your playlist. ${
+                        importedTracks.length - matchedCount > 0
+                          ? AppCapabilities.downloads
+                            ? `${importedTracks.length - matchedCount} tracks not yet in your local library can be downloaded directly from the playlist.`
+                            : `${importedTracks.length - matchedCount} tracks are not yet in your local library.`
+                          : 'All tracks matched in your local library!'
+                      }`
+                    : 'Track matching uses your local library.'}
+                </p>
               </div>
             </div>
-          )}
-
-          <div className="mt-5 border-t border-white/10 pt-4">
-            <div className="flex gap-2 text-xs leading-5 text-[#aeb7c4]">
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
-              <p>
-                {importedTracks.length > 0
-                  ? `All ${importedTracks.length} tracks will be added to your playlist. ${
-                      importedTracks.length - matchedCount > 0
-                        ? `${importedTracks.length - matchedCount} tracks not yet in your local library can be downloaded directly from the playlist.`
-                        : 'All tracks matched in your local library!'
-                    }`
-                  : 'Track matching uses your local library.'}
-              </p>
-            </div>
-          </div>
-        </section>
+          </section>
+        )}
 
         {error && (
           <p className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">

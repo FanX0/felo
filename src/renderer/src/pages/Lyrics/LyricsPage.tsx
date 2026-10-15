@@ -805,7 +805,7 @@ export default function LyricsPage() {
     if (element && lyricsEngine === 'am') {
       element.currentTime = currentSec * 1000
     }
-  }, [isPlaying, activePlayback.currentTime, lyricsEngine])
+  }, [isPlaying, activePlayback.getCurrentTime, lyricsEngine])
 
   const handleAmLineClick = useCallback(
     (event: Event) => {
@@ -880,7 +880,7 @@ export default function LyricsPage() {
   const handleTranslate = useCallback(
     async (language: string) => {
       setIsTranslationOpen(false)
-      if (sourceLines.length === 0) return
+      if (!window.api?.translateLyrics || sourceLines.length === 0) return
 
       const songId = currentSong?.id
       setIsTranslating(true)
@@ -903,7 +903,7 @@ export default function LyricsPage() {
       setIsRomanized(false)
       return
     }
-    if (!canRomanize || sourceLines.length === 0) return
+    if (!canRomanize || !window.api?.romanizeLyrics || sourceLines.length === 0) return
     if (romanizations.length === sourceLines.length) {
       setIsRomanized(true)
       return
@@ -936,7 +936,7 @@ export default function LyricsPage() {
   }
 
   return (
-    <div className="relative h-full overflow-hidden bg-[#101014] text-text">
+    <div className="relative h-full flex-1 overflow-hidden bg-[#101014] text-text">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_36%,rgba(255,255,255,0.08),transparent_30%),linear-gradient(to_bottom,rgba(0,0,0,0.08),rgba(0,0,0,0.2))]" />
 
       {/* Remote playing device indicator */}
