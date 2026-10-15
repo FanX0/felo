@@ -62,7 +62,20 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
   const handleAddFolder = useCallback(async () => {
     try {
       if (!window.api?.selectFolder) return
-      const folderPath = await window.api.selectFolder()
+      let folderPath: string | null = null
+      try {
+        folderPath = await window.api.selectFolder()
+      } catch (selectErr) {
+        console.warn('Folder selection error in Home:', selectErr)
+      }
+      const isElectron = typeof window !== 'undefined' && Boolean((window as any).electron)
+      if (!folderPath && !isElectron) {
+        if (window.api?.selectFiles) {
+          folderPath = await window.api.selectFiles()
+        } else if (window.api?.selectFolder) {
+          folderPath = await window.api.selectFolder({ forceFiles: true })
+        }
+      }
       if (folderPath) {
         await window.api.scanLibrary(folderPath)
         const latest = (await window.api?.getSongs?.()) as Song[] | undefined
