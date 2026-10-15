@@ -42,7 +42,12 @@ async function getExternalProviders(): Promise<ExternalProviders | null> {
       path.resolve(process.cwd(), 'src/main/providers/index.js'),
       path.resolve(process.cwd(), '../felo-private/src/main/providers/index.ts'),
       path.resolve(process.cwd(), '../felo-private/src/main/providers/index.js'),
-      path.resolve(__dirname, '../providers/index.js')
+      path.resolve(__dirname, '../providers/index.js'),
+      path.resolve(__dirname, '../providers/index.cjs'),
+      app.isPackaged ? path.join(process.resourcesPath, 'providers', 'index.cjs') : null,
+      app.isPackaged ? path.join(process.resourcesPath, 'providers', 'index.js') : null,
+      path.resolve(process.cwd(), 'resources', 'providers', 'index.cjs'),
+      path.resolve(process.cwd(), 'resources', 'providers', 'index.js')
     ].filter(Boolean) as string[]
 
     const dynamicImport = new Function('m', 'return import(m)')
@@ -50,8 +55,14 @@ async function getExternalProviders(): Promise<ExternalProviders | null> {
     for (const cand of candidatePaths) {
       if (fs.existsSync(cand)) {
         try {
-          const fileUrl = pathToFileURL(cand).href
-          const mod = await dynamicImport(fileUrl)
+          let mod: any
+          if (cand.endsWith('.cjs')) {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            mod = typeof require !== 'undefined' ? require(cand) : (new Function('m', 'return require(m)'))(cand)
+          } else {
+            const fileUrl = pathToFileURL(cand).href
+            mod = await dynamicImport(fileUrl)
+          }
           if (mod && (mod.QobuzClient || mod.DeezerClient || mod.slsk)) {
             _providersCache = mod as ExternalProviders
             break

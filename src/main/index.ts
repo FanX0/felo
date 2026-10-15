@@ -3402,6 +3402,11 @@ app.whenReady().then(() => {
     return app.getVersion()
   })
 
+  // System: Get app mode and active streaming providers
+  ipcMain.handle('system:getAppMode', async () => {
+    return DownloadService.getProviderInfo()
+  })
+
   ipcMain.handle('system:checkForUpdates', () => checkGithubRelease())
 
   // System: Open external URL (strictly validated to http/https/mailto)

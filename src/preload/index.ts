@@ -213,6 +213,8 @@ const api = {
 
   // System
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('system:getVersion'),
+  getAppMode: (): Promise<{ mode: 'public' | 'private'; sources: string[] }> =>
+    ipcRenderer.invoke('system:getAppMode'),
   checkForUpdates: (): Promise<any> => ipcRenderer.invoke('system:checkForUpdates'),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('system:openExternal', url),
   setupMusicPresence: (): Promise<{ success: boolean; status?: any; error?: string }> =>

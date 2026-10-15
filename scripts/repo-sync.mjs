@@ -102,10 +102,12 @@ function syncPublic(message) {
   if (
     stagedFiles.includes('src/main/providers') ||
     trackedFiles.includes('src/main/providers') ||
+    stagedFiles.includes('resources/providers') ||
+    trackedFiles.includes('resources/providers') ||
     stagedFiles.includes('README.private.md') ||
     trackedFiles.includes('README.private.md')
   ) {
-    console.error('\n❌ CRITICAL SECURITY ERROR: Private assets (src/main/providers/ or README.private.md) tracked or staged on public branch!')
+    console.error('\n❌ CRITICAL SECURITY ERROR: Private assets (src/main/providers/, resources/providers/ or README.private.md) tracked or staged on public branch!')
     console.error('Aborting push to public repository to prevent secret leak.')
     process.exit(1)
   }

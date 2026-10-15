@@ -260,6 +260,7 @@ declare global {
 
       // System
       getAppVersion: () => Promise<string>
+      getAppMode: () => Promise<{ mode: 'public' | 'private'; sources: string[] }>
       checkForUpdates: () => Promise<{
         status: 'up-to-date' | 'available' | 'unavailable' | 'error'
         currentVersion: string

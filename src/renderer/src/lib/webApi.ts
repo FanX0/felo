@@ -2007,7 +2007,11 @@ const webApi: Window['api'] = {
   }),
   fetchDeezerChart: async () => ({}),
   fetchDeezerRecommendations: async () => [],
-  getDesktopSources: async () => []
+  getDesktopSources: async () => [],
+  getAppMode: async () => ({
+    mode: 'public' as const,
+    sources: ['Local Library']
+  })
 }
 
 export function installWebApi(): void {
