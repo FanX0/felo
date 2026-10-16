@@ -9,7 +9,9 @@ files:
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md,README.private.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
-  - '!{.claude,.agents,scripts,scratch,docs}/**/*'
+  - '!{.claude,.agents,scripts,scratch,docs,coverage,tests,android,supabase,.vercel,.zed}/**/*'
+  - '!dist/**/*'
+  - '!**/*.log'
   - '!resources/providers/**/*'
 asarUnpack:
   - resources/**
@@ -33,7 +35,7 @@ protocols:
       - felo
 nsis:
   include: build/installer.nsh
-  artifactName: Felo-Public-${version}-Setup.${ext}
+  artifactName: Felo-${version}-Setup.${ext}
   installerIcon: build/icon.ico
   uninstallerIcon: build/icon.ico
   installerHeaderIcon: build/icon.ico
@@ -52,7 +54,7 @@ mac:
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
   notarize: false
 dmg:
-  artifactName: ${name}-Public-${version}.${ext}
+  artifactName: ${name}-${version}.${ext}
 linux:
   target:
     - AppImage
@@ -61,7 +63,7 @@ linux:
   maintainer: electronjs.org
   category: Utility
 appImage:
-  artifactName: ${name}-Public-${version}.${ext}
+  artifactName: ${name}-${version}.${ext}
 npmRebuild: false
 publish:
   provider: generic
