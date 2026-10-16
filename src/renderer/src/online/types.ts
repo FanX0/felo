@@ -54,10 +54,30 @@ export interface SharedSong {
   artworkUrl?: string
   isDeviceStream?: boolean
   isTrackStream?: boolean
-  streamType?: 'device_audio' | 'library' | 'track_stream'
+  streamType?: 'device_audio' | 'library' | 'track_stream' | 'youtube'
+  isYouTube?: boolean
+  videoId?: string
   requestedBy?: string
   isPriority?: boolean
   discordPriorityEnabled?: boolean
+  lanUrl?: string
+  audioUrl?: string
+  deviceId?: string
+  sizeBytes?: number
+  uploadStatus?: 'METADATA_ONLY' | 'UPLOADING' | 'UPLOADED' | 'ERROR'
+  uploadProgress?: number
+  statusText?: string
+  isAlreadyCompressed?: boolean
+  needsCompression?: boolean
+  estimatedBitrateKbps?: number
+  hostPosition?: number
+  hostTimestamp?: number
+  hostUpdatedAt?: number
+  playbackRate?: number
+  lyrics?: {
+    plainLyrics?: string
+    syncedLyrics?: string
+  }
 }
 
 export interface Conversation {
@@ -95,6 +115,19 @@ export interface SharedPlaylistItem {
   position: number
   created_at: string
 }
+export type RoomMemberRole = 'host' | 'co_host' | 'listener'
+export type SpeakerRole = 'center' | 'left' | 'right' | 'subwoofer'
+
+export interface RoomMember {
+  room_id: string
+  user_id: string
+  role: RoomMemberRole
+  speaker_role?: SpeakerRole
+  sub_cutoff?: number
+  joined_at: string
+  display_name?: string
+  avatar_url?: string | null
+}
 
 export interface ListeningRoom {
   id: string
@@ -120,6 +153,7 @@ export interface RoomChatMessage {
   created_at: string
   sender_display_name?: string
   sender_avatar_url?: string | null
+  isLocalSystem?: boolean
 }
 
 export type DeviceCategory = 'app_pc' | 'web_pc' | 'app_mobile' | 'web_mobile'
@@ -136,4 +170,20 @@ export interface UserConnectedDevice {
   last_seen_at: string
   is_active: boolean
 }
+
+export type RoomInvitationStatus = 'pending' | 'accepted' | 'declined' | 'dismissed'
+
+export interface ListeningRoomInvitation {
+  id: string
+  room_id: string
+  inviter_id: string
+  invitee_id: string
+  status: RoomInvitationStatus
+  created_at: string
+  updated_at: string
+  // Hydrated details
+  inviter?: Pick<OnlineProfile, 'id' | 'username' | 'display_name' | 'avatar_url'>
+  room?: Pick<ListeningRoom, 'id' | 'code' | 'name' | 'is_active' | 'song' | 'is_playing'>
+}
+
 

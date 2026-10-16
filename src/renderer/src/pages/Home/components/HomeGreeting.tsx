@@ -25,8 +25,8 @@ export function HomeGreeting({ tasteMetrics, isRefreshing, onRefresh }: HomeGree
             {greeting}
           </h1>
           {tasteMetrics?.listenerTier && (
-            <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-primary-amber/15 border border-primary-amber/30 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-primary-amber">
-              <Sparkles className="h-3 w-3" />
+            <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-surface-elevated border border-border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-text">
+              <Sparkles className="h-3 w-3 text-text-muted" />
               {tasteMetrics.listenerTier.title}
             </span>
           )}
@@ -37,7 +37,7 @@ export function HomeGreeting({ tasteMetrics, isRefreshing, onRefresh }: HomeGree
             <>
               <span className="text-white/20">•</span>
               <span className="inline-flex items-center gap-1 text-white/70">
-                <Clock className="h-3 w-3 text-secondary-cyan" />
+                <Clock className="h-3 w-3 text-text-muted" />
                 {tasteMetrics.chronotype.label}
               </span>
             </>
@@ -51,7 +51,7 @@ export function HomeGreeting({ tasteMetrics, isRefreshing, onRefresh }: HomeGree
           onClick={onRefresh}
           title="Refresh recommendations"
           disabled={isRefreshing}
-          className="flex h-8 items-center gap-2 rounded-full border border-white/10 bg-surface-elevated/80 px-3.5 text-xs font-bold text-text-muted transition-all hover:bg-hover hover:text-white disabled:opacity-50"
+          className="flex h-8 items-center gap-2 rounded-full border border-border bg-surface-elevated px-3.5 text-xs font-semibold text-text-muted transition-all hover:bg-hover hover:text-white disabled:opacity-50"
         >
           <RotateCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
           <span>Refresh</span>

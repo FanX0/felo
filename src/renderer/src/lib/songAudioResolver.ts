@@ -3,6 +3,8 @@ import { toMediaUrl } from './media'
 import { isElectron } from './appConfig'
 import { useConnectedDeviceStore } from '../hooks/useConnectedDeviceStore'
 import { remoteClient } from '../pages/Remote/remoteClient'
+import { getSongPublicBucketUrl, isSongUploadedToBucket } from './audioBucketService'
+import { getLocalSlotBlobUrl, getCachedAudioBlobUrl } from './jitAudioPipeline'
 
 /**
  * Resolves a playable media/audio stream URL for any song across all environments:
@@ -17,19 +19,52 @@ import { remoteClient } from '../pages/Remote/remoteClient'
 export function resolveSongAudioUrl(song?: Song | null): string | null {
   if (!song) return null
 
-  // 1. If song already has an active web playable URL (http, https, blob, data)
-  if (song.filePath && /^(blob:|data:|https?:)/i.test(song.filePath)) {
-    return song.filePath
+  // YouTube tracks are handled exclusively by YouTubePlayerBridge via the YouTube IFrame API
+  if (
+    (song as any).isYouTube ||
+    (typeof song.id === 'string' && song.id.startsWith('yt-')) ||
+    (song.audioUrl && /youtube\.com|youtu\.be/i.test(song.audioUrl)) ||
+    (song.filePath && /youtube\.com|youtu\.be/i.test(song.filePath))
+  ) {
+    return null
   }
 
-  // 2. If song has an explicit audioUrl attached
-  if (song.audioUrl && /^(https?:|blob:)/i.test(song.audioUrl)) {
+  // 1. If song filePath or audioUrl is already a local memory blob: or data: URL
+  if (song.filePath && /^(blob:|data:)/i.test(song.filePath)) {
+    return song.filePath
+  }
+  if (song.audioUrl && /^(blob:|data:)/i.test(song.audioUrl)) {
     return song.audioUrl
   }
 
-  // 3. If running in Electron desktop app and song has a real local path
-  if (isElectron && song.filePath && !song.filePath.startsWith('virtual:') && !song.isOnline) {
+  // 1b. High Priority: RAM cache (MUSIXQUARE auto-downloaded / preloaded bytes)
+  if (song.id) {
+    const cachedBlobUrl = getCachedAudioBlobUrl(song.id)
+    if (cachedBlobUrl) return cachedBlobUrl
+  }
+
+  // 1c. High Priority: Host local RAM slot pool
+  if (song.id) {
+    const slotBlobUrl = getLocalSlotBlobUrl(song.id)
+    if (slotBlobUrl) {
+      if (!song.audioUrl || !song.audioUrl.startsWith('blob:')) {
+        song.audioUrl = slotBlobUrl
+      }
+      return slotBlobUrl
+    }
+  }
+
+  // 2. If running in Electron desktop app and song has a real local path
+  if (isElectron && song.filePath && !song.filePath.startsWith('virtual:') && !song.isOnline && !/^https?:/i.test(song.filePath)) {
     return toMediaUrl(song.filePath)
+  }
+
+  // 3. If song has an explicit HTTP/HTTPS playable URL
+  if (song.filePath && /^https?:/i.test(song.filePath)) {
+    return song.filePath
+  }
+  if (song.audioUrl && /^https?:/i.test(song.audioUrl)) {
+    return song.audioUrl
   }
 
   // 4. Resolve via discovered active desktop device with local LAN IP
@@ -60,6 +95,36 @@ export function resolveSongAudioUrl(song?: Song | null): string | null {
   const remoteBase = remoteClient.getBaseUrl()
   if (remoteBase && song.id) {
     return remoteClient.getAudioStreamUrl(song.id)
+  }
+
+  // 6. Loopback / Local network fallback for web browsers running in dev mode or mobile on Wi-Fi.
+  // Uses direct URL to the Electron RemoteControlService on port 4788.
+  // The localhost auth bypass allows tokenless access for read-only media endpoints.
+  // NOTE: HTTP audio URLs are silently blocked on HTTPS pages (mixed content policy),
+  // so this fallback is only used when the page itself is served over HTTP.
+  if (typeof window !== 'undefined' && !isElectron && song.id && window.location.protocol !== 'https:') {
+    const host = window.location.hostname
+    if (host === 'localhost' || host === '127.0.0.1') {
+      return `http://127.0.0.1:4788/v1/audio/${encodeURIComponent(song.id)}`
+    }
+    if (
+      /^192\.168\./.test(host) ||
+      /^10\./.test(host) ||
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host) ||
+      host.endsWith('.local')
+    ) {
+      return `http://${host}:4788/v1/audio/${encodeURIComponent(song.id)}`
+    }
+  }
+
+  // 7. Cloud Audio Bucket (Supabase Storage) fallback for web / mobile clients.
+  // Only return the bucket URL if we have evidence the song was actually uploaded,
+  // to avoid returning a URL that will guaranteed 404 and trigger error → retry loops.
+  if (song.id && !isElectron) {
+    if (isSongUploadedToBucket(song.id)) {
+      return getSongPublicBucketUrl(song.id)
+    }
+    return null
   }
 
   return null

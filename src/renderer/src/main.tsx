@@ -9,8 +9,10 @@ import { registerServiceWorker } from './lib/registerServiceWorker'
 
 import { HashRouter } from 'react-router-dom'
 import { ThemeProvider, initTheme } from './components/Theme/ThemeProvider'
+import { initUiSounds } from './lib/uiSounds'
 
 initTheme()
+initUiSounds()
 installWebApi()
 void registerServiceWorker()
 

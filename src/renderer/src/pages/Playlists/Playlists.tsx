@@ -1,28 +1,14 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import {
-  CheckCircle2,
-  ExternalLink,
-  FileText,
-  Link,
-  MoreVertical,
-  Music2,
-  Play,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-  UploadCloud,
-  X
-} from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
-import { toMediaUrl } from '../../lib/media'
-import HighlightMatch from '../../components/Common/HighlightMatch'
-import { AppCapabilities, isPublicMode } from '../../lib/appConfig'
 import { Playlist } from './types'
 import { remoteClient } from '../Remote/remoteClient'
 import { remoteLibraryService } from '../../services/RemoteLibraryService'
+import CreatePlaylistModal from './CreatePlaylistModal'
+import { PlaylistsHeader } from './components/PlaylistsHeader'
+import { PlaylistCard } from './components/PlaylistCard'
+import { PlaylistContextMenu } from './components/PlaylistContextMenu'
+import { PlaylistsEmptyState } from './components/PlaylistsEmptyState'
 
 export default function Playlists() {
   const navigate = useNavigate()
@@ -38,7 +24,6 @@ export default function Playlists() {
   } | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
-  const searchInputRef = useRef<HTMLInputElement>(null)
 
   const loadPlaylists = async () => {
     try {
@@ -76,10 +61,6 @@ export default function Playlists() {
   useEffect(() => {
     void loadPlaylists()
   }, [])
-
-  useEffect(() => {
-    if (isSearchOpen) searchInputRef.current?.focus()
-  }, [isSearchOpen])
 
   useEffect(() => {
     const closeMenu = () => setActiveMenu(null)
@@ -176,55 +157,35 @@ export default function Playlists() {
     )
       return
     await window.api.deletePlaylist(playlistId)
-    setPlaylists((current) => current.filter((playlist) => playlist.id !== playlistId))
+    setPlaylists((current) => current.filter((item) => item.id !== playlistId))
     window.dispatchEvent(new CustomEvent('felo:playlists-updated'))
     setActiveMenu(null)
   }
 
+  const handleOpenMenu = (playlist: Playlist, rect: DOMRect) => {
+    const menuWidth = 220
+    const menuHeight = 104
+    setActiveMenu((current) =>
+      current?.playlist.id === playlist.id
+        ? null
+        : {
+            playlist,
+            x: Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12),
+            y: Math.min(rect.bottom + 8, window.innerHeight - menuHeight - 12)
+          }
+    )
+  }
+
   return (
     <div className="h-full flex-1 overflow-y-auto bg-[#121212] px-4 sm:px-6 md:px-10 pt-6 sm:pt-8 md:pt-10 pb-36 md:pb-10 text-white">
-      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 md:gap-8 border-b border-white/10 pb-6 md:pb-11">
-        <div className="flex min-w-0 items-baseline justify-between sm:justify-start gap-3 sm:gap-5">
-          <h1 className="truncate text-2xl sm:text-4xl md:text-[56px] font-black leading-tight sm:leading-none tracking-tight">
-            Your Playlists
-          </h1>
-          <span className="shrink-0 text-xs sm:text-base md:text-[18px] text-[#c9d7f2]">
-            {filteredPlaylists.length} playlists
-          </span>
-        </div>
-
-        <div className="flex shrink-0 items-center justify-between sm:justify-end gap-2 sm:gap-4 w-full sm:w-auto">
-          <div
-            className={`flex h-10 sm:h-[52px] origin-right items-center overflow-hidden rounded-full border border-border/60 bg-surface-elevated transition-all duration-300 ${isSearchOpen ? 'w-full sm:w-[315px] px-3 sm:px-4' : 'w-10 sm:w-[52px]'}`}
-          >
-            <button
-              type="button"
-              title="Search playlists"
-              onClick={() => setIsSearchOpen(true)}
-              className="flex h-10 sm:h-[52px] w-10 sm:w-[52px] shrink-0 items-center justify-center text-[#b3b3b3] hover:text-white"
-            >
-              <Search className="h-4 w-4 sm:h-5 sm:w-5" />
-            </button>
-            <input
-              ref={searchInputRef}
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              onBlur={() => !searchQuery && setIsSearchOpen(false)}
-              placeholder="Search playlists..."
-              className={`h-full min-w-0 flex-1 bg-transparent pr-2 sm:pr-3 text-sm sm:text-[16px] text-white outline-none placeholder:text-[#bdbdbd] ${isSearchOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
-            />
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setIsCreateOpen(true)}
-            className="flex h-10 sm:h-[52px] shrink-0 items-center gap-2 sm:gap-3 rounded-full bg-white px-4 sm:px-7 text-xs sm:text-[16px] font-bold text-black transition-all hover:scale-[1.02] hover:bg-white/90"
-          >
-            <Plus className="h-4 w-4 sm:h-5 sm:w-5 stroke-[3]" />
-            <span>Create Playlist</span>
-          </button>
-        </div>
-      </header>
+      <PlaylistsHeader
+        totalCount={filteredPlaylists.length}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        isSearchOpen={isSearchOpen}
+        setIsSearchOpen={setIsSearchOpen}
+        onCreateClick={() => setIsCreateOpen(true)}
+      />
 
       {isLoading ? (
         <div className="flex min-h-[360px] items-center justify-center">
@@ -235,150 +196,42 @@ export default function Playlists() {
           <p>{error}</p>
           <button
             onClick={() => void loadPlaylists()}
-            className="rounded-full bg-white px-5 py-2 font-bold text-black"
+            className="rounded-full bg-white px-5 py-2 font-bold text-black cursor-pointer"
           >
             Retry
           </button>
         </div>
       ) : filteredPlaylists.length ? (
         <div className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] md:grid-cols-[repeat(auto-fill,234px)] gap-3 sm:gap-6 md:gap-8 pt-6 sm:pt-10 md:pt-16">
-          {filteredPlaylists.map((playlist) => {
-            const artworkUrl = toMediaUrl(playlist.artworkPath)
-            return (
-              <div
-                key={playlist.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => navigate(`/playlists/${playlist.id}`)}
-                onKeyDown={(event) =>
-                  event.key === 'Enter' && navigate(`/playlists/${playlist.id}`)
-                }
-                className="group relative flex w-full sm:w-[234px] cursor-pointer flex-col rounded-xl bg-[#181818] p-3 sm:p-5 text-left transition-all hover:bg-[#282828] active:scale-[0.98]"
-              >
-                <div className="relative mb-3 sm:mb-5 flex aspect-square w-full sm:h-[194px] sm:w-[194px] items-center justify-center overflow-hidden rounded-lg bg-[#242424] shadow-[0_8px_22px_rgba(0,0,0,0.35)]">
-                  {artworkUrl ? (
-                    <img src={artworkUrl} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <Music2 className="h-10 w-10 sm:h-16 sm:w-16 fill-[#5f5f5f] text-[#5f5f5f]" />
-                  )}
-                  {playlist.songCount > 0 && (
-                    <button
-                      type="button"
-                      title={`Play ${playlist.name}`}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        void playPlaylist(playlist.id)
-                      }}
-                      className="absolute bottom-2 right-2 sm:bottom-3 sm:right-3 flex h-9 w-9 sm:h-12 sm:w-12 translate-y-2 items-center justify-center rounded-full bg-white text-black opacity-0 shadow-lg transition-all group-hover:translate-y-0 group-hover:opacity-100 hover:scale-105"
-                    >
-                      <Play className="ml-0.5 h-4 w-4 sm:h-5 sm:w-5 fill-current" />
-                    </button>
-                  )}
-                </div>
-                <div className="flex min-w-0 items-start justify-between gap-1.5 sm:gap-2">
-                  <div className="min-w-0">
-                    <h2 className="truncate text-sm sm:text-[18px] font-bold sm:font-black leading-tight sm:leading-6">
-                      <HighlightMatch text={playlist.name} query={searchQuery} />
-                    </h2>
-                    <p className="mt-1 sm:mt-2 truncate text-xs sm:text-[14px] font-medium text-[#b9c4d8]">
-                      {playlist.songCount} {playlist.songCount === 1 ? 'song' : 'songs'}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    title="Playlist options"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      const rect = event.currentTarget.getBoundingClientRect()
-                      const menuWidth = 220
-                      const menuHeight = 104
-                      setActiveMenu((current) =>
-                        current?.playlist.id === playlist.id
-                          ? null
-                          : {
-                              playlist,
-                              x: Math.min(
-                                rect.right - menuWidth,
-                                window.innerWidth - menuWidth - 12
-                              ),
-                              y: Math.min(rect.bottom + 8, window.innerHeight - menuHeight - 12)
-                            }
-                      )
-                    }}
-                    className={`mt-0.5 flex h-7 w-7 sm:h-8 sm:w-8 shrink-0 items-center justify-center rounded-[3px] border transition-all ${
-                      activeMenu?.playlist.id === playlist.id
-                        ? 'border-primary-amber bg-hover text-text opacity-100'
-                        : 'border-transparent text-[#b3b3b3] opacity-70 md:opacity-0 group-hover:opacity-100 hover:border-primary-amber hover:bg-hover hover:text-white'
-                    }`}
-                  >
-                    <MoreVertical className="h-4 w-4 sm:h-5 sm:w-5" />
-                  </button>
-                </div>
-              </div>
-            )
-          })}
+          {filteredPlaylists.map((playlist) => (
+            <PlaylistCard
+              key={playlist.id}
+              playlist={playlist}
+              searchQuery={searchQuery}
+              isMenuActive={activeMenu?.playlist.id === playlist.id}
+              onPlay={(pid) => void playPlaylist(pid)}
+              onOpenMenu={handleOpenMenu}
+            />
+          ))}
         </div>
       ) : (
-        <div className="flex min-h-[420px] flex-col items-center justify-center text-center text-[#b3b3b3]">
-          <Music2 className="mb-5 h-14 w-14" />
-          <h2 className="text-2xl font-black text-white">
-            {searchQuery ? 'No playlists found' : 'Create your first playlist'}
-          </h2>
-          <p className="mt-2 text-sm">
-            {searchQuery
-              ? 'Try another playlist search.'
-              : 'Collect songs into a playlist you can play anytime.'}
-          </p>
-          {!searchQuery && (
-            <button
-              type="button"
-              onClick={() => setIsCreateOpen(true)}
-              className="mt-6 flex items-center gap-2 rounded-full bg-white px-5 py-2.5 font-bold text-black"
-            >
-              <Plus className="h-4 w-4" /> Create Playlist
-            </button>
-          )}
-        </div>
+        <PlaylistsEmptyState
+          searchQuery={searchQuery}
+          onCreateClick={() => setIsCreateOpen(true)}
+        />
       )}
 
-      {activeMenu &&
-        createPortal(
-          <div
-            className="fixed z-[9999] w-[220px] rounded-lg border border-white/15 bg-[#1a1a1a] p-1 shadow-[0_8px_24px_rgba(0,0,0,0.8),0_2px_8px_rgba(0,0,0,0.4)]"
-            style={{ left: activeMenu.x, top: activeMenu.y }}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <button
-              type="button"
-              onClick={() => {
-                void playPlaylist(activeMenu.playlist.id)
-                setActiveMenu(null)
-              }}
-              disabled={activeMenu.playlist.songCount === 0}
-              className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Play className="h-4 w-4 fill-current" />
-              Play
-            </button>
-            <button
-              type="button"
-              onClick={() => void renamePlaylist(activeMenu.playlist.id)}
-              className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
-            >
-              <Pencil className="h-4 w-4" />
-              Rename playlist
-            </button>
-            <button
-              type="button"
-              onClick={() => void deletePlaylist(activeMenu.playlist.id)}
-              className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-danger transition-colors hover:bg-danger/10"
-            >
-              <Trash2 className="h-4 w-4 fill-current" />
-              Remove playlist
-            </button>
-          </div>,
-          document.body
-        )}
+      {activeMenu && (
+        <PlaylistContextMenu
+          playlist={activeMenu.playlist}
+          x={activeMenu.x}
+          y={activeMenu.y}
+          onClose={() => setActiveMenu(null)}
+          onPlay={(pid) => void playPlaylist(pid)}
+          onRename={(pid) => void renamePlaylist(pid)}
+          onDelete={(pid) => void deletePlaylist(pid)}
+        />
+      )}
 
       {isCreateOpen && (
         <CreatePlaylistModal
@@ -391,607 +244,5 @@ export default function Playlists() {
         />
       )}
     </div>
-  )
-}
-
-type ImportTab = 'CSV' | 'JSPF' | 'XSPF' | 'XML' | 'M3U'
-type ImportService = 'spotify' | 'apple' | 'youtube'
-
-interface ImportedTrack {
-  title: string
-  artist: string
-  album?: string
-  coverArt?: string
-  duration?: number
-  matchedSongId?: string
-}
-
-function normalizeImportValue(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function parseCSVRows(text: string): string[][] {
-  const rows: string[][] = []
-  let row: string[] = []
-  let field = ''
-  let inQuotes = false
-  const input = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-
-  for (let index = 0; index < input.length; index++) {
-    const character = input[index]
-    const next = input[index + 1]
-    if (character === '"') {
-      if (inQuotes && next === '"') {
-        field += '"'
-        index++
-      } else {
-        inQuotes = !inQuotes
-      }
-    } else if (character === ',' && !inQuotes) {
-      row.push(field.trim())
-      field = ''
-    } else if (character === '\n' && !inQuotes) {
-      row.push(field.trim())
-      if (row.some(Boolean)) rows.push(row)
-      row = []
-      field = ''
-    } else {
-      field += character
-    }
-  }
-
-  row.push(field.trim())
-  if (row.some(Boolean)) rows.push(row)
-  return rows
-}
-
-function findColumn(headers: string[], candidates: string[], avoid: string[] = []) {
-  for (const candidate of candidates) {
-    const exact = headers.findIndex((header) => header === candidate)
-    if (exact >= 0) return exact
-  }
-  for (const candidate of candidates) {
-    const partial = headers.findIndex(
-      (header) => header.includes(candidate) && !avoid.some((item) => header.includes(item))
-    )
-    if (partial >= 0) return partial
-  }
-  return -1
-}
-
-function parseImportCSV(text: string): ImportedTrack[] {
-  const rows = parseCSVRows(text)
-  if (rows.length < 2) return []
-  const headers = rows[0].map((header) => header.toLowerCase().replace(/[^a-z0-9]/g, ''))
-  const titleIndex = findColumn(
-    headers,
-    ['trackname', 'songname', 'tracktitle', 'title', 'song', 'track', 'name'],
-    ['url', 'uri', 'id']
-  )
-  const artistIndex = findColumn(headers, ['artistnames', 'artistname', 'artist', 'artists'])
-  const albumIndex = findColumn(headers, ['albumname', 'albumtitle', 'album'], ['image'])
-  const coverIndex = findColumn(headers, [
-    'albumimageurl',
-    'imageurl',
-    'coverarturl',
-    'coverurl',
-    'image'
-  ])
-  const durationIndex = findColumn(headers, ['trackdurationms', 'durationms', 'duration', 'length'])
-
-  if (titleIndex < 0) return []
-
-  return rows
-    .slice(1)
-    .map((row) => {
-      const title = row[titleIndex]?.replace(/\\,/g, ',').trim() || ''
-      const artist =
-        artistIndex >= 0 && row[artistIndex]?.trim()
-          ? row[artistIndex].replace(/\\,/g, ',').trim()
-          : 'Unknown Artist'
-      const rawDuration = durationIndex >= 0 ? Number(row[durationIndex]) : 0
-      return {
-        title,
-        artist,
-        album: albumIndex >= 0 ? row[albumIndex]?.trim() : '',
-        coverArt: coverIndex >= 0 ? row[coverIndex]?.trim() : '',
-        duration: Number.isFinite(rawDuration) && rawDuration > 0 ? rawDuration : undefined
-      }
-    })
-    .filter((track) => track.title)
-}
-
-function parseM3U(text: string): ImportedTrack[] {
-  const tracks: ImportedTrack[] = []
-  let pending: ImportedTrack | null = null
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    if (trimmed.startsWith('#EXTINF:')) {
-      const [, rest = ''] = trimmed.split(':')
-      const comma = rest.indexOf(',')
-      const label = comma >= 0 ? rest.slice(comma + 1).trim() : rest.trim()
-      const [artist, title] = label.includes(' - ')
-        ? label.split(' - ', 2)
-        : ['Unknown Artist', label]
-      pending = { title: title || label, artist: artist || 'Unknown Artist' }
-    } else if (!trimmed.startsWith('#')) {
-      if (pending?.title) {
-        tracks.push(pending)
-      } else {
-        const filename =
-          trimmed
-            .split(/[\\/]/)
-            .pop()
-            ?.replace(/\.[^.]+$/, '') || trimmed
-        const [artist, title] = filename.includes(' - ')
-          ? filename.split(' - ', 2)
-          : ['Unknown Artist', filename]
-        tracks.push({ title: title || filename, artist: artist || 'Unknown Artist' })
-      }
-      pending = null
-    }
-  }
-  return tracks
-}
-
-function parseJSPF(text: string): ImportedTrack[] {
-  try {
-    const json = JSON.parse(text)
-    const rawTracks = json?.playlist?.track || json?.tracks || []
-    return rawTracks
-      .map((track: any) => ({
-        title: track.title || track.name || '',
-        artist: track.creator || track.artist || 'Unknown Artist',
-        album: track.album || '',
-        coverArt: track.image || '',
-        duration: typeof track.duration === 'number' ? track.duration : undefined
-      }))
-      .filter((track: ImportedTrack) => track.title)
-  } catch {
-    return []
-  }
-}
-
-function parseXMLTracks(text: string): ImportedTrack[] {
-  const parser = new DOMParser()
-  const doc = parser.parseFromString(text, 'text/xml')
-  const tracks: ImportedTrack[] = []
-
-  doc.querySelectorAll('track').forEach((track) => {
-    const title = track.querySelector('title')?.textContent?.trim() || ''
-    const artist = track.querySelector('creator')?.textContent?.trim() || 'Unknown Artist'
-    if (title) {
-      tracks.push({
-        title,
-        artist,
-        album: track.querySelector('album')?.textContent?.trim() || '',
-        coverArt: track.querySelector('image')?.textContent?.trim() || ''
-      })
-    }
-  })
-
-  if (tracks.length) return tracks
-
-  doc.querySelectorAll('dict > dict > dict').forEach((dict) => {
-    let title = ''
-    let artist = 'Unknown Artist'
-    let album = ''
-    dict.querySelectorAll('key').forEach((key) => {
-      const value = key.nextElementSibling?.textContent?.trim() || ''
-      if (key.textContent === 'Name') title = value
-      if (key.textContent === 'Artist') artist = value
-      if (key.textContent === 'Album') album = value
-    })
-    if (title) tracks.push({ title, artist, album })
-  })
-
-  return tracks
-}
-
-function parseImportFile(text: string, fileName: string): ImportedTrack[] {
-  const extension = fileName.split('.').pop()?.toLowerCase()
-  if (extension === 'jspf' || extension === 'json') return parseJSPF(text)
-  if (extension === 'xspf' || extension === 'xml') return parseXMLTracks(text)
-  if (extension === 'm3u' || extension === 'm3u8') return parseM3U(text)
-  return parseImportCSV(text)
-}
-
-function matchImportedTracks(
-  importedTracks: ImportedTrack[],
-  librarySongs: any[]
-): ImportedTrack[] {
-  return importedTracks.map((track) => {
-    const title = normalizeImportValue(track.title)
-    const artist = normalizeImportValue(track.artist)
-    const match = librarySongs.find((song) => {
-      const songTitle = normalizeImportValue(song.title || '')
-      const songArtist = normalizeImportValue(song.artist || '')
-      return (
-        songTitle === title &&
-        (songArtist === artist || songArtist.includes(artist) || artist.includes(songArtist))
-      )
-    })
-    return { ...track, matchedSongId: match?.id }
-  })
-}
-
-function formatImportDuration(duration?: number) {
-  if (!duration) return ''
-  const seconds = duration > 10000 ? Math.floor(duration / 1000) : Math.floor(duration)
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
-}
-
-function CreatePlaylistModal({
-  onClose,
-  onCreated
-}: {
-  onClose: () => void
-  onCreated: (playlist: Playlist) => void
-}) {
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [activeTab, setActiveTab] = useState<ImportTab>('CSV')
-  const [selectedService, setSelectedService] = useState<ImportService>('spotify')
-  const [urlInput, setUrlInput] = useState('')
-  const [librarySongs, setLibrarySongs] = useState<any[]>([])
-  const [importedTracks, setImportedTracks] = useState<ImportedTrack[]>([])
-  const [isDragActive, setIsDragActive] = useState(false)
-  const [isSaving, setIsSaving] = useState(false)
-  const [isFetchingUrl, setIsFetchingUrl] = useState(false)
-  const [error, setError] = useState('')
-  const fileInputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    if (window.api?.getSongs) {
-      window.api
-        .getSongs()
-        .then((songs) => setLibrarySongs(songs || []))
-        .catch((err) => console.error('Failed to load songs for playlist import:', err))
-    } else {
-      setLibrarySongs(remoteClient.getIsConnected() ? [] : [])
-    }
-  }, [])
-
-  const matchedCount = importedTracks.filter((track) => track.matchedSongId).length
-
-  const processFile = (file: File) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const parsed = parseImportFile(String(reader.result || ''), file.name)
-      if (!parsed.length) {
-        setError('No valid tracks were found in that file.')
-        return
-      }
-      setImportedTracks(matchImportedTracks(parsed, librarySongs))
-      setError('')
-      if (!name.trim()) setName(file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' '))
-    }
-    reader.readAsText(file)
-  }
-
-  const fetchUrl = async () => {
-    if (!urlInput.trim()) return
-    if (!window.api?.fetchPlaylistImportMetadata) {
-      setError('Playlist import metadata fetching is only available on desktop.')
-      return
-    }
-    try {
-      setIsFetchingUrl(true)
-      setError('')
-      const metadata = await window.api.fetchPlaylistImportMetadata(urlInput.trim())
-      if (metadata?.name && !name.trim()) setName(metadata.name)
-      if (metadata?.description && !description.trim()) setDescription(metadata.description)
-      if (Array.isArray(metadata?.tracks) && metadata.tracks.length) {
-        setImportedTracks(matchImportedTracks(metadata.tracks as ImportedTrack[], librarySongs))
-      } else {
-        setError('Fetched playlist info. Upload an exported playlist file to import tracks.')
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch playlist URL.')
-    } finally {
-      setIsFetchingUrl(false)
-    }
-  }
-
-  const submit = async (event: FormEvent) => {
-    event.preventDefault()
-    if (!name.trim()) return
-    if (!window.api?.createPlaylist) {
-      setError('Creating playlists is only supported on desktop.')
-      return
-    }
-
-    try {
-      setIsSaving(true)
-      setError('')
-      const playlist = await window.api.createPlaylist({
-        name,
-        description,
-        tracks: importedTracks.length ? importedTracks : undefined,
-        songIds: importedTracks.length ? undefined : []
-      })
-      onCreated(playlist)
-    } catch (err) {
-      console.error('Failed to create playlist:', err)
-      setError('Could not create the playlist.')
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
-  const acceptedExtensions =
-    activeTab === 'CSV'
-      ? '.csv,.txt'
-      : activeTab === 'JSPF'
-        ? '.jspf,.json'
-        : activeTab === 'XSPF'
-          ? '.xspf'
-          : activeTab === 'XML'
-            ? '.xml'
-            : '.m3u,.m3u8'
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/75 p-4"
-      onMouseDown={onClose}
-    >
-      <form
-        onSubmit={submit}
-        onMouseDown={(event) => event.stopPropagation()}
-        className="max-h-[92vh] w-full max-w-[600px] overflow-y-auto rounded-[18px] border border-white/10 bg-[#121212] p-8 text-white shadow-2xl"
-      >
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={acceptedExtensions}
-          hidden
-          onChange={(event) => {
-            const file = event.target.files?.[0]
-            if (file) processFile(file)
-            event.currentTarget.value = ''
-          }}
-        />
-
-        <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-black">Create Playlist</h2>
-          <button type="button" onClick={onClose} className="p-1 text-[#b3b3b3] hover:text-white">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <input
-          autoFocus
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          className="mt-6 h-14 w-full rounded-lg border border-white/15 bg-white/[0.04] px-4 text-[16px] text-white outline-none focus:border-white/40 focus:ring-1 focus:ring-white/20"
-          placeholder="Playlist name"
-        />
-
-        <textarea
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-          rows={3}
-          className="mt-5 w-full resize-none rounded-lg border border-white/15 bg-white/[0.04] p-4 text-[15px] text-white outline-none focus:border-white/30"
-          placeholder="Description (optional)"
-        />
-
-        {AppCapabilities.playlistImport && (
-          <section className="mt-7 rounded-xl border border-white/10 bg-[#181818] p-5">
-            <div className="grid grid-cols-5 border-b border-white/10">
-              {(['CSV', 'JSPF', 'XSPF', 'XML', 'M3U'] as const).map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => setActiveTab(tab)}
-                  className={`pb-3 text-sm font-black ${
-                    activeTab === tab
-                      ? 'border-b-2 border-white text-white'
-                      : 'text-[#9ca3af] hover:text-white'
-                  }`}
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
-
-            <h3 className="mt-5 text-sm font-black">Import from {activeTab}</h3>
-
-            {activeTab === 'CSV' && (
-              <>
-                <div className="mt-4 grid grid-cols-3 gap-3">
-                  {[
-                    ['spotify', 'Spotify'],
-                    ['apple', 'Apple Music'],
-                    ['youtube', 'YouTube Music']
-                  ].map(([id, label]) => (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => setSelectedService(id as ImportService)}
-                      className={`rounded-lg border px-3 py-3 text-sm font-black ${
-                        selectedService === id
-                          ? 'border-white bg-white/10 text-white'
-                          : 'border-white/10 bg-white/[0.04] text-white hover:bg-white/10'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="mt-4 flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-[#d1d5db]">
-                  <ExternalLink className="h-4 w-4 shrink-0 text-text-muted" />
-                  <span>
-                    Spotify CSV works best from{' '}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (window.api?.openExternal) void window.api.openExternal('https://exportify.app/')
-                        else window.open('https://exportify.app/', '_blank')
-                      }}
-                      className="font-black text-white underline hover:text-white/80"
-                    >
-                      Exportify
-                    </button>
-                    . Apple Music and YouTube Music CSV exports are also accepted.
-                  </span>
-                </div>
-
-                {AppCapabilities.onlineDiscovery && !isPublicMode && (
-                  <div className="mt-4 flex gap-3">
-                    <div className="relative flex-1">
-                      <Link className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9ca3af]" />
-                      <input
-                        value={urlInput}
-                        onChange={(event) => setUrlInput(event.target.value)}
-                        className="h-12 w-full rounded-lg border border-white/15 bg-white/[0.06] pl-11 pr-4 text-white outline-none focus:border-white/40"
-                        placeholder="Paste Spotify playlist URL..."
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={fetchUrl}
-                      disabled={!urlInput.trim() || isFetchingUrl}
-                      className="rounded-lg bg-white px-5 font-black text-black hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {isFetchingUrl ? 'Fetching...' : 'Fetch'}
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-
-            {activeTab !== 'CSV' && (
-              <div className="mt-4 flex items-center gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-[#d1d5db]">
-                <FileText className="h-4 w-4 shrink-0 text-text-muted" />
-                <span>
-                  Drop or browse a .{activeTab.toLowerCase()} file. Tracks are matched against your
-                  local library when the playlist is saved.
-                </span>
-              </div>
-            )}
-
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              onDragOver={(event) => {
-                event.preventDefault()
-                setIsDragActive(true)
-              }}
-              onDragLeave={() => setIsDragActive(false)}
-              onDrop={(event) => {
-                event.preventDefault()
-                setIsDragActive(false)
-                const file = event.dataTransfer.files?.[0]
-                if (file) processFile(file)
-              }}
-              className={`mt-5 flex h-36 w-full flex-col items-center justify-center rounded-xl border-2 border-dashed text-center transition-colors ${
-                isDragActive
-                  ? 'border-white bg-white/10'
-                  : 'border-white/20 bg-white/[0.03] hover:border-white/40'
-              }`}
-            >
-              <UploadCloud className="h-8 w-8 text-[#9ca3af]" />
-              <span className="mt-3 font-black">Drop your {activeTab.toLowerCase()} file here</span>
-              <span className="mt-1 text-sm text-[#9ca3af]">or click to browse files</span>
-            </button>
-
-            {importedTracks.length > 0 && (
-              <div className="mt-5 overflow-hidden rounded-lg border border-white/10 bg-[#141414]">
-                <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-                  <span className="flex items-center gap-2 text-sm font-black">
-                    <CheckCircle2 className="h-4 w-4 text-text-muted" />
-                    {importedTracks.length} tracks imported · {matchedCount} local matches
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setImportedTracks([])}
-                    className="text-xs font-black text-[#9ca3af] hover:text-red-400"
-                  >
-                    Clear
-                  </button>
-                </div>
-                <div className="max-h-52 overflow-y-auto">
-                  {importedTracks.map((track, index) => (
-                    <div
-                      key={`${track.title}-${index}`}
-                      className="grid grid-cols-[28px_1fr_60px_28px] items-center gap-3 border-b border-white/[0.04] px-4 py-2 text-sm"
-                    >
-                      <span className="text-right text-[#9ca3af]">{index + 1}</span>
-                      <div className="min-w-0">
-                        <div className="truncate font-bold">{track.title}</div>
-                        <div className="truncate text-xs text-[#9ca3af]">
-                          {track.artist}
-                          {track.album ? ` · ${track.album}` : ''}
-                        </div>
-                      </div>
-                      <span className="text-xs text-[#9ca3af]">
-                        {formatImportDuration(track.duration)}
-                      </span>
-                      <span
-                        title={track.matchedSongId ? 'Matched local song' : 'No local match'}
-                        className={`h-2.5 w-2.5 rounded-full ${
-                          track.matchedSongId ? 'bg-white' : 'bg-white/20'
-                        }`}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="mt-5 border-t border-white/10 pt-4">
-              <div className="flex gap-2 text-xs leading-5 text-[#aeb7c4]">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
-                <p>
-                  {importedTracks.length > 0
-                    ? `All ${importedTracks.length} tracks will be added to your playlist. ${
-                        importedTracks.length - matchedCount > 0
-                          ? AppCapabilities.downloads
-                            ? `${importedTracks.length - matchedCount} tracks not yet in your local library can be downloaded directly from the playlist.`
-                            : `${importedTracks.length - matchedCount} tracks are not yet in your local library.`
-                          : 'All tracks matched in your local library!'
-                      }`
-                    : 'Track matching uses your local library.'}
-                </p>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {error && (
-          <p className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-            {error}
-          </p>
-        )}
-
-        <div className="mt-7 flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full border border-white/20 px-7 py-3 font-black text-white hover:bg-white/10"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={!name.trim() || isSaving}
-            className="rounded-full bg-white px-8 py-3 font-black text-black hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isSaving
-              ? 'Saving...'
-              : importedTracks.length
-                ? `Save (${importedTracks.length} Songs)`
-                : 'Save'}
-          </button>
-        </div>
-      </form>
-    </div>,
-    document.body
   )
 }

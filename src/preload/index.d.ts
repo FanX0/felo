@@ -60,6 +60,7 @@ declare global {
         executablePath: string | null
       }>
       launchMusicPresence: () => Promise<{ success: boolean; error?: string }>
+      relaunchApp?: () => Promise<void>
 
       // Charts & Recommendations
       fetchDeezerChart: (genreId?: number, limit?: number) => Promise<any>
@@ -69,7 +70,12 @@ declare global {
       selectFolder: (options?: { forceFiles?: boolean }) => Promise<string | null>
       selectFiles?: (options?: { accept?: string }) => Promise<string | null>
       scanLibrary: (folderPath: string) => Promise<number>
+      scanFiles?: (files: FileList | File[], folderName?: string) => Promise<number>
       getSongs: () => Promise<any[]>
+      readAudioFile?: (
+        songIdOrPath: string,
+        explicitPath?: string
+      ) => Promise<{ success: boolean; data?: ArrayBuffer; contentType?: string; size?: number; error?: string }>
 
       // Library Roots
       getLibraryRoots: () => Promise<any[]>
@@ -329,6 +335,7 @@ declare global {
         executablePath: string | null
       }>
       launchMusicPresence: () => Promise<{ success: boolean; error?: string }>
+      relaunchApp?: () => Promise<void>
 
       // Library Scanning
       cancelLibraryScan: () => Promise<boolean>
@@ -338,6 +345,16 @@ declare global {
       getDesktopSources: () => Promise<
         Array<{ id: string; name: string; thumbnail: string | null; appIcon: string | null }>
       >
+
+      // YouTube Metadata Resolver
+      getYouTubeMetadata: (urlOrId: string) => Promise<{
+        success: boolean
+        videoId?: string
+        title?: string
+        channel?: string
+        thumbnailUrl?: string
+        error?: string
+      }>
 
       // Window
       minimizeWindow: () => void

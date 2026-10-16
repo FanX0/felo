@@ -1,4 +1,14 @@
 // Client-side Service Worker registration and lifecycle management for Felo PWA
+// Enhanced with context-aware, zero-disruption update logic (MUSIXQUARE pattern)
+
+import {
+  handleWaitingWorker,
+  armDeferredPromptRetry,
+  handlePassiveControllerChange,
+  activateWorkerAndReload
+} from './swUpdateCoordinator'
+import { useListeningStore } from '../hooks/useListeningStore'
+import { usePlayerStore } from '../hooks/usePlayerStore'
 
 export interface ServiceWorkerStatus {
   supported: boolean
@@ -39,7 +49,19 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
       window.dispatchEvent(new CustomEvent('felo:sw-offline-ready'))
     }
 
-    // Check for updates
+    // 1. Passive controllerchange listener:
+    // If another tab accepted an update, or a waiting worker activates, this tab receives controllerchange.
+    // We pass it to handlePassiveControllerChange() so tabs with active rooms/playback won't reload!
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      handlePassiveControllerChange()
+    })
+
+    // 2. Check for waiting worker already installed before this document loaded
+    if (registration.waiting && navigator.serviceWorker.controller) {
+      void handleWaitingWorker(registration.waiting, registration)
+    }
+
+    // 3. Listen for future incoming worker updates
     registration.onupdatefound = () => {
       const installingWorker = registration.installing
       if (!installingWorker) return
@@ -47,17 +69,53 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
       installingWorker.onstatechange = () => {
         if (installingWorker.state === 'installed') {
           if (navigator.serviceWorker.controller) {
-            // New content is available and will be used when all tabs are closed or updated
-            console.log('[PWA] New content is available; please refresh.')
+            console.log('[PWA] New content is available; coordinating update presentation...')
             window.dispatchEvent(new CustomEvent('felo:sw-updated', { detail: { registration } }))
+            void handleWaitingWorker(registration.waiting || installingWorker, registration)
           } else {
-            // Content is cached for offline use
             console.log('[PWA] Content is cached for offline use.')
             window.dispatchEvent(new CustomEvent('felo:sw-offline-ready'))
           }
         }
       }
     }
+
+    // 4. Lifecycle listeners: When returning from a room or pausing playback to idle,
+    // re-evaluate any deferred prompt after a 1-second settle timer.
+    useListeningStore.subscribe((state, prev) => {
+      const hadRoom = Boolean(prev.hostRoom || prev.joinedRoom || prev.isJoiningRoom)
+      const hasRoom = Boolean(state.hostRoom || state.joinedRoom || state.isJoiningRoom)
+      if (hadRoom && !hasRoom) {
+        armDeferredPromptRetry(registration)
+      }
+    })
+
+    usePlayerStore.subscribe((state, prev) => {
+      if (prev.isPlaying && !state.isPlaying) {
+        armDeferredPromptRetry(registration)
+      }
+    })
+
+    // 5. Periodic update check (every 60 minutes when tab is visible and online)
+    const UPDATE_INTERVAL_MS = 60 * 60 * 1000
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState !== 'hidden' && navigator.onLine !== false) {
+        registration.update().catch(() => {
+          // Ignore background update errors
+        })
+      }
+    }, UPDATE_INTERVAL_MS)
+
+    // Immediate update check on boot if visible and online
+    if (document.visibilityState !== 'hidden' && navigator.onLine !== false) {
+      registration.update().catch(() => {
+        // Ignore initial check errors
+      })
+    }
+
+    window.addEventListener('beforeunload', () => {
+      clearInterval(intervalId)
+    })
 
     return registration
   } catch (error) {
@@ -72,14 +130,7 @@ export function skipWaitingAndReload(): void {
     return
   }
 
-  const waitingWorker = registrationInstance.waiting
-  const channel = new MessageChannel()
-  channel.port1.onmessage = () => {
-    window.location.reload()
-  }
-
-  waitingWorker.postMessage({ type: 'SKIP_WAITING' }, [channel.port2])
-  window.setTimeout(() => window.location.reload(), 500)
+  activateWorkerAndReload(registrationInstance.waiting)
 }
 
 export async function clearAppCache(): Promise<boolean> {

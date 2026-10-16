@@ -448,6 +448,10 @@ export default function CrossTabSyncBridge(): null {
 
     // ─── 3. Local Desktop Loopback Probe (Web Browser Mode) ───────────
     // If running in browser on localhost or HTTP, probe desktop app on 127.0.0.1:4788
+    // to discover its auth token. This lets songAudioResolver stream audio from the
+    // desktop's HTTP server without requiring manual token entry.
+    // NOTE: We do NOT steal isAudioActive here — the browser plays audio independently
+    // using the desktop as a media proxy.
     if (!isElectron && typeof window !== 'undefined' && window.location.protocol === 'http:') {
       const probeDesktop = async () => {
         try {
@@ -456,25 +460,20 @@ export default function CrossTabSyncBridge(): null {
           })
           if (res.ok) {
             const data = await res.json()
-            if (data?.isPlaying) {
-              const state = usePlayerStore.getState()
-              if (state.isAudioActive && state.isPlaying) {
-                // Desktop app on same machine is playing audio! Yield web audio.
-                const audio = getActiveAudioElement()
-                if (audio && !audio.paused) {
-                  audio.pause()
-                }
-                state.setIsAudioActive(false, 'felo-desktop-local')
-                state.setIsPlaying(false)
-              }
+            // Store the token so songAudioResolver can include it in audio URLs
+            if (data?.token) {
+              ;(window as any).__feloDesktopToken = data.token
             }
           }
         } catch {
-          // Desktop app not running or unreachable
+          // Desktop app not running or unreachable — clear cached token
+          ;(window as any).__feloDesktopToken = undefined
         }
       }
 
-      desktopProbeTimerRef.current = setInterval(probeDesktop, 3000)
+      // Probe immediately on mount, then periodically
+      void probeDesktop()
+      desktopProbeTimerRef.current = setInterval(probeDesktop, 5000)
     }
 
     const handleBeforeUnload = () => {

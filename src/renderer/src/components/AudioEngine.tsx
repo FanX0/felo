@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { registerActiveAudioElement } from '../lib/audioBridge'
+import { Volume2 } from 'lucide-react'
+import { registerActiveAudioElement, notifyAudioTrackChanged } from '../lib/audioBridge'
 import { usePlayerStore } from '../hooks/usePlayerStore'
 import { usePrivateSessionStore } from '../hooks/usePrivateSessionStore'
 import { toMediaUrl } from '../lib/media'
@@ -8,6 +9,13 @@ import type { Song } from '../pages/Library/Library'
 import { remoteClient } from '../pages/Remote/remoteClient'
 import { resolveSongAudioUrl } from '../lib/songAudioResolver'
 import { useConnectedDeviceStore } from '../hooks/useConnectedDeviceStore'
+import { useListeningStore } from '../hooks/useListeningStore'
+import { audioDspEngine } from '../lib/audioDspEngine'
+import { getLocalSlotPoolFile } from '../lib/jitAudioPipeline'
+import { getTrackDisplayTitle } from '../lib/songUtils'
+import YouTubePlayerBridge from './Audio/YouTubePlayerBridge'
+import { isYouTubeSong } from '../lib/youtubeService'
+import { isElectron } from '../lib/appConfig'
 
 function shouldMaskMediaSession(): boolean {
   const { isPrivateSession, maskMediaSession } = usePrivateSessionStore.getState()
@@ -83,6 +91,22 @@ function safeSetPlaybackState(state: 'none' | 'paused' | 'playing'): void {
   }
 }
 
+/**
+ * Safari / WebKit AudioSession category hint (direct port from MUSIXQUARE media-session.ts).
+ * Declaring 'playback' category ensures audio remains audible across app backgrounding,
+ * screen locks, and ignores the physical mute switch on iOS.
+ */
+function requestPlaybackAudioSession(): void {
+  if (typeof navigator === 'undefined') return
+  const audioSession = (navigator as any).audioSession
+  if (!audioSession) return
+  try {
+    audioSession.type = 'playback'
+  } catch (error) {
+    console.debug('[AudioEngine] Playback audio session is unavailable:', error)
+  }
+}
+
 async function getArtworkSource(song?: Song) {
   const artworkUrl = toMediaUrl(song?.artworkPath) || song?.artworkUrl
   if (!artworkUrl) return null
@@ -117,7 +141,11 @@ function updateMediaPosition(audio: HTMLAudioElement): void {
 }
 
 export default function AudioEngine() {
-  const audioRef = useRef<HTMLAudioElement>(null)
+  const isAutoplayBlocked = useListeningStore((s) => s.isAutoplayBlocked)
+  const audioRefA = useRef<HTMLAudioElement>(null)
+  const audioRefB = useRef<HTMLAudioElement>(null)
+  const activeChannelRef = useRef<'A' | 'B'>('A')
+
   const pendingSeekRef = useRef<number | null>(null)
   const resumeAfterSeekRef = useRef(false)
   const mediaMetadataGenerationRef = useRef(0)
@@ -128,22 +156,100 @@ export default function AudioEngine() {
   const playTimeAccumulatedRef = useRef<number>(0)
   const lastPlayTickRef = useRef<number>(0)
   const isChangingSourceRef = useRef(false)
+  const isCrossfadingRef = useRef(false)
+  const crossfadeTimerRef = useRef<number | null>(null)
+  const preloadedUrlRef = useRef<string | null>(null)
+  const decodeGenerationRef = useRef(0)
+  const localBufferLoadedSongIdRef = useRef<string | null>(null)
+  void decodeGenerationRef
+  void localBufferLoadedSongIdRef
 
-  useEffect(() => {
-    registerActiveAudioElement(audioRef.current)
-    return () => registerActiveAudioElement(null)
+  const getActiveAudio = useCallback((): HTMLAudioElement | null => {
+    return activeChannelRef.current === 'A' ? audioRefA.current : audioRefB.current
   }, [])
 
+  const getInactiveAudio = useCallback((): HTMLAudioElement | null => {
+    return activeChannelRef.current === 'A' ? audioRefB.current : audioRefA.current
+  }, [])
+
+  // Mount: Attach both audio channels to the DSP graph and register the active element
+  useEffect(() => {
+    if (audioRefA.current) {
+      audioDspEngine.attachAudioElement(audioRefA.current, 'A')
+    }
+    if (audioRefB.current) {
+      audioDspEngine.attachAudioElement(audioRefB.current, 'B')
+    }
+    registerActiveAudioElement(getActiveAudio())
+    requestPlaybackAudioSession()
+    audioDspEngine.setCrossfadeMix(0, 0.01)
+    audioDspEngine.setMasterVolume(usePlayerStore.getState().volume, 0)
+
+    return () => {
+      registerActiveAudioElement(null)
+      audioDspEngine.detachAudioElement()
+    }
+  }, [getActiveAudio])
+
+  // MUSIXQUARE-style global gesture recovery for mobile browsers (iOS WebKit / Android Chrome)
+  useEffect(() => {
+    const resumeFromGesture = () => {
+      const audio = getActiveAudio()
+      if (audio && usePlayerStore.getState().isPlaying && audio.paused) {
+        audio.play().then(
+          () => useListeningStore.getState().setIsAutoplayBlocked(false),
+          () => {}
+        )
+      }
+      void audioDspEngine.resume()
+    }
+    window.addEventListener('pointerdown', resumeFromGesture, { capture: true, passive: true })
+    window.addEventListener('touchstart', resumeFromGesture, { capture: true, passive: true })
+    window.addEventListener('keydown', resumeFromGesture, { capture: true, passive: true })
+    return () => {
+      window.removeEventListener('pointerdown', resumeFromGesture, { capture: true })
+      window.removeEventListener('touchstart', resumeFromGesture, { capture: true })
+      window.removeEventListener('keydown', resumeFromGesture, { capture: true })
+    }
+  }, [getActiveAudio])
+
+  // Pause playback if this device switches to remote controller mode
   useEffect(() => {
     return useConnectedDeviceStore.subscribe((state, previousState) => {
-      if (state.devicePlaybackMode === 'remote_controller' && previousState.devicePlaybackMode !== 'remote_controller') {
-        const audio = audioRef.current
-        if (audio && !audio.paused) {
-          audio.pause()
-        }
+      const isJoinedListeningRoom = Boolean(useListeningStore.getState().joinedRoom)
+      if (
+        !isJoinedListeningRoom &&
+        state.devicePlaybackMode === 'remote_controller' &&
+        previousState.devicePlaybackMode !== 'remote_controller'
+      ) {
+        const audioA = audioRefA.current
+        const audioB = audioRefB.current
+        if (audioA && !audioA.paused) audioA.pause()
+        if (audioB && !audioB.paused) audioB.pause()
       }
     })
   }, [])
+
+  // WebKit Background wake & frozen clock stall health recovery (from MUSIXQUARE)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && usePlayerStore.getState().isPlaying) {
+        void audioDspEngine.probeAudioContextHealth({ attemptResume: true }).then((health) => {
+          if (health.reason === 'clock-stalled') {
+            console.warn('[AudioEngine] WebKit AudioContext clock freeze detected upon foreground return; restarting output')
+            const activeAudio = getActiveAudio()
+            if (activeAudio && !activeAudio.paused) {
+              audioDspEngine.restartAudioContextFromGesture().catch(() => {})
+            }
+          }
+        })
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [getActiveAudio])
+
   const volume = usePlayerStore((s) => s.volume)
   const seekRequest = usePlayerStore((s) => s.seekRequest)
   const playNext = usePlayerStore((s) => s.playNext)
@@ -153,14 +259,53 @@ export default function AudioEngine() {
   const setIsPlaying = usePlayerStore((s) => s.setIsPlaying)
   const setIsBuffering = usePlayerStore((s) => s.setIsBuffering)
   const seek = usePlayerStore((s) => s.seek)
+  const skipTime = usePlayerStore((s) => s.skipTime)
   const clearSeekRequest = usePlayerStore((s) => s.clearSeekRequest)
+
+  const handleEnded = useCallback(
+    (channel: 'A' | 'B') => {
+      if (isCrossfadingRef.current) return
+      if (channel !== activeChannelRef.current) return
+      const isBuf = audioDspEngine.isBufferActive(channel)
+      const audio = getActiveAudio()
+      if (!isBuf && (!audio?.src || audio.src.startsWith('data:audio/'))) return
+
+      const storeState = usePlayerStore.getState()
+      if (!storeState.isAudioActive) return
+      const activeSong = storeState.queue[storeState.currentSongIndex]
+      if (activeSong && scrobbledSongIdRef.current !== activeSong.id) {
+        scrobbledSongIdRef.current = activeSong.id
+        const contextType = storeState.playbackContext?.type || 'library'
+        void recordCertifiedScrobble(
+          activeSong,
+          activeSong.duration || playTimeAccumulatedRef.current,
+          1.0,
+          contextType
+        )
+      }
+      if (isBuf) {
+        audioDspEngine.stopBuffer(channel)
+      }
+      playNext(false)
+    },
+    [getActiveAudio, playNext]
+  )
 
   const applySeek = useCallback(
     (time: number) => {
-      const audio = audioRef.current
+      // Avoid micro-stutter/pop if seekRequest(0) arrives mid-crossfade
+      if (isCrossfadingRef.current && time === 0) return true
+
+      if (audioDspEngine.isBufferActive(activeChannelRef.current)) {
+        audioDspEngine.seekBuffer(time, activeChannelRef.current)
+        setCurrentTime(time)
+        return true
+      }
+
+      const audio = getActiveAudio()
       if (!audio) return false
 
-      resumeAfterSeekRef.current = usePlayerStore.getState().isPlaying && !audio.paused
+      resumeAfterSeekRef.current = usePlayerStore.getState().isPlaying
 
       if (audio.readyState < HTMLMediaElement.HAVE_METADATA) {
         pendingSeekRef.current = time
@@ -168,69 +313,280 @@ export default function AudioEngine() {
       }
 
       const duration = Number.isFinite(audio.duration) ? audio.duration : time
+      const wasEnded = audio.ended
       audio.currentTime = Math.max(0, Math.min(time, duration))
       setCurrentTime(audio.currentTime)
 
+      if ((wasEnded || audio.paused) && resumeAfterSeekRef.current) {
+        audio.play().catch((err) => {
+          console.warn('[AudioEngine] Playback failed resuming after ended:', err)
+        })
+      }
+
       return true
     },
-    [setCurrentTime]
+    [getActiveAudio, setCurrentTime]
   )
+
+  // Web Audio buffer source position sync ticker
+  useEffect(() => {
+    let animId: number
+    const tick = () => {
+      const channel = activeChannelRef.current
+      if (audioDspEngine.isBufferPlaying(channel)) {
+        const curTime = audioDspEngine.getBufferPosition(channel)
+        const buf = audioDspEngine.getCurrentAudioBuffer(channel)
+        const dur = buf?.duration || 0
+        setCurrentTime(curTime)
+        if (dur > 0) setDuration(dur)
+        if (usePlayerStore.getState().isBuffering) {
+          setIsBuffering(false)
+        }
+
+        // Scrobble tracking for buffer source
+        const storeState = usePlayerStore.getState()
+        const activeSong = storeState.queue[storeState.currentSongIndex]
+        if (activeSong && scrobbledSongIdRef.current !== activeSong.id) {
+          const songDur = dur || activeSong.duration || 0
+          const isThirtySeconds = curTime >= 30
+          const isHalfway = songDur > 0 && curTime / songDur >= 0.5
+          if (isThirtySeconds || isHalfway) {
+            scrobbledSongIdRef.current = activeSong.id
+            const contextType = storeState.playbackContext?.type || 'library'
+            void recordCertifiedScrobble(
+              activeSong,
+              songDur,
+              songDur > 0 ? curTime / songDur : 1.0,
+              contextType
+            )
+          }
+        }
+      }
+      animId = requestAnimationFrame(tick)
+    }
+    animId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(animId)
+  }, [setCurrentTime, setDuration])
 
   const startPlayback = (audio: HTMLAudioElement) => {
     if (!audio.src) return
+    requestPlaybackAudioSession()
+    const isJoinedListeningRoom = Boolean(useListeningStore.getState().joinedRoom)
     const mode = useConnectedDeviceStore.getState().devicePlaybackMode
-    if (mode === 'remote_controller') {
+    if (mode === 'remote_controller' && !isJoinedListeningRoom) {
       if (!audio.paused) audio.pause()
       return
     }
     remoteClient.pauseMobileAudio()
+    audio.muted = false
+    void audioDspEngine.resume()
+    console.log('[AudioEngine] startPlayback called, src:', audio.src.substring(0, 80), 'readyState:', audio.readyState)
     try {
       const playPromise = audio.play()
       if (playPromise !== undefined) {
         playPromise.then(
-          () => undefined,
+          () => {
+            console.log('[AudioEngine] play() succeeded')
+            useListeningStore.getState().setIsAutoplayBlocked(false)
+          },
           (error) => {
             if (error instanceof DOMException && error.name === 'AbortError') return
-            // If we are currently changing sources or audio is still decoding/fetching metadata,
-            // play() naturally rejects before the browser decodes data.
-            // DO NOT reset isPlaying to false in that case! onCanPlay will resume playback.
-            if (isChangingSourceRef.current || audio.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+            if (
+              isChangingSourceRef.current ||
+              audio.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+              audio.networkState === HTMLMediaElement.NETWORK_LOADING
+            ) {
+              console.log('[AudioEngine] play() pending source load, will retry on canplay:', error?.message)
               return
             }
-            console.warn('Playback failed:', error)
-            usePlayerStore.getState().setIsPlaying(false)
+            if (error instanceof DOMException && error.name === 'NotAllowedError') {
+              console.warn('[AudioEngine] Autoplay blocked by browser. User tap needed to unlock speaker.')
+              useListeningStore.getState().setIsAutoplayBlocked(true)
+              return
+            }
+            console.warn('[AudioEngine] Playback failed (will retry on canplay/loaded):', error)
           }
         )
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.name === 'NotAllowedError') {
+        useListeningStore.getState().setIsAutoplayBlocked(true)
+        return
+      }
       console.warn('Synchronous play() exception:', err)
-      usePlayerStore.getState().setIsPlaying(false)
     }
   }
 
   const resumePendingPlayback = (audio: HTMLAudioElement) => {
     const state = usePlayerStore.getState()
-    if (!state.isPlaying || !state.isAudioActive || !audio.paused) return
+    if (!state.isPlaying || !state.isAudioActive || !audio.paused) {
+      return
+    }
     const mode = useConnectedDeviceStore.getState().devicePlaybackMode
     if (mode === 'remote_controller') return
     startPlayback(audio)
   }
 
-  // Zustand subscriptions run inside the original click event. This keeps browser
-  // playback within the user activation required by strict autoplay policies.
-  useEffect(() => {
-    const audio = audioRef.current
-    if (!audio) return
+  // Preload the upcoming track onto the inactive channel for 0ms gapless transitions
+  const schedulePreload = useCallback(() => {
+    const state = usePlayerStore.getState()
+    let nextSong: Song | undefined
+    if (state.repeatMode === 'one') {
+      nextSong = state.queue[state.currentSongIndex]
+    } else {
+      const nextIndex = state.currentSongIndex + 1
+      nextSong = state.queue[nextIndex]
+      if (!nextSong && state.repeatMode === 'all' && state.queue.length > 0) {
+        nextSong = state.queue[0]
+      }
+    }
+    if (!nextSong) {
+      preloadedUrlRef.current = null
+      return
+    }
 
+    const nextUrl = resolveSongAudioUrl(nextSong)
+    if (!nextUrl) {
+      preloadedUrlRef.current = null
+      return
+    }
+
+    const inactiveAudio = getInactiveAudio()
+    if (!inactiveAudio) return
+
+    if (preloadedUrlRef.current !== nextUrl) {
+      preloadedUrlRef.current = nextUrl
+      if (/^(https?|media):/i.test(nextUrl)) {
+        inactiveAudio.crossOrigin = 'anonymous'
+      } else {
+        inactiveAudio.removeAttribute('crossOrigin')
+      }
+      inactiveAudio.src = nextUrl
+      inactiveAudio.preload = 'auto'
+      inactiveAudio.load()
+      console.log(`[AudioEngine] Preloaded track "${nextSong.title}" onto inactive Channel ${activeChannelRef.current === 'A' ? 'B' : 'A'}`)
+    }
+  }, [getInactiveAudio])
+
+  // Trigger studio-grade equal-power cosine crossfade between Channel A and Channel B
+  const triggerCrossfade = useCallback(
+    (fadeDuration: number) => {
+      if (isCrossfadingRef.current) return
+      const state = usePlayerStore.getState()
+      let nextSong: Song | undefined
+      if (state.repeatMode === 'one') {
+        nextSong = state.queue[state.currentSongIndex]
+      } else {
+        const nextIndex = state.currentSongIndex + 1
+        nextSong = state.queue[nextIndex]
+        if (!nextSong && state.repeatMode === 'all' && state.queue.length > 0) {
+          nextSong = state.queue[0]
+        }
+      }
+      if (!nextSong) return
+
+      const nextUrl = resolveSongAudioUrl(nextSong)
+      if (!nextUrl) return
+
+      const outgoingChannel = activeChannelRef.current
+      const incomingChannel = outgoingChannel === 'A' ? 'B' : 'A'
+      const outgoingAudio = outgoingChannel === 'A' ? audioRefA.current : audioRefB.current
+      const incomingAudio = incomingChannel === 'B' ? audioRefB.current : audioRefA.current
+      if (!outgoingAudio || !incomingAudio) return
+
+      isCrossfadingRef.current = true
+      console.log(`[AudioEngine] Crossfading from Channel ${outgoingChannel} to Channel ${incomingChannel} (${fadeDuration}s) for "${nextSong.title}"`)
+
+      if (incomingAudio.src !== nextUrl) {
+        if (/^(https?|media):/i.test(nextUrl)) {
+          incomingAudio.crossOrigin = 'anonymous'
+        } else {
+          incomingAudio.removeAttribute('crossOrigin')
+        }
+        incomingAudio.src = nextUrl
+      }
+      incomingAudio.currentTime = 0
+      incomingAudio.muted = false
+
+      void audioDspEngine.resume()
+      incomingAudio
+        .play()
+        .then(() => {
+          // Equal-power cosine/sine crossfade: 0 = 100% Channel A, 1 = 100% Channel B
+          const targetMix = incomingChannel === 'B' ? 1.0 : 0.0
+          audioDspEngine.setCrossfadeMix(targetMix, fadeDuration)
+
+          activeChannelRef.current = incomingChannel
+          registerActiveAudioElement(incomingAudio)
+          currentSourceRef.current = nextUrl
+          scrobbledSongIdRef.current = null
+          playTimeAccumulatedRef.current = 0
+          lastPlayTickRef.current = performance.now()
+          preloadedUrlRef.current = null
+
+          // Advance player queue without resetting incoming channel
+          state.playNext(false)
+
+          if (crossfadeTimerRef.current !== null) {
+            window.clearTimeout(crossfadeTimerRef.current)
+          }
+          crossfadeTimerRef.current = window.setTimeout(() => {
+            try {
+              outgoingAudio.pause()
+              outgoingAudio.removeAttribute('src')
+              outgoingAudio.load()
+            } catch {}
+            isCrossfadingRef.current = false
+            schedulePreload()
+          }, Math.round(fadeDuration * 1000) + 120)
+        })
+        .catch((err) => {
+          console.warn('[AudioEngine] Crossfade incoming play error:', err)
+          isCrossfadingRef.current = false
+        })
+    },
+    [schedulePreload]
+  )
+
+  // Synchronize player store state with active audio channel
+  useEffect(() => {
     const syncAudio = (state: ReturnType<typeof usePlayerStore.getState>) => {
       try {
         const song = state.queue[state.currentSongIndex]
         const playableUrl = song ? resolveSongAudioUrl(song) : null
         const isVirtual = !playableUrl
+        const audio = getActiveAudio()
+        if (!audio) return
+
         if (isVirtual) {
           currentSourceRef.current = null
-          retryCountRef.current = 0
           if (song) {
+            if (isYouTubeSong(song)) {
+              usePlayerStore.setState({ isBuffering: false, isAudioActive: true })
+            }
+
+            // Web environment: no PlaybackStreamBridge or DownloadEventBridge available,
+            // so virtual songs with no playable URL will never resolve. Clear buffering
+            // immediately and auto-advance to prevent infinite loading spinner.
+            if (!isElectron && state.isBuffering) {
+              usePlayerStore.setState({ isBuffering: false })
+              if (!isYouTubeSong(song)) {
+                console.warn('[AudioEngine] Virtual song with no playback path on web:', song.title)
+                window.dispatchEvent(new CustomEvent('felo:track-unavailable', {
+                  detail: {
+                    title: song.title,
+                    artist: song.artist,
+                    message: `Track "${song.title}" is unavailable for playback in web mode.`
+                  }
+                }))
+                if (state.queue.length > 1) {
+                  setTimeout(() => usePlayerStore.getState().playNext(), 100)
+                } else {
+                  usePlayerStore.setState({ isPlaying: false })
+                }
+              }
+            }
+
             if (shouldMaskMediaSession()) {
               safeSetMediaMetadata({
                 title: 'Private Session',
@@ -241,7 +597,7 @@ export default function AudioEngine() {
               safeSetPlaybackState((state.isPlaying && state.isAudioActive) || state.isBuffering ? 'playing' : 'paused')
             } else {
               safeSetMediaMetadata({
-                title: song.title || 'Buffering Track...',
+                title: getTrackDisplayTitle(song, 'Buffering Track...'),
                 artist: song.artist || '',
                 album: song.album || 'Felo',
                 artwork: []
@@ -250,7 +606,7 @@ export default function AudioEngine() {
               void getArtworkSource(song).then((artwork) => {
                 if (!artwork || shouldMaskMediaSession()) return
                 safeSetMediaMetadata({
-                  title: song.title || 'Buffering Track...',
+                  title: getTrackDisplayTitle(song, 'Buffering Track...'),
                   artist: song.artist || '',
                   album: song.album || 'Felo',
                   artwork: getArtworkEntries(artwork.srcs, artwork.type)
@@ -266,23 +622,249 @@ export default function AudioEngine() {
             audio.removeAttribute('src')
             audio.load()
           }
+          const otherAudio = getInactiveAudio()
+          if (otherAudio && otherAudio.src) {
+            otherAudio.pause()
+            otherAudio.removeAttribute('src')
+            otherAudio.load()
+          }
           return
         }
 
+        // Mid-crossfade update: metadata was already aligned, skip reload
+        if (isCrossfadingRef.current && currentSourceRef.current === playableUrl) {
+          if (shouldMaskMediaSession()) {
+            safeSetMediaMetadata({
+              title: 'Private Session',
+              artist: 'Felo',
+              album: 'Private Listening',
+              artwork: []
+            })
+            safeSetPlaybackState('playing')
+          } else {
+            safeSetMediaMetadata({
+              title: getTrackDisplayTitle(song),
+              artist: song.artist || 'Unknown Artist',
+              album: song.album || 'Felo',
+              artwork: []
+            })
+            safeSetPlaybackState('playing')
+            void getArtworkSource(song).then((artwork) => {
+              if (shouldMaskMediaSession()) return
+              safeSetMediaMetadata({
+                title: getTrackDisplayTitle(song),
+                artist: song.artist || 'Unknown Artist',
+                album: song.album || 'Felo',
+                artwork: artwork ? getArtworkEntries(artwork.srcs, artwork.type) : []
+              })
+            })
+          }
+          updateMediaPosition(audio)
+          return
+        }
+
+        // Cancel any pending crossfade timer on direct manual song changes
+        if (crossfadeTimerRef.current !== null) {
+          window.clearTimeout(crossfadeTimerRef.current)
+          crossfadeTimerRef.current = null
+        }
+        isCrossfadingRef.current = false
+
+        const isLocalBrowserSong = !isElectron && Boolean(
+          song && (
+            (playableUrl && (playableUrl.startsWith('blob:') || playableUrl.startsWith('data:'))) ||
+            getLocalSlotPoolFile(song.id) ||
+            song.isLocalToDevice ||
+            !song.isOnline
+          )
+        )
+
+        if (isLocalBrowserSong && song) {
+          const songKey = song.id || playableUrl || song.title
+          const isSameSong = localBufferLoadedSongIdRef.current === songKey && audioDspEngine.isBufferActive(activeChannelRef.current)
+
+          if (!isSameSong) {
+            audioDspEngine.clearBuffer(activeChannelRef.current)
+            if (audio.src) {
+              audio.pause()
+              audio.removeAttribute('src')
+              audio.load()
+            }
+            localBufferLoadedSongIdRef.current = songKey
+            currentSourceRef.current = playableUrl || song.id
+            retryCountRef.current = 0
+            scrobbledSongIdRef.current = null
+            playTimeAccumulatedRef.current = 0
+            lastPlayTickRef.current = performance.now()
+            setCurrentTime(0)
+            setDuration(song.duration || 0)
+
+            const decodeGen = ++decodeGenerationRef.current
+            setIsBuffering(true)
+
+            void (async () => {
+              try {
+                let arrayBuffer: ArrayBuffer | null = null
+                const slotFile = getLocalSlotPoolFile(song.id)
+                if (slotFile) {
+                  arrayBuffer = await slotFile.arrayBuffer()
+                } else if (typeof window !== 'undefined' && (window as any).api?.readAudioFile) {
+                  const res = await (window as any).api.readAudioFile(song.id, song.filePath)
+                  if (res?.data) {
+                    arrayBuffer = res.data instanceof ArrayBuffer ? res.data : res.data.buffer || null
+                  }
+                }
+                if (!arrayBuffer && playableUrl) {
+                  const resp = await fetch(playableUrl)
+                  if (resp.ok) {
+                    arrayBuffer = await resp.arrayBuffer()
+                  }
+                }
+
+                if (!arrayBuffer) {
+                  console.warn('[AudioEngine] Could not retrieve audio bytes for local song:', song.title)
+                  setIsBuffering(false)
+                  return
+                }
+
+                if (decodeGen !== decodeGenerationRef.current) return
+
+                await audioDspEngine.resume()
+                const decoded = await audioDspEngine.decodeAudioData(arrayBuffer)
+                if (decodeGen !== decodeGenerationRef.current) return
+
+                setDuration(decoded.duration)
+                setCurrentTime(0)
+                setIsBuffering(false)
+
+                const shouldPlayNow = usePlayerStore.getState().isPlaying && usePlayerStore.getState().isAudioActive
+                if (shouldPlayNow) {
+                  audioDspEngine.setCrossfadeMix(activeChannelRef.current === 'B' ? 1.0 : 0.0, 0.01)
+                  audioDspEngine.playBuffer(
+                    decoded,
+                    0,
+                    () => handleEnded(activeChannelRef.current),
+                    activeChannelRef.current
+                  )
+                  safeSetPlaybackState('playing')
+                }
+                console.log(`[AudioEngine] Web Audio buffer playback ready for "${song.title}" (${decoded.duration.toFixed(1)}s)`)
+              } catch (decodeErr) {
+                console.warn('[AudioEngine] Web Audio buffer decode failed, falling back to HTMLAudioElement:', decodeErr)
+                setIsBuffering(false)
+                if (playableUrl && audio) {
+                  audio.src = playableUrl
+                  audio.load()
+                  startPlayback(audio)
+                }
+              }
+            })()
+          } else {
+            // Same track: handle play / pause
+            const isJoinedListeningRoom = Boolean(useListeningStore.getState().joinedRoom)
+            const mode = useConnectedDeviceStore.getState().devicePlaybackMode
+            const shouldPlay = state.isPlaying && state.isAudioActive && (mode !== 'remote_controller' || isJoinedListeningRoom)
+            if (shouldPlay) {
+              const buf = audioDspEngine.getCurrentAudioBuffer(activeChannelRef.current)
+              if (buf && !audioDspEngine.isBufferPlaying(activeChannelRef.current)) {
+                setIsBuffering(false)
+                const pos = audioDspEngine.getBufferPosition(activeChannelRef.current)
+                audioDspEngine.playBuffer(buf, pos, () => handleEnded(activeChannelRef.current), activeChannelRef.current)
+                safeSetPlaybackState('playing')
+              }
+            } else {
+              if (audioDspEngine.isBufferActive(activeChannelRef.current)) {
+                audioDspEngine.pauseBuffer(activeChannelRef.current)
+                safeSetPlaybackState('paused')
+              }
+            }
+          }
+
+          if (shouldMaskMediaSession()) {
+            safeSetMediaMetadata({
+              title: 'Private Session',
+              artist: 'Felo',
+              album: 'Private Listening',
+              artwork: []
+            })
+            safeSetPlaybackState(state.isPlaying && state.isAudioActive ? 'playing' : 'paused')
+          } else {
+            const metadataGeneration = ++mediaMetadataGenerationRef.current
+            safeSetMediaMetadata({
+              title: getTrackDisplayTitle(song),
+              artist: song.artist || 'Unknown Artist',
+              album: song.album || 'Felo',
+              artwork: []
+            })
+            safeSetPlaybackState(state.isPlaying && state.isAudioActive ? 'playing' : 'paused')
+            void getArtworkSource(song).then((artwork) => {
+              if (metadataGeneration !== mediaMetadataGenerationRef.current || shouldMaskMediaSession()) return
+              safeSetMediaMetadata({
+                title: getTrackDisplayTitle(song),
+                artist: song.artist || 'Unknown Artist',
+                album: song.album || 'Felo',
+                artwork: artwork ? getArtworkEntries(artwork.srcs, artwork.type) : []
+              })
+            })
+          }
+
+          schedulePreload()
+          return
+        }
+
+        localBufferLoadedSongIdRef.current = null
+
         const sourceUrl = playableUrl ?? ''
-        if (currentSourceRef.current !== sourceUrl) {
+        const inactiveAudio = getInactiveAudio()
+
+        // Check if the next song was already preloaded on the inactive audio
+        const isPreloadedOnInactive = Boolean(inactiveAudio && inactiveAudio.src && inactiveAudio.src === sourceUrl)
+
+        if (isPreloadedOnInactive && inactiveAudio) {
+          // Instant gapless switch to the preloaded channel with smooth 30ms micro-fade
+          const nextChannel = activeChannelRef.current === 'A' ? 'B' : 'A'
+          activeChannelRef.current = nextChannel
+          registerActiveAudioElement(inactiveAudio)
+          audioDspEngine.setCrossfadeMix(nextChannel === 'B' ? 1.0 : 0.0, 0.03)
+          if (audio && !audio.paused) {
+            audio.pause()
+          }
+          currentSourceRef.current = sourceUrl
+          retryCountRef.current = 0
+          scrobbledSongIdRef.current = null
+          playTimeAccumulatedRef.current = 0
+          lastPlayTickRef.current = performance.now()
+          inactiveAudio.currentTime = 0
+          inactiveAudio.playbackRate = 1.0
+          setCurrentTime(0)
+          setDuration(song.duration || inactiveAudio.duration || 0)
+        } else if (currentSourceRef.current !== sourceUrl) {
+          audioDspEngine.stopBuffer()
           currentSourceRef.current = sourceUrl
           isChangingSourceRef.current = true
           retryCountRef.current = 0
           scrobbledSongIdRef.current = null
           playTimeAccumulatedRef.current = 0
           lastPlayTickRef.current = performance.now()
+          console.log(`[AudioEngine] Setting Channel ${activeChannelRef.current} audio.src =`, sourceUrl.substring(0, 100))
+
+          if (/^(https?|media):/i.test(sourceUrl)) {
+            audio.crossOrigin = 'anonymous'
+          } else {
+            audio.removeAttribute('crossOrigin')
+          }
+
+          audioDspEngine.setCrossfadeMix(activeChannelRef.current === 'B' ? 1.0 : 0.0, 0.03)
+
           audio.src = sourceUrl
           audio.currentTime = 0
           audio.playbackRate = 1.0
           setCurrentTime(0)
           setDuration(song.duration || 0)
         }
+
+        const currentActiveAudio = getActiveAudio() || audio
+        registerActiveAudioElement(currentActiveAudio)
 
         if (shouldMaskMediaSession()) {
           safeSetMediaMetadata({
@@ -292,38 +874,53 @@ export default function AudioEngine() {
             artwork: []
           })
           safeSetPlaybackState(state.isPlaying && state.isAudioActive ? 'playing' : 'paused')
-          updateMediaPosition(audio)
+          updateMediaPosition(currentActiveAudio)
         } else {
           const metadataGeneration = ++mediaMetadataGenerationRef.current
           safeSetMediaMetadata({
-            title: song.title || 'Unknown Track',
+            title: getTrackDisplayTitle(song),
             artist: song.artist || 'Unknown Artist',
             album: song.album || 'Felo',
             artwork: []
           })
           safeSetPlaybackState(state.isPlaying && state.isAudioActive ? 'playing' : 'paused')
-          updateMediaPosition(audio)
+          updateMediaPosition(currentActiveAudio)
 
           void getArtworkSource(song).then((artwork) => {
             if (metadataGeneration !== mediaMetadataGenerationRef.current || shouldMaskMediaSession()) return
             safeSetMediaMetadata({
-              title: song.title || 'Unknown Track',
+              title: getTrackDisplayTitle(song),
               artist: song.artist || 'Unknown Artist',
               album: song.album || 'Felo',
               artwork: artwork ? getArtworkEntries(artwork.srcs, artwork.type) : []
             })
             safeSetPlaybackState(usePlayerStore.getState().isPlaying && usePlayerStore.getState().isAudioActive ? 'playing' : 'paused')
-            updateMediaPosition(audio)
+            updateMediaPosition(currentActiveAudio)
           })
         }
 
-        // ONLY play audio if this tab is the designated active audio instance and not acting as remote controller
+        const isJoinedListeningRoom = Boolean(useListeningStore.getState().joinedRoom)
         const mode = useConnectedDeviceStore.getState().devicePlaybackMode
-        if (state.isPlaying && state.isAudioActive && mode !== 'remote_controller') {
-          startPlayback(audio)
+        const shouldPlay = state.isPlaying && state.isAudioActive && (mode !== 'remote_controller' || isJoinedListeningRoom)
+        if (shouldPlay) {
+          if (audioDspEngine.isBufferActive(activeChannelRef.current)) {
+            const buf = audioDspEngine.getCurrentAudioBuffer(activeChannelRef.current)
+            if (buf && !audioDspEngine.isBufferPlaying(activeChannelRef.current)) {
+              setIsBuffering(false)
+              const pos = audioDspEngine.getBufferPosition(activeChannelRef.current)
+              audioDspEngine.playBuffer(buf, pos, () => handleEnded(activeChannelRef.current), activeChannelRef.current)
+            }
+          } else {
+            startPlayback(currentActiveAudio)
+          }
         } else {
-          audio.pause()
+          if (audioDspEngine.isBufferActive(activeChannelRef.current)) {
+            audioDspEngine.pauseBuffer(activeChannelRef.current)
+          }
+          currentActiveAudio.pause()
         }
+
+        schedulePreload()
       } catch (syncErr) {
         console.warn('[AudioEngine syncAudio caught error]:', syncErr)
       }
@@ -355,25 +952,23 @@ export default function AudioEngine() {
       window.removeEventListener('felo:media-session-refresh', handlePrivacyRefresh)
       unsubscribe()
     }
-  }, [setCurrentTime, setDuration])
+  }, [getActiveAudio, getInactiveAudio, schedulePreload, setCurrentTime, setDuration])
 
+  // OS Media Session command handlers
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
 
     const setHandler = navigator.mediaSession.setActionHandler.bind(navigator.mediaSession)
     setHandler('play', () => setIsPlaying(true))
     setHandler('pause', () => setIsPlaying(false))
+    setHandler('stop', () => setIsPlaying(false))
     setHandler('previoustrack', playPrevious)
     setHandler('nexttrack', () => playNext(true))
     setHandler('seekbackward', (details) => {
-      const audio = audioRef.current
-      const offset = details.seekOffset || 10
-      if (audio) seek(Math.max(0, audio.currentTime - offset))
+      skipTime(-(details.seekOffset || 10))
     })
     setHandler('seekforward', (details) => {
-      const audio = audioRef.current
-      const offset = details.seekOffset || 10
-      if (audio) seek(Math.min(audio.duration || Number.MAX_SAFE_INTEGER, audio.currentTime + offset))
+      skipTime(details.seekOffset || 10)
     })
     setHandler('seekto', (details) => {
       if (typeof details.seekTime === 'number') seek(details.seekTime)
@@ -382,6 +977,7 @@ export default function AudioEngine() {
     return () => {
       setHandler('play', null)
       setHandler('pause', null)
+      setHandler('stop', null)
       setHandler('previoustrack', null)
       setHandler('nexttrack', null)
       setHandler('seekbackward', null)
@@ -390,13 +986,13 @@ export default function AudioEngine() {
       safeSetMediaMetadata(null)
       safeSetPlaybackState('none')
     }
-  }, [playNext, playPrevious, seek, setIsPlaying])
+  }, [getActiveAudio, playNext, playPrevious, seek, skipTime, setIsPlaying])
 
-  // Handle volume
+  // Handle volume changes exclusively via Web Audio masterGain for smooth ramps and full dynamic range (MUSIXQUARE parity)
   useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = volume
-    }
+    if (audioRefA.current) audioRefA.current.volume = 1.0
+    if (audioRefB.current) audioRefB.current.volume = 1.0
+    audioDspEngine.setMasterVolume(volume, 0.05)
   }, [volume])
 
   // Handle seek requests from UI
@@ -407,171 +1003,341 @@ export default function AudioEngine() {
     }
   }, [seekRequest, applySeek, clearSeekRequest])
 
-  return (
-    <audio
-      ref={audioRef}
-      preload="auto"
-      playsInline
-      onLoadedMetadata={(event) => {
-        isChangingSourceRef.current = false
-        if (pendingSeekRef.current !== null) {
-          const pendingSeek = pendingSeekRef.current
-          pendingSeekRef.current = null
-          applySeek(pendingSeek)
-        }
-        resumePendingPlayback(event.currentTarget)
-      }}
-      onCanPlay={(event) => {
-        isChangingSourceRef.current = false
-        setIsBuffering(false)
-        resumePendingPlayback(event.currentTarget)
-      }}
-      onWaiting={() => {
-        if (usePlayerStore.getState().isPlaying) {
-          setIsBuffering(true)
-        }
-      }}
-      onPlaying={(event) => {
-        isChangingSourceRef.current = false
-        setIsBuffering(false)
-        lastPlayTickRef.current = performance.now()
-        if (!usePlayerStore.getState().isPlaying) {
-          setIsPlaying(true)
-        }
-        safeSetPlaybackState('playing')
-        updateMediaPosition(event.currentTarget)
-      }}
-      onPause={(event) => {
-        const storeState = usePlayerStore.getState()
-        const activeSong = storeState.queue[storeState.currentSongIndex]
-        const isVirtual = !resolveSongAudioUrl(activeSong)
-        if (!isVirtual && !storeState.isBuffering) {
-          setIsBuffering(false)
-        }
-        safeSetPlaybackState('paused')
-        // Synchronize store if paused externally (Bluetooth, OS controls, etc.)
-        // ONLY if this tab is the active audio owner!
-        if (
-          !isChangingSourceRef.current &&
-          !resumeAfterSeekRef.current &&
-          !isVirtual &&
-          storeState.isPlaying &&
-          storeState.isAudioActive &&
-          !storeState.isBuffering &&
-          event.currentTarget.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
-        ) {
-          setIsPlaying(false)
-        }
-      }}
-      onTimeUpdate={(e) => {
-        const storeState = usePlayerStore.getState()
-        if (!storeState.isAudioActive) return
+  // Buffering Stall Watchdog: If isBuffering stays true for 4 seconds without any
+  // audio event resolving it (canplay, playing, error recovery, download completion),
+  // assume the track is stalled and recover gracefully.
+  const isBuffering = usePlayerStore((s) => s.isBuffering)
+  const currentSongIndex = usePlayerStore((s) => s.currentSongIndex)
+  useEffect(() => {
+    if (!isBuffering) return
 
-        const currentTime = e.currentTarget.currentTime
-        setCurrentTime(currentTime)
+    const timer = setTimeout(() => {
+      const currentState = usePlayerStore.getState()
+      if (!currentState.isBuffering) return // already resolved naturally
 
-        // Accumulate active playback time (exclude pause/buffering)
-        const nowPerf = performance.now()
-        if (!e.currentTarget.paused && !e.currentTarget.seeking) {
-          if (lastPlayTickRef.current > 0) {
-            const delta = (nowPerf - lastPlayTickRef.current) / 1000
-            if (delta > 0 && delta < 5) {
-              playTimeAccumulatedRef.current += delta
-            }
+      const activeSong = currentState.queue[currentState.currentSongIndex]
+      const playableUrl = activeSong ? resolveSongAudioUrl(activeSong) : null
+
+      console.warn(
+        '[AudioEngine] Buffering stall watchdog triggered after 4s for:',
+        activeSong?.title,
+        'playableUrl:', playableUrl ? playableUrl.substring(0, 80) : null
+      )
+
+      setIsBuffering(false)
+
+      // If the song has no playable URL at all, it will never play — advance
+      if (!playableUrl) {
+        window.dispatchEvent(new CustomEvent('felo:track-unavailable', {
+          detail: {
+            title: activeSong?.title,
+            artist: activeSong?.artist,
+            message: `Track "${activeSong?.title || 'Unknown'}" timed out. Advancing to next track.`
           }
-        }
-        lastPlayTickRef.current = nowPerf
-
-        // Check scrobble threshold (>= 30s or >= 50% completion)
-        const activeSong = storeState.queue[storeState.currentSongIndex]
-        if (activeSong && scrobbledSongIdRef.current !== activeSong.id) {
-          const songDur = e.currentTarget.duration || activeSong.duration || 0
-          const isThirtySeconds = playTimeAccumulatedRef.current >= 30
-          const isHalfway = songDur > 0 && (currentTime / songDur >= 0.5)
-
-          if (isThirtySeconds || isHalfway) {
-            scrobbledSongIdRef.current = activeSong.id
-            const contextType = storeState.playbackContext?.type || 'library'
-            void recordCertifiedScrobble(
-              activeSong,
-              songDur || playTimeAccumulatedRef.current,
-              songDur > 0 ? currentTime / songDur : 1.0,
-              contextType
-            )
-          }
-        }
-
-        // Throttle position updates to MediaSession to avoid spamming OS media session IPC
-        const now = Date.now()
-        if (now - lastPositionUpdateTimeRef.current > 3000) {
-          lastPositionUpdateTimeRef.current = now
-          updateMediaPosition(e.currentTarget)
-        }
-      }}
-      onDurationChange={(e) => {
-        const storeState = usePlayerStore.getState()
-        if (!storeState.isAudioActive) return
-        setDuration(e.currentTarget.duration || 0)
-        updateMediaPosition(e.currentTarget)
-      }}
-      onError={(event) => {
-        const storeState = usePlayerStore.getState()
-        if (!storeState.isAudioActive) return
-        const activeSong = storeState.queue[storeState.currentSongIndex]
-        const isVirtual = !resolveSongAudioUrl(activeSong)
-        if (isVirtual || !event.currentTarget.src) {
-          // Virtual track or cleared audio source; ignore synthetic DOM error
-          return
-        }
-        setIsBuffering(false)
-        const error = event.currentTarget.error
-        console.warn('Audio source error:', error)
-        if (retryCountRef.current < 1 && audioRef.current?.src) {
-          retryCountRef.current += 1
-          console.log('Retrying audio playback once...')
-          isChangingSourceRef.current = true
-          audioRef.current.load()
-          return
-        }
-        console.warn('Audio playback unrecoverable for track, advancing to next:', activeSong?.title)
-        setIsBuffering(false)
-        if (storeState.queue.length > 1) {
+        }))
+        if (currentState.queue.length > 1) {
           playNext()
         } else {
           setIsPlaying(false)
         }
-      }}
-      onSeeked={(e) => {
-        const storeState = usePlayerStore.getState()
-        if (!storeState.isAudioActive) return
-        const shouldResume = resumeAfterSeekRef.current
-        resumeAfterSeekRef.current = false
-        setCurrentTime(e.currentTarget.currentTime)
-        updateMediaPosition(e.currentTarget)
+      }
+    }, 4_000)
 
-        if (shouldResume && storeState.isPlaying && e.currentTarget.paused) {
-          e.currentTarget.play().catch((err) => {
-            console.warn('Playback failed after seek:', err)
-          })
+    return () => clearTimeout(timer)
+  }, [isBuffering, currentSongIndex, setIsBuffering, setIsPlaying, playNext])
+
+  // Common audio element event handlers
+  const handleLoadedMetadata = (channel: 'A' | 'B', event: React.SyntheticEvent<HTMLAudioElement>) => {
+    if (channel !== activeChannelRef.current) return
+    isChangingSourceRef.current = false
+    event.currentTarget.muted = false
+    setIsBuffering(false)
+    if (pendingSeekRef.current !== null) {
+      const pendingSeek = pendingSeekRef.current
+      pendingSeekRef.current = null
+      applySeek(pendingSeek)
+    }
+    resumePendingPlayback(event.currentTarget)
+    notifyAudioTrackChanged()
+  }
+
+  const handleCanPlay = (channel: 'A' | 'B', event: React.SyntheticEvent<HTMLAudioElement>) => {
+    if (channel !== activeChannelRef.current) return
+    isChangingSourceRef.current = false
+    event.currentTarget.muted = false
+    setIsBuffering(false)
+    resumePendingPlayback(event.currentTarget)
+    notifyAudioTrackChanged()
+    schedulePreload()
+  }
+
+  const handleWaiting = (channel: 'A' | 'B') => {
+    if (channel === activeChannelRef.current && usePlayerStore.getState().isPlaying) {
+      setIsBuffering(true)
+    }
+  }
+
+  const handlePlaying = (channel: 'A' | 'B', event: React.SyntheticEvent<HTMLAudioElement>) => {
+    if (channel !== activeChannelRef.current) return
+    isChangingSourceRef.current = false
+    event.currentTarget.muted = false
+    setIsBuffering(false)
+    lastPlayTickRef.current = performance.now()
+    if (!usePlayerStore.getState().isPlaying) {
+      setIsPlaying(true)
+    }
+    safeSetPlaybackState('playing')
+    updateMediaPosition(event.currentTarget)
+    notifyAudioTrackChanged()
+    schedulePreload()
+  }
+
+  const handlePause = (channel: 'A' | 'B', event: React.SyntheticEvent<HTMLAudioElement>) => {
+    if (channel !== activeChannelRef.current) return
+    if (!event.currentTarget.src || event.currentTarget.src.startsWith('data:audio/')) {
+      return
+    }
+    const storeState = usePlayerStore.getState()
+    const activeSong = storeState.queue[storeState.currentSongIndex]
+    const isVirtual = !resolveSongAudioUrl(activeSong)
+    if (!isVirtual && !storeState.isBuffering) {
+      setIsBuffering(false)
+    }
+    if (!storeState.isPlaying) {
+      safeSetPlaybackState('paused')
+    }
+  }
+
+  const handleTimeUpdate = (channel: 'A' | 'B', e: React.SyntheticEvent<HTMLAudioElement>) => {
+    if (channel !== activeChannelRef.current) return
+    if (!e.currentTarget.src || e.currentTarget.src.startsWith('data:audio/')) {
+      return
+    }
+    const storeState = usePlayerStore.getState()
+    if (!storeState.isAudioActive) return
+
+    const currentTime = e.currentTarget.currentTime
+    setCurrentTime(currentTime)
+    if (storeState.isBuffering && currentTime > 0) {
+      setIsBuffering(false)
+    }
+
+    // Accumulate active playback time
+    const nowPerf = performance.now()
+    if (!e.currentTarget.paused && !e.currentTarget.seeking) {
+      if (lastPlayTickRef.current > 0) {
+        const delta = (nowPerf - lastPlayTickRef.current) / 1000
+        if (delta > 0 && delta < 5) {
+          playTimeAccumulatedRef.current += delta
         }
+      }
+    }
+    lastPlayTickRef.current = nowPerf
+
+    // Check scrobble threshold (>= 30s or >= 50% completion)
+    const activeSong = storeState.queue[storeState.currentSongIndex]
+    if (activeSong && scrobbledSongIdRef.current !== activeSong.id) {
+      const songDur = e.currentTarget.duration || activeSong.duration || 0
+      const isThirtySeconds = playTimeAccumulatedRef.current >= 30
+      const isHalfway = songDur > 0 && currentTime / songDur >= 0.5
+
+      if (isThirtySeconds || isHalfway) {
+        scrobbledSongIdRef.current = activeSong.id
+        const contextType = storeState.playbackContext?.type || 'library'
+        void recordCertifiedScrobble(
+          activeSong,
+          songDur || playTimeAccumulatedRef.current,
+          songDur > 0 ? currentTime / songDur : 1.0,
+          contextType
+        )
+      }
+    }
+
+    // Throttle position updates to MediaSession
+    const now = Date.now()
+    if (now - lastPositionUpdateTimeRef.current > 3000) {
+      lastPositionUpdateTimeRef.current = now
+      updateMediaPosition(e.currentTarget)
+    }
+
+    // Dynamic Cosine Crossfade trigger check
+    const crossfadeEnabled = storeState.crossfadeEnabled
+    const crossfadeDuration = storeState.crossfadeDuration || 4
+    const duration = e.currentTarget.duration || 0
+    const remaining = duration - currentTime
+    if (
+      crossfadeEnabled &&
+      crossfadeDuration > 0 &&
+      duration > 6 &&
+      remaining <= crossfadeDuration &&
+      remaining > 0.1 &&
+      !isCrossfadingRef.current
+    ) {
+      triggerCrossfade(crossfadeDuration)
+    }
+  }
+
+  const handleDurationChange = (channel: 'A' | 'B', e: React.SyntheticEvent<HTMLAudioElement>) => {
+    if (channel !== activeChannelRef.current) return
+    const storeState = usePlayerStore.getState()
+    if (!storeState.isAudioActive) return
+    setDuration(e.currentTarget.duration || 0)
+    updateMediaPosition(e.currentTarget)
+  }
+
+  const handleError = (channel: 'A' | 'B', event: React.SyntheticEvent<HTMLAudioElement>) => {
+    if (channel !== activeChannelRef.current) return
+    const storeState = usePlayerStore.getState()
+    if (!storeState.isAudioActive) return
+    const activeSong = storeState.queue[storeState.currentSongIndex]
+    const playableUrl = activeSong ? resolveSongAudioUrl(activeSong) : null
+    if (!playableUrl || !event.currentTarget.src) return
+
+    setIsBuffering(false)
+    isChangingSourceRef.current = false
+    const error = event.currentTarget.error
+    console.warn('[AudioEngine] HTMLAudioElement error:', error, 'src:', event.currentTarget.src)
+
+    // MUSIXQUARE decoding fallback for local files
+    if (activeSong && !audioDspEngine.isBufferActive(channel)) {
+      const isLocal = Boolean(
+        activeSong.filePath ||
+        getLocalSlotPoolFile(activeSong.id) ||
+        playableUrl.startsWith('media:') ||
+        playableUrl.startsWith('blob:')
+      )
+      if (isLocal) {
+        console.log('[AudioEngine] Attempting MUSIXQUARE AudioBuffer decode fallback for:', activeSong.title)
+        void (async () => {
+          try {
+            let arrayBuffer: ArrayBuffer | null = null
+            const slotFile = getLocalSlotPoolFile(activeSong.id)
+            if (slotFile) {
+              arrayBuffer = await slotFile.arrayBuffer()
+            } else if (typeof window !== 'undefined' && (window as any).api?.readAudioFile && activeSong.filePath) {
+              const res = await (window as any).api.readAudioFile(activeSong.id, activeSong.filePath)
+              if (res?.data) {
+                arrayBuffer = res.data.buffer
+              }
+            }
+            if (!arrayBuffer && playableUrl) {
+              const resp = await fetch(playableUrl)
+              if (resp.ok) {
+                arrayBuffer = await resp.arrayBuffer()
+              }
+            }
+            if (arrayBuffer) {
+              const decoded = await audioDspEngine.decodeAudioData(arrayBuffer)
+              setDuration(decoded.duration)
+              setIsBuffering(false)
+              setIsPlaying(true)
+              audioDspEngine.playBuffer(
+                decoded,
+                0,
+                () => handleEnded(channel),
+                channel
+              )
+              console.log('[AudioEngine] Successfully recovered playback with AudioBufferSourceNode!')
+              return
+            }
+          } catch (decodeErr) {
+            console.warn('[AudioEngine] AudioBuffer decode fallback error:', decodeErr)
+          }
+
+          if (retryCountRef.current < 1 && event.currentTarget.src) {
+            retryCountRef.current += 1
+            isChangingSourceRef.current = true
+            event.currentTarget.load()
+            return
+          }
+          console.warn('Audio playback unrecoverable for track, advancing to next:', activeSong?.title)
+          if (storeState.queue.length > 1) {
+            playNext()
+          } else {
+            setIsPlaying(false)
+          }
+        })()
+        return
+      }
+    }
+
+    if (retryCountRef.current < 1 && event.currentTarget.src) {
+      retryCountRef.current += 1
+      console.log('Retrying audio playback once...')
+      isChangingSourceRef.current = true
+      event.currentTarget.load()
+      return
+    }
+    console.warn('Audio playback unrecoverable for track, advancing to next:', activeSong?.title)
+    setIsBuffering(false)
+    if (storeState.queue.length > 1) {
+      playNext()
+    } else {
+      setIsPlaying(false)
+    }
+  }
+
+  const handleSeeked = (channel: 'A' | 'B', e: React.SyntheticEvent<HTMLAudioElement>) => {
+    if (channel !== activeChannelRef.current) return
+    const storeState = usePlayerStore.getState()
+    if (!storeState.isAudioActive) return
+    const shouldResume = resumeAfterSeekRef.current
+    resumeAfterSeekRef.current = false
+    setCurrentTime(e.currentTarget.currentTime)
+    updateMediaPosition(e.currentTarget)
+
+    if (shouldResume && storeState.isPlaying && e.currentTarget.paused) {
+      e.currentTarget.play().catch((err) => {
+        console.warn('Playback failed after seek:', err)
+      })
+    }
+  }
+
+  const renderAudioElement = (channel: 'A' | 'B', ref: React.RefObject<HTMLAudioElement | null>) => (
+    <audio
+      ref={ref}
+      crossOrigin="anonymous"
+      preload="auto"
+      playsInline
+      {...({ 'webkit-playsinline': 'true' } as any)}
+      onLoadedMetadata={(event) => handleLoadedMetadata(channel, event)}
+      onCanPlay={(event) => handleCanPlay(channel, event)}
+      onWaiting={() => handleWaiting(channel)}
+      onPlaying={(event) => handlePlaying(channel, event)}
+      onPause={(event) => handlePause(channel, event)}
+      onTimeUpdate={(event) => handleTimeUpdate(channel, event)}
+      onDurationChange={(event) => handleDurationChange(channel, event)}
+      onError={(event) => handleError(channel, event)}
+      onSeeked={(event) => handleSeeked(channel, event)}
+      onEnded={() => handleEnded(channel)}
+      style={{
+        position: 'fixed',
+        bottom: 0,
+        left: '-9999px',
+        width: '1px',
+        height: '1px',
+        opacity: 0.01,
+        pointerEvents: 'none'
       }}
-      onEnded={() => {
-        const storeState = usePlayerStore.getState()
-        if (!storeState.isAudioActive) return
-        const activeSong = storeState.queue[storeState.currentSongIndex]
-        if (activeSong && scrobbledSongIdRef.current !== activeSong.id) {
-          scrobbledSongIdRef.current = activeSong.id
-          const contextType = storeState.playbackContext?.type || 'library'
-          void recordCertifiedScrobble(
-            activeSong,
-            activeSong.duration || playTimeAccumulatedRef.current,
-            1.0,
-            contextType
-          )
-        }
-        playNext(false)
-      }}
-      style={{ display: 'none' }}
     />
+  )
+
+  return (
+    <>
+      {renderAudioElement('A', audioRefA)}
+      {renderAudioElement('B', audioRefB)}
+      <YouTubePlayerBridge />
+      {isAutoplayBlocked && (
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => void useListeningStore.getState().enableSpeakerAudio()}
+          className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[9999] flex items-center gap-3 px-6 py-3.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold shadow-[0_10px_35px_rgba(16,185,129,0.5)] animate-bounce cursor-pointer select-none transition-transform active:scale-95"
+        >
+          <Volume2 className="h-5 w-5 animate-pulse" />
+          <span>Tap to Enable Audio</span>
+        </div>
+      )}
+    </>
   )
 }

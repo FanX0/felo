@@ -23,6 +23,10 @@ interface RoomMemberProfileModalProps {
     username?: string
   }
   isHost?: boolean
+  role?: 'host' | 'co_host' | 'listener'
+  isRoomHost?: boolean
+  onPromote?: (role: 'co_host' | 'listener') => Promise<void>
+  onKick?: () => Promise<void>
   onClose: () => void
 }
 
@@ -30,6 +34,10 @@ export default function RoomMemberProfileModal({
   userId,
   initialProfile,
   isHost = false,
+  role,
+  isRoomHost = false,
+  onPromote,
+  onKick,
   onClose
 }: RoomMemberProfileModalProps): ReactElement {
   const { user } = useOnlineStore()
@@ -197,9 +205,17 @@ export default function RoomMemberProfileModal({
             <span className="text-xs font-bold uppercase tracking-wider text-text-muted">
               Member Profile
             </span>
-            {isHost && (
-              <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-black text-amber-400">
+            {role === 'host' || isHost ? (
+              <span className="rounded-full bg-surface-elevated border border-border px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-text">
                 Host
+              </span>
+            ) : role === 'co_host' ? (
+              <span className="rounded-full bg-surface-elevated border border-border px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-text">
+                Co-host
+              </span>
+            ) : (
+              <span className="rounded-full bg-surface-elevated border border-border px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-text-muted">
+                Listener
               </span>
             )}
           </div>
@@ -335,6 +351,77 @@ export default function RoomMemberProfileModal({
                 <ExternalLink className="h-3.5 w-3.5 text-text-muted" />
                 <span>View Full Profile</span>
               </NavLink>
+            )}
+
+            {/* Host Session Role Controls */}
+            {isRoomHost && !isSelf && (
+              <div className="mt-4 pt-3 border-t border-border/40 w-full space-y-2">
+                <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider block text-left">
+                  Host Controls
+                </span>
+                <div className="flex items-center gap-2">
+                  {role === 'co_host' ? (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setBusy(true)
+                        try {
+                          await onPromote?.('listener')
+                          setFeedback('Member demoted to listener.')
+                          setTimeout(() => setFeedback(''), 2500)
+                        } catch (err: any) {
+                          setError(err?.message || 'Could not change role.')
+                        } finally {
+                          setBusy(false)
+                        }
+                      }}
+                      disabled={busy}
+                      className="flex-1 py-2 px-3 rounded-xl border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      Demote to Listener
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setBusy(true)
+                        try {
+                          await onPromote?.('co_host')
+                          setFeedback('Member promoted to co-host!')
+                          setTimeout(() => setFeedback(''), 2500)
+                        } catch (err: any) {
+                          setError(err?.message || 'Could not change role.')
+                        } finally {
+                          setBusy(false)
+                        }
+                      }}
+                      disabled={busy}
+                      className="flex-1 py-2 px-3 rounded-xl border border-white/20 bg-surface-elevated hover:bg-hover text-text text-xs font-bold transition-all cursor-pointer disabled:opacity-50 shadow-sm"
+                    >
+                      Promote to Co-host
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setBusy(true)
+                      try {
+                        await onKick?.()
+                        onClose()
+                      } catch (err: any) {
+                        setError(err?.message || 'Could not kick member.')
+                        setBusy(false)
+                      }
+                    }}
+                    disabled={busy}
+                    className="py-2 px-3 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-300 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                    title="Remove member from listening room"
+                  >
+                    Kick Member
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         </div>

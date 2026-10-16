@@ -45,8 +45,8 @@ export function AotyTab() {
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-2xl font-black tracking-tight text-white">Album of the Year</h2>
-            <span className="inline-flex items-center gap-1 rounded-md bg-primary-amber/15 px-2 py-0.5 text-[10px] font-black text-primary-amber border border-primary-amber/30">
-              <Trophy className="h-3 w-3" /> Critic Scores
+            <span className="inline-flex items-center gap-1 rounded-md bg-surface-elevated border border-border px-2 py-0.5 text-[10px] font-semibold text-text-muted">
+              <Trophy className="h-3 w-3 text-text-muted" /> Critic Scores
             </span>
           </div>
           <p className="mt-1 text-sm text-text-muted">
@@ -66,7 +66,7 @@ export function AotyTab() {
       </div>
 
       {/* Category Pills */}
-      <div className="flex flex-wrap gap-2 border-b border-white/5 pb-3">
+      <div className="flex flex-wrap gap-2 border-b border-border/40 pb-3">
         {categories.map((cat) => (
           <button
             key={cat.id}
@@ -74,7 +74,7 @@ export function AotyTab() {
             onClick={() => setAotyCategory(cat.id)}
             className={`rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
               aotyCategory === cat.id
-                ? 'bg-white text-black shadow-md'
+                ? 'bg-primary text-primary-foreground shadow-sm'
                 : 'bg-surface-elevated text-text-muted hover:bg-hover hover:text-white'
             }`}
           >

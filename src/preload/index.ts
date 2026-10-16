@@ -5,12 +5,21 @@ const authCallbackListeners = new Set<(url: string) => void>()
 const pendingAuthCallbacks: string[] = []
 
 ipcRenderer.on('auth:callback', (_event, url: unknown) => {
-  if (typeof url !== 'string' || !url.startsWith('felo://auth/callback')) return
+  if (typeof url !== 'string') return
+  const clean = url.trim().replace(/^["']|["']$/g, '')
+  const lower = clean.toLowerCase()
+  if (!lower.startsWith('felo://auth/callback') && !lower.startsWith('felo:///auth/callback')) return
   if (authCallbackListeners.size === 0) {
-    pendingAuthCallbacks.push(url)
+    pendingAuthCallbacks.push(clean)
     return
   }
-  authCallbackListeners.forEach((listener) => listener(url))
+  authCallbackListeners.forEach((listener) => {
+    try {
+      listener(clean)
+    } catch (err) {
+      console.error('[Preload] Failed to dispatch auth callback:', err)
+    }
+  })
 })
 
 // Typed API exposed to renderer
@@ -85,6 +94,11 @@ const api = {
     return () => ipcRenderer.removeListener('library:scan-progress', handler)
   },
   getSongs: (): Promise<any[]> => ipcRenderer.invoke('library:getSongs'),
+  readAudioFile: (
+    songIdOrPath: string,
+    explicitPath?: string
+  ): Promise<{ success: boolean; data?: ArrayBuffer; contentType?: string; size?: number; error?: string }> =>
+    ipcRenderer.invoke('library:readAudioFile', songIdOrPath, explicitPath),
 
   // Library Roots
   getLibraryRoots: (): Promise<any[]> => ipcRenderer.invoke('library:getRoots'),
@@ -227,6 +241,8 @@ const api = {
   }> => ipcRenderer.invoke('system:getMusicPresenceStatus'),
   launchMusicPresence: (): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('system:launchMusicPresence'),
+  relaunchApp: (): Promise<void> =>
+    ipcRenderer.invoke('system:relaunchApp'),
   onAuthCallback: (listener: (url: string) => void): (() => void) => {
     authCallbackListeners.add(listener)
     pendingAuthCallbacks.splice(0).forEach(listener)
@@ -238,6 +254,16 @@ const api = {
   // Desktop Audio Loopback
   getDesktopSources: (): Promise<Array<{ id: string; name: string; thumbnail: string | null; appIcon: string | null }>> =>
     ipcRenderer.invoke('desktopAudio:getSources'),
+
+  // YouTube Metadata Resolver
+  getYouTubeMetadata: (urlOrId: string): Promise<{
+    success: boolean
+    videoId?: string
+    title?: string
+    channel?: string
+    thumbnailUrl?: string
+    error?: string
+  }> => ipcRenderer.invoke('youtube:get-metadata', urlOrId),
 
   // Window
   minimizeWindow: (): void => ipcRenderer.send('window:minimize'),

@@ -39,7 +39,7 @@ export async function beginOAuthSignIn(
 ): Promise<void> {
   const redirectTo = isElectronRuntime
     ? FELO_OAUTH_CALLBACK_URL
-    : `${window.location.origin}/#/account`
+    : `${window.location.origin}/`
   const { data, error } = await getSupabase().auth.signInWithOAuth({
     provider,
     options: {
@@ -55,13 +55,49 @@ export async function beginOAuthSignIn(
 }
 
 export async function completeOAuthSignIn(callbackUrl: string): Promise<void> {
-  const url = new URL(callbackUrl)
-  const providerError = url.searchParams.get('error_description') || url.searchParams.get('error')
+  const cleanUrl = callbackUrl.trim().replace(/^["']|["']$/g, '')
+  const url = new URL(cleanUrl)
+
+  const searchParams = url.searchParams
+  let hashParams: URLSearchParams | null = null
+  if (url.hash) {
+    const rawHash = url.hash.startsWith('#') ? url.hash.slice(1) : url.hash
+    if (rawHash.includes('?')) {
+      hashParams = new URLSearchParams(rawHash.split('?')[1])
+    } else {
+      hashParams = new URLSearchParams(rawHash)
+    }
+  }
+
+  const getParam = (key: string): string | null => {
+    return searchParams.get(key) || (hashParams ? hashParams.get(key) : null)
+  }
+
+  const providerError = getParam('error_description') || getParam('error')
   if (providerError) throw new Error(providerError)
 
-  const code = url.searchParams.get('code')
-  if (!code) throw new Error('The OAuth callback did not contain an authorization code.')
+  const code = getParam('code')
+  const flowId = getParam('sb_flow_id') || getParam('flow_id')
 
-  const { error } = await getSupabase().auth.exchangeCodeForSession(code)
-  if (error) throw error
+  if (code) {
+    const { error } = await getSupabase().auth.exchangeCodeForSession(
+      code,
+      flowId ? { flowId } : undefined
+    )
+    if (error) throw error
+    return
+  }
+
+  const accessToken = getParam('access_token')
+  const refreshToken = getParam('refresh_token')
+  if (accessToken && refreshToken) {
+    const { error } = await getSupabase().auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken
+    })
+    if (error) throw error
+    return
+  }
+
+  throw new Error('The OAuth callback did not contain an authorization code or tokens.')
 }

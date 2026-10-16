@@ -537,6 +537,21 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
       ? track.duration.split(':').reduce((total, part) => total * 60 + Number(part), 0)
       : 0
 
+    if (onOpenDownloadPanel) {
+      onOpenDownloadPanel({
+        id: track.id,
+        title: track.title,
+        artist: track.artist || albumArtist,
+        album: track.album || albumTitle,
+        duration: parsedSec,
+        artworkUrl: track.thumbnail || artwork,
+        isOnline: true,
+        autoDownload: false,
+        autoPlay: false
+      })
+      return
+    }
+
     void downloadTrackInBackground(
       {
         id: track.id,
@@ -680,10 +695,20 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                 key={track.id}
                 role="button"
                 tabIndex={0}
-                onClick={() => handlePlayTrack(track, index)}
+                onClick={() => {
+                  if (!track.localSong && AppCapabilities.downloads) {
+                    handleDownloadTrack(track)
+                    return
+                  }
+                  handlePlayTrack(track, index)
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
+                    if (!track.localSong && AppCapabilities.downloads) {
+                      handleDownloadTrack(track)
+                      return
+                    }
                     handlePlayTrack(track, index)
                   }
                 }}
@@ -868,7 +893,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                 <button
                   type="button"
                   onClick={() => {
-                    remoteClient.downloadSong(activeMenu.song.id)
+                    void remoteClient.downloadSong(activeMenu.song.id, activeMenu.song.title)
                     setActiveMenu(null)
                   }}
                   className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted hover:bg-white/10 hover:text-text transition-colors"

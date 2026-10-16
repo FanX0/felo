@@ -31,7 +31,8 @@ export const SLASH_COMMANDS = [
         name: 'query',
         description: 'Song title, artist, or album to search & play',
         type: 3,
-        required: true
+        required: true,
+        autocomplete: true
       },
       {
         name: 'action',

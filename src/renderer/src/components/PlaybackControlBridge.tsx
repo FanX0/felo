@@ -249,7 +249,7 @@ export default function PlaybackControlBridge() {
                 new CustomEvent('felo:bot-activity', {
                   detail: {
                     type: 'bot',
-                    title: '🤖 Playing Track',
+                    title: 'Playing Track',
                     message: `Now playing "${song.title}" by ${song.artist} via bot command.`
                   }
                 })
@@ -311,7 +311,7 @@ export default function PlaybackControlBridge() {
                 new CustomEvent('felo:bot-activity', {
                   detail: {
                     type: 'skip',
-                    title: '🤖 Track Skipped',
+                    title: 'Track Skipped',
                     message: 'Skipped to next track via bot command.'
                   }
                 })
@@ -335,7 +335,7 @@ export default function PlaybackControlBridge() {
                 new CustomEvent('felo:bot-activity', {
                   detail: {
                     type: 'volume',
-                    title: '🤖 Volume Changed',
+                    title: 'Volume Changed',
                     message: `Volume set to ${command.percent}% via bot command.`
                   }
                 })
@@ -371,7 +371,7 @@ export default function PlaybackControlBridge() {
                 new CustomEvent('felo:bot-activity', {
                   detail: {
                     type: 'download',
-                    title: `🤖 Bot Request: ${user}`,
+                    title: `Bot Request: ${user}`,
                     message: `Searching & downloading "${query}" via priority providers (${action === 'enqueue' ? 'Queueing' : action === 'play_next' ? 'Plays Next' : 'Auto-Plays'}).`
                   }
                 })

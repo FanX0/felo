@@ -122,14 +122,14 @@ export function SpotifyPlaylistsTab({
         <button
           type="button"
           onClick={() => setSelectedSpotifyPlaylist(null)}
-          className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-surface-elevated/80 px-4 py-2 text-xs font-bold text-white transition-all hover:bg-hover hover:scale-105"
+          className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-elevated px-4 py-2 text-xs font-semibold text-text transition-all hover:bg-hover hover:text-white"
         >
           <ArrowLeft className="h-4 w-4" />
           <span>Back to Spotify playlists</span>
         </button>
 
-        <div className="flex flex-col sm:flex-row items-start sm:items-end gap-6 rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-surface-elevated/90 p-6 sm:p-8 shadow-2xl">
-          <div className="relative h-40 w-40 shrink-0 overflow-hidden rounded-xl bg-surface shadow-2xl">
+        <div className="flex flex-col sm:flex-row items-start sm:items-end gap-6 rounded-2xl border border-border bg-surface-elevated p-6 sm:p-8 shadow-sm">
+          <div className="relative h-40 w-40 shrink-0 overflow-hidden rounded-xl bg-surface border border-border shadow-sm">
             {spotifyArtwork[selectedSpotifyPlaylist.id] || selectedSpotifyPlaylist.artworkUrl ? (
               <img
                 src={spotifyArtwork[selectedSpotifyPlaylist.id] || selectedSpotifyPlaylist.artworkUrl}
@@ -157,10 +157,10 @@ export function SpotifyPlaylistsTab({
                 type="button"
                 onClick={() => void handleImportSpotifyPlaylist(selectedSpotifyPlaylist)}
                 disabled={Boolean(importingSpotifyId)}
-                className="flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-xs font-black text-black shadow-xl transition-all hover:scale-105 active:scale-95 disabled:opacity-60"
+                className="flex items-center gap-2 rounded-full bg-primary hover:bg-primary-hover text-primary-foreground px-5 py-2.5 text-xs font-bold shadow-sm transition-all hover:scale-105 active:scale-95 disabled:opacity-60"
               >
                 {importingSpotifyId === selectedSpotifyPlaylist.id ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-black" />
+                  <Loader2 className="h-4 w-4 animate-spin text-primary-foreground" />
                 ) : (
                   <Plus className="h-4 w-4" />
                 )}
@@ -170,22 +170,28 @@ export function SpotifyPlaylistsTab({
                     : 'Add to Local Playlists'}
                 </span>
               </button>
-              <span className="text-xs font-bold text-text-muted">
+              <span className="text-xs font-semibold text-text-muted">
                 {spotifyTracks.length} tracks
               </span>
             </div>
           </div>
         </div>
 
-        {/* Tracks List */}
-        <div className="space-y-2">
-          <h3 className="text-lg font-black text-white px-1">Tracklist preview</h3>
+        {/* Tracks List - Parity with local song list */}
+        <div className="flex flex-col rounded-xl border border-border bg-surface overflow-hidden">
+          <div className="grid grid-cols-[36px_minmax(0,1fr)_80px] sm:grid-cols-[40px_minmax(0,2fr)_minmax(0,1.2fr)_140px] items-center gap-3 border-b border-border px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted bg-surface-elevated/40">
+            <div className="text-center font-medium">#</div>
+            <div>Title</div>
+            <div className="hidden sm:block">Artist</div>
+            <div className="text-right pr-2">Duration</div>
+          </div>
+
           {isLoadingSpotifyTracks ? (
-            <div className="space-y-2">
+            <div className="space-y-2 p-3">
               {Array.from({ length: 8 }).map((_, i) => (
                 <div
                   key={i}
-                  className="h-12 rounded-lg bg-surface-elevated/40 animate-pulse border border-white/5"
+                  className="h-10 rounded-lg bg-surface-elevated/40 animate-pulse border border-border/30"
                 />
               ))}
             </div>
@@ -194,7 +200,7 @@ export function SpotifyPlaylistsTab({
               No track details loaded for this playlist.
             </div>
           ) : (
-            <div className="space-y-1">
+            <div className="divide-y divide-border/40">
               {spotifyTracks.map((track, i) => {
                 const isInLibrary = libraryIndex.has(track.title, track.artist)
                 const trackSongItem: HomeSongItem = {
@@ -218,21 +224,22 @@ export function SpotifyPlaylistsTab({
                   <div
                     key={i}
                     onClick={() => void onPlaySong(trackSongItem)}
-                    className="group flex cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2.5 hover:bg-hover transition-colors"
+                    className="group grid grid-cols-[36px_minmax(0,1fr)_80px] sm:grid-cols-[40px_minmax(0,2fr)_minmax(0,1.2fr)_140px] items-center gap-3 px-3 py-2 text-[13px] hover:bg-hover/50 cursor-pointer transition-colors"
                   >
-                    <div className="flex min-w-0 flex-1 items-center gap-3">
-                      <span className="w-6 text-right text-xs font-black text-text-muted tabular-nums">
-                        {i + 1}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-bold text-white group-hover:text-primary-amber transition-colors">
-                          {track.title}
-                        </p>
-                        <p className="truncate text-xs text-text-muted mt-0.5">{track.artist}</p>
-                      </div>
+                    <div className="text-center text-xs font-medium text-text-muted tabular-nums">
+                      {i + 1}
+                    </div>
+                    <div className="min-w-0 overflow-hidden">
+                      <p className="truncate text-sm font-semibold text-text transition-colors">
+                        {track.title}
+                      </p>
+                      <p className="truncate text-xs text-text-muted mt-0.5 sm:hidden">{track.artist}</p>
+                    </div>
+                    <div className="hidden sm:block min-w-0 truncate text-xs text-text-muted">
+                      {track.artist}
                     </div>
 
-                    <div className="flex shrink-0 items-center gap-2 pr-2">
+                    <div className="flex items-center justify-end gap-2.5 pr-1">
                       {track.duration && track.duration > 0 && (
                         <span className="text-xs text-text-muted tabular-nums">
                           {Math.floor(track.duration / 60)}:
@@ -256,16 +263,10 @@ export function SpotifyPlaylistsTab({
                               ? 'In your library (Click to choose source or replace)'
                               : 'Download track to library'
                         }
-                        className={`h-7 w-7 flex items-center justify-center rounded-full transition-all ${
-                          isDownloading
-                            ? 'text-primary-amber'
-                            : isInLibrary
-                              ? 'text-text-muted hover:text-white hover:bg-white/10'
-                              : 'text-text-muted opacity-0 group-hover:opacity-100 hover:text-white hover:bg-white/10'
-                        }`}
+                        className="h-7 w-7 flex items-center justify-center rounded-full text-text-muted hover:text-white hover:bg-hover transition-all"
                       >
                         {isDownloading ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <Loader2 className="h-4 w-4 animate-spin text-primary" />
                         ) : isInLibrary ? (
                           <CheckCircle2 className="h-4 w-4" />
                         ) : (
@@ -343,14 +344,14 @@ export function SpotifyPlaylistsTab({
               onClick={() => setSpotifySection(tab.id)}
               className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
                 isActive
-                  ? 'bg-white text-black shadow-md'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
                   : 'bg-surface-elevated text-text-muted hover:bg-hover hover:text-white'
               }`}
             >
               <span>{tab.label}</span>
               <span
                 className={`rounded-full px-1.5 py-0.2 text-[10px] font-black ${
-                  isActive ? 'bg-black/15 text-black' : 'bg-white/10 text-text-muted'
+                  isActive ? 'bg-primary-foreground/15 text-primary-foreground' : 'bg-white/10 text-text-muted'
                 }`}
               >
                 {tab.count}

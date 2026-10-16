@@ -18,6 +18,7 @@ const ALL_TABS: Array<{ id: HomeTabType; label: string; icon: React.ComponentTyp
 export function HomeTabs({ activeTab, onTabChange }: HomeTabsProps) {
   const visibleTabs = ALL_TABS.filter((tab) => {
     if (tab.id === 'overview') return true
+    if (tab.id === 'lastfm') return AppCapabilities.lastFm
     return AppCapabilities.onlineDiscovery
   })
 

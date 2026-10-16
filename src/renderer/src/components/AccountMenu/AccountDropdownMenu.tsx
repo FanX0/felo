@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import {
   User,
   Settings as SettingsIcon,
-  Radio,
   EyeOff,
   LogOut,
   LogIn
@@ -84,23 +83,39 @@ export default function AccountDropdownMenu({
     >
       {/* User Info Header */}
       <div className="px-4 py-3 border-b border-border/80">
-        <p className="truncate text-sm font-bold text-text">
-          {profile?.display_name || (user ? 'Online profile' : 'Local listener')}
-        </p>
+        <div className="flex items-center justify-between gap-1.5">
+          <p className="truncate text-sm font-bold text-text">
+            {profile?.display_name || (user ? 'Online profile' : 'Local listener')}
+          </p>
+        </div>
         <p className="truncate text-xs text-text-muted">
-          {user?.email || (configured && initialized ? 'Not signed in' : 'Local account')}
+          {user?.email ||
+            (configured && initialized
+              ? 'Not signed in'
+              : 'Local account')}
         </p>
       </div>
 
       <div className="py-1">
-        <button
-          type="button"
-          onClick={() => handleNavigate(user ? '/profile' : '/account')}
-          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-text-muted hover:bg-hover hover:text-text transition-colors cursor-pointer text-left"
-        >
-          {user ? <User className="w-4 h-4 shrink-0" /> : <LogIn className="w-4 h-4 shrink-0" />}
-          <span>{user ? 'Profile' : 'Sign in'}</span>
-        </button>
+        {user ? (
+          <button
+            type="button"
+            onClick={() => handleNavigate('/profile')}
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-text-muted hover:bg-hover hover:text-text transition-colors cursor-pointer text-left"
+          >
+            <User className="w-4 h-4 shrink-0" />
+            <span>Profile</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => handleNavigate('/account')}
+            className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-muted hover:bg-hover hover:text-text transition-colors cursor-pointer text-left"
+          >
+            <LogIn className="w-4 h-4 shrink-0" />
+            <span>Sign in</span>
+          </button>
+        )}
 
         <button
           type="button"
@@ -109,15 +124,6 @@ export default function AccountDropdownMenu({
         >
           <SettingsIcon className="w-4 h-4 shrink-0" />
           <span>Settings</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => handleNavigate('/remote')}
-          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-text-muted hover:bg-hover hover:text-text transition-colors cursor-pointer text-left"
-        >
-          <Radio className="w-4 h-4 shrink-0" />
-          <span>Remote control (PC)</span>
         </button>
 
         <button

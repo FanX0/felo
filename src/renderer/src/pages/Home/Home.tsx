@@ -141,8 +141,8 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
         duration: song.duration,
         artworkPath: song.artworkUrl,
         isOnline: true,
-        autoDownload: true,
-        autoPlay: true
+        autoDownload: false,
+        autoPlay: false
       })
     },
     [librarySongs, setLibrarySongs, setQueue, onOpenDownloadPanel]
@@ -159,7 +159,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
         duration: song.duration,
         artworkPath: song.artworkUrl,
         isOnline: true,
-        autoDownload: true,
+        autoDownload: false,
         autoPlay: false
       })
     },
@@ -433,7 +433,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
         {AppCapabilities.onlineDiscovery && activeTab === 'aoty' && <AotyTab />}
 
         {/* ─── Last.fm Community Scrobbles Tab ──────────────────────────────────────── */}
-        {AppCapabilities.onlineDiscovery && activeTab === 'lastfm' && <LastFmTab onPlaySong={handlePlaySong} />}
+        {AppCapabilities.lastFm && activeTab === 'lastfm' && <LastFmTab onPlaySong={handlePlaySong} />}
       </div>
     </div>
   )

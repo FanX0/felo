@@ -207,4 +207,25 @@ export const discordChannelBindings = pgTable(
   ]
 )
 
+export const listeningRoomInvitations = pgTable(
+  'listening_room_invitations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    roomId: uuid('room_id')
+      .notNull()
+      .references(() => listeningRooms.id, { onDelete: 'cascade' }),
+    inviterId: uuid('inviter_id').notNull(),
+    inviteeId: uuid('invitee_id').notNull(),
+    status: text('status').notNull().default('pending'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index('room_invitations_invitee_status_idx').on(table.inviteeId, table.status, table.createdAt),
+    index('room_invitations_inviter_idx').on(table.inviterId),
+    index('room_invitations_room_idx').on(table.roomId)
+  ]
+)
+
+
 

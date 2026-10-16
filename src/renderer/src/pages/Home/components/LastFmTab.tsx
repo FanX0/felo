@@ -55,8 +55,8 @@ export function LastFmTab({ onPlaySong }: LastFmTabProps) {
             <h2 className="text-2xl font-black tracking-tight text-white">
               Last.fm Scrobbles & Charts
             </h2>
-            <span className="inline-flex items-center gap-1 rounded-md bg-secondary-cyan/15 px-2 py-0.5 text-[10px] font-black text-secondary-cyan border border-secondary-cyan/30">
-              <Radio className="h-3 w-3" /> Community Trends
+            <span className="inline-flex items-center gap-1 rounded-md bg-surface-elevated border border-border px-2 py-0.5 text-[10px] font-semibold text-text-muted">
+              <Radio className="h-3 w-3 text-text-muted" /> Community Trends
             </span>
           </div>
           <p className="mt-1 text-sm text-text-muted">
@@ -76,7 +76,7 @@ export function LastFmTab({ onPlaySong }: LastFmTabProps) {
       </div>
 
       {/* Category Pills */}
-      <div className="flex flex-wrap gap-2 border-b border-white/5 pb-3">
+      <div className="flex flex-wrap gap-2 border-b border-border/40 pb-3">
         {categories.map((cat) => (
           <button
             key={cat.id}
@@ -84,7 +84,7 @@ export function LastFmTab({ onPlaySong }: LastFmTabProps) {
             onClick={() => setLastFmCategory(cat.id)}
             className={`rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
               lastFmCategory === cat.id
-                ? 'bg-white text-black shadow-md'
+                ? 'bg-primary text-primary-foreground shadow-sm'
                 : 'bg-surface-elevated text-text-muted hover:bg-hover hover:text-white'
             }`}
           >

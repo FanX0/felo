@@ -2,6 +2,8 @@ import type { Song } from '../pages/Library/Library'
 import type { RemotePlayerState, PlaybackTarget } from '../pages/Remote/remoteClient'
 import type { RemotePlaybackState } from '../hooks/useConnectedDeviceStore'
 import { getInterpolatedPosition } from '../hooks/useConnectedDeviceStore'
+import type { ListeningRoom } from '../online/types'
+import { roomClockSync } from './roomClockSync'
 import {
   getDeviceCategory,
   getDeviceDisplayName,
@@ -13,7 +15,7 @@ import {
 import { toMediaUrl } from './media'
 
 export interface UnifiedPlaybackState {
-  source: 'local' | 'lan' | 'cloud' | 'none'
+  source: 'local' | 'lan' | 'cloud' | 'room' | 'none'
   isLocal: boolean
   isRemote: boolean
   activeDeviceId: string
@@ -51,6 +53,7 @@ export interface ResolvePlaybackParams {
   activeRemote: RemotePlaybackState | null
   lanState: RemotePlayerState
   isLanConnected: boolean
+  joinedRoom?: ListeningRoom | null
   myDeviceId?: string | null
 }
 
@@ -59,8 +62,61 @@ export function resolveEffectivePlaybackState({
   activeRemote,
   lanState,
   isLanConnected,
+  joinedRoom,
   myDeviceId = getCurrentDeviceId()
 }: ResolvePlaybackParams): UnifiedPlaybackState {
+  // 0. Priority: Listen Together Room (Joined as participant/listener/co-host)
+  if (joinedRoom && joinedRoom.song) {
+    const roomSong = joinedRoom.song
+    const hostPos =
+      typeof roomSong.hostPosition === 'number'
+        ? roomSong.hostPosition
+        : joinedRoom.position_seconds || 0
+    const hostTimestamp =
+      typeof roomSong.hostTimestamp === 'number'
+        ? roomSong.hostTimestamp
+        : joinedRoom.updated_at
+        ? new Date(joinedRoom.updated_at).getTime()
+        : Date.now()
+    const dur = roomSong.duration || 0
+    const pos = roomClockSync.calculateTargetTime(
+      hostPos,
+      hostTimestamp,
+      joinedRoom.is_playing,
+      0,
+      dur
+    )
+    return {
+      source: 'room',
+      isLocal: false,
+      isRemote: true,
+      activeDeviceId: joinedRoom.host_id,
+      activeDeviceName: joinedRoom.name || 'Listen Together',
+      activeDeviceCategory: 'app_pc',
+      isPlaying: joinedRoom.is_playing,
+      position: pos,
+      duration: dur,
+      progressPercent: dur > 0 ? Math.min(100, (pos / dur) * 100) : 0,
+      volume: localPlayer.volume ?? 1,
+      volumePercent: Math.round((localPlayer.volume ?? 1) * 100),
+      shuffle: false,
+      repeat: 'off',
+      targetDevice: 'desktop',
+      song: {
+        id: roomSong.localId || (roomSong as any).id || 'room-synced',
+        title: roomSong.title || 'Unknown Title',
+        artist: roomSong.artist || 'Unknown Artist',
+        album: roomSong.album || '',
+        duration: dur,
+        artworkUrl: roomSong.artworkUrl || '',
+        filePath: roomSong.audioUrl,
+        lyrics: roomSong.lyrics
+      } as Song,
+      artworkUrl: roomSong.artworkUrl,
+      lyrics: roomSong.lyrics
+    }
+  }
+
   const localSong = localPlayer.queue[localPlayer.currentSongIndex] || null
   const isLocalAudioOwner = Boolean(localPlayer.isAudioActive && localPlayer.isPlaying)
 

@@ -611,7 +611,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
       filePath: '',
       artworkUrl: track.artworkUrl,
       isOnline: true,
-      autoDownload: true,
+      autoDownload: false,
       autoPlay: false
     })
   }
@@ -645,7 +645,13 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
       <button
         key={song.id}
         type="button"
-        onClick={() => handlePlayTrack(song)}
+        onClick={() => {
+          if (!song.localSong && AppCapabilities.downloads) {
+            handleDownloadTrack(song)
+            return
+          }
+          handlePlayTrack(song)
+        }}
         onContextMenu={(e) => {
           e.preventDefault()
           e.stopPropagation()
@@ -933,7 +939,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
                   >
                     <option value="library">Library</option>
                     <option value="apple_music">Apple Music</option>
-                    <option value="lastfm">Last.fm</option>
+                    {AppCapabilities.lastFm && <option value="lastfm">Last.fm</option>}
                     <option value="musicbrainz">MusicBrainz</option>
                   </select>
                 </label>
@@ -1078,7 +1084,8 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
                   className="flex w-full items-center gap-3 px-4 py-2.5 text-[14px] text-white hover:bg-white/10 transition-colors"
                   onClick={() => {
                     const targetId = activeMenu.song.localSong?.id || activeMenu.song.id
-                    remoteClient.downloadSong(targetId)
+                    const targetTitle = activeMenu.song.localSong?.title || activeMenu.song.title
+                    void remoteClient.downloadSong(targetId, targetTitle)
                     setActiveMenu(null)
                   }}
                 >

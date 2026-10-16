@@ -9,6 +9,7 @@ import {
   Download,
   DownloadCloud,
   FolderOpen,
+  Heart,
   Loader2,
   MoreVertical,
   Play,
@@ -27,6 +28,7 @@ import { STREAMING_ACCOUNTS_SETTING } from '../../lib/downloadConfig'
 import type { Playlist } from '../../pages/Playlists/types'
 import type { DownloadTarget } from '../DownloadPanel/DownloadPanel'
 import CreatePlaylistModal from '../../pages/Playlists/CreatePlaylistModal'
+import SupportAboutModal from '../Common/SupportAboutModal'
 import { AppCapabilities } from '../../lib/appConfig'
 
 interface SidebarProps {
@@ -41,6 +43,7 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
   const [songCount, setSongCount] = useState<number>(0)
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [isCreatePlaylistOpen, setIsCreatePlaylistOpen] = useState(false)
+  const [isSupportModalOpen, setIsSupportModalOpen] = useState(false)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [activeMenuTransferId, setActiveMenuTransferId] = useState<string | null>(null)
   const menuContainerRef = useRef<HTMLDivElement | null>(null)
@@ -392,54 +395,70 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
         </div>
       </div>
 
-      <div className="mt-auto p-4 pb-3">
-        <button
-          type="button"
-          onClick={() => {
-            if (updateStatus?.status === 'available' && updateStatus.releaseUrl) {
-              void window.api.openExternal(updateStatus.releaseUrl)
-            } else {
-              navigate('/settings')
-            }
-          }}
-          title={
+      <div className="mt-auto p-3">
+        <div
+          className={`group relative flex w-full items-center justify-between rounded-xl border p-2.5 transition-all duration-200 no-drag ${
             updateStatus?.status === 'available'
-              ? `Felo ${updateStatus.latestVersion} is available on GitHub`
-              : updateStatus?.status === 'error'
-                ? updateStatus.message
-                : updateStatus?.status === 'unavailable'
-                  ? 'GitHub update source is not configured'
-                  : 'Felo is up to date'
-          }
-          className={`flex w-full items-center justify-between rounded-md px-4 py-2.5 transition-colors no-drag ${
-            updateStatus?.status === 'available'
-              ? 'bg-primary-amber/10 hover:bg-primary-amber/15'
-              : 'bg-surface hover:bg-hover'
+              ? 'border-primary-amber/40 bg-primary-amber/10 hover:bg-primary-amber/15 shadow-sm'
+              : 'border-white/5 bg-surface/75 hover:border-white/10 hover:bg-surface-elevated/90'
           }`}
         >
-          <div className="flex items-center gap-2.5">
+          {/* Main button to open Support & About */}
+          <button
+            type="button"
+            onClick={() => setIsSupportModalOpen(true)}
+            title={
+              updateStatus?.status === 'available'
+                ? `Update v${updateStatus.latestVersion} available • Click to view`
+                : 'Felo Free & Open Source • Click for About & Support'
+            }
+            className="flex min-w-0 flex-1 items-center gap-2.5 text-left focus:outline-none cursor-pointer"
+          >
             <span
-              className={`h-2 w-2 rounded-full ${
+              className={`h-2 w-2 shrink-0 rounded-full transition-transform group-hover:scale-125 ${
                 updateStatus?.status === 'available'
-                  ? 'animate-pulse bg-primary-amber'
+                  ? 'animate-pulse bg-primary-amber shadow-[0_0_8px_rgba(245,158,11,0.6)]'
                   : updateStatus === null
                     ? 'animate-pulse bg-text-muted'
-                    : 'bg-text-muted/60'
+                    : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]'
               }`}
             />
-            <span
-              className={`truncate text-left text-[12px] font-bold ${
-                updateStatus?.status === 'available' ? 'text-primary-amber' : 'text-text'
-              }`}
+            <div className="min-w-0 flex items-center gap-1.5">
+              <span className="truncate text-xs font-bold text-text">Felo</span>
+              <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-400 border border-emerald-500/25">
+                Free
+              </span>
+              {updateStatus?.status === 'available' && (
+                <span className="rounded bg-primary-amber/25 px-1.5 py-0.5 text-[9px] font-bold text-primary-amber animate-pulse">
+                  Update
+                </span>
+              )}
+            </div>
+          </button>
+
+          {/* Quick Action: Support Heart + Version tag */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                setIsSupportModalOpen(true)
+              }}
+              title="Support Felo (Saweria, Trakteer, Solana)"
+              className="flex h-6 w-6 items-center justify-center rounded-lg text-text-muted transition-all duration-150 hover:bg-rose-500/15 hover:text-rose-400 active:scale-95 cursor-pointer"
             >
-              {updateStatus?.status === 'available' ? 'Update available' : 'Local-First Engine'}
-            </span>
+              <Heart className="h-3.5 w-3.5 fill-rose-500/20 text-rose-400" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsSupportModalOpen(true)}
+              title="View version & support details"
+              className="text-[11px] font-mono text-text-muted hover:text-text transition-colors cursor-pointer"
+            >
+              v{updateStatus?.latestVersion || updateStatus?.currentVersion || '1.1.0'}
+            </button>
           </div>
-          <span className="shrink-0 text-[11px] font-mono text-text-muted">
-            v
-            {updateStatus?.latestVersion || updateStatus?.currentVersion || '1.0.0'}
-          </span>
-        </button>
+        </div>
       </div>
 
       {/* Transfers / Download Footer */}
@@ -514,7 +533,7 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
                             <div className="mt-2 flex items-center justify-between gap-3 text-[11px] font-medium">
                               <span
                                 className={`min-w-0 truncate ${
-                                  transfer.status === 'failed' ? 'text-danger' : 'text-warning'
+                                  transfer.status === 'failed' ? 'text-danger' : 'text-text-muted'
                                 }`}
                               >
                                 {transfer.message || transfer.status}
@@ -732,6 +751,18 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
             void loadStats()
             navigate(`/playlists/${newPlaylist.id}`)
           }}
+        />
+      )}
+
+      {isSupportModalOpen && (
+        <SupportAboutModal
+          isOpen={isSupportModalOpen}
+          onClose={() => setIsSupportModalOpen(false)}
+          currentVersion={updateStatus?.currentVersion || '1.1.0-beta.1'}
+          latestVersion={updateStatus?.latestVersion}
+          updateAvailable={updateStatus?.status === 'available'}
+          releaseUrl={updateStatus?.releaseUrl}
+          onOpenSettings={() => navigate('/settings')}
         />
       )}
     </aside>

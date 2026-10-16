@@ -7,7 +7,7 @@ import { BrowserWindow, ipcMain, app } from 'electron'
 import QRCode from 'qrcode'
 import { getDb } from '../database'
 import { CommandScheduler, searchLibrary, type LibraryTrack } from './playbackControlCore'
-import { isPathAllowedForMedia } from '../index'
+import { isPathAllowedForMedia } from '../protocols'
 
 const REMOTE_SETTING_KEY = 'felo_remote_control_enabled'
 const REMOTE_TOKEN_KEY = 'felo_remote_control_token'
@@ -470,6 +470,7 @@ export class RemoteControlService {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, HEAD',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization, Range',
+      'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
       'Access-Control-Allow-Private-Network': 'true',
       'Cache-Control': 'no-store'
     }
@@ -511,8 +512,41 @@ export class RemoteControlService {
     // but the app on the phone stores and sends the token for all API and SSE calls.
     const isApiRequest = pathname.startsWith('/v1/')
 
-    if (isApiRequest && !isTokenValid) {
+    // Allow localhost and local LAN clients (phones/tablets on Wi-Fi) to stream read-only media
+    // without requiring an authentication token. Protected remote control actions (play/pause/seek)
+    // still strictly require a valid token.
+    const remoteAddress = req.socket?.remoteAddress || ''
+    const cleanIp = remoteAddress.replace(/^::ffff:/, '')
+    const isLocalhost =
+      cleanIp === '127.0.0.1' ||
+      cleanIp === '::1' ||
+      remoteAddress === '127.0.0.1' ||
+      remoteAddress === '::1'
+    const isPrivateLan =
+      isLocalhost ||
+      /^192\.168\./.test(cleanIp) ||
+      /^10\./.test(cleanIp) ||
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(cleanIp) ||
+      /^100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\./.test(cleanIp) ||
+      cleanIp.endsWith('.local')
+
+    const isReadOnlyMedia =
+      pathname.startsWith('/v1/audio/') ||
+      pathname.startsWith('/v1/artwork/') ||
+      pathname === '/v1/status' ||
+      pathname === '/health'
+
+    if (isApiRequest && !isTokenValid && !(isPrivateLan && isReadOnlyMedia)) {
       return reply(401, { error: 'UNAUTHORIZED', message: 'Valid token required.' })
+    }
+
+    // Health check endpoint (no token required, used by CrossTabSyncBridge loopback probe)
+    if (method === 'GET' && pathname === '/health') {
+      return reply(200, {
+        ok: true,
+        isPlaying: this.state?.isPlaying ?? false,
+        token: isLocalhost ? this.token : undefined
+      })
     }
 
     try {
@@ -651,7 +685,7 @@ export class RemoteControlService {
       // 5a. Full Paginated Songs Library
       if (method === 'GET' && pathname === '/v1/library/songs') {
         const offset = Math.max(0, Number(parsedUrl.searchParams.get('offset')) || 0)
-        const limit = Math.max(1, Math.min(200, Number(parsedUrl.searchParams.get('limit')) || 50))
+        const limit = Math.max(1, Math.min(5000, Number(parsedUrl.searchParams.get('limit')) || 50))
         const sort = parsedUrl.searchParams.get('sort') || 'dateAdded'
         const order = (parsedUrl.searchParams.get('order') || '').toLowerCase() === 'asc' ? 'ASC' : 'DESC'
         const search = (parsedUrl.searchParams.get('q') || '').trim()
@@ -1272,9 +1306,12 @@ export class RemoteControlService {
     }
 
     try {
-      const song = getDb()
-        .prepare('SELECT title, artist, album, duration FROM songs WHERE id = ?')
-        .get(songId) as { title: string; artist: string; album?: string; duration?: number } | undefined
+      const db = getDb()
+      const song = db
+        .prepare('SELECT title, artist, album, duration, filePath FROM songs WHERE id = ?')
+        .get(songId) as
+        | { title: string; artist: string; album?: string; duration?: number; filePath?: string }
+        | undefined
 
       if (!song) {
         res.writeHead(404, corsHeaders)
@@ -1282,6 +1319,82 @@ export class RemoteControlService {
         return
       }
 
+      // 1. Check SQLite lyrics_cache
+      const cleanTitle = (song.title || '').trim()
+      const cleanArtist = (song.artist || '').trim()
+      const cacheKey = `${cleanTitle.toLowerCase()}:::${cleanArtist.toLowerCase()}`
+
+      try {
+        const cachedRow = db
+          .prepare('SELECT plainLyrics, syncedLyrics, instrumental FROM lyrics_cache WHERE id = ?')
+          .get(cacheKey) as { plainLyrics?: string; syncedLyrics?: string; instrumental?: number } | undefined
+
+        if (cachedRow && (cachedRow.plainLyrics || cachedRow.syncedLyrics)) {
+          res.writeHead(200, {
+            ...corsHeaders,
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'public, max-age=86400'
+          })
+          res.end(
+            JSON.stringify({
+              id: 0,
+              trackName: song.title,
+              artistName: song.artist,
+              plainLyrics: cachedRow.plainLyrics || undefined,
+              syncedLyrics: cachedRow.syncedLyrics || undefined,
+              instrumental: Boolean(cachedRow.instrumental)
+            })
+          )
+          return
+        }
+      } catch {
+        // Table might not be ready or empty
+      }
+
+      // 2. Check local sidecar .lrc files if filePath exists
+      if (song.filePath && fs.existsSync(song.filePath)) {
+        try {
+          const dir = path.dirname(song.filePath)
+          const ext = path.extname(song.filePath)
+          const baseName = path.basename(song.filePath, ext)
+          const candidateLrcFiles = [
+            path.join(dir, `${baseName}.lrc`),
+            path.join(dir, `${baseName}.LRC`),
+            path.join(dir, `${cleanTitle}.lrc`),
+            path.join(dir, `${cleanTitle}.LRC`)
+          ]
+
+          for (const lrcPath of candidateLrcFiles) {
+            if (fs.existsSync(lrcPath)) {
+              const content = fs.readFileSync(lrcPath, 'utf8')
+              if (content.trim()) {
+                const hasTimestamps = /\[\d{1,2}:\d{2}/.test(content)
+                const lyricsData = {
+                  id: 0,
+                  trackName: song.title,
+                  artistName: song.artist || '',
+                  syncedLyrics: hasTimestamps ? content : undefined,
+                  plainLyrics: hasTimestamps
+                    ? content.replace(/\[\d{1,2}:\d{2}[^\]]*\]/g, '').trim()
+                    : content.trim(),
+                  instrumental: false
+                }
+                res.writeHead(200, {
+                  ...corsHeaders,
+                  'Content-Type': 'application/json; charset=utf-8',
+                  'Cache-Control': 'public, max-age=86400'
+                })
+                res.end(JSON.stringify(lyricsData))
+                return
+              }
+            }
+          }
+        } catch {
+          // Ignore filesystem read failure
+        }
+      }
+
+      // 3. Fallback to LRCLIB with 6s timeout
       const params = new URLSearchParams({
         artist_name: song.artist || '',
         track_name: song.title || '',
@@ -1291,11 +1404,27 @@ export class RemoteControlService {
 
       const lrclibUrl = `https://lrclib.net/api/get?${params.toString()}`
       const fetchRes = await fetch(lrclibUrl, {
-        headers: { 'User-Agent': 'Felo Music Player (https://github.com/FanX0/felo)' }
+        headers: { 'User-Agent': 'Felo Music Player (https://github.com/FanX0/felo)' },
+        signal: AbortSignal.timeout(6000)
       })
 
       if (fetchRes.ok) {
         const data = await fetchRes.json()
+        if (data && (data.syncedLyrics || data.plainLyrics)) {
+          try {
+            db.prepare(
+              `INSERT OR REPLACE INTO lyrics_cache (id, trackName, artistName, plainLyrics, syncedLyrics, instrumental, source, updatedAt)
+               VALUES (?, ?, ?, ?, ?, ?, 'lrclib', strftime('%s', 'now'))`
+            ).run(
+              cacheKey,
+              data.trackName || song.title,
+              data.artistName || song.artist,
+              data.plainLyrics || null,
+              data.syncedLyrics || null,
+              data.instrumental ? 1 : 0
+            )
+          } catch {}
+        }
         res.writeHead(200, {
           ...corsHeaders,
           'Content-Type': 'application/json; charset=utf-8',

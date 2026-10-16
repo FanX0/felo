@@ -71,18 +71,14 @@ export function QuickAccessGrid({
         <div
           key={item.id}
           onClick={item.onClick}
-          className="group relative flex items-center justify-between overflow-hidden rounded-lg bg-surface-elevated/60 pr-3 transition-all duration-300 hover:bg-surface-elevated hover:shadow-lg cursor-pointer border border-white/5 hover:border-white/15"
+          className="group relative flex items-center justify-between overflow-hidden rounded-lg bg-surface-elevated/70 pr-3 transition-all duration-200 hover:bg-surface-elevated cursor-pointer border border-border hover:border-white/20 shadow-sm"
         >
           <div className="flex items-center gap-3 min-w-0 flex-1">
             {/* Visual thumbnail */}
-            <div className="relative h-14 w-14 shrink-0 overflow-hidden bg-surface">
+            <div className="relative h-14 w-14 shrink-0 overflow-hidden bg-surface border-r border-border">
               {item.type === 'mix' ? (
-                <div
-                  className={`flex h-full w-full items-center justify-center bg-gradient-to-br ${
-                    item.gradient || 'from-violet-600 to-indigo-900'
-                  }`}
-                >
-                  <Music2 className="h-6 w-6 text-white/90" />
+                <div className="flex h-full w-full items-center justify-center bg-surface-elevated text-text-muted">
+                  <Music2 className="h-6 w-6 text-text-muted" />
                 </div>
               ) : (
                 <ArtworkImage
@@ -97,7 +93,7 @@ export function QuickAccessGrid({
 
             {/* Title & subtitle */}
             <div className="min-w-0 flex-1 py-1">
-              <h4 className="truncate text-xs sm:text-sm font-bold text-white transition-colors">
+              <h4 className="truncate text-xs sm:text-sm font-semibold text-text transition-colors">
                 {item.title}
               </h4>
               <p className="truncate text-[11px] text-text-muted mt-0.5">
@@ -111,7 +107,7 @@ export function QuickAccessGrid({
             type="button"
             onClick={item.onPlay}
             title={`Play ${item.title}`}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-black shadow-xl opacity-0 translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 hover:scale-105 active:scale-95 transition-all duration-200 ml-2"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary hover:bg-primary-hover text-primary-foreground shadow-md opacity-0 translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 hover:scale-105 active:scale-95 transition-all duration-200 ml-2"
           >
             <Play className="h-4 w-4 fill-current ml-0.5" />
           </button>

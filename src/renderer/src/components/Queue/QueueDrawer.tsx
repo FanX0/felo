@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import {
   ChevronDown,
@@ -12,7 +12,8 @@ import {
   Shuffle,
   Volume2,
   Loader2,
-  Star
+  Star,
+  ArrowUp
 } from 'lucide-react'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
@@ -52,6 +53,13 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
   const removeSongFromQueueByIndex = usePlayerStore((s) => s.removeSongFromQueueByIndex)
   const clearUpcomingQueue = usePlayerStore((s) => s.clearUpcomingQueue)
   const transfers = useDownloadStore((s) => s.transfers)
+
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const [showScrollToCurrent, setShowScrollToCurrent] = useState(false)
+
+  const scrollToCurrent = () => {
+    scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 
   const [touchStartY, setTouchStartY] = useState<number | null>(null)
 
@@ -123,12 +131,12 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
           className="flex h-14 sm:h-16 shrink-0 items-center justify-between border-b border-white/10 px-4 sm:px-5 pt-[env(safe-area-inset-top,0px)] bg-[#121212]"
         >
           <div className="flex items-center gap-2.5 min-w-0">
-            <ListMusic className="h-5 w-5 text-primary-amber shrink-0" />
+            <ListMusic className="h-5 w-5 text-primary shrink-0" />
             <h2 className="text-base font-bold text-white truncate">Queue</h2>
             {isShuffle && (
               <span
                 title="Shuffle is active"
-                className="flex items-center gap-1 text-[11px] font-mono font-medium text-primary-amber shrink-0"
+                className="flex items-center gap-1 text-[11px] font-mono font-medium text-primary shrink-0"
               >
                 <Shuffle className="h-3 w-3" />
                 Shuffled
@@ -160,7 +168,11 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 pb-12 space-y-6">
+        <div
+          ref={scrollContainerRef}
+          onScroll={(e) => setShowScrollToCurrent(e.currentTarget.scrollTop > 80)}
+          className="flex-1 overflow-y-auto px-4 py-4 pb-12 space-y-6 custom-scrollbar"
+        >
         {/* Now Playing */}
         <div>
           <div className="mb-2.5 flex items-center justify-between">
@@ -198,9 +210,9 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
               </div>
 
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-bold text-primary-amber flex items-center gap-1.5">
+                <p className="truncate text-sm font-bold text-primary flex items-center gap-1.5">
                   {isPlaying && <Volume2 className="h-3.5 w-3.5 shrink-0 animate-pulse" />}
-                  {isBuffering && <Disc3 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary-amber" />}
+                  {isBuffering && <Disc3 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />}
                   <span className="truncate">{currentSong.title}</span>
                 </p>
                 <div className="truncate text-xs text-text-muted mt-0.5">
@@ -273,12 +285,12 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
 
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <p className={`truncate text-xs font-semibold ${song.isPriority ? 'text-amber-200' : 'text-text'} group-hover:text-primary-amber transition-colors`}>
+                        <p className="truncate text-xs font-semibold text-text group-hover:text-primary transition-colors">
                           {song.title}
                         </p>
                         {song.isPriority && (
-                          <span className="rounded-full bg-amber-400/20 border border-amber-400/30 px-1.5 py-0.2 text-[8px] font-black text-amber-300">
-                            🌟 {song.requestedBy || 'Priority'}
+                          <span className="rounded-full bg-surface-elevated border border-border px-1.5 py-0.2 text-[8px] font-mono font-bold text-text-muted">
+                            {song.requestedBy || 'Priority'}
                           </span>
                         )}
                       </div>
@@ -292,7 +304,7 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
                     </div>
 
                     {transfer && (
-                      <span className="flex items-center gap-1 text-[10px] text-primary-amber font-medium shrink-0">
+                      <span className="flex items-center gap-1 text-[10px] text-primary font-medium shrink-0">
                         <Loader2 className="h-3 w-3 animate-spin" />
                         {transfer.progress > 0 ? `${transfer.progress}%` : 'Buffering'}
                       </span>
@@ -312,11 +324,11 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
                         title={song.isPriority ? 'Priority Request • Move to Top Next' : 'Make Important / Play Next'}
                         className={`p-1 rounded transition-all ${
                           song.isPriority
-                            ? 'text-amber-400 bg-amber-500/20'
-                            : 'text-text-muted hover:text-amber-300 hover:bg-amber-500/10'
+                            ? 'text-primary bg-primary/10'
+                            : 'text-text-muted hover:text-text hover:bg-hover'
                         }`}
                       >
-                        <Star className="h-3.5 w-3.5 fill-amber-400/30" />
+                        <Star className={`h-3.5 w-3.5 ${song.isPriority ? 'fill-primary' : ''}`} />
                       </button>
                       {idx > 0 && (
                         <button
@@ -367,6 +379,19 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
           )}
         </div>
       </div>
+
+      {/* Floating Jump to Now Playing locator */}
+      {showScrollToCurrent && currentSong && (
+        <button
+          type="button"
+          onClick={scrollToCurrent}
+          className="absolute bottom-6 right-6 z-20 flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-primary hover:bg-primary-hover text-primary-foreground shadow-lg text-xs font-bold animate-in fade-in slide-in-from-bottom-2 duration-200 cursor-pointer active:scale-95 border border-border"
+          title="Jump to Now Playing"
+        >
+          <ArrowUp className="w-3.5 h-3.5" />
+          <span>Now Playing</span>
+        </button>
+      )}
     </aside>
   </>
   )

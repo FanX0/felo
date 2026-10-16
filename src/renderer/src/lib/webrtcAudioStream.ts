@@ -1,14 +1,26 @@
 import { getSupabase } from './supabase'
 import type { RealtimeChannel } from '@supabase/supabase-js'
-import { getActiveAudioElement } from './audioBridge'
+import {
+  getActiveAudioElement,
+  getActiveAudioMediaStream,
+  registerAudioTrackChangeListener
+} from './audioBridge'
+import { toMediaUrl } from './media'
+import {
+  analyzeCompression,
+  transcodeToCompressedAudio
+} from './jitAudioPipeline'
+import { audioDspEngine } from './audioDspEngine'
+import { useDspStore, type DspRoomSnapshot } from '../hooks/useDspStore'
 
 export interface WebRTCSignalMessage {
-  type: 'stream-started' | 'stream-stopped' | 'join-stream' | 'leave-stream' | 'offer' | 'answer' | 'ice-candidate'
+  type: 'stream-started' | 'stream-stopped' | 'join-stream' | 'leave-stream' | 'offer' | 'answer' | 'ice-candidate' | 'dsp-settings-sync'
   senderId: string
   targetId?: string
   offer?: RTCSessionDescriptionInit
   answer?: RTCSessionDescriptionInit
   candidate?: RTCIceCandidateInit
+  settings?: DspRoomSnapshot
   metadata?: {
     hostName?: string
     streamTitle?: string
@@ -20,7 +32,18 @@ const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun3.l.google.com:19302' }
+  { urls: 'stun:stun3.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  // OpenRelay TURN fallback for cross-network, cellular 4G/5G, and symmetric NAT traversal
+  {
+    urls: [
+      'turn:openrelay.metered.ca:80',
+      'turn:openrelay.metered.ca:443',
+      'turns:openrelay.metered.ca:443?transport=tcp'
+    ],
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  }
 ]
 
 export interface WebRTCAudioStats {
@@ -32,47 +55,215 @@ export interface WebRTCAudioStats {
 /**
  * Modifies an SDP description to set the Opus codec parameters for studio music quality:
  * - Full stereo (stereo=1, sprop-stereo=1)
- * - Studio Ultra bitrate (default 510 kbps CBR - maximum mathematical Opus limit)
+ * - Studio bitrate (default 256 kbps CBR - 1:1 MUSIXQUARE parity for NetEq stability)
  * - In-band Forward Error Correction (useinbandfec=1)
  * - Studio frame pacing (minptime=10, maxptime=20)
  */
-export function enhanceOpusSdp(sdp: string, bitrateBps = 510000): string {
+export function forceStereoSdp(sdp: string, bitrateBps = 256000): string {
   try {
-    const match = /a=rtpmap:(\d+)\s+opus\/48000\/2/i.exec(sdp)
-    if (!match) return sdp
-    const pt = match[1]
+    let modified = sdp
+    const stereoParams = [
+      'stereo=1',
+      'sprop-stereo=1',
+      `maxaveragebitrate=${bitrateBps}`,
+      'useinbandfec=1'
+    ]
 
-    const fmtpRegex = new RegExp(`^a=fmtp:${pt}\\s+(.*)$`, 'm')
-    const fmtpMatch = fmtpRegex.exec(sdp)
-
-    let customParams = 'stereo=1;sprop-stereo=1;useinbandfec=1;minptime=10;maxptime=20'
-    if (bitrateBps > 0) {
-      customParams += `;maxaveragebitrate=${bitrateBps};cbr=1`
+    // 1. Find opus payload types
+    const opusPTs: string[] = []
+    const rtpmapRegex = /a=rtpmap:(\d+)\s+opus\/48000\/2/gi
+    let match: RegExpExecArray | null
+    while ((match = rtpmapRegex.exec(sdp)) !== null) {
+      opusPTs.push(match[1])
     }
 
-    if (fmtpMatch) {
-      let existing = fmtpMatch[1]
-      if (!existing.includes('stereo=')) existing += ';stereo=1'
-      if (!existing.includes('sprop-stereo=')) existing += ';sprop-stereo=1'
-      if (!existing.includes('maxaveragebitrate=')) existing += `;maxaveragebitrate=${bitrateBps}`
-      if (!existing.includes('cbr=')) existing += ';cbr=1'
-      if (!existing.includes('useinbandfec=')) existing += ';useinbandfec=1'
-      return sdp.replace(fmtpRegex, `a=fmtp:${pt} ${existing}`)
-    } else {
-      return sdp.replace(
-        new RegExp(`(a=rtpmap:${pt}\\s+opus\\/48000\\/2)`, 'i'),
-        `$1\r\na=fmtp:${pt} ${customParams}`
-      )
+    // 2. Add/replace stereo params to ALL fmtp lines for these PTs
+    for (const pt of opusPTs) {
+      let foundFmtp = false
+      const fmtpRegex = new RegExp(`^a=fmtp:${pt}(?:(?:\\s+|;)([^\\r\\n]*))?$`, 'gm')
+      modified = modified.replace(fmtpRegex, (_line, params: string | undefined) => {
+        foundFmtp = true
+        const preservedParams = (params || '')
+          .split(';')
+          .map((param) => param.trim())
+          .filter(Boolean)
+          .filter((param) => !/^(stereo|sprop-stereo|maxaveragebitrate|useinbandfec)=/i.test(param))
+
+        return `a=fmtp:${pt} ${[...preservedParams, ...stereoParams].join('; ')}`
+      })
+
+      if (!foundFmtp) {
+        // If no fmtp line exists, append it after the rtpmap line
+        const rtpmapLine = new RegExp(`a=rtpmap:${pt}\\s+opus\\/48000\\/2`, 'i')
+        modified = modified.replace(rtpmapLine, (line) => {
+          return `${line}\r\na=fmtp:${pt} ${stereoParams.join('; ')}`
+        })
+      }
     }
+    return modified
   } catch (err) {
-    console.warn('[WebRTC] Failed to enhance Opus SDP, using raw SDP:', err)
+    console.warn('[WebRTC] Failed to force Opus stereo SDP, using raw SDP:', err)
     return sdp
   }
 }
 
+/** Backwards-compatibility alias for forceStereoSdp */
+export const enhanceOpusSdp = forceStereoSdp
+
+/** Boost bitrate and disable microphone DSP constraints for system audio sender (1:1 MUSIXQUARE parity). */
+export function tuneSystemAudioSender(sender: RTCRtpSender, bitrateBps = 256000): void {
+  if (sender.track?.kind !== 'audio') return
+  const track = sender.track
+  try {
+    track
+      .applyConstraints({
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false
+      })
+      .catch(() => {})
+  } catch {}
+
+  try {
+    const params = sender.getParameters()
+    if (!params.encodings || params.encodings.length === 0) {
+      params.encodings = [{}]
+    }
+    params.encodings[0].maxBitrate = bitrateBps
+    sender.setParameters(params).catch(() => {})
+  } catch {}
+}
+
+/** Set fixed playoutDelayHint target (0.5s) on receivers to prevent buffer drift across devices (1:1 MUSIXQUARE parity). */
+export const SYSTEM_AUDIO_PLAYOUT_DELAY_S = 0.5
+
+export function tuneSystemAudioReceivers(pc: RTCPeerConnection): void {
+  for (const r of pc.getReceivers()) {
+    const recv = r as RTCRtpReceiver & { playoutDelayHint?: number }
+    if (recv.track && recv.track.kind === 'audio') {
+      try {
+        recv.playoutDelayHint = SYSTEM_AUDIO_PLAYOUT_DELAY_S
+      } catch {}
+    }
+  }
+}
+
+export interface WebRtcAudioDecoderPrimer {
+  element: HTMLAudioElement
+  streamKey: string
+}
+
+let _activeDecoderPrimer: WebRtcAudioDecoderPrimer | null = null
+
+export function getAudioTrackStreamKey(scope: string, tracks: readonly MediaStreamTrack[]): string {
+  return `${scope}:${tracks.map((track) => track.id).join(',')}`
+}
+
+export function cleanupWebRtcAudioDecoderPrimer(): void {
+  if (!_activeDecoderPrimer) return
+  try {
+    _activeDecoderPrimer.element.pause()
+  } catch {}
+  try {
+    _activeDecoderPrimer.element.srcObject = null
+  } catch {}
+  try {
+    _activeDecoderPrimer.element.remove()
+  } catch {}
+  _activeDecoderPrimer = null
+}
+
+/** Dedicated, isolated decoder primer element to wake Chromium audio decoding without polluting main player (1:1 MUSIXQUARE parity). */
+export function primeWebRtcAudioDecoder(
+  tracks: readonly MediaStreamTrack[],
+  scope = 'stream'
+): WebRtcAudioDecoderPrimer | null {
+  if (tracks.length === 0) return null
+  const streamKey = getAudioTrackStreamKey(scope, tracks)
+  if (_activeDecoderPrimer?.streamKey === streamKey) {
+    return _activeDecoderPrimer
+  }
+  cleanupWebRtcAudioDecoderPrimer()
+
+  try {
+    const audioEl = document.createElement('audio')
+    audioEl.autoplay = true
+    audioEl.controls = false
+    audioEl.muted = true
+    audioEl.volume = 0
+    audioEl.setAttribute('playsinline', 'true')
+    audioEl.preload = 'auto'
+    audioEl.srcObject = new MediaStream([...tracks])
+    audioEl.dataset.feloSystemAudio = 'webrtc-decoder-primer'
+    audioEl.style.display = 'none'
+    document.body.appendChild(audioEl)
+    _activeDecoderPrimer = { element: audioEl, streamKey }
+
+    void audioEl.play().catch((err) => {
+      console.debug('[WebRTCClient] Decoder primer play blocked:', err)
+    })
+    return _activeDecoderPrimer
+  } catch (err) {
+    console.debug('[WebRTCClient] Error creating decoder primer:', err)
+    return null
+  }
+}
+
 /**
- * Captures the system/device loopback audio stream using Electron or modern Web APIs.
+ * Waits for remote WebRTC tracks to unmute before connecting them to Web Audio (1:1 MUSIXQUARE parity).
+ * In Chromium, tracks arrive in muted state until the first RTP audio packets are decoded.
+ * Creating a MediaStreamAudioSourceNode on a muted track produces a permanently silent node.
+ */
+export async function waitForInitialUnmute(
+  tracks: readonly MediaStreamTrack[],
+  timeoutMs = 2000,
+  settleMs = 80
+): Promise<boolean> {
+  if (tracks.length === 0 || tracks.every((t) => !t.muted)) {
+    return true
+  }
+
+  console.log('[WebRTCClient] WebRTC audio stream arrived muted; waiting for unmute before Web Audio graph attach')
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false
+    let timeoutTimer: ReturnType<typeof setTimeout> | null = null
+    let settleTimer: ReturnType<typeof setTimeout> | null = null
+
+    const cleanup = (): void => {
+      if (timeoutTimer) clearTimeout(timeoutTimer)
+      if (settleTimer) clearTimeout(settleTimer)
+      tracks.forEach((track) => track.removeEventListener('unmute', check))
+    }
+
+    const done = (ready: boolean, reason: string): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      console.log(
+        `[WebRTCClient] Audio graph attach after ${reason}: tracks muted=${tracks.map((t) => t.muted).join(',')}`
+      )
+      resolve(ready)
+    }
+
+    const check = (): void => {
+      if (tracks.every((track) => !track.muted)) {
+        if (!settleTimer) {
+          settleTimer = setTimeout(() => done(true, 'unmute'), settleMs)
+        }
+      }
+    }
+
+    tracks.forEach((track) => track.addEventListener('unmute', check))
+    timeoutTimer = setTimeout(() => done(true, 'unmute-timeout'), timeoutMs)
+    check()
+  })
+}
+
+/**
+ * Captures the system/device loopback audio stream using standard getDisplayMedia (1:1 MUSIXQUARE parity).
  * Disables echo cancellation, noise suppression, and automatic gain control to preserve full musical dynamics.
+ * Immediately stops all video tracks so screen capture does not persist in the background.
  */
 export async function captureSystemAudioStream(): Promise<{
   rawStream: MediaStream
@@ -80,76 +271,55 @@ export async function captureSystemAudioStream(): Promise<{
   audioOnlyStream: MediaStream
 }> {
   let rawStream: MediaStream | null = null
-  let captureError: any = null
 
-  // 1. First attempt: standard getDisplayMedia with studio audio constraints
   try {
     rawStream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
       audio: {
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
         channelCount: 2,
         sampleRate: 48000
-      } as any,
-      video: true
+      } as any
     })
   } catch (displayErr: any) {
-    captureError = displayErr
-    console.warn('[WebRTC] getDisplayMedia capture failed or cancelled, trying getUserMedia desktop fallback:', displayErr)
-  }
-
-  // 2. Second attempt (Electron fallback): getUserMedia with chromeMediaSource desktop
-  if (!rawStream || rawStream.getAudioTracks().length === 0) {
-    try {
-      const desktopStream = await (navigator.mediaDevices as any).getUserMedia({
-        audio: {
-          mandatory: {
-            chromeMediaSource: 'desktop'
-          }
-        },
-        video: {
-          mandatory: {
-            chromeMediaSource: 'desktop',
-            maxWidth: 2,
-            maxHeight: 2,
-            maxFrameRate: 1
-          }
-        }
-      })
-      if (desktopStream && desktopStream.getAudioTracks().length > 0) {
-        if (rawStream) {
-          rawStream.getTracks().forEach((t) => t.stop())
-        }
-        rawStream = desktopStream
-        captureError = null
-      }
-    } catch (fallbackErr) {
-      console.warn('[WebRTC] getUserMedia desktop fallback also failed:', fallbackErr)
-    }
-  }
-
-  if (!rawStream) {
-    if (captureError?.name === 'NotAllowedError' || captureError?.message?.includes('Permission denied')) {
-      throw new Error('Screen/audio capture was cancelled by user.')
+    if (displayErr?.name === 'NotAllowedError' || displayErr?.message?.includes('Permission denied')) {
+      throw new Error('Screen/audio capture was cancelled or denied by user.')
     }
     throw new Error('Device audio capture could not be initialized.')
   }
 
-  const audioTracks = rawStream.getAudioTracks()
-  if (audioTracks.length === 0) {
-    rawStream.getTracks().forEach((t) => t.stop())
-    throw new Error('No system audio track was captured. When prompted, make sure to check "Also share system audio" in the browser popup.')
+  if (!rawStream) {
+    throw new Error('Device audio capture could not be initialized.')
   }
 
-  // Disable video track without stopping it to prevent stream termination on some Chromium builds
-  rawStream.getVideoTracks().forEach((vt) => {
-    vt.enabled = false
-  })
+  // 1. Immediately stop all video tracks — only the captured audio track belongs in the product graph
+  for (const vt of rawStream.getVideoTracks()) {
+    try {
+      vt.stop()
+    } catch {}
+  }
+
+  // 2. Validate audio track
+  const audioTracks = rawStream.getAudioTracks()
+  if (audioTracks.length === 0) {
+    for (const t of rawStream.getTracks()) {
+      try {
+        t.stop()
+      } catch {}
+    }
+    throw new Error(
+      'No system audio track was captured. When prompted, make sure to check "Also share system audio" in the browser popup.'
+    )
+  }
 
   const audioTrack = audioTracks[0]
-  const audioOnlyStream = new MediaStream([audioTrack])
+  try {
+    audioTrack.contentHint = 'music'
+  } catch {}
 
+  const audioOnlyStream = new MediaStream([audioTrack])
   return { rawStream, audioTrack, audioOnlyStream }
 }
 
@@ -162,9 +332,14 @@ export class AudioLevelMonitor {
   private sourceNode: MediaStreamAudioSourceNode | null = null
   private rafId: number | null = null
   private callback: (level: number) => void
+  private unlockHandler: (() => void) | null = null
 
   constructor(callback: (level: number) => void) {
     this.callback = callback
+  }
+
+  setVolume(_vol: number): void {
+    // Volume is controlled via HTMLAudioElement
   }
 
   start(stream: MediaStream): void {
@@ -174,7 +349,7 @@ export class AudioLevelMonitor {
       if (!AudioCtx) return
       this.audioCtx = new AudioCtx()
       if (this.audioCtx.state === 'suspended') {
-        void this.audioCtx.resume()
+        void this.audioCtx.resume().catch(() => {})
       }
 
       this.analyser = this.audioCtx.createAnalyser()
@@ -183,6 +358,24 @@ export class AudioLevelMonitor {
 
       this.sourceNode = this.audioCtx.createMediaStreamSource(stream)
       this.sourceNode.connect(this.analyser)
+
+      // Unlock AudioContext on mobile Safari if suspended upon touch/click
+      this.unlockHandler = () => {
+        if (this.audioCtx && this.audioCtx.state === 'suspended') {
+          void this.audioCtx
+            .resume()
+            .then(() => {
+              if (this.audioCtx?.state === 'running' && this.unlockHandler) {
+                window.removeEventListener('touchstart', this.unlockHandler)
+                window.removeEventListener('click', this.unlockHandler)
+                this.unlockHandler = null
+              }
+            })
+            .catch(() => {})
+        }
+      }
+      window.addEventListener('touchstart', this.unlockHandler, { passive: true })
+      window.addEventListener('click', this.unlockHandler, { passive: true })
 
       const bufferLength = this.analyser.frequencyBinCount
       const dataArray = new Uint8Array(bufferLength)
@@ -210,7 +403,18 @@ export class AudioLevelMonitor {
     }
   }
 
+  resume(): void {
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      void this.audioCtx.resume().catch(() => {})
+    }
+  }
+
   stop(): void {
+    if (this.unlockHandler) {
+      window.removeEventListener('touchstart', this.unlockHandler)
+      window.removeEventListener('click', this.unlockHandler)
+      this.unlockHandler = null
+    }
     if (this.rafId) {
       cancelAnimationFrame(this.rafId)
       this.rafId = null
@@ -246,6 +450,13 @@ export interface WebRTCAudioHostOptions {
   onPeerDisconnected?: (peerId: string, count: number) => void
   onAudioLevel?: (level: number) => void
   onLevelChange?: (level: number) => void
+  onUploadProgress?: (
+    trackId: string,
+    percent: number,
+    statusText: string,
+    receivedBytes?: number,
+    totalBytes?: number
+  ) => void
   onError?: (err: Error) => void
   onEnded?: () => void
 }
@@ -253,7 +464,7 @@ export interface WebRTCAudioHostOptions {
 export class WebRTCAudioHost {
   private roomCode: string
   private userId: string
-  private bitrateBps = 510000
+  private bitrateBps = 256000
   private isMuted = false
   private isTrackOnly = false
   private rawStream: MediaStream | null = null
@@ -264,13 +475,23 @@ export class WebRTCAudioHost {
   private peerPendingCandidates = new Map<string, RTCIceCandidateInit[]>()
   private channel: RealtimeChannel | null = null
   private levelMonitor: AudioLevelMonitor | null = null
-  private activeTrackUrl: string | null = null
-  private activeTrackMimeType = 'audio/flac'
+  public activeTrackId: string | null = null
+  public activeTrackPayload: Blob | File | string | null = null
+  public activeTrackUrl: string | null = null
+  public activeTrackMimeType = 'audio/flac'
+  public activeTrackDuration = 180
   private peerStreamAbortControllers = new Map<string, AbortController>()
   private peerDisconnectTimers = new Map<string, any>()
 
   public onLevelChange?: (level: number) => void
   public onPeerCountChange?: (count: number) => void
+  public onUploadProgress?: (
+    trackId: string,
+    percent: number,
+    statusText: string,
+    receivedBytes?: number,
+    totalBytes?: number
+  ) => void
   public onError?: (err: Error) => void
   public onEnded?: () => void
 
@@ -293,8 +514,26 @@ export class WebRTCAudioHost {
     }
   }
 
-  setBitrate(bitrateBps: number): void {
+  async setBitrate(bitrateBps: number): Promise<void> {
     this.bitrateBps = bitrateBps
+    for (const pc of this.peers.values()) {
+      if (pc.connectionState === 'closed') continue
+      const senders = pc.getSenders()
+      for (const sender of senders) {
+        if (sender.track?.kind === 'audio') {
+          try {
+            const params = sender.getParameters()
+            if (!params.encodings || params.encodings.length === 0) {
+              params.encodings = [{}]
+            }
+            params.encodings[0].maxBitrate = bitrateBps
+            await sender.setParameters(params)
+          } catch (err) {
+            console.warn('[WebRTCHost] Failed to update sender bitrate dynamically:', err)
+          }
+        }
+      }
+    }
   }
 
   getBitrate(): number {
@@ -326,7 +565,13 @@ export class WebRTCAudioHost {
       this.onEnded?.()
     }
 
-    // 2. Start audio level monitor
+    // 2. MUSIXQUARE System Audio Capture Topology Parity:
+    // Route captured system audio into the host's Web Audio DSP engine so visualizers dance,
+    // while muting physical speaker destination to prevent acoustic feedback loop / audio doubling.
+    audioDspEngine.attachMediaStream(this.audioOnlyStream, 1.0, false)
+    audioDspEngine.setDestinationMuted(true)
+
+    // 3. Start audio level monitor
     if (this.onLevelChange) {
       this.levelMonitor = new AudioLevelMonitor(this.onLevelChange)
       this.levelMonitor.start(this.audioOnlyStream)
@@ -344,6 +589,7 @@ export class WebRTCAudioHost {
 
       try {
         if (msg.type === 'join-stream' && msg.senderId) {
+          if (msg.senderId === this.userId) return
           await this.handlePeerJoin(msg.senderId)
         } else if (msg.type === 'answer' && msg.senderId && msg.targetId === this.userId && msg.answer) {
           await this.handlePeerAnswer(msg.senderId, msg.answer)
@@ -357,7 +603,15 @@ export class WebRTCAudioHost {
       }
     })
 
-    await this.channel.subscribe()
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => resolve(), 3000)
+      this.channel!.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          clearTimeout(timeout)
+          resolve()
+        }
+      })
+    })
 
     // 4. Broadcast that device audio stream has started
     await this.channel.send({
@@ -379,30 +633,13 @@ export class WebRTCAudioHost {
   async startTrackOnlyMode(): Promise<void> {
     this.isTrackOnly = true
 
-    // Best-effort capture of local audio element stream without user prompt
-    try {
-      const el = getActiveAudioElement()
-      if (el) {
-        const stream: MediaStream | null =
-          typeof (el as any).captureStream === 'function'
-            ? (el as any).captureStream()
-            : typeof (el as any).mozCaptureStream === 'function'
-            ? (el as any).mozCaptureStream()
-            : null
+    // Register audio track change listener to seamlessly re-capture on song changes
+    registerAudioTrackChangeListener(() => {
+      this.refreshTrack()
+    })
 
-        if (stream && stream.getAudioTracks().length > 0) {
-          this.audioOnlyStream = stream
-          this.audioTrack = stream.getAudioTracks()[0]
-        }
-      }
-    } catch (captureErr) {
-      console.warn('[WebRTCHost] Audio element stream capture unavailable, running DataChannel streaming:', captureErr)
-    }
-
-    if (this.onLevelChange && this.audioOnlyStream) {
-      this.levelMonitor = new AudioLevelMonitor(this.onLevelChange)
-      this.levelMonitor.start(this.audioOnlyStream)
-    }
+    // Capture initial track if element is active
+    this.refreshTrack()
 
     const supabase = getSupabase()
     this.channel = supabase.channel(`room-rtc-${this.roomCode}`, {
@@ -415,6 +652,7 @@ export class WebRTCAudioHost {
 
       try {
         if (msg.type === 'join-stream' && msg.senderId) {
+          if (msg.senderId === this.userId) return
           await this.handlePeerJoin(msg.senderId)
         } else if (msg.type === 'answer' && msg.senderId && msg.targetId === this.userId && msg.answer) {
           await this.handlePeerAnswer(msg.senderId, msg.answer)
@@ -428,7 +666,15 @@ export class WebRTCAudioHost {
       }
     })
 
-    await this.channel.subscribe()
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => resolve(), 3000)
+      this.channel!.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          clearTimeout(timeout)
+          resolve()
+        }
+      })
+    })
 
     await this.channel.send({
       type: 'broadcast',
@@ -441,11 +687,143 @@ export class WebRTCAudioHost {
     })
   }
 
+  /**
+   * Refreshes the local audio track from the active HTMLAudioElement and dynamically replaces
+   * the audio sender track on all active peer connections without interrupting playback.
+   */
+  refreshTrack(): void {
+    if (!this.isTrackOnly) return
+    try {
+      let stream =
+        getActiveAudioMediaStream() ||
+        (() => {
+          const el = getActiveAudioElement()
+          if (!el) return null
+          return typeof (el as any).captureStream === 'function'
+            ? (el as any).captureStream()
+            : typeof (el as any).mozCaptureStream === 'function'
+            ? (el as any).mozCaptureStream()
+            : null
+        })()
+
+      // Fallback: If captureStream returned null or empty tracks, use audioDspEngine's
+      // post-DSP master gain capture node instead of creating a competing MediaElementSource
+      // (which throws InvalidStateError when the element is already bound to the DSP graph).
+      if (!stream || stream.getAudioTracks().length === 0) {
+        const dspStream = audioDspEngine.getStreamCapture()
+        if (dspStream && dspStream.getAudioTracks().length > 0) {
+          stream = dspStream
+        }
+      }
+
+      if (stream && stream.getAudioTracks().length > 0) {
+        this.audioOnlyStream = stream
+        this.audioTrack = stream.getAudioTracks()[0]
+
+        if (this.audioTrack) {
+          try {
+            void this.audioTrack.applyConstraints({
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false
+            })
+          } catch {}
+        }
+
+        // Update audio track on all connected peers
+        for (const [peerId, pc] of this.peers.entries()) {
+          const senders = pc.getSenders()
+          const audioSender = senders.find((s) => s.track?.kind === 'audio' || s.track === null)
+          if (audioSender && this.audioTrack) {
+            void audioSender.replaceTrack(this.audioTrack).catch((err) => {
+              console.warn('[WebRTCHost] Failed to replaceTrack on peer:', err)
+            })
+          } else if (!audioSender && this.audioTrack && this.audioOnlyStream) {
+            try {
+              const sender = pc.addTrack(this.audioTrack, this.audioOnlyStream)
+              tuneSystemAudioSender(sender, this.bitrateBps)
+              void this.renegotiatePeer(peerId, pc)
+            } catch {}
+          }
+        }
+
+        if (this.onLevelChange && this.audioOnlyStream) {
+          this.levelMonitor?.stop()
+          this.levelMonitor = new AudioLevelMonitor(this.onLevelChange)
+          this.levelMonitor.start(this.audioOnlyStream)
+        }
+      }
+    } catch (err) {
+      console.warn('[WebRTCHost] Error refreshing track:', err)
+    }
+  }
+
+  private async renegotiatePeer(peerId: string, pc: RTCPeerConnection): Promise<void> {
+    try {
+      if (pc.signalingState === 'closed') return
+      const offer = await pc.createOffer()
+      if (offer.sdp) {
+        offer.sdp = forceStereoSdp(offer.sdp, this.bitrateBps)
+      }
+      await pc.setLocalDescription(offer)
+      if (this.channel) {
+        await this.channel.send({
+          type: 'broadcast',
+          event: 'signal',
+          payload: {
+            type: 'offer',
+            senderId: this.userId,
+            targetId: peerId,
+            offer: {
+              type: offer.type,
+              sdp: offer.sdp
+            }
+          } satisfies WebRTCSignalMessage
+        })
+      }
+    } catch (err) {
+      console.warn('[WebRTCHost] Renegotiation error for peer:', peerId, err)
+    }
+  }
+
   private async handlePeerJoin(peerId: string): Promise<void> {
+    // Refresh audio track first to ensure new peer receives a live track immediately
+    this.refreshTrack()
     if (!this.isTrackOnly && (!this.audioTrack || !this.audioOnlyStream)) return
 
-    // Clean up any existing connection for this peer
-    this.removePeer(peerId)
+    // Guard against tearing down already-connected or in-flight handshakes
+    const existing = this.peers.get(peerId)
+    if (existing) {
+      if (existing.connectionState === 'connected') {
+        // Peer is already connected; sync settings and track payload if data channel is ready
+        try {
+          const dc = this.peerDataChannels.get(peerId)
+          if (dc && dc.readyState === 'open') {
+            const snapshot = useDspStore.getState().getRoomDspSnapshot()
+            if (snapshot) {
+              dc.send(JSON.stringify({ type: 'dsp-settings-sync', settings: snapshot }))
+            }
+            const payloadToStream = this.activeTrackPayload || this.activeTrackUrl
+            if (payloadToStream) {
+              void this.streamTrackToPeer(
+                dc,
+                peerId,
+                payloadToStream,
+                this.activeTrackMimeType,
+                this.activeTrackId || 'track',
+                this.activeTrackDuration
+              )
+            }
+          }
+        } catch {}
+        return
+      }
+      if (existing.connectionState === 'connecting') {
+        // Handshake already in flight; do not abort ongoing ICE / SDP negotiation
+        return
+      }
+      this.removePeer(peerId)
+    }
 
     const pc = new RTCPeerConnection({ iceServers: DEFAULT_ICE_SERVERS })
     this.peers.set(peerId, pc)
@@ -494,12 +872,52 @@ export class WebRTCAudioHost {
       }
     }
 
-    // Add audio track to peer connection if available
+    // Add audio track to peer connection if available, or add audio transceiver so SDP offer always has an audio m-line
     if (this.audioTrack && this.audioOnlyStream) {
       try {
-        pc.addTrack(this.audioTrack, this.audioOnlyStream)
+        const sender = pc.addTrack(this.audioTrack, this.audioOnlyStream)
+        tuneSystemAudioSender(sender, this.bitrateBps)
       } catch (trackErr) {
         console.warn('[WebRTCHost] Could not add audio track to peer connection:', trackErr)
+      }
+    } else {
+      try {
+        pc.addTransceiver('audio', { direction: 'sendonly' })
+      } catch (trErr) {
+        console.warn('[WebRTCHost] Could not add audio transceiver:', trErr)
+      }
+
+      // In track-only mode, audio element may not be ready yet (Howl still loading).
+      // Retry capturing and attaching the audio track once it becomes available.
+      if (this.isTrackOnly) {
+        const retryAttachTrack = (attempt: number) => {
+          if (attempt > 3 || !this.peers.has(peerId)) return
+          setTimeout(() => {
+            if (!this.peers.has(peerId)) return
+            this.refreshTrack()
+            if (this.audioTrack && this.audioOnlyStream) {
+              const activePc = this.peers.get(peerId)
+              if (activePc && activePc.connectionState !== 'closed' && activePc.connectionState !== 'failed') {
+                const senders = activePc.getSenders()
+                const audioSender = senders.find((s) => s.track?.kind === 'audio' || s.track === null)
+                if (audioSender) {
+                  void audioSender.replaceTrack(this.audioTrack!).catch((err) => {
+                    console.warn('[WebRTCHost] Retry replaceTrack failed:', err)
+                  })
+                } else {
+                  try {
+                    const sender = activePc.addTrack(this.audioTrack!, this.audioOnlyStream!)
+                    tuneSystemAudioSender(sender, this.bitrateBps)
+                    void this.renegotiatePeer(peerId, activePc)
+                  } catch {}
+                }
+              }
+            } else {
+              retryAttachTrack(attempt + 1)
+            }
+          }, 500 * (attempt + 1))
+        }
+        retryAttachTrack(0)
       }
     }
 
@@ -508,8 +926,22 @@ export class WebRTCAudioHost {
       const dc = pc.createDataChannel('felo-lossless-stream', { ordered: true })
       this.peerDataChannels.set(peerId, dc)
       dc.onopen = () => {
-        if (this.activeTrackUrl) {
-          void this.streamTrackToPeer(dc, peerId, this.activeTrackUrl, this.activeTrackMimeType)
+        try {
+          const snapshot = useDspStore.getState().getRoomDspSnapshot()
+          if (snapshot) {
+            dc.send(JSON.stringify({ type: 'dsp-settings-sync', settings: snapshot }))
+          }
+        } catch {}
+        const payloadToStream = this.activeTrackPayload || this.activeTrackUrl
+        if (payloadToStream) {
+          void this.streamTrackToPeer(
+            dc,
+            peerId,
+            payloadToStream,
+            this.activeTrackMimeType,
+            this.activeTrackId || 'track',
+            this.activeTrackDuration
+          )
         }
       }
     } catch (dcErr) {
@@ -520,7 +952,7 @@ export class WebRTCAudioHost {
     const offer = await pc.createOffer()
     // Enhance SDP for fullband stereo Opus at configured bitrate
     if (offer.sdp) {
-      offer.sdp = enhanceOpusSdp(offer.sdp, this.bitrateBps)
+      offer.sdp = forceStereoSdp(offer.sdp, this.bitrateBps)
     }
     await pc.setLocalDescription(offer)
 
@@ -615,11 +1047,13 @@ export class WebRTCAudioHost {
    * Streams audio chunks to an individual peer's DataChannel with flow control backpressure,
    * safe 16 KB packet fragmentation, and per-peer cancellation on track change.
    */
-  private async streamTrackToPeer(
+  private  async streamTrackToPeer(
     dc: RTCDataChannel,
     peerId: string,
-    audioUrl: string,
-    mimeType: string
+    fileOrBlobOrUrl: Blob | File | string,
+    mimeType = 'audio/mpeg',
+    trackId = 'track',
+    durationSec = 180
   ): Promise<void> {
     if (dc.readyState !== 'open') return
 
@@ -634,55 +1068,106 @@ export class WebRTCAudioHost {
 
     const abortCtrl = new AbortController()
     this.peerStreamAbortControllers.set(peerId, abortCtrl)
+    const signal = abortCtrl.signal
 
     try {
-      const response = await fetch(audioUrl, { signal: abortCtrl.signal })
-      if (!response.ok || !response.body) return
-      const totalSize = parseInt(response.headers.get('content-length') || '0', 10)
+      let rawBlob: Blob | null = null
+      if (fileOrBlobOrUrl instanceof Blob) {
+        rawBlob = fileOrBlobOrUrl
+      } else if (typeof fileOrBlobOrUrl === 'string') {
+        const fetchUrl = /^https?:\/\//i.test(fileOrBlobOrUrl) || /^blob:/i.test(fileOrBlobOrUrl) || /^media:\/\//i.test(fileOrBlobOrUrl)
+          ? fileOrBlobOrUrl
+          : toMediaUrl(fileOrBlobOrUrl) || fileOrBlobOrUrl
+        const response = await fetch(fetchUrl, { signal: abortCtrl.signal })
+        if (!response.ok) return
+        rawBlob = await response.blob()
+      }
 
-      if (abortCtrl.signal.aborted || dc.readyState !== 'open') return
+      if (!rawBlob || abortCtrl.signal.aborted || dc.readyState !== 'open') return
 
-      const startMsg = JSON.stringify({ type: 'start', mimeType, totalSize })
-      dc.send(startMsg)
+      const profile = analyzeCompression(rawBlob.size, durationSec, trackId, mimeType)
 
-      const reader = response.body.getReader()
-      const CHUNK_SIZE = 16384 // 16 KB safe WebRTC SCTP chunk size
-
-      while (true) {
-        if (abortCtrl.signal.aborted || dc.readyState !== 'open') {
-          try {
-            await reader.cancel()
-          } catch {}
-          break
-        }
-
-        const { done, value } = await reader.read()
-        if (done) break
-
-        if (value && value.byteLength > 0) {
-          // Slice the Uint8Array into 16 KB safe WebRTC chunks
-          for (let offset = 0; offset < value.byteLength; offset += CHUNK_SIZE) {
-            if (abortCtrl.signal.aborted || dc.readyState !== 'open') break
-
-            // Flow control: wait if bufferedAmount exceeds 2MB
-            while (dc.readyState === 'open' && !abortCtrl.signal.aborted && dc.bufferedAmount > 2097152) {
-              await new Promise((r) => setTimeout(r, 40))
-            }
-
-            if (abortCtrl.signal.aborted || dc.readyState !== 'open') break
-
-            const slice = value.subarray(offset, Math.min(offset + CHUNK_SIZE, value.byteLength))
-            dc.send(slice)
-          }
+      let payloadToStream = rawBlob
+      if (profile.needsCompression) {
+        this.onUploadProgress?.(trackId, 0, 'Compressing (WAV -> Opus)...', 0, rawBlob.size)
+        try {
+          payloadToStream = await transcodeToCompressedAudio(rawBlob, signal)
+        } catch (transErr: any) {
+          if (transErr.name === 'AbortError') return
+          payloadToStream = rawBlob
         }
       }
 
-      if (!abortCtrl.signal.aborted && dc.readyState === 'open') {
-        dc.send(JSON.stringify({ type: 'end' }))
+      if (signal.aborted || dc.readyState !== 'open') return
+
+      const totalSize = payloadToStream.size
+      const CHUNK_SIZE = 65536 // 64 KB slices for optimal WebRTC SCTP delivery
+      const totalChunks = Math.ceil(totalSize / CHUNK_SIZE)
+      const effectiveMime = payloadToStream.type || rawBlob.type || mimeType || 'audio/mpeg'
+
+      const startMsg = JSON.stringify({
+        type: 'jit-start',
+        trackId,
+        mimeType: effectiveMime,
+        totalSize,
+        totalChunks,
+        compression: profile
+      })
+      dc.send(startMsg)
+
+      let uploadedBytes = 0
+
+      for (let i = 0; i < totalChunks; i++) {
+        if (signal.aborted || dc.readyState !== 'open') {
+          if (dc.readyState === 'open') {
+            try {
+              dc.send(JSON.stringify({ type: 'jit-abort', trackId }))
+            } catch {}
+          }
+          return
+        }
+
+        // Flow control: event-driven backpressure via bufferedamountlow threshold
+        if (dc.readyState === 'open' && !signal.aborted && dc.bufferedAmount > 1048576) {
+          dc.bufferedAmountLowThreshold = 262144
+          await new Promise<void>((resolve) => {
+            const onLow = () => {
+              dc.removeEventListener('bufferedamountlow', onLow)
+              clearTimeout(timer)
+              resolve()
+            }
+            const timer = setTimeout(() => {
+              dc.removeEventListener('bufferedamountlow', onLow)
+              resolve()
+            }, 100)
+            dc.addEventListener('bufferedamountlow', onLow)
+          })
+        }
+
+        if (signal.aborted || dc.readyState !== 'open') return
+
+        const start = i * CHUNK_SIZE
+        const end = Math.min(start + CHUNK_SIZE, totalSize)
+        const slice = payloadToStream.slice(start, end)
+        const arrayBuf = await slice.arrayBuffer()
+
+        dc.send(arrayBuf)
+
+        uploadedBytes += arrayBuf.byteLength
+        const percent = Math.min(100, Math.round((uploadedBytes / totalSize) * 100))
+        const statusText = profile.needsCompression
+          ? `Compressing & Uploading... ${percent}%`
+          : `Uploading... ${percent}%`
+        this.onUploadProgress?.(trackId, percent, statusText, uploadedBytes, totalSize)
+      }
+
+      if (!signal.aborted && dc.readyState === 'open') {
+        dc.send(JSON.stringify({ type: 'jit-end', trackId, totalSize }))
+        this.onUploadProgress?.(trackId, 100, 'Playing (Synced)', totalSize, totalSize)
       }
     } catch (err: any) {
       if (err?.name !== 'AbortError') {
-        console.warn(`[WebRTCHost] Error streaming track to peer ${peerId}:`, err)
+        console.warn(`[WebRTCHost] Error streaming JIT track to peer ${peerId}:`, err)
       }
     } finally {
       if (this.peerStreamAbortControllers.get(peerId) === abortCtrl) {
@@ -695,13 +1180,47 @@ export class WebRTCAudioHost {
    * Broadcasts the pristine, bit-perfect lossless audio stream chunks directly through WebRTC DataChannels.
    * Chunks are held ephemerally in RAM on the listener's client and never written to disk.
    */
-  async broadcastLosslessTrack(audioUrl: string, mimeType = 'audio/flac'): Promise<void> {
-    this.activeTrackUrl = audioUrl
+  async broadcastLosslessTrack(
+    fileOrBlobOrUrl: Blob | File | string,
+    mimeType = 'audio/flac',
+    trackId = 'track',
+    durationSec = 180
+  ): Promise<void> {
+    this.activeTrackId = trackId
+    this.activeTrackPayload = fileOrBlobOrUrl
+    this.activeTrackUrl = typeof fileOrBlobOrUrl === 'string' ? fileOrBlobOrUrl : null
     this.activeTrackMimeType = mimeType
+    this.activeTrackDuration = durationSec
 
     for (const [peerId, dc] of this.peerDataChannels) {
       if (dc.readyState === 'open') {
-        void this.streamTrackToPeer(dc, peerId, audioUrl, mimeType)
+        void this.streamTrackToPeer(dc, peerId, fileOrBlobOrUrl, mimeType, trackId, durationSec)
+      }
+    }
+  }
+
+  /**
+   * Broadcasts room DSP settings (EQ gains, Reverb presets, Virtual Bass/Exciter/Widener)
+   * to all connected peers over both WebRTC DataChannel and Supabase Realtime broadcast.
+   */
+  broadcastDspSettings(snapshot: DspRoomSnapshot): void {
+    if (this.channel) {
+      void this.channel.send({
+        type: 'broadcast',
+        event: 'signal',
+        payload: {
+          type: 'dsp-settings-sync',
+          senderId: this.userId,
+          settings: snapshot
+        } satisfies WebRTCSignalMessage
+      })
+    }
+    const msg = JSON.stringify({ type: 'dsp-settings-sync', settings: snapshot })
+    for (const dc of this.peerDataChannels.values()) {
+      if (dc.readyState === 'open') {
+        try {
+          dc.send(msg)
+        } catch {}
       }
     }
   }
@@ -758,9 +1277,20 @@ export class WebRTCAudioHost {
       this.rawStream.getTracks().forEach((t) => t.stop())
       this.rawStream = null
     }
+
+    // Restore physical destination and detach captured stream from DSP engine
+    if (this.audioOnlyStream && audioDspEngine.getAttachedMediaStream() === this.audioOnlyStream) {
+      audioDspEngine.detachMediaStream()
+    }
+    audioDspEngine.setDestinationMuted(false)
+    audioDspEngine.releaseStreamCapture()
+
     this.audioTrack = null
     this.audioOnlyStream = null
     this.activeTrackUrl = null
+    this.activeTrackPayload = null
+    this.activeTrackId = null
+    registerAudioTrackChangeListener(null)
   }
 }
 
@@ -775,6 +1305,13 @@ export interface WebRTCAudioClientOptions {
   onAutoplayBlocked?: (blocked: boolean) => void
   onStats?: (stats: WebRTCAudioStats) => void
   onLosslessReady?: (blobUrl: string, mimeType: string) => void
+  onJITProgress?: (
+    trackId: string,
+    percent: number,
+    statusText: string,
+    receivedBytes?: number,
+    totalBytes?: number
+  ) => void
   onError?: (err: Error) => void
 }
 
@@ -785,24 +1322,37 @@ export class WebRTCAudioClient {
   private pc: RTCPeerConnection | null = null
   private channel: RealtimeChannel | null = null
   private audioElement: HTMLAudioElement | null = null
+  private audioCtx: AudioContext | null = null
+  private audioSourceNode: MediaStreamAudioSourceNode | null = null
+  private gainNode: GainNode | null = null
   private levelMonitor: AudioLevelMonitor | null = null
   private pendingCandidates: RTCIceCandidateInit[] = []
   private statsTimer: any = null
   private prevBytesReceived = 0
   private prevTimestamp = 0
   private handshakeRetryTimer: any = null
+  private reconnectTimer: any = null
 
   private losslessChunks: ArrayBuffer[] = []
   private losslessMimeType = 'audio/flac'
   private losslessTotalSize = 0
   private losslessReceivedSize = 0
   private losslessBlobUrl: string | null = null
+  private activeTrackId: string | null = null
+  private currentStream: MediaStream | null = null
 
   public onLevelChange?: (level: number) => void
   public onStateChange?: (state: 'connecting' | 'connected' | 'disconnected' | 'stopped') => void
   public onAutoplayBlocked?: (blocked: boolean) => void
   public onStats?: (stats: WebRTCAudioStats) => void
   public onLosslessReady?: (blobUrl: string, mimeType: string) => void
+  public onJITProgress?: (
+    trackId: string,
+    percent: number,
+    statusText: string,
+    receivedBytes?: number,
+    totalBytes?: number
+  ) => void
   public onError?: (err: Error) => void
 
   constructor(roomCode: string, userId: string, hostId: string, options?: WebRTCAudioClientOptions) {
@@ -816,13 +1366,53 @@ export class WebRTCAudioClient {
       if (options.onAutoplayBlocked) this.onAutoplayBlocked = options.onAutoplayBlocked
       if (options.onStats) this.onStats = options.onStats
       if (options.onLosslessReady) this.onLosslessReady = options.onLosslessReady
+      if (options.onJITProgress) this.onJITProgress = options.onJITProgress
       if (options.onError) this.onError = options.onError
     }
   }
 
-  setMutedForLossless(muted: boolean): void {
+  private volume = 1.0
+
+  setVolume(volume: number): void {
+    this.volume = Math.max(0, Math.min(1, volume))
+    if (this.gainNode) {
+      this.gainNode.gain.value = this.volume
+    }
     if (this.audioElement) {
-      this.audioElement.muted = muted
+      this.audioElement.volume = this.volume
+    }
+    audioDspEngine.setMediaStreamVolume(this.volume)
+    this.levelMonitor?.setVolume(this.volume)
+  }
+
+  setMutedForLossless(_muted: boolean): void {
+    // Lossless mute logic decoupled from device audio streaming
+  }
+
+  resumeAudio(): void {
+    void audioDspEngine.resume()
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      void this.audioCtx.resume()
+    }
+  }
+
+  /**
+   * Routes incoming stream directly to Web Audio DSP engine with 1:1 MUSIXQUARE topology:
+   * 1. Primes isolated WebRTC audio decoder (Windows / Chromium fix).
+   * 2. Unmutes physical audio output destination for listener.
+   * 3. Attaches MediaStream to audioDspEngine (Stereo upmix -> Widener/EQ/MasterGain -> Destination).
+   */
+  public playStream(stream: MediaStream): void {
+    this.currentStream = stream
+    // 1. Prime isolated WebRTC audio decoder (MUSIXQUARE Windows/Chromium parity)
+    primeWebRtcAudioDecoder(stream.getAudioTracks(), `client-${this.roomCode}`)
+
+    // 2. Unmute listener output and attach stream to full Web Audio DSP graph
+    try {
+      audioDspEngine.setDestinationMuted(false)
+      audioDspEngine.attachMediaStream(stream, this.volume, true)
+    } catch (ctxErr) {
+      console.warn('[WebRTCClient] Web Audio DSP pipeline error:', ctxErr)
     }
   }
 
@@ -835,11 +1425,6 @@ export class WebRTCAudioClient {
 
   async connect(): Promise<void> {
     this.onStateChange?.('connecting')
-
-    // Create an ephemeral HTMLAudioElement in memory
-    this.audioElement = new Audio()
-    this.audioElement.autoplay = true
-    this.audioElement.volume = 1.0
 
     const supabase = getSupabase()
     this.channel = supabase.channel(`room-rtc-${this.roomCode}`, {
@@ -867,6 +1452,10 @@ export class WebRTCAudioClient {
         } else if (msg.type === 'stream-stopped' && msg.senderId === this.hostId) {
           this.disconnect()
           this.onStateChange?.('stopped')
+        } else if (msg.type === 'dsp-settings-sync' && msg.settings && msg.senderId === this.hostId) {
+          if (useDspStore.getState().settingsSync) {
+            useDspStore.getState().applyRoomDspSnapshot(msg.settings)
+          }
         }
       } catch (err) {
         console.warn('[WebRTCClient] Error handling signal:', err)
@@ -886,115 +1475,181 @@ export class WebRTCAudioClient {
       })
     })
 
-    const sendJoin = async () => {
-      if (!this.channel) return
-      await this.channel.send({
-        type: 'broadcast',
-        event: 'signal',
-        payload: {
-          type: 'join-stream',
-          senderId: this.userId,
-          targetId: this.hostId
-        } satisfies WebRTCSignalMessage
-      })
-    }
-
-    await sendJoin()
+    await this.sendJoin()
 
     this.stopHandshakeRetry()
     let attempts = 0
     this.handshakeRetryTimer = setInterval(async () => {
-      if (this.pc?.remoteDescription || this.pc?.connectionState === 'connected' || attempts >= 2) {
+      if (this.pc?.remoteDescription || this.pc?.connectionState === 'connected' || attempts >= 5) {
         this.stopHandshakeRetry()
         return
       }
       attempts++
-      await sendJoin()
+      await this.sendJoin()
     }, 2500)
   }
 
+  private async sendJoin(): Promise<void> {
+    if (!this.channel) return
+    await this.channel.send({
+      type: 'broadcast',
+      event: 'signal',
+      payload: {
+        type: 'join-stream',
+        senderId: this.userId,
+        targetId: this.hostId
+      } satisfies WebRTCSignalMessage
+    })
+  }
+
   private async handleOffer(offer: RTCSessionDescriptionInit): Promise<void> {
-    if (this.pc) {
-      try {
-        this.pc.close()
-      } catch {
-        // Ignored
+    const isRenegotiation = Boolean(
+      this.pc &&
+      this.pc.signalingState !== 'closed' &&
+      this.pc.connectionState !== 'failed' &&
+      this.pc.connectionState !== 'closed'
+    )
+
+    if (!isRenegotiation) {
+      if (this.pc) {
+        try {
+          this.pc.close()
+        } catch {
+          // Ignored
+        }
       }
-    }
 
-    this.pc = new RTCPeerConnection({ iceServers: DEFAULT_ICE_SERVERS })
+      this.pc = new RTCPeerConnection({ iceServers: DEFAULT_ICE_SERVERS })
 
-    this.pc.ondatachannel = (event) => {
-      if (event.channel.label === 'felo-lossless-stream') {
-        this.setupLosslessDataChannel(event.channel)
+      this.pc.ondatachannel = (event) => {
+        if (event.channel.label === 'felo-lossless-stream' || event.channel.label === 'felo-jit-stream') {
+          this.setupLosslessDataChannel(event.channel)
+        }
       }
-    }
 
-    this.pc.onicecandidate = (event) => {
-      if (event.candidate && this.channel) {
-        void this.channel.send({
-          type: 'broadcast',
-          event: 'signal',
-          payload: {
-            type: 'ice-candidate',
-            senderId: this.userId,
-            targetId: this.hostId,
-            candidate: event.candidate.toJSON()
-          } satisfies WebRTCSignalMessage
-        })
-      }
-    }
-
-    this.pc.ontrack = (event) => {
-      const stream = event.streams[0] || new MediaStream([event.track])
-      if (this.audioElement) {
-        this.audioElement.srcObject = stream
-        this.audioElement
-          .play()
-          .then(() => {
-            this.onAutoplayBlocked?.(false)
+      this.pc.onicecandidate = (event) => {
+        if (event.candidate && this.channel) {
+          void this.channel.send({
+            type: 'broadcast',
+            event: 'signal',
+            payload: {
+              type: 'ice-candidate',
+              senderId: this.userId,
+              targetId: this.hostId,
+              candidate: event.candidate.toJSON()
+            } satisfies WebRTCSignalMessage
           })
-          .catch((err) => {
-            console.warn('[WebRTCClient] Audio auto-play prevented by browser:', err)
-            this.onAutoplayBlocked?.(true)
-          })
+        }
       }
 
-      if (this.onLevelChange) {
-        this.levelMonitor?.stop()
-        this.levelMonitor = new AudioLevelMonitor(this.onLevelChange)
-        this.levelMonitor.start(stream)
-      }
+      this.pc.ontrack = async (event) => {
+        const stream = event.streams[0] || new MediaStream([event.track])
+        if (this.pc) {
+          tuneSystemAudioReceivers(this.pc)
+        }
 
-      this.startStatsMonitoring()
-      this.onStateChange?.('connected')
-    }
+        const audioTracks = stream.getAudioTracks()
+        if (audioTracks.length === 0) return
 
-    this.pc.onconnectionstatechange = () => {
-      if (this.pc?.connectionState === 'connected') {
+        // 1. Prime isolated decoder first so Chromium NetEq begins decoding WebRTC packets
+        primeWebRtcAudioDecoder(audioTracks, `client-${this.roomCode}`)
+
+        // 2. Wait for initial unmute + settle delay (1:1 MUSIXQUARE parity)
+        // In Chromium, audio tracks start muted until the first RTP audio packets are decoded.
+        // Creating a MediaStreamAudioSourceNode on a muted track produces a permanently silent node!
+        await waitForInitialUnmute(audioTracks)
+
+        // 3. Ensure Web Audio DSP engine context is running
+        await audioDspEngine.resume()
+        const ctx = audioDspEngine.getAudioContext()
+        if (ctx.state !== 'running') {
+          console.warn('[WebRTCClient] AudioContext is suspended by browser autoplay policy')
+          this.onAutoplayBlocked?.(true)
+
+          const unlockOnGesture = async (): Promise<void> => {
+            window.removeEventListener('click', unlockOnGesture)
+            window.removeEventListener('pointerdown', unlockOnGesture)
+            window.removeEventListener('keydown', unlockOnGesture)
+            try {
+              await audioDspEngine.resume()
+              this.onAutoplayBlocked?.(false)
+              this.playStream(stream)
+            } catch (err) {
+              console.warn('[WebRTCClient] Error resuming AudioContext on user gesture:', err)
+            }
+          }
+
+          window.addEventListener('click', unlockOnGesture, { once: true })
+          window.addEventListener('pointerdown', unlockOnGesture, { once: true })
+          window.addEventListener('keydown', unlockOnGesture, { once: true })
+        }
+
+        // 4. Attach stream to full DSP graph
+        this.playStream(stream)
+
+        event.track.onunmute = () => {
+          this.levelMonitor?.resume()
+          this.resumeAudio()
+        }
+
+        if (this.onLevelChange) {
+          this.levelMonitor?.stop()
+          this.levelMonitor = new AudioLevelMonitor(this.onLevelChange)
+          this.levelMonitor.start(stream)
+        }
+
+        this.startStatsMonitoring()
         this.onStateChange?.('connected')
-      } else if (
-        this.pc?.connectionState === 'disconnected' ||
-        this.pc?.connectionState === 'failed' ||
-        this.pc?.connectionState === 'closed'
-      ) {
-        this.onStateChange?.('disconnected')
+      }
+
+      this.pc.onconnectionstatechange = () => {
+        const state = this.pc?.connectionState
+        if (state === 'connected') {
+          if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer)
+            this.reconnectTimer = null
+          }
+          this.onStateChange?.('connected')
+        } else if (state === 'disconnected') {
+          this.onStateChange?.('disconnected')
+          if (!this.reconnectTimer) {
+            this.reconnectTimer = setTimeout(() => {
+              this.reconnectTimer = null
+              if (this.pc?.connectionState === 'disconnected' || this.pc?.connectionState === 'failed') {
+                console.log('[WebRTCClient] Connection dropped; auto-reconnecting via join-stream')
+                void this.sendJoin()
+              }
+            }, 3000)
+          }
+        } else if (state === 'failed') {
+          this.onStateChange?.('disconnected')
+          void this.sendJoin()
+        } else if (state === 'closed') {
+          this.onStateChange?.('disconnected')
+        }
       }
     }
 
-    await this.pc.setRemoteDescription(new RTCSessionDescription(offer))
+    if (!this.pc) return
+    const pc = this.pc
+
+    await pc.setRemoteDescription(new RTCSessionDescription(offer))
     const queuedCandidates = [...this.pendingCandidates]
     this.pendingCandidates = []
     for (const cand of queuedCandidates) {
       try {
-        await this.pc.addIceCandidate(new RTCIceCandidate(cand))
+        await pc.addIceCandidate(new RTCIceCandidate(cand))
       } catch (err) {
         console.warn('[WebRTCClient] Error adding buffered candidate:', err)
       }
     }
 
-    const answer = await this.pc.createAnswer()
-    await this.pc.setLocalDescription(answer)
+    const answer = await pc.createAnswer()
+    // CRITICAL: Munge answer SDP to force stereo reception (RFC 7587 & 1:1 MUSIXQUARE parity)
+    if (answer.sdp) {
+      answer.sdp = forceStereoSdp(answer.sdp, 256000)
+    }
+    await pc.setLocalDescription(answer)
 
     if (this.channel) {
       await this.channel.send({
@@ -1014,21 +1669,20 @@ export class WebRTCAudioClient {
   }
 
   async unmuteAudio(): Promise<boolean> {
-    if (!this.audioElement) return false
-    try {
-      await this.audioElement.play()
-      this.onAutoplayBlocked?.(false)
-      return true
-    } catch (err) {
-      console.warn('[WebRTCClient] Manual unmute/play failed:', err)
-      return false
+    await audioDspEngine.resume()
+    audioDspEngine.setDestinationMuted(false)
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      try {
+        await this.audioCtx.resume()
+      } catch {}
     }
-  }
-
-  setVolume(vol: number): void {
-    if (this.audioElement) {
-      this.audioElement.volume = Math.max(0, Math.min(1, vol))
+    const attached = audioDspEngine.getAttachedMediaStream()
+    if (!attached && this.currentStream) {
+      this.playStream(this.currentStream)
     }
+    this.levelMonitor?.resume()
+    this.onAutoplayBlocked?.(false)
+    return true
   }
 
   private startStatsMonitoring(): void {
@@ -1088,20 +1742,41 @@ export class WebRTCAudioClient {
       if (typeof event.data === 'string') {
         try {
           const meta = JSON.parse(event.data)
-          if (meta.type === 'start') {
+          if (meta.type === 'dsp-settings-sync' && meta.settings) {
+            if (useDspStore.getState().settingsSync) {
+              useDspStore.getState().applyRoomDspSnapshot(meta.settings)
+            }
+            return
+          }
+          if (meta.type === 'jit-start' || meta.type === 'start') {
             this.clearLosslessBuffer()
-            this.losslessMimeType = meta.mimeType || 'audio/flac'
+            this.losslessMimeType = meta.mimeType || 'audio/mpeg'
             this.losslessTotalSize = meta.totalSize || 0
             this.losslessReceivedSize = 0
+            this.activeTrackId = meta.trackId || null
+            this.onJITProgress?.(meta.trackId || '', 0, 'Buffering... 0%', 0, this.losslessTotalSize)
             this.setMutedForLossless(false)
-          } else if (meta.type === 'end') {
+          } else if (meta.type === 'jit-end' || meta.type === 'end') {
             this.activateLosslessPlayback()
+          } else if (meta.type === 'jit-abort') {
+            this.clearLosslessBuffer()
+            this.onJITProgress?.(meta.trackId || '', 0, 'Buffering paused', 0, this.losslessTotalSize)
           }
         } catch {}
       } else if (event.data instanceof ArrayBuffer) {
         this.losslessChunks.push(event.data)
         this.losslessReceivedSize += event.data.byteLength
-        // When received known complete stream, activate in-memory lossless stream
+        if (this.losslessTotalSize > 0) {
+          const percent = Math.min(99, Math.round((this.losslessReceivedSize / this.losslessTotalSize) * 100))
+          this.onJITProgress?.(
+            this.activeTrackId || '',
+            percent,
+            `Buffering... ${percent}%`,
+            this.losslessReceivedSize,
+            this.losslessTotalSize
+          )
+        }
+        // When received complete track stream, activate in-memory lossless stream
         if (
           !this.losslessBlobUrl &&
           this.losslessTotalSize > 0 &&
@@ -1121,9 +1796,11 @@ export class WebRTCAudioClient {
         URL.revokeObjectURL(this.losslessBlobUrl)
       }
       this.losslessBlobUrl = URL.createObjectURL(blob)
+      const finalBytes = this.losslessTotalSize || this.losslessReceivedSize
+      this.onJITProgress?.(this.activeTrackId || '', 100, 'Playing (Synced)', finalBytes, finalBytes)
       this.onLosslessReady?.(this.losslessBlobUrl, this.losslessMimeType)
     } catch (err) {
-      console.warn('[WebRTCClient] Error activating lossless buffer:', err)
+      console.warn('[WebRTCClient] Error activating JIT lossless buffer:', err)
     }
   }
 
@@ -1137,14 +1814,22 @@ export class WebRTCAudioClient {
     this.losslessChunks = []
     this.losslessReceivedSize = 0
     this.losslessTotalSize = 0
+    this.activeTrackId = null
     this.setMutedForLossless(false)
   }
 
   disconnect(): void {
     this.stopHandshakeRetry()
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
     this.clearLosslessBuffer()
     this.stopStatsMonitoring()
     this.pendingCandidates = []
+    this.currentStream = null
+    cleanupWebRtcAudioDecoderPrimer()
+
     if (this.channel) {
       void this.channel.send({
         type: 'broadcast',
@@ -1171,12 +1856,28 @@ export class WebRTCAudioClient {
       this.pc = null
     }
 
-    if (this.audioElement) {
-      this.audioElement.pause()
-      this.audioElement.srcObject = null
-      this.audioElement = null
+    audioDspEngine.detachMediaStream()
+
+    if (this.audioSourceNode) {
+      try {
+        this.audioSourceNode.disconnect()
+      } catch {}
+      this.audioSourceNode = null
+    }
+    if (this.gainNode) {
+      try {
+        this.gainNode.disconnect()
+      } catch {}
+      this.gainNode = null
+    }
+    if (this.audioCtx) {
+      try {
+        void this.audioCtx.close()
+      } catch {}
+      this.audioCtx = null
     }
 
+    this.audioElement = null
     this.onStateChange?.('stopped')
   }
 }

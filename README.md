@@ -120,7 +120,7 @@ To enable social rooms, friend activity, and realtime listening sessions:
 
 ```bash
 # Windows Installer (.exe setup)
-npm run build:win:public   # Clean open-source release (Felo-Public-Setup.exe)
+npm run build:win:public   # Clean open-source release (Felo-Setup.exe)
 npm run build:win:private  # Full multi-provider release (Felo-Private-Setup.exe)
 npm run build:win:all      # Build both installers sequentially
 
@@ -142,6 +142,35 @@ npm run deploy:cf
 
 # Deploy to Cloudflare Workers Static Assets
 npm run deploy:worker
+```
+
+---
+
+## 🧪 Testing & Quality Assurance
+
+Felo adheres to an industry-standard testing pyramid with **Vitest**, **React Testing Library**, and **Playwright for Electron**:
+
+```bash
+# Run all unit and integration test suites
+npm test
+
+# Run tests in interactive watch mode
+npm run test:watch
+
+# Run unit tests only (Shared, Main, Renderer)
+npm run test:unit
+
+# Run integration tests only (Zustand Stores, React Components)
+npm run test:integration
+
+# Generate code coverage report (V8)
+npm run test:coverage
+
+# Full CI validation (Typecheck + Coverage)
+npm run test:ci
+
+# Run Playwright Electron End-to-End tests (requires build)
+npm run test:e2e
 ```
 
 ---

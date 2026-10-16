@@ -506,7 +506,70 @@ async function handleComponent(interaction) {
     })
   }
 
-  if (customId === 'queue_skip') {
+  if (customId === 'player_prev') {
+    await supabase.from('listening_room_commands').insert({
+      room_code: roomCode,
+      command: 'previous',
+      payload: {},
+      sender_name: username,
+      source: 'discord_universal'
+    })
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: {
+        flags: 64,
+        content: `⏮️ Playing previous track in Room **\`${roomCode}\`**.`
+      }
+    })
+  }
+
+  if (customId === 'player_pause_toggle') {
+    const { data: room } = await supabase
+      .from('listening_rooms')
+      .select('is_playing')
+      .eq('code', roomCode)
+      .maybeSingle()
+
+    const currentlyPlaying = Boolean(room?.is_playing)
+    const targetCommand = currentlyPlaying ? 'pause' : 'resume'
+
+    await supabase.from('listening_room_commands').insert({
+      room_code: roomCode,
+      command: targetCommand,
+      payload: {},
+      sender_name: username,
+      source: 'discord_universal'
+    })
+
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: {
+        flags: 64,
+        content: currentlyPlaying
+          ? `⏸️ Playback paused in Room **\`${roomCode}\`**.`
+          : `▶️ Playback resumed in Room **\`${roomCode}\`**.`
+      }
+    })
+  }
+
+  if (customId === 'player_stop') {
+    await supabase.from('listening_room_commands').insert({
+      room_code: roomCode,
+      command: 'stop',
+      payload: {},
+      sender_name: username,
+      source: 'discord_universal'
+    })
+    return respond(interaction.id, interaction.token, {
+      type: 4,
+      data: {
+        flags: 64,
+        content: `⏹️ Playback stopped in Room **\`${roomCode}\`**.`
+      }
+    })
+  }
+
+  if (customId === 'queue_skip' || customId === 'player_skip') {
     const { data: room } = await supabase
       .from('listening_rooms')
       .select('*')
@@ -777,6 +840,59 @@ async function handleComponent(interaction) {
   }
 
   return respond(interaction.id, interaction.token, { type: 6 })
+}
+
+// ─── AUTOCOMPLETE HANDLER ─────────────────────────────────────────────
+
+async function handleAutocomplete(interaction) {
+  try {
+    const options = interaction.data?.options || []
+    const focused = options.find((o) => o.focused)
+    const query = (focused?.value || '').trim()
+    const channelId = interaction.channel_id
+    const roomCode = await getRoomForChannel(channelId)
+
+    let choices = []
+
+    if (query.length >= 2) {
+      const matches = await searchMusicCatalog(query)
+      choices = matches.slice(0, 5).map((m) => {
+        const durStr = m.duration ? ` [${formatTime(m.duration)}]` : ''
+        const label = `${m.title} - ${m.artist || 'Unknown'}${durStr}`.slice(0, 100)
+        const val = `${m.title} ${m.artist || ''}`.slice(0, 100).trim()
+        return { name: label, value: val }
+      })
+    } else if (roomCode) {
+      const { data: room } = await supabase
+        .from('listening_rooms')
+        .select('queue, song')
+        .eq('code', roomCode)
+        .maybeSingle()
+
+      const fullQueue = Array.isArray(room?.queue) ? room.queue : []
+      if (room?.song) {
+        const durStr = room.song.duration ? ` [${formatTime(room.song.duration)}]` : ''
+        choices.push({
+          name: `▶️ Now: ${room.song.title} - ${room.song.artist || 'Unknown'}${durStr}`.slice(0, 100),
+          value: `${room.song.title} ${room.song.artist || ''}`.slice(0, 100).trim()
+        })
+      }
+      for (const t of fullQueue.slice(0, 4)) {
+        const durStr = t.duration ? ` [${formatTime(t.duration)}]` : ''
+        choices.push({
+          name: `🎵 ${t.title} - ${t.artist || 'Unknown'}${durStr}`.slice(0, 100),
+          value: `${t.title} ${t.artist || ''}`.slice(0, 100).trim()
+        })
+      }
+    }
+
+    await respond(interaction.id, interaction.token, {
+      type: 8,
+      data: { choices: choices.slice(0, 25) }
+    })
+  } catch (err) {
+    console.warn('Error handling autocomplete:', err)
+  }
 }
 
 // ─── COMMAND HANDLERS ─────────────────────────────────────────────────
@@ -1945,7 +2061,9 @@ async function handleCommand(interaction) {
               `🏷️ **Origin:** ${originBadge}` +
               upNextText +
               `\n\n🔑 **Room Code:** \`${roomCode}\``,
-            color: room.is_playing ? 0x10b981 : 0xf59e0b
+            color: room.is_playing ? 0x10b981 : 0xf59e0b,
+            thumbnail: song.artworkUrl ? { url: song.artworkUrl } : undefined,
+            footer: { text: `Room: ${roomCode} • Lossless Audio • Requested by @${username}` }
           }
         ],
         components: [
@@ -1955,10 +2073,43 @@ async function handleCommand(interaction) {
               {
                 type: 2,
                 style: 2,
-                custom_id: 'queue_help_view',
-                label: 'View Current Queue',
-                emoji: { name: '📜' }
+                custom_id: 'player_prev',
+                label: 'Previous',
+                emoji: { name: '⏮️' }
               },
+              {
+                type: 2,
+                style: room.is_playing ? 2 : 3,
+                custom_id: 'player_pause_toggle',
+                label: room.is_playing ? 'Pause' : 'Resume',
+                emoji: { name: room.is_playing ? '⏸️' : '▶️' }
+              },
+              {
+                type: 2,
+                style: 2,
+                custom_id: 'queue_skip',
+                label: 'Skip',
+                emoji: { name: '⏭️' }
+              },
+              {
+                type: 2,
+                style: 2,
+                custom_id: 'player_stop',
+                label: 'Stop',
+                emoji: { name: '⏹️' }
+              },
+              {
+                type: 2,
+                style: 2,
+                custom_id: 'queue_help_view',
+                label: 'Queue',
+                emoji: { name: '📜' }
+              }
+            ]
+          },
+          {
+            type: 1,
+            components: [
               {
                 type: 2,
                 style: 5,
@@ -2123,6 +2274,8 @@ function connect() {
               void handleCommand(d)
             } else if (d.type === 3) {
               void handleComponent(d)
+            } else if (d.type === 4) {
+              void handleAutocomplete(d)
             }
           }
           break

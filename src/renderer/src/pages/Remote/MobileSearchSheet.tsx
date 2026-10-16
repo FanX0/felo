@@ -25,6 +25,7 @@ export default function MobileSearchSheet({
   const [isLoading, setIsLoading] = useState(false)
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
   const [downloadedIds, setDownloadedIds] = useState<Set<string>>(new Set())
+  const [downloadingIds, setDownloadingIds] = useState<Map<string, number>>(new Map())
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   const canonicalTargetId = normalizeDeviceId(targetDeviceId)
@@ -156,17 +157,31 @@ export default function MobileSearchSheet({
     }
   }
 
-  const handleDownload = (e: React.MouseEvent, songId: string) => {
+  const handleDownload = async (e: React.MouseEvent, songId: string, songTitle?: string) => {
     e.stopPropagation()
-    remoteClient.downloadSong(songId)
-    setDownloadedIds((prev) => new Set(prev).add(songId))
-    setTimeout(() => {
-      setDownloadedIds((prev) => {
-        const next = new Set(prev)
+    if (downloadingIds.has(songId)) return
+    setDownloadingIds((prev) => new Map(prev).set(songId, 0))
+    try {
+      await remoteClient.downloadSong(songId, songTitle, (ratio) => {
+        setDownloadingIds((prev) => new Map(prev).set(songId, Math.round(ratio * 100)))
+      })
+      setDownloadedIds((prev) => new Set(prev).add(songId))
+      setTimeout(() => {
+        setDownloadedIds((prev) => {
+          const next = new Set(prev)
+          next.delete(songId)
+          return next
+        })
+      }, 2500)
+    } catch (err) {
+      console.warn('Search download failed:', err)
+    } finally {
+      setDownloadingIds((prev) => {
+        const next = new Map(prev)
         next.delete(songId)
         return next
       })
-    }, 2500)
+    }
   }
 
   const formatDuration = (secs: number) => {
@@ -294,12 +309,15 @@ export default function MobileSearchSheet({
                   <div className="flex items-center gap-1 shrink-0">
                     <button
                       type="button"
-                      onClick={(e) => handleDownload(e, track.id)}
+                      onClick={(e) => handleDownload(e, track.id, track.title)}
+                      disabled={downloadingIds.has(track.id)}
                       className="w-8 h-8 rounded-full flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
                       title="Download to phone storage"
                     >
-                      {isDownloaded ? (
-                        <Check className="w-4 h-4 text-white" />
+                      {downloadingIds.has(track.id) ? (
+                        <RefreshCw className="w-4 h-4 animate-spin text-primary-amber" />
+                      ) : isDownloaded ? (
+                        <Check className="w-4 h-4 text-emerald-400" />
                       ) : (
                         <Download className="w-4 h-4" />
                       )}

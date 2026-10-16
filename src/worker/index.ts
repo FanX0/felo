@@ -894,15 +894,36 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
     if (customId.startsWith('queue_rel_')) {
       const relQuery = decodeURIComponent(customId.replace('queue_rel_', '')).trim()
       const room = await supabase.getRoom(roomCode)
+      const roomQueue: any[] = Array.isArray(room?.queue) ? room.queue : []
 
-      // Search catalog or queue for this exact related track
-      const onlineMatches = await searchMusicCatalog(relQuery)
-      const targetTrack = onlineMatches[0] || {
-        title: relQuery,
-        artist: 'Selected Track',
-        album: '',
-        duration: 0,
-        artworkUrl: ''
+      // 1. Check if the song exists in the host's room queue
+      const queueMatch = roomQueue.find(
+        (t: any) =>
+          t.title &&
+          (t.title.toLowerCase() === relQuery.toLowerCase() ||
+            t.title.toLowerCase().startsWith(relQuery.toLowerCase()))
+      )
+
+      let targetTrack: any = queueMatch
+        ? {
+            title: queueMatch.title,
+            artist: queueMatch.artist || 'Host Library',
+            album: queueMatch.album || '',
+            duration: queueMatch.duration || 0,
+            artworkUrl: queueMatch.artworkUrl || ''
+          }
+        : null
+
+      // 2. If not found in room queue, fallback to online music catalog
+      if (!targetTrack) {
+        const onlineMatches = await searchMusicCatalog(relQuery)
+        targetTrack = onlineMatches[0] || {
+          title: relQuery,
+          artist: 'Selected Track',
+          album: '',
+          duration: 0,
+          artworkUrl: ''
+        }
       }
 
       await supabase.insertRoomCommand(
@@ -1491,51 +1512,87 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
 
       // Branch 3: No track found AND no related songs
       if (!primaryTrack && relatedTracks.length === 0) {
+        const hostTracksCount = fullQueue.length
+        const previewCount = Math.min(3, hostTracksCount)
+        const previewTracks = fullQueue.slice(0, previewCount)
+
+        let description = `We couldn't find any songs matching **"${query}"** in this room or catalog.\n\n`
+
+        if (hostTracksCount > 0) {
+          const previewLines = previewTracks.map((t: any, i: number) => {
+            const dur = t.duration ? ` \`[${formatTime(t.duration)}]\`` : ''
+            return `\`${i + 1}.\` **${t.title}** by *${t.artist || 'Unknown'}*${dur}`
+          })
+          description +=
+            `📁 **Available Songs from Host (${hostTracksCount} loaded):**\n` +
+            previewLines.join('\n') +
+            (hostTracksCount > previewCount
+              ? `\n*... and ${hostTracksCount - previewCount} more song(s) in playlist.*`
+              : '') +
+            `\n\n👉 *Click a song button below to play, or browse all available host songs.*`
+        } else {
+          description +=
+            `ℹ️ **What you can do:**\n` +
+            `• 🔍 **Check Spelling:** Make sure the song name or artist is spelled correctly.\n` +
+            `• 📜 **Browse Songs:** Click **Browse Host Songs** below to view available songs.\n` +
+            `• 🎵 **Queue in Felo:** Host can add tracks directly in the Felo app.\n` +
+            `• 🌐 **Listen Live:** Tune in to the active room via the web player.`
+        }
+
+        const actionButtons: any[] = [
+          {
+            type: 2,
+            style: 2,
+            custom_id: 'queue_help_view',
+            label: hostTracksCount > 0 ? `Browse Host Songs (${hostTracksCount})` : 'Browse Host Songs',
+            emoji: { name: '📜' }
+          },
+          {
+            type: 2,
+            style: 5,
+            label: 'Open Web Player',
+            emoji: { name: '🌐' },
+            url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+          }
+        ]
+
+        const components: any[] = [
+          {
+            type: 1,
+            components: actionButtons
+          }
+        ]
+
+        if (previewTracks.length > 0) {
+          components.push({
+            type: 1,
+            components: previewTracks.map((r: any, i: number) => ({
+              type: 2,
+              style: 2,
+              custom_id: `queue_rel_${encodeURIComponent(r.title.slice(0, 35))}`,
+              label: `#${i + 1}: ${r.title.slice(0, 20)}`,
+              emoji: { name: '▶️' }
+            }))
+          })
+        }
+
         return jsonResponse({
           type: 4,
           data: {
             embeds: [
               {
                 title: '❌ Song Not Found',
-                description:
-                  `We couldn't find any songs matching **"${query}"** in this room or catalog.\n\n` +
-                  `ℹ️ **What you can do:**\n` +
-                  `• 🔍 **Check Spelling:** Make sure the song name or artist is spelled correctly.\n` +
-                  `• 📜 **Browse Queue:** Run \`/queue\` to view available songs in the host's playlist.\n` +
-                  `• 🎵 **Queue in Felo:** Host can play or add this track in the room.\n` +
-                  `• 🌐 **Listen Live:** Tune in to the active room via the web player.`,
+                description,
                 color: 0xef4444,
-                footer: { text: `Searched for "${query}" • Felo Music` }
+                footer: {
+                  text:
+                    hostTracksCount > 0
+                      ? `Searched for "${query}" • ${hostTracksCount} song(s) available in host library • Felo Music`
+                      : `Searched for "${query}" • Felo Music`
+                }
               }
             ],
-            components: [
-              {
-                type: 1,
-                components: [
-                  {
-                    type: 2,
-                    style: 2,
-                    custom_id: 'queue_help_view',
-                    label: 'View Current Queue',
-                    emoji: { name: '📜' }
-                  },
-                  {
-                    type: 2,
-                    style: 5,
-                    label: 'Open Web Player',
-                    emoji: { name: '🌐' },
-                    url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
-                  },
-                  {
-                    type: 2,
-                    style: 5,
-                    label: 'Download App',
-                    emoji: { name: '📥' },
-                    url: 'https://bit.ly/47iv3PK'
-                  }
-                ]
-              }
-            ]
+            components
           }
         })
       }
@@ -2281,6 +2338,15 @@ export default {
         return new Response(`Asset Not Found: ${url.pathname}`, {
           status: 404,
           headers: { 'Content-Type': 'text/plain' }
+        })
+      }
+      if (assetRes.headers.get('content-type')?.includes('text/html')) {
+        const newHeaders = new Headers(assetRes.headers)
+        newHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate')
+        return new Response(assetRes.body, {
+          status: assetRes.status,
+          statusText: assetRes.statusText,
+          headers: newHeaders
         })
       }
       return assetRes

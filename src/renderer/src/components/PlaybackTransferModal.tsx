@@ -2,7 +2,7 @@ import { useState, useEffect, type ReactElement } from 'react'
 import { Laptop2, Smartphone, Globe, Radio, X, Music } from 'lucide-react'
 import { usePlaybackArbitration } from '../hooks/usePlaybackArbitration'
 import { toMediaUrl } from '../lib/media'
-import { isLocalSong } from '../lib/songUtils'
+import { isLocalSong, fmtTime } from '../lib/songUtils'
 import { getDeviceCategory, getDeviceCategoryLabel } from '../lib/deviceInfo'
 
 export default function PlaybackTransferModal(): ReactElement | null {
@@ -35,13 +35,6 @@ export default function PlaybackTransferModal(): ReactElement | null {
     })
   const activeCategoryLabel = getDeviceCategoryLabel(activeCategory)
   const activeArtwork = activeSong ? activeSong.artworkUrl || toMediaUrl(activeSong.artworkPath) : null
-
-  const formatTime = (seconds: number) => {
-    if (!seconds || isNaN(seconds)) return '0:00'
-    const mins = Math.floor(seconds / 60)
-    const secs = Math.floor(seconds % 60)
-    return `${mins}:${secs.toString().padStart(2, '0')}`
-  }
 
   const activeDuration = activeSong?.duration || 0
   const activeProgress = activeDuration > 0 ? Math.min(100, (livePos / activeDuration) * 100) : 0
@@ -115,8 +108,8 @@ export default function PlaybackTransferModal(): ReactElement | null {
                   />
                 </div>
                 <div className="flex justify-between text-[10px] font-mono text-zinc-500">
-                  <span>{formatTime(livePos)}</span>
-                  <span>{formatTime(activeDuration)}</span>
+                  <span>{fmtTime(livePos, '0:00')}</span>
+                  <span>{fmtTime(activeDuration, '0:00')}</span>
                 </div>
               </div>
             )}
@@ -223,7 +216,7 @@ export default function PlaybackTransferModal(): ReactElement | null {
                   Resume "{activeSong.title}" here
                 </div>
                 <div className="text-[11px] text-text-muted truncate">
-                  Transfer current track and resume from {formatTime(livePos)}
+                  Transfer current track and resume from {fmtTime(livePos, '0:00')}
                 </div>
               </div>
             </button>

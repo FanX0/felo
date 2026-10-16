@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
-import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { cn } from './lib/utils'
 import Sidebar from './components/Sidebar/Sidebar'
 import Footer from './components/Footer/Footer'
 import AudioEngine from './components/AudioEngine'
+import YouTubePlayerBridge from './components/Audio/YouTubePlayerBridge'
 import CrossTabSyncBridge from './components/CrossTabSyncBridge'
 import DownloadPanel from './components/DownloadPanel/DownloadPanel'
 import type { DownloadTarget } from './components/DownloadPanel/DownloadPanel'
@@ -19,14 +20,23 @@ import QueueDrawer from './components/Queue/QueueDrawer'
 import RemotePhoneView from './pages/Remote/RemotePhoneView'
 import OfflineNoticeToast from './components/OfflineNoticeToast'
 import ErrorBoundary from './components/ErrorBoundary'
+import FileDropOverlay from './components/Common/FileDropOverlay'
 import MobileNavBar from './components/MobileNavBar'
 import AccountDropdownMenu from './components/AccountMenu/AccountDropdownMenu'
+import NotificationDropdown from './components/Notifications/NotificationDropdown'
+import InvitationToast from './components/Notifications/InvitationToast'
 import MobileDockedPlayer from './components/MobileDockedPlayer'
 import MobileNowPlaying from './pages/Remote/MobileNowPlaying'
 import MobileDeviceSheet from './pages/Remote/MobileDeviceSheet'
 import MobileLyricsSheet from './pages/Remote/MobileLyricsSheet'
 import DevicePresenceBridge from './components/DevicePresenceBridge'
 import PlaybackTransferModal from './components/PlaybackTransferModal'
+import SessionLeaveDialog from './components/SessionLeaveDialog'
+import UpdateModalDialog from './components/Common/UpdateModalDialog'
+import { triggerChunkLoadRecovery } from './lib/swUpdateCoordinator'
+import AudioFxModal from './components/Audio/AudioFxModal'
+import ManualSyncModal from './components/Online/ManualSyncModal'
+import { initUiSounds } from './lib/uiSounds'
 import { remoteClient, type RemotePlayerState } from './pages/Remote/remoteClient'
 import { resolveEffectivePlaybackState } from './lib/playbackStateResolver'
 import {
@@ -37,21 +47,9 @@ import { getCurrentDeviceId } from './lib/deviceInfo'
 import { AppCapabilities, isElectron } from './lib/appConfig'
 import { useIsMobile } from './hooks/useIsMobile'
 import { usePrivateSessionStore } from './hooks/usePrivateSessionStore'
+import { useListeningStore, useIsPlayerLocked } from './hooks/useListeningStore'
 
-import Home from './pages/Home/Home'
-import Library from './pages/Library/Library'
-import Search from './pages/Search/Search'
-import Playlists from './pages/Playlists/Playlists'
-import PlaylistDetail from './pages/Playlists/PlaylistDetail'
-import AlbumPage from './pages/Album/AlbumPage'
-import ArtistPage from './pages/Artist/ArtistPage'
-import LyricsPage from './pages/Lyrics/LyricsPage'
-import Settings from './pages/Settings/Settings'
-import AccountPage from './pages/Online/AccountPage'
-import ProfilePage from './pages/Online/ProfilePage'
-import ChatPage from './pages/Online/ChatPage'
-
-import ListenTogetherPage from './pages/Online/ListenTogetherPage'
+import { AppRoutes } from './routes'
 import {
   Search as SearchIcon,
   User,
@@ -63,6 +61,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Users,
+  Bell,
   Minus,
   Square,
   X
@@ -70,6 +69,8 @@ import {
 import { useAppStore } from './hooks/useAppStore'
 import { useOnlineStore } from './hooks/useOnlineStore'
 import { usePlayerStore } from './hooks/usePlayerStore'
+import { useNotificationStore } from './stores/useNotificationStore'
+
 
 function FeloMark({ className = 'w-5 h-5' }: { className?: string }) {
   return (
@@ -91,6 +92,25 @@ function App() {
   const checkExpiration = usePrivateSessionStore((s) => s.checkExpiration)
 
   const [remainingTimeStr, setRemainingTimeStr] = useState<string | null>(null)
+  useEffect(() => {
+    initUiSounds()
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event?.reason?.message || String(event?.reason || '')
+      if (
+        /Failed to fetch dynamically imported module|error loading dynamically imported module|ChunkLoadError/i.test(
+          reason
+        )
+      ) {
+        triggerChunkLoadRecovery(event.reason)
+      }
+    }
+    window.addEventListener('unhandledrejection', handleUnhandledRejection)
+    return () => {
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection)
+    }
+  }, [])
+
   useEffect(() => {
     checkExpiration()
     const timer = setInterval(() => {
@@ -122,11 +142,13 @@ function App() {
   const [isDownloadPanelOpen, setIsDownloadPanelOpen] = useState(false)
   const [isFriendActivityOpen, setIsFriendActivityOpen] = useState(false)
   const [isQueueOpen, setIsQueueOpen] = useState(false)
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false)
   const [downloadTarget, setDownloadTarget] = useState<DownloadTarget | null>(null)
   const [isSidebarOpen, setIsSidebarOpen] = useState(
     () => localStorage.getItem('felo_sidebar_open') !== 'false'
   )
   const { user, profile, initialize } = useOnlineStore()
+
 
   // Mobile & Remote Player State
   const [isMobileNowPlayingOpen, setIsMobileNowPlayingOpen] = useState(false)
@@ -154,6 +176,8 @@ function App() {
   }, [])
 
   const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
+  const joinedRoom = useListeningStore((s) => s.joinedRoom)
+  const isPlayerLocked = useIsPlayerLocked()
   const myDeviceId = getCurrentDeviceId()
   const isAudioActive = usePlayerStore((s) => s.isAudioActive)
 
@@ -172,6 +196,7 @@ function App() {
     activeRemote,
     lanState: remoteState,
     isLanConnected: isRemoteConnected,
+    joinedRoom,
     myDeviceId
   })
 
@@ -196,7 +221,8 @@ function App() {
           artist: unified.song.artist || 'Unknown Artist',
           album: unified.song.album || 'Library',
           duration: unified.duration || unified.song.duration || 0,
-          artworkUrl: unified.artworkUrl || ''
+          artworkUrl: unified.artworkUrl || '',
+          lyrics: (unified.song as any).lyrics || unified.lyrics
         }
       : null
   }
@@ -204,14 +230,27 @@ function App() {
   const topSearchInputRef = useRef<HTMLInputElement>(null)
   const searchModeRef = useRef<HTMLDivElement>(null)
   const profileRef = useRef<HTMLDivElement>(null)
+  const notificationRef = useRef<HTMLDivElement>(null)
   const mainContentRef = useRef<HTMLElement>(null)
   const navigate = useNavigate()
   const location = useLocation()
+
+  const subscribeNotifications = useNotificationStore((s) => s.subscribe)
+  const unreadNotificationCount = useNotificationStore(
+    (s) => s.invitations.length + s.incomingFriendRequests.length
+  )
+
+  useEffect(() => {
+    if (!user?.id) return
+    const unsub = subscribeNotifications(user.id)
+    return () => unsub()
+  }, [user?.id, subscribeNotifications])
 
   // Reset scroll position on route change
   useEffect(() => {
     mainContentRef.current?.scrollTo({ top: 0, behavior: 'instant' })
     setIsProfileOpen(false)
+    setIsNotificationOpen(false)
   }, [location.pathname])
 
   const toggleSidebar = (): void => {
@@ -233,10 +272,14 @@ function App() {
       if (searchModeRef.current && !searchModeRef.current.contains(e.target as Node)) {
         setIsSearchModeOpen(false)
       }
+      if (notificationRef.current && !notificationRef.current.contains(e.target as Node)) {
+        setIsNotificationOpen(false)
+      }
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+
 
   // Global Keyboard Shortcuts (Shuffle, Repeat, Play/Pause, Seek, Volume, Search)
   useEffect(() => {
@@ -249,7 +292,7 @@ function App() {
           target.isContentEditable)
 
       // Search shortcut: Ctrl + K (global)
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+      if (!e.shiftKey && (e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
         e.preventDefault()
         navigate('/search')
         window.setTimeout(() => {
@@ -269,15 +312,60 @@ function App() {
         return
       }
 
+      // M: Toggle Mute
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'm' || e.key === 'M')) {
+        e.preventDefault()
+        usePlayerStore.getState().toggleMute()
+        return
+      }
+
+      // J / L: Seek -10s / +10s (standard media shortcut)
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'j' || e.key === 'J')) {
+        e.preventDefault()
+        usePlayerStore.getState().skipTime(-10)
+        return
+      }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault()
+        usePlayerStore.getState().skipTime(10)
+        return
+      }
+
+      // Plain ArrowLeft / ArrowRight: Seek -5s / +5s
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'ArrowLeft') {
+        e.preventDefault()
+        usePlayerStore.getState().skipTime(-5)
+        return
+      }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'ArrowRight') {
+        e.preventDefault()
+        usePlayerStore.getState().skipTime(5)
+        return
+      }
+
+      // Plain ArrowUp / ArrowDown: Volume +/- 5%
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'ArrowUp') {
+        e.preventDefault()
+        const currentVol = usePlayerStore.getState().volume
+        usePlayerStore.getState().setVolume(Math.min(1, currentVol + 0.05))
+        return
+      }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'ArrowDown') {
+        e.preventDefault()
+        const currentVol = usePlayerStore.getState().volume
+        usePlayerStore.getState().setVolume(Math.max(0, currentVol - 0.05))
+        return
+      }
+
       // Ctrl + S: Toggle Shuffle (prevents browser webpage save)
-      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+      if (!e.shiftKey && (e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
         e.preventDefault()
         usePlayerStore.getState().toggleShuffle()
         return
       }
 
-      // Ctrl + R: Toggle Repeat (prevents window reload)
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'r' || e.key === 'R')) {
+      // Ctrl + R: Toggle Repeat (prevents window reload, preserves Ctrl+Shift+R for hard reload)
+      if (!e.shiftKey && (e.ctrlKey || e.metaKey) && (e.key === 'r' || e.key === 'R')) {
         e.preventDefault()
         usePlayerStore.getState().toggleRepeat()
         return
@@ -363,6 +451,7 @@ function App() {
     if (location.pathname.startsWith('/profile')) return 'Profile'
     if (
       location.pathname.startsWith('/online/listen') ||
+      location.pathname.startsWith('/listen-together') ||
       location.pathname === '/listen' ||
       location.pathname === '/together'
     )
@@ -380,6 +469,7 @@ function App() {
     return <RemotePhoneView />
   }
 
+
   return (
     <div
       className={cn(
@@ -387,6 +477,7 @@ function App() {
       )}
     >
       <AudioEngine />
+      <YouTubePlayerBridge />
       <CrossTabSyncBridge />
       <OfflineNoticeToast />
       <PlaybackControlBridge />
@@ -460,8 +551,27 @@ function App() {
             </button>
             <button
               type="button"
+              onClick={() => setIsNotificationOpen((prev) => !prev)}
+              title={unreadNotificationCount > 0 ? `Notifications (${unreadNotificationCount} new)` : 'Notifications'}
+              className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition cursor-pointer relative"
+            >
+              <Bell className="w-4 h-4" />
+              {unreadNotificationCount > 0 && (
+                <span className="absolute top-1 right-1 min-w-[14px] h-[14px] px-0.5 bg-danger text-white text-[9px] font-black rounded-full flex items-center justify-center ring-2 ring-canvas shadow-xs">
+                  {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
               onClick={() => setIsProfileOpen((prev) => !prev)}
-              title={user ? (isPrivateSession ? 'Account (Private session active)' : 'Account') : 'Sign in'}
+              title={
+                user
+                  ? isPrivateSession
+                    ? 'Account (Private session active)'
+                    : 'Account'
+                  : 'Sign in'
+              }
               className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition cursor-pointer relative"
             >
               {profile?.avatar_url ? (
@@ -482,11 +592,17 @@ function App() {
             </button>
           </div>
         </header>
+        <NotificationDropdown
+          isOpen={isNotificationOpen}
+          onClose={() => setIsNotificationOpen(false)}
+          isMobile={true}
+        />
         <AccountDropdownMenu
           isOpen={isProfileOpen}
           onClose={() => setIsProfileOpen(false)}
           isMobile={true}
         />
+
       </>
       ) : (
         <header className="hidden md:flex absolute top-0 left-0 right-0 h-16 draggable-header items-center justify-between px-4 z-50 pointer-events-none">
@@ -593,7 +709,7 @@ function App() {
                       <Database className="w-3.5 h-3.5" /> MusicBrainz
                     </>
                   )}
-                  {searchMode === 'lastfm' && (
+                  {AppCapabilities.lastFm && searchMode === 'lastfm' && (
                     <>
                       <Radio className="w-3.5 h-3.5" /> Last.fm
                     </>
@@ -642,17 +758,19 @@ function App() {
                       MusicBrainz
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSearchMode('lastfm')
-                        setIsSearchModeOpen(false)
-                      }}
-                      className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'lastfm' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
-                    >
-                      <Radio className="w-4 h-4" />
-                      Last.fm
-                    </button>
+                    {AppCapabilities.lastFm && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchMode('lastfm')
+                          setIsSearchModeOpen(false)
+                        }}
+                        className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'lastfm' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
+                      >
+                        <Radio className="w-4 h-4" />
+                        Last.fm
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -674,6 +792,31 @@ function App() {
               )}
             </button>
           )}
+          <div ref={notificationRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setIsNotificationOpen((prev) => !prev)}
+              title={unreadNotificationCount > 0 ? `Notifications (${unreadNotificationCount} new)` : 'Notifications'}
+              className={`w-10 h-10 rounded-full flex items-center justify-center no-drag transition-all shadow-sm relative ${
+                isNotificationOpen
+                  ? 'bg-primary-amber text-canvas'
+                  : 'bg-surface-elevated text-text-muted hover:bg-hover hover:text-text'
+              }`}
+            >
+              <Bell className="w-5 h-5" />
+              {unreadNotificationCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-danger text-white text-[10px] font-black rounded-full flex items-center justify-center ring-2 ring-canvas shadow-md animate-in zoom-in-50">
+                  {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                </span>
+              )}
+            </button>
+
+            <NotificationDropdown
+              isOpen={isNotificationOpen}
+              onClose={() => setIsNotificationOpen(false)}
+              isMobile={false}
+            />
+          </div>
           <button
             type="button"
             onClick={() => {
@@ -797,154 +940,19 @@ function App() {
             isMobileScreen ? 'rounded-none' : 'rounded-xl'
           )}
         >
-          <section ref={mainContentRef} className="flex-1 overflow-y-auto relative no-drag">
+          <section
+            ref={mainContentRef}
+            className={cn('flex-1 overflow-y-auto relative no-drag', isMobileScreen && 'pb-36')}
+          >
             <div className="h-full min-h-full w-full flex flex-col flex-1">
               <ErrorBoundary>
-                <Routes>
-                  <Route
-                    path="/"
-                    element={
-                      <Home
-                        onOpenDownloadPanel={(target) => {
-                          setDownloadTarget(target)
-                          setIsFriendActivityOpen(false)
-                          setIsDownloadPanelOpen(true)
-                        }}
-                      />
-                    }
-                  />
-                  <Route
-                    path="/library"
-                    element={
-                      <Library
-                        onOpenDownloadPanel={(target) => {
-                          setDownloadTarget(target)
-                          setIsFriendActivityOpen(false)
-                          setIsDownloadPanelOpen(true)
-                        }}
-                      />
-                    }
-                  />
-                  <Route
-                    path="/search"
-                    element={
-                      <Search
-                        onOpenDownloadPanel={(target) => {
-                          setDownloadTarget(target)
-                          setIsFriendActivityOpen(false)
-                          setIsDownloadPanelOpen(true)
-                        }}
-                      />
-                    }
-                  />
-                  <Route path="/playlists" element={<Playlists />} />
-                  <Route
-                    path="/playlists/:id"
-                    element={
-                      <PlaylistDetail
-                        onOpenDownloadPanel={(target) => {
-                          setDownloadTarget(target)
-                          setIsFriendActivityOpen(false)
-                          setIsDownloadPanelOpen(true)
-                        }}
-                      />
-                    }
-                  />
-                  <Route
-                    path="/artist/:name"
-                    element={
-                      <ArtistPage
-                        onOpenDownloadPanel={(target) => {
-                          setDownloadTarget(target)
-                          setIsFriendActivityOpen(false)
-                          setIsDownloadPanelOpen(true)
-                        }}
-                      />
-                    }
-                  />
-                  <Route
-                    path="/album/:artist/:title"
-                    element={
-                      <AlbumPage
-                        onOpenDownloadPanel={(target) => {
-                          setDownloadTarget(target)
-                          setIsFriendActivityOpen(false)
-                          setIsDownloadPanelOpen(true)
-                        }}
-                      />
-                    }
-                  />
-                  <Route path="/lyrics" element={<LyricsPage />} />
-                  <Route path="/settings" element={<Settings />} />
-                  <Route path="/account" element={<AccountPage />} />
-                  <Route path="/profile" element={<ProfilePage />} />
-                  <Route path="/profile/:username" element={<ProfilePage />} />
-                  <Route
-                    path="/chat"
-                    element={
-                      <ChatPage
-                        onOpenDownloadPanel={(target) => {
-                          setDownloadTarget(target)
-                          setIsFriendActivityOpen(false)
-                          setIsDownloadPanelOpen(true)
-                        }}
-                      />
-                    }
-                  />
-
-                  {/* Listen Together Routes & Aliases */}
-                  <Route
-                    path="/listen-together"
-                    element={
-                      <ListenTogetherPage
-                        onOpenDownloadPanel={(target) => {
-                          setDownloadTarget(target)
-                          setIsFriendActivityOpen(false)
-                          setIsDownloadPanelOpen(true)
-                        }}
-                      />
-                    }
-                  />
-                  <Route
-                    path="/online/listen"
-                    element={
-                      <ListenTogetherPage
-                        onOpenDownloadPanel={(target) => {
-                          setDownloadTarget(target)
-                          setIsFriendActivityOpen(false)
-                          setIsDownloadPanelOpen(true)
-                        }}
-                      />
-                    }
-                  />
-                  <Route
-                    path="/listen"
-                    element={
-                      <ListenTogetherPage
-                        onOpenDownloadPanel={(target) => {
-                          setDownloadTarget(target)
-                          setIsFriendActivityOpen(false)
-                          setIsDownloadPanelOpen(true)
-                        }}
-                      />
-                    }
-                  />
-                  <Route
-                    path="/together"
-                    element={
-                      <ListenTogetherPage
-                        onOpenDownloadPanel={(target) => {
-                          setDownloadTarget(target)
-                          setIsFriendActivityOpen(false)
-                          setIsDownloadPanelOpen(true)
-                        }}
-                      />
-                    }
-                  />
-
-                  {/* Fallback Catch-All Route: Redirect to Home on unknown routes to prevent black screen */}
-                  <Route path="*" element={<Navigate to="/" replace />} />
-                </Routes>
+                <AppRoutes
+                  onOpenDownloadPanel={(target) => {
+                    setDownloadTarget(target)
+                    setIsFriendActivityOpen(false)
+                    setIsDownloadPanelOpen(true)
+                  }}
+                />
               </ErrorBoundary>
             </div>
           </section>
@@ -963,7 +971,9 @@ function App() {
         )}
         <LibraryScanPill />
         <PlaybackNoticeToast />
+        <InvitationToast />
         <PlaybackTransferModal />
+        <FileDropOverlay />
       </div>
 
       {isMobileScreen ? (
@@ -1015,7 +1025,10 @@ function App() {
               navigate('/lyrics')
             }}
             onSeek={(seconds) => {
-              if (isRemoteConnected) {
+              if (joinedRoom && joinedRoom.song) {
+                if (isPlayerLocked) return
+                usePlayerStore.getState().seek(seconds)
+              } else if (isRemoteConnected) {
                 void remoteClient.seek(seconds)
               } else if (isCloudRemoteActive && activeRemote && user?.id) {
                 void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'seek', { seconds })
@@ -1048,6 +1061,18 @@ function App() {
 
       {/* Play Queue Overlay Drawer */}
       <QueueDrawer isOpen={isQueueOpen} onClose={() => setIsQueueOpen(false)} />
+
+      {/* Session Leave & Play Confirmation Dialog */}
+      <SessionLeaveDialog />
+
+      {/* Context-Aware New Version Update Dialog (MUSIXQUARE Architecture) */}
+      <UpdateModalDialog />
+
+      {/* Spatial Audio & Multi-Device DSP Modal (MUSIXQUARE Audio) */}
+      <AudioFxModal />
+
+      {/* Manual Sync (ms) Latency Calibration Modal (MUSIXQUARE Sync) */}
+      <ManualSyncModal />
     </div>
   )
 }

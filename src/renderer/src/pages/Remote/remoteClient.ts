@@ -1,4 +1,10 @@
 import { usePlayerStore } from '../../hooks/usePlayerStore'
+import {
+  downloadAudioFile,
+  downloadRemoteAudioFileWithRetry,
+  cacheAudioBlob,
+  getCachedAudioBlobUrl
+} from '../../lib/jitAudioPipeline'
 
 export interface RemotePlayerSong {
   id: string
@@ -7,6 +13,10 @@ export interface RemotePlayerSong {
   album: string
   duration: number
   artworkUrl?: string
+  lyrics?: {
+    plainLyrics?: string
+    syncedLyrics?: string
+  }
 }
 
 export type PlaybackTarget = 'desktop' | 'mobile' | 'both'
@@ -263,6 +273,25 @@ class RemoteClient {
     return audio
   }
 
+  private async prepareAudioSource(songId: string): Promise<string> {
+    const rawUrl = this.getAudioStreamUrl(songId)
+    // 1. Check RAM cache first (same-file / preload match)
+    const cached = getCachedAudioBlobUrl(songId)
+    if (cached) return cached
+
+    // 2. MUSIXQUARE Auto-download whole audio object into RAM with 90s watchdog & transient retry
+    try {
+      const blob = await downloadRemoteAudioFileWithRetry(rawUrl, {
+        trackId: songId,
+        authToken: this.token
+      })
+      return cacheAudioBlob(songId, blob)
+    } catch (err) {
+      console.warn('[RemoteClient] Auto-download into RAM failed, fallback to direct stream URL:', err)
+      return rawUrl
+    }
+  }
+
   public getTargetDevice(): PlaybackTarget {
     return this.targetDevice
   }
@@ -294,31 +323,34 @@ class RemoteClient {
       const audio = this.initMobileAudio()
       if (currentSong?.id) {
         this.currentMobileSongId = currentSong.id
-        audio.src = this.getAudioStreamUrl(currentSong.id)
+        void this.prepareAudioSource(currentSong.id).then((sourceUrl) => {
+          if (this.targetDevice !== 'mobile' || this.currentMobileSongId !== currentSong.id) return
+          audio.src = sourceUrl
 
-        const seekAndPlay = async () => {
-          if (currentPos > 0) {
-            audio.currentTime = currentPos
-          }
-          if (wasPlaying) {
-            try {
-              await audio.play()
-              this.mobileIsPlaying = true
-              this.currentState = { ...this.currentState, isPlaying: true, playbackState: 'playing' }
-              this.notifyState()
-            } catch (e) {
-              console.warn('[RemoteClient] Autoplay prevented, waiting for user click:', e)
+          const seekAndPlay = async () => {
+            if (currentPos > 0) {
+              audio.currentTime = currentPos
+            }
+            if (wasPlaying) {
+              try {
+                await audio.play()
+                this.mobileIsPlaying = true
+                this.currentState = { ...this.currentState, isPlaying: true, playbackState: 'playing' }
+                this.notifyState()
+              } catch (e) {
+                console.warn('[RemoteClient] Autoplay prevented, waiting for user click:', e)
+              }
             }
           }
-        }
 
-        if (audio.readyState >= 1) {
-          await seekAndPlay()
-        } else {
-          audio.addEventListener('loadedmetadata', () => {
+          if (audio.readyState >= 1) {
             void seekAndPlay()
-          }, { once: true })
-        }
+          } else {
+            audio.addEventListener('loadedmetadata', () => {
+              void seekAndPlay()
+            }, { once: true })
+          }
+        })
       }
     } else if (target === 'both') {
       // 2. Target: PLAY ON BOTH (Dual Playback)
@@ -327,31 +359,34 @@ class RemoteClient {
 
       if (currentSong?.id) {
         this.currentMobileSongId = currentSong.id
-        audio.src = this.getAudioStreamUrl(currentSong.id)
+        void this.prepareAudioSource(currentSong.id).then((sourceUrl) => {
+          if (this.targetDevice !== 'both' || this.currentMobileSongId !== currentSong.id) return
+          audio.src = sourceUrl
 
-        const seekAndPlayMobile = async () => {
-          if (currentPos > 0) {
-            audio.currentTime = currentPos
-          }
-          if (wasPlaying) {
-            try {
-              await audio.play()
-              this.mobileIsPlaying = true
-              this.currentState = { ...this.currentState, isPlaying: true, playbackState: 'playing' }
-              this.notifyState()
-            } catch (e) {
-              console.warn('[RemoteClient] Both target mobile audio autoplay prevented:', e)
+          const seekAndPlayMobile = async () => {
+            if (currentPos > 0) {
+              audio.currentTime = currentPos
+            }
+            if (wasPlaying) {
+              try {
+                await audio.play()
+                this.mobileIsPlaying = true
+                this.currentState = { ...this.currentState, isPlaying: true, playbackState: 'playing' }
+                this.notifyState()
+              } catch (e) {
+                console.warn('[RemoteClient] Both target mobile audio autoplay prevented:', e)
+              }
             }
           }
-        }
 
-        if (audio.readyState >= 1) {
-          void seekAndPlayMobile()
-        } else {
-          audio.addEventListener('loadedmetadata', () => {
+          if (audio.readyState >= 1) {
             void seekAndPlayMobile()
-          }, { once: true })
-        }
+          } else {
+            audio.addEventListener('loadedmetadata', () => {
+              void seekAndPlayMobile()
+            }, { once: true })
+          }
+        })
       }
 
       if (wasPlaying && currentSong) {
@@ -493,27 +528,31 @@ class RemoteClient {
           if (this.targetDevice === 'both') {
             // Target: PLAY ON BOTH (Dual Playback Sync)
             if (data.song?.id && data.song.id !== this.currentMobileSongId) {
-              this.currentMobileSongId = data.song.id
+              const songId = data.song.id
+              this.currentMobileSongId = songId
               const audio = this.initMobileAudio()
-              audio.src = this.getAudioStreamUrl(data.song.id)
-              const targetPos = data.position || 0
-              const handleLoaded = () => {
-                if (targetPos > 0) {
-                  audio.currentTime = targetPos
+              void this.prepareAudioSource(songId).then((sourceUrl) => {
+                if (this.targetDevice !== 'both' || this.currentMobileSongId !== songId) return
+                audio.src = sourceUrl
+                const targetPos = data.position || 0
+                const handleLoaded = () => {
+                  if (targetPos > 0) {
+                    audio.currentTime = targetPos
+                  }
+                  if (data.isPlaying) {
+                    void audio.play().then(() => {
+                      this.mobileIsPlaying = true
+                      this.currentState = { ...this.currentState, isPlaying: true, playbackState: 'playing' }
+                      this.notifyState()
+                    }).catch(() => undefined)
+                  }
                 }
-                if (data.isPlaying) {
-                  void audio.play().then(() => {
-                    this.mobileIsPlaying = true
-                    this.currentState = { ...this.currentState, isPlaying: true, playbackState: 'playing' }
-                    this.notifyState()
-                  }).catch(() => undefined)
+                if (audio.readyState >= 1) {
+                  handleLoaded()
+                } else {
+                  audio.addEventListener('loadedmetadata', handleLoaded, { once: true })
                 }
-              }
-              if (audio.readyState >= 1) {
-                handleLoaded()
-              } else {
-                audio.addEventListener('loadedmetadata', handleLoaded, { once: true })
-              }
+              })
             } else if (this.mobileAudio) {
               if (data.isPlaying && this.mobileAudio.paused) {
                 void this.mobileAudio.play().then(() => {
@@ -568,18 +607,22 @@ class RemoteClient {
 
             // Detect if desktop queue advanced or changed song
             if (data.song?.id && data.song.id !== this.currentMobileSongId) {
-              this.currentMobileSongId = data.song.id
+              const songId = data.song.id
+              this.currentMobileSongId = songId
               const audio = this.initMobileAudio()
-              audio.src = this.getAudioStreamUrl(data.song.id)
-              audio.currentTime = 0
-              const shouldPlay = this.mobileIsPlaying || this.pendingMobilePlay
-              this.pendingMobilePlay = false
-              if (shouldPlay) {
-                this.mobileIsPlaying = true
-                void audio.play().catch((e) => {
-                  console.warn('[RemoteClient] Mobile autoplay next song failed:', e)
-                })
-              }
+              void this.prepareAudioSource(songId).then((sourceUrl) => {
+                if (this.targetDevice !== 'mobile' || this.currentMobileSongId !== songId) return
+                audio.src = sourceUrl
+                audio.currentTime = 0
+                const shouldPlay = this.mobileIsPlaying || this.pendingMobilePlay
+                this.pendingMobilePlay = false
+                if (shouldPlay) {
+                  this.mobileIsPlaying = true
+                  void audio.play().catch((e) => {
+                    console.warn('[RemoteClient] Mobile autoplay next song failed:', e)
+                  })
+                }
+              })
             }
 
             this.currentState = {
@@ -721,24 +764,35 @@ class RemoteClient {
       const targetSongId = songId || this.currentState.song?.id
       if (targetSongId && targetSongId !== this.currentMobileSongId) {
         this.currentMobileSongId = targetSongId
-        audio.src = this.getAudioStreamUrl(targetSongId)
         const targetPos = songId ? 0 : (this.currentState.position || 0)
-        const handleLoaded = () => {
-          if (targetPos > 0) {
-            audio.currentTime = targetPos
+        void this.prepareAudioSource(targetSongId).then((sourceUrl) => {
+          if (this.targetDevice !== 'both' || this.currentMobileSongId !== targetSongId) return
+          audio.src = sourceUrl
+          const handleLoaded = () => {
+            if (targetPos > 0) {
+              audio.currentTime = targetPos
+            }
+            void audio.play().then(() => {
+              this.mobileIsPlaying = true
+              this.currentState = { ...this.currentState, isPlaying: true, playbackState: 'playing' }
+              this.notifyState()
+            }).catch((e) => {
+              console.warn('[RemoteClient] Mobile audio play failed:', e)
+            })
           }
+          if (audio.readyState >= 1) {
+            handleLoaded()
+          } else {
+            audio.addEventListener('loadedmetadata', handleLoaded, { once: true })
+          }
+        })
+      } else {
+        try {
+          await audio.play()
+          this.mobileIsPlaying = true
+        } catch (e) {
+          console.warn('[RemoteClient] Mobile audio play failed:', e)
         }
-        if (audio.readyState >= 1) {
-          handleLoaded()
-        } else {
-          audio.addEventListener('loadedmetadata', handleLoaded, { once: true })
-        }
-      }
-      try {
-        await audio.play()
-        this.mobileIsPlaying = true
-      } catch (e) {
-        console.warn('[RemoteClient] Mobile audio play failed:', e)
       }
 
       this.currentState = { ...this.currentState, isPlaying: true, playbackState: 'playing' }
@@ -753,19 +807,34 @@ class RemoteClient {
 
       if (targetSongId && targetSongId !== this.currentMobileSongId) {
         this.currentMobileSongId = targetSongId
-        audio.src = this.getAudioStreamUrl(targetSongId)
-        if (songId) {
-          audio.currentTime = 0
-        } else if (this.currentState.position > 0) {
-          const pos = this.currentState.position
+        const targetPos = songId ? 0 : (this.currentState.position || 0)
+        void this.prepareAudioSource(targetSongId).then((sourceUrl) => {
+          if (this.targetDevice !== 'mobile' || this.currentMobileSongId !== targetSongId) return
+          audio.src = sourceUrl
           const handleLoaded = () => {
-            audio.currentTime = pos
+            if (targetPos > 0) {
+              audio.currentTime = targetPos
+            }
+            void audio.play().then(() => {
+              this.mobileIsPlaying = true
+              this.currentState = { ...this.currentState, isPlaying: true, playbackState: 'playing' }
+              this.notifyState()
+            }).catch((e) => {
+              console.warn('[RemoteClient] Mobile audio play failed:', e)
+            })
           }
           if (audio.readyState >= 1) {
             handleLoaded()
           } else {
             audio.addEventListener('loadedmetadata', handleLoaded, { once: true })
           }
+        })
+      } else {
+        try {
+          await audio.play()
+          this.mobileIsPlaying = true
+        } catch (e) {
+          console.warn('[RemoteClient] Mobile audio play failed:', e)
         }
       }
 
@@ -783,13 +852,6 @@ class RemoteClient {
           method: 'POST',
           body: JSON.stringify({})
         }).catch(() => undefined)
-      }
-
-      try {
-        await audio.play()
-        this.mobileIsPlaying = true
-      } catch (e) {
-        console.warn('[RemoteClient] Mobile audio play failed:', e)
       }
 
       this.currentState = { ...this.currentState, isPlaying: true, playbackState: 'playing' }
@@ -1146,15 +1208,18 @@ class RemoteClient {
     }
   }
 
-  public downloadSong(songId: string): void {
+  public async downloadSong(
+    songId: string,
+    songTitle?: string,
+    onProgress?: (progress: number) => void
+  ): Promise<boolean> {
     const url = this.getDownloadUrl(songId)
-    const a = document.createElement('a')
-    a.href = url
-    a.setAttribute('download', '')
-    a.rel = 'noopener'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    const fileName = songTitle || this.currentState.song?.title || `Track-${songId}`
+    return await downloadAudioFile(url, fileName, {
+      trackId: songId,
+      authToken: this.token,
+      onProgress
+    })
   }
 }
 

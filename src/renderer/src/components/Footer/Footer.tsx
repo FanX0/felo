@@ -19,8 +19,11 @@ import {
   Loader2,
   Smartphone,
   Laptop2,
-  Globe
+  Globe,
+  Sliders,
+  Crown
 } from 'lucide-react'
+import { useDspStore } from '../../hooks/useDspStore'
 import RemoteControlModal from '../RemoteControlModal/RemoteControlModal'
 import { detectDeviceInfo } from '../../lib/deviceInfo'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
@@ -33,8 +36,9 @@ import { resolveEffectivePlaybackState } from '../../lib/playbackStateResolver'
 import { remoteClient, type RemotePlayerState } from '../../pages/Remote/remoteClient'
 import ArtistLinks from '../Common/ArtistLinks'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
-import { useListeningStore } from '../../hooks/useListeningStore'
+import { useListeningStore, useIsPlayerLocked } from '../../hooks/useListeningStore'
 import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
+import { audioDspEngine } from '../../lib/audioDspEngine'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toMediaUrl } from '../../lib/media'
@@ -42,6 +46,8 @@ import { getCurrentDeviceId } from '../../lib/deviceInfo'
 import { ArtworkImage } from '../../pages/Home/components/ArtworkImage'
 import type { DownloadTarget } from '../DownloadPanel/DownloadPanel'
 import { AppCapabilities } from '../../lib/appConfig'
+import PingPongMarquee from '../Common/PingPongMarquee'
+import { fmtTime, UNAVAILABLE_TIME_TEXT } from '../../lib/songUtils'
 
 interface FooterProps {
   onOpenDownloadPanel?: (target?: DownloadTarget) => void
@@ -62,13 +68,12 @@ function ProgressBar({ duration, seek, currentTime: propCurrentTime, disabled, d
   const currentTime = propCurrentTime !== undefined ? propCurrentTime : storeCurrentTime
   const [isSeeking, setIsSeeking] = useState(false)
   const [previewTime, setPreviewTime] = useState(0)
+  const [hoverTime, setHoverTime] = useState<number | null>(null)
+  const [hoverX, setHoverX] = useState<number | null>(null)
   const progressRef = useRef<HTMLDivElement>(null)
 
   const formatTime = (time: number) => {
-    if (!time || isNaN(time)) return '0:00'
-    const mins = Math.floor(time / 60)
-    const secs = Math.floor(time % 60)
-    return `${mins}:${secs.toString().padStart(2, '0')}`
+    return fmtTime(time, duration > 0 ? '0:00' : UNAVAILABLE_TIME_TEXT)
   }
 
   const displayTime = isSeeking ? previewTime : currentTime
@@ -105,17 +110,26 @@ function ProgressBar({ duration, seek, currentTime: propCurrentTime, disabled, d
 
       event.currentTarget.setPointerCapture(event.pointerId)
       setIsSeeking(true)
+      setHoverTime(null)
     },
     [duration, disabled, updateSeekPreview]
   )
 
   const handleProgressPointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!isSeeking) return
-      event.preventDefault()
-      updateSeekPreview(event.clientX)
+      if (isSeeking) {
+        event.preventDefault()
+        updateSeekPreview(event.clientX)
+      } else if (!disabled && duration > 0) {
+        const time = getSeekTimeFromClientX(event.clientX)
+        const rect = progressRef.current?.getBoundingClientRect()
+        if (time !== null && rect) {
+          setHoverTime(time)
+          setHoverX(Math.max(12, Math.min(rect.width - 12, event.clientX - rect.left)))
+        }
+      }
     },
-    [isSeeking, updateSeekPreview]
+    [isSeeking, disabled, duration, updateSeekPreview, getSeekTimeFromClientX]
   )
 
   const handleProgressPointerUp = useCallback(
@@ -141,7 +155,15 @@ function ProgressBar({ duration, seek, currentTime: propCurrentTime, disabled, d
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
     setIsSeeking(false)
+    setHoverTime(null)
   }, [])
+
+  const handlePointerLeave = () => {
+    if (!isSeeking) {
+      setHoverTime(null)
+      setHoverX(null)
+    }
+  }
 
   useEffect(() => {
     if (!isSeeking) {
@@ -151,32 +173,45 @@ function ProgressBar({ duration, seek, currentTime: propCurrentTime, disabled, d
 
   return (
     <div className="w-full flex items-center gap-2 text-[11px] font-mono text-text-muted">
-      <span className="w-10 text-right">{formatTime(displayTime)}</span>
+      <span className="min-w-[36px] text-right tabular-nums">{formatTime(displayTime)}</span>
       <div
         ref={progressRef}
         onPointerDown={disabled ? undefined : handleProgressPointerDown}
         onPointerMove={disabled ? undefined : handleProgressPointerMove}
         onPointerUp={disabled ? undefined : handleProgressPointerUp}
         onPointerCancel={disabled ? undefined : handleProgressPointerCancel}
+        onPointerLeave={handlePointerLeave}
         title={disabledTitle}
         className={`flex-1 h-1.5 bg-border rounded-full relative no-drag flex items-center transition-all touch-none ${
           disabled ? 'cursor-not-allowed opacity-85' : 'cursor-pointer hover:h-2 group'
         }`}
       >
+        {/* Hover Timestamp Preview Tooltip */}
+        {!disabled && hoverTime !== null && hoverX !== null && (
+          <div
+            className="absolute -top-7 -translate-x-1/2 px-2 py-0.5 rounded-md bg-black/95 border border-emerald-500/40 text-[10px] font-mono text-emerald-400 shadow-xl shadow-black/80 pointer-events-none transition-opacity animate-in fade-in duration-150 z-30 font-semibold"
+            style={{ left: `${hoverX}px` }}
+          >
+            {formatTime(hoverTime)}
+          </div>
+        )}
+
         <div
           className={`absolute left-0 h-full rounded-full transition-colors ${
-            disabled ? 'bg-text-muted' : 'bg-text group-hover:bg-primary-amber'
+            disabled ? 'bg-text-muted' : isSeeking ? 'bg-emerald-500' : 'bg-text group-hover:bg-emerald-500'
           }`}
           style={{ width: `${progressPercent}%` }}
         />
         {!disabled && (
           <div
-            className="absolute h-3 w-3 bg-text rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-md -ml-1.5"
+            className={`absolute h-3 w-3 bg-white rounded-full transition-all shadow-md -ml-1.5 border border-emerald-500/50 ${
+              isSeeking ? 'opacity-100 scale-110 shadow-[0_0_8px_rgba(16,185,129,0.8)]' : 'opacity-0 group-hover:opacity-100 group-hover:shadow-[0_0_6px_rgba(16,185,129,0.7)]'
+            }`}
             style={{ left: `${progressPercent}%` }}
           />
         )}
       </div>
-      <span className="w-10 text-left">{formatTime(duration)}</span>
+      <span className="min-w-[36px] text-left tabular-nums">{fmtTime(duration, UNAVAILABLE_TIME_TEXT)}</span>
     </div>
   )
 }
@@ -258,8 +293,14 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
   )
 
   const navigate = useNavigate()
+
+  const speakerRole = useDspStore((s) => s.speakerRole)
+  const reverbEnabled = useDspStore((s) => s.reverbEnabled)
+  const virtualBass = useDspStore((s) => s.virtualBass)
+  const virtualTreble = useDspStore((s) => s.virtualTreble)
+  const virtualSurround = useDspStore((s) => s.virtualSurround)
+  const setIsAudioModalOpen = useDspStore((s) => s.setIsAudioModalOpen)
   const location = useLocation()
-  const [prevVolume, setPrevVolume] = useState(1)
   const [isRemoteModalOpen, setIsRemoteModalOpen] = useState(false)
   const [connectedPhones, setConnectedPhones] = useState(0)
 
@@ -285,9 +326,17 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
   }, [])
 
   const joinedRoom = useListeningStore((state) => state.joinedRoom)
+  const hostRoom = useListeningStore((state) => state.hostRoom)
+  const myRole = useListeningStore((state) => state.myRole)
+  const memberCount = useListeningStore((state) => state.memberCount)
+  const isPlayerLocked = useIsPlayerLocked()
   const syncStatus = useListeningStore((state) => state.syncStatus)
   const missingSong = useListeningStore((state) => state.missingSong)
   const leaveJoinedRoom = useListeningStore((state) => state.leaveJoinedRoom)
+  const isAutoplayBlocked = useListeningStore((state) => state.isAutoplayBlocked)
+  const unmuteDeviceStream = useListeningStore((state) => state.unmuteDeviceStream)
+  const manualSyncOffsetMs = useListeningStore((state) => state.manualSyncOffsetMs)
+  const setIsManualSyncModalOpen = useListeningStore((state) => state.setIsManualSyncModalOpen)
 
   const isLyricsActive = location.pathname === '/lyrics'
   const artworkUrl =
@@ -326,22 +375,15 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
   }
 
   const toggleMute = () => {
-    if (volume > 0) {
-      setPrevVolume(volume)
-      setVolume(0)
-      if (isRemoteActive && user?.id) {
-        void sendDeviceCommand(user.id, unified.activeDeviceId, 'volume', { volume: 0 })
-      }
-    } else {
-      const restored = prevVolume || 0.5
-      setVolume(restored)
-      if (isRemoteActive && user?.id) {
-        void sendDeviceCommand(user.id, unified.activeDeviceId, 'volume', { volume: restored })
-      }
+    usePlayerStore.getState().toggleMute()
+    const nextVol = usePlayerStore.getState().volume
+    if (isRemoteActive && user?.id) {
+      void sendDeviceCommand(user.id, unified.activeDeviceId, 'volume', { volume: nextVol })
     }
   }
 
   const handlePlayClick = async () => {
+    void audioDspEngine.resume()
     if (isRemoteActive) {
       if (unified.source === 'lan') {
         void remoteClient.togglePlay()
@@ -521,21 +563,29 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
             </div>
           ) : null}
 
-          <p
-            onClick={handleTitleClick}
-            title={
-              displaySong
-                ? isRemoteActive
+          {displaySong ? (
+            <PingPongMarquee
+              text={displaySong.title}
+              onClick={handleTitleClick}
+              active={isPlaying}
+              className="text-[14px] font-medium text-text hover:underline cursor-pointer no-drag"
+              title={
+                isRemoteActive
                   ? `Playing on ${activeRemote?.activeDeviceName}`
                   : AppCapabilities.downloads
                     ? `Open download sources for "${displaySong.title}"`
                     : displaySong.title
-                : 'Click play to start recently added'
-            }
-            className="text-[14px] font-medium text-text truncate hover:underline cursor-pointer no-drag"
-          >
-            {displaySong ? displaySong.title : 'No track selected'}
-          </p>
+              }
+            />
+          ) : (
+            <p
+              onClick={handleTitleClick}
+              title="Click play to start recently added"
+              className="text-[14px] font-medium text-text truncate hover:underline cursor-pointer no-drag"
+            >
+              No track selected
+            </p>
+          )}
           {displaySong ? (
             <div className="text-[12px] truncate no-drag">
               <ArtistLinks
@@ -587,15 +637,72 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
                 ? 'Host reconnecting...'
                 : joinedRoom.name}
             </button>
+            {myRole && (
+              <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-surface-elevated text-text-muted border border-border/40">
+                {myRole === 'host' ? 'Host' : myRole === 'co_host' ? 'Co-host' : 'Listener'}
+              </span>
+            )}
+            {isAutoplayBlocked && (
+              <button
+                type="button"
+                onClick={() => void unmuteDeviceStream()}
+                title="Audio blocked by browser. Click to unmute!"
+                className="flex items-center gap-1 rounded-full bg-primary-amber hover:bg-amber-400 text-black px-2 py-0.5 text-[10px] font-bold shadow-md shadow-amber-500/20 animate-bounce transition-all ml-1 cursor-pointer"
+              >
+                <Volume2 className="h-2.5 w-2.5" />
+                <span>Unmute</span>
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={myRole === 'host'}
+              onClick={() => {
+                if (myRole !== 'host') {
+                  setIsManualSyncModalOpen(true)
+                }
+              }}
+              title={
+                myRole === 'host'
+                  ? 'Manual sync is disabled for host (host is the reference audio source)'
+                  : 'Manual sync latency calibration (ms)'
+              }
+              className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-mono font-semibold transition-all ml-0.5 ${
+                myRole === 'host'
+                  ? 'bg-white/5 text-zinc-500 opacity-40 cursor-not-allowed border border-white/5 shadow-none'
+                  : 'bg-white/10 hover:bg-white/20 text-text cursor-pointer'
+              }`}
+            >
+              <Sliders className={`h-2.5 w-2.5 ${myRole === 'host' ? 'text-zinc-500' : 'text-text-muted'}`} />
+              <span>{manualSyncOffsetMs && myRole !== 'host' ? `${manualSyncOffsetMs > 0 ? `+${manualSyncOffsetMs}` : manualSyncOffsetMs}ms` : 'Sync'}</span>
+            </button>
             <button
               type="button"
               onClick={() => void leaveJoinedRoom()}
               title="Leave listen together session"
-              className="flex items-center gap-0.5 rounded-full bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white px-2 py-0.5 text-[10px] font-bold transition-all ml-1"
+              className="flex items-center gap-0.5 rounded-full bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white px-2 py-0.5 text-[10px] font-bold transition-all ml-1 cursor-pointer"
             >
               <LogOut className="h-2.5 w-2.5" />
               <span>Leave</span>
             </button>
+          </div>
+        )}
+
+        {/* Host Room Status Badge */}
+        {hostRoom && !joinedRoom && (
+          <div className="hidden xl:flex items-center gap-1.5 rounded-full border border-border bg-surface-elevated text-text px-2.5 py-1 text-xs no-drag shrink-0 transition-colors">
+            <Radio className="h-3 w-3 animate-pulse text-primary shrink-0" />
+            <button
+              type="button"
+              onClick={() => navigate('/listen-together')}
+              className="truncate max-w-[120px] font-bold text-[11px] hover:underline cursor-pointer text-left flex items-center gap-1"
+              title="Open host room"
+            >
+              <Crown className="h-3 w-3 text-text-muted shrink-0" />
+              <span className="truncate">{hostRoom.name}</span>
+            </button>
+            {memberCount > 1 && (
+              <span className="text-[10px] text-text-muted font-semibold">({memberCount})</span>
+            )}
           </div>
         )}
 
@@ -607,11 +714,18 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
           {/* Shuffle button */}
           <button
             onClick={toggleShuffle}
-            title={isShuffle ? 'Shuffle on' : 'Shuffle off'}
-            className={`transition-colors relative ${isShuffle ? 'text-primary-amber' : 'text-text-muted hover:text-text'}`}
+            disabled={isPlayerLocked}
+            title={isPlayerLocked ? 'Host controls playback' : isShuffle ? 'Shuffle on' : 'Shuffle off'}
+            className={`transition-colors relative ${
+              isPlayerLocked
+                ? 'opacity-30 cursor-not-allowed text-text-muted'
+                : isShuffle
+                ? 'text-primary-amber'
+                : 'text-text-muted hover:text-text'
+            }`}
           >
             <Shuffle className="w-[17px] h-[17px]" />
-            {isShuffle && (
+            {isShuffle && !isPlayerLocked && (
               <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary-amber" />
             )}
           </button>
@@ -619,8 +733,11 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
           {/* Previous */}
           <button
             onClick={handlePreviousClick}
-            title="Previous"
-            className="text-text-muted hover:text-text transition-colors"
+            disabled={isPlayerLocked}
+            title={isPlayerLocked ? 'Host controls playback' : 'Previous'}
+            className={`transition-colors ${
+              isPlayerLocked ? 'opacity-30 cursor-not-allowed text-text-muted' : 'text-text-muted hover:text-text'
+            }`}
           >
             <SkipBack className="w-5 h-5 fill-current" />
           </button>
@@ -628,8 +745,21 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
           {/* Play/Pause */}
           <button
             onClick={handlePlayClick}
-            title={isBuffering ? 'Buffering track...' : displayIsPlaying ? 'Pause' : 'Play'}
-            className="h-10 w-10 rounded-full bg-text text-canvas flex items-center justify-center hover:scale-105 active:scale-95 transition-transform shadow-md"
+            disabled={isPlayerLocked}
+            title={
+              isPlayerLocked
+                ? 'Host controls playback'
+                : isBuffering
+                ? 'Buffering track...'
+                : displayIsPlaying
+                ? 'Pause'
+                : 'Play'
+            }
+            className={`h-10 w-10 rounded-full flex items-center justify-center transition-transform shadow-md ${
+              isPlayerLocked
+                ? 'bg-text/40 text-canvas/60 cursor-not-allowed'
+                : 'bg-text text-canvas hover:scale-105 active:scale-95'
+            }`}
           >
             {isBuffering ? (
               <Loader2 className="w-4 h-4 animate-spin text-canvas" />
@@ -643,8 +773,11 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
           {/* Next */}
           <button
             onClick={handleNextClick}
-            title="Next"
-            className="text-text-muted hover:text-text transition-colors"
+            disabled={isPlayerLocked}
+            title={isPlayerLocked ? 'Host controls playback' : 'Next'}
+            className={`transition-colors ${
+              isPlayerLocked ? 'opacity-30 cursor-not-allowed text-text-muted' : 'text-text-muted hover:text-text'
+            }`}
           >
             <SkipForward className="w-5 h-5 fill-current" />
           </button>
@@ -652,15 +785,22 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
           {/* Repeat */}
           <button
             onClick={toggleRepeat}
-            title={`Repeat: ${repeatMode}`}
-            className={`transition-colors relative ${repeatMode !== 'off' ? 'text-primary-amber' : 'text-text-muted hover:text-text'}`}
+            disabled={isPlayerLocked}
+            title={isPlayerLocked ? 'Host controls playback' : `Repeat: ${repeatMode}`}
+            className={`transition-colors relative ${
+              isPlayerLocked
+                ? 'opacity-30 cursor-not-allowed text-text-muted'
+                : repeatMode !== 'off'
+                ? 'text-primary-amber'
+                : 'text-text-muted hover:text-text'
+            }`}
           >
             {repeatMode === 'one' ? (
               <Repeat1 className="w-[17px] h-[17px]" />
             ) : (
               <Repeat className="w-[17px] h-[17px]" />
             )}
-            {repeatMode !== 'off' && (
+            {repeatMode !== 'off' && !isPlayerLocked && (
               <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary-amber" />
             )}
           </button>
@@ -668,11 +808,22 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
           {/* Autoplay / Infinity */}
           <button
             onClick={toggleAutoplay}
-            title={`Autoplay similar songs when music ends: ${isAutoplay ? 'On' : 'Off'}`}
-            className={`transition-colors relative ${isAutoplay ? 'text-primary-amber' : 'text-text-muted hover:text-text'}`}
+            disabled={isPlayerLocked}
+            title={
+              isPlayerLocked
+                ? 'Host controls playback'
+                : `Autoplay similar songs when music ends: ${isAutoplay ? 'On' : 'Off'}`
+            }
+            className={`transition-colors relative ${
+              isPlayerLocked
+                ? 'opacity-30 cursor-not-allowed text-text-muted'
+                : isAutoplay
+                ? 'text-primary-amber'
+                : 'text-text-muted hover:text-text'
+            }`}
           >
             <InfinityIcon className="w-[17px] h-[17px]" />
-            {isAutoplay && (
+            {isAutoplay && !isPlayerLocked && (
               <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary-amber" />
             )}
           </button>
@@ -683,10 +834,10 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
           duration={displayDuration}
           seek={handleSeek}
           currentTime={displayCurrentTime}
-          disabled={Boolean(!displaySong || displayDuration <= 0 || joinedRoom)}
+          disabled={Boolean(!displaySong || displayDuration <= 0 || isPlayerLocked)}
           disabledTitle={
-            joinedRoom
-              ? 'Playback position is locked to the live session host. Leave room to seek.'
+            isPlayerLocked
+              ? 'Playback position is locked to the live session host.'
               : undefined
           }
         />
@@ -739,15 +890,32 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
             onPointerMove={handleVolumePointerMove}
           >
             <div
-              className="absolute left-0 h-full bg-text group-hover:bg-primary-amber rounded-full transition-colors"
+              className="absolute left-0 h-full bg-text group-hover:bg-emerald-500 rounded-full transition-colors"
               style={{ width: `${volume * 100}%` }}
             />
             <div
-              className="absolute h-2.5 w-2.5 bg-text rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-sm -ml-1"
+              className="absolute h-2.5 w-2.5 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-[0_0_6px_rgba(16,185,129,0.7)] -ml-1 border border-emerald-500/40"
               style={{ left: `${volume * 100}%` }}
             />
           </div>
         </div>
+
+        {/* Spatial Audio & Speaker Roles (Acoustics & DSP) */}
+        <button
+          type="button"
+          title={`Acoustic Settings & Spatial DSP (${speakerRole.charAt(0).toUpperCase() + speakerRole.slice(1)} Speaker)`}
+          onClick={() => setIsAudioModalOpen(true)}
+          className={`hover:text-text transition-colors p-1 relative ${
+            speakerRole !== 'center' || reverbEnabled || virtualBass || virtualTreble || virtualSurround
+              ? 'text-emerald-400'
+              : ''
+          }`}
+        >
+          <Sliders className="w-4 h-4" />
+          {(speakerRole !== 'center' || reverbEnabled || virtualBass || virtualTreble || virtualSurround) && (
+            <span className="absolute top-0 right-0 w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.8)]" />
+          )}
+        </button>
 
         {/* Device Output Switcher / Remote Control */}
         {isRemoteActive ? (

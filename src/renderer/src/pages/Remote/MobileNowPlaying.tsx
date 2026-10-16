@@ -15,23 +15,32 @@ import {
   Search,
   Radio,
   Sliders,
+  SlidersHorizontal,
   Download,
   Check,
   Moon,
   Mic2,
-  ChevronDown
+  ChevronDown,
+  ArrowLeft,
+  Activity,
+  RefreshCw
 } from 'lucide-react'
+import EmeraldVisualizer from '../../components/Audio/EmeraldVisualizer'
+import PingPongMarquee from '../../components/Common/PingPongMarquee'
 import {
   remoteClient,
   type RemotePlayerState
 } from './remoteClient'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
+import { useListeningStore } from '../../hooks/useListeningStore'
+import { useDspStore } from '../../hooks/useDspStore'
 import {
   useConnectedDeviceStore,
   sendDeviceCommand
 } from '../../hooks/useConnectedDeviceStore'
 import { getDeviceDisplayName } from '../../lib/deviceInfo'
+import { fmtTime, UNAVAILABLE_TIME_TEXT } from '../../lib/songUtils'
 
 interface MobileNowPlayingProps {
   state: RemotePlayerState
@@ -43,6 +52,7 @@ interface MobileNowPlayingProps {
   onOpenSleepTimer: () => void
   sleepTimerBadge?: string | null
   onClose?: () => void
+  onExitRemote?: () => void
 }
 
 const triggerHaptic = (ms = 12) => {
@@ -64,7 +74,8 @@ export default function MobileNowPlaying({
   onOpenLyrics,
   onOpenSleepTimer,
   sleepTimerBadge,
-  onClose
+  onClose,
+  onExitRemote
 }: MobileNowPlayingProps) {
   const song = state.song
   const isPlaying = state.isPlaying
@@ -75,6 +86,9 @@ export default function MobileNowPlaying({
   const [isVolumeOpen, setIsVolumeOpen] = useState(false)
   const [volume, setVolume] = useState(state.volumePercent ?? 100)
   const [isDownloaded, setIsDownloaded] = useState(false)
+  const [isDownloading, setIsDownloading] = useState(false)
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null)
+  const [showVisualizer, setShowVisualizer] = useState(false)
 
   // Touch Swipe on Album Artwork for Next/Prev Track
   const [touchStartX, setTouchStartX] = useState<number | null>(null)
@@ -101,16 +115,13 @@ export default function MobileNowPlaying({
   }, [isPlaying, isScrubbing, duration])
 
   const formatTime = (seconds: number) => {
-    if (!seconds || isNaN(seconds) || seconds < 0) return '0:00'
-    const mins = Math.floor(seconds / 60)
-    const secs = Math.floor(seconds % 60)
-    return `${mins}:${secs.toString().padStart(2, '0')}`
+    return fmtTime(seconds, duration > 0 ? '0:00' : UNAVAILABLE_TIME_TEXT)
   }
 
   const formatRemainingTime = (current: number, total: number) => {
-    if (!total || total <= 0) return '-0:00'
+    if (!total || total <= 0) return UNAVAILABLE_TIME_TEXT
     const remaining = Math.max(0, total - current)
-    return `-${formatTime(remaining)}`
+    return `-${fmtTime(remaining, '0:00')}`
   }
 
   const currentDisplayTime = isScrubbing ? scrubPreview : localPos
@@ -131,6 +142,12 @@ export default function MobileNowPlaying({
   const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
   const isCloudRemote = Boolean(activeRemote && activeRemote.song && user?.id)
   const isRemoteActive = Boolean(isConnected && state.song)
+  const activeRoom = useListeningStore((s) => s.joinedRoom || s.hostRoom)
+  const manualSyncOffsetMs = useListeningStore((s) => s.manualSyncOffsetMs)
+  const setIsManualSyncModalOpen = useListeningStore((s) => s.setIsManualSyncModalOpen)
+  const myRole = useListeningStore((s) => s.myRole)
+  const isHost = myRole === 'host' || Boolean(activeRoom && activeRoom.host_id === user?.id)
+  const setIsAudioModalOpen = useDspStore((s) => s.setIsAudioModalOpen)
 
   const handleScrubEnd = () => {
     triggerHaptic(14)
@@ -224,12 +241,23 @@ export default function MobileNowPlaying({
     }
   }
 
-  const handleDownload = () => {
-    if (!song?.id) return
+  const handleDownload = async () => {
+    if (!song?.id || isDownloading) return
     triggerHaptic(20)
-    remoteClient.downloadSong(song.id)
-    setIsDownloaded(true)
-    setTimeout(() => setIsDownloaded(false), 2500)
+    setIsDownloading(true)
+    setDownloadProgress(0)
+    try {
+      await remoteClient.downloadSong(song.id, song.title, (ratio) => {
+        setDownloadProgress(Math.round(ratio * 100))
+      })
+      setIsDownloaded(true)
+      setTimeout(() => setIsDownloaded(false), 2500)
+    } catch (err) {
+      console.warn('Download failed:', err)
+    } finally {
+      setIsDownloading(false)
+      setDownloadProgress(null)
+    }
   }
 
   // Swipe gesture handlers
@@ -283,7 +311,20 @@ export default function MobileNowPlaying({
 
       {/* Top Header */}
       <header className="relative z-10 flex items-center justify-between pt-2 pb-4">
-        {onClose ? (
+        {onExitRemote ? (
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic(10)
+              onExitRemote()
+            }}
+            className="h-9 px-3 rounded-full flex items-center gap-1.5 bg-white/10 hover:bg-white/20 active:bg-white/30 text-white text-xs font-semibold transition active:scale-95 cursor-pointer border border-white/15 shadow-sm"
+            title="Open Full Felo App"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Open App</span>
+          </button>
+        ) : onClose ? (
           <button
             type="button"
             onClick={() => {
@@ -328,6 +369,39 @@ export default function MobileNowPlaying({
         </div>
 
         <div className="flex items-center gap-1">
+          {/* Listen Together Sync Latency Button */}
+          {activeRoom && (
+            <button
+              type="button"
+              disabled={isHost}
+              onClick={() => {
+                if (!isHost) {
+                  triggerHaptic(10)
+                  setIsManualSyncModalOpen(true)
+                }
+              }}
+              className={`h-9 px-2.5 rounded-full flex items-center gap-1 text-xs font-semibold transition ${
+                isHost
+                  ? 'bg-white/5 text-zinc-500 opacity-40 cursor-not-allowed border border-white/5 shadow-none'
+                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 active:scale-95 cursor-pointer shadow-sm'
+              }`}
+              title={
+                isHost
+                  ? 'Manual sync is disabled for host (host is the reference audio source)'
+                  : 'Calibrate audio sync latency'
+              }
+            >
+              <SlidersHorizontal className={`w-3.5 h-3.5 ${isHost ? 'text-zinc-500' : 'text-emerald-400'}`} />
+              <span className="font-mono text-[11px]">
+                {isHost
+                  ? 'Host'
+                  : manualSyncOffsetMs === 0
+                  ? 'Sync 0ms'
+                  : `${manualSyncOffsetMs > 0 ? `+${manualSyncOffsetMs}` : manualSyncOffsetMs}ms`}
+              </span>
+            </button>
+          )}
+
           {/* Sleep Timer Button */}
           <button
             type="button"
@@ -373,7 +447,11 @@ export default function MobileNowPlaying({
             transition: dragOffset === 0 ? 'transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)' : 'none'
           }}
         >
-          {artworkSrc ? (
+          {showVisualizer ? (
+            <div className="w-full h-full p-2 bg-[#0e1013] flex items-center justify-center animate-in zoom-in-95 duration-200">
+              <EmeraldVisualizer className="w-full h-full border-0" defaultMode="circular" interactive={true} showModePill={true} />
+            </div>
+          ) : artworkSrc ? (
             <img
               src={artworkSrc}
               alt={song?.title || 'Album Artwork'}
@@ -394,9 +472,12 @@ export default function MobileNowPlaying({
       {/* Track Metadata & Actions (Lyrics, Download, Volume) */}
       <div className="relative z-10 flex items-center justify-between pt-2 pb-1">
         <div className="flex-1 min-w-0 pr-3">
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white truncate leading-tight">
-            {song?.title || (isConnected ? 'No song loaded' : 'Connecting to Felo...')}
-          </h1>
+          <PingPongMarquee
+            text={song?.title || (isConnected ? 'No song loaded' : 'Connecting to Felo...')}
+            active={state.isPlaying}
+            speed={32}
+            className="text-xl sm:text-2xl font-bold tracking-tight text-white leading-tight"
+          />
           <p className="text-sm sm:text-base font-medium text-zinc-400 truncate mt-0.5">
             {song?.artist || (isConnected ? 'Select a song on desktop' : 'Check Wi-Fi connection')}
           </p>
@@ -423,14 +504,66 @@ export default function MobileNowPlaying({
             <button
               type="button"
               onClick={handleDownload}
+              disabled={isDownloading}
               className={`w-10 h-10 rounded-full flex items-center justify-center transition active:scale-95 cursor-pointer ${
-                isDownloaded ? 'text-white bg-white/10' : 'text-zinc-400 hover:text-white'
+                isDownloaded
+                  ? 'text-white bg-white/10'
+                  : isDownloading
+                  ? 'text-primary-amber'
+                  : 'text-zinc-400 hover:text-white'
               }`}
-              title="Download to phone storage"
+              title={
+                isDownloading
+                  ? `Downloading ${downloadProgress !== null ? `${downloadProgress}%` : '...'}`
+                  : isDownloaded
+                  ? 'Downloaded!'
+                  : 'Download to phone storage'
+              }
             >
-              {isDownloaded ? <Check className="w-5 h-5" /> : <Download className="w-5 h-5" />}
+              {isDownloading ? (
+                <div className="flex flex-col items-center justify-center">
+                  <RefreshCw className="w-4 h-4 animate-spin text-primary-amber" />
+                  {downloadProgress !== null && downloadProgress > 0 && (
+                    <span className="text-[8px] font-mono leading-none mt-0.5">{downloadProgress}%</span>
+                  )}
+                </div>
+              ) : isDownloaded ? (
+                <Check className="w-5 h-5 text-emerald-400" />
+              ) : (
+                <Download className="w-5 h-5" />
+              )}
             </button>
           )}
+
+          {/* Audio FX (DSP / EQ / Virtual Effects / Reverb) */}
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic(10)
+              setIsAudioModalOpen(true)
+            }}
+            className="w-10 h-10 rounded-full flex items-center justify-center text-zinc-400 hover:text-emerald-400 transition active:scale-95 cursor-pointer"
+            title="Audio FX & Equalizer"
+          >
+            <Sliders className="w-5 h-5" />
+          </button>
+
+          {/* Visualizer Toggle */}
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic(10)
+              setShowVisualizer(!showVisualizer)
+            }}
+            className={`w-10 h-10 rounded-full flex items-center justify-center transition active:scale-95 cursor-pointer ${
+              showVisualizer
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm'
+                : 'text-zinc-400 hover:text-white'
+            }`}
+            title="Toggle Live Audio Visualizer"
+          >
+            <Activity className="w-5 h-5" />
+          </button>
 
           {/* Volume Control Button */}
           <button
@@ -444,7 +577,7 @@ export default function MobileNowPlaying({
             }`}
             title="Volume Control"
           >
-            <Sliders className="w-5 h-5" />
+            {volume === 0 ? <VolumeX className="w-5 h-5 text-red-400" /> : <Volume2 className="w-5 h-5" />}
           </button>
         </div>
       </div>
@@ -456,12 +589,13 @@ export default function MobileNowPlaying({
             type="button"
             onClick={() => {
               triggerHaptic(10)
-              const nextVol = volume === 0 ? 80 : 0
-              setVolume(nextVol)
               if (isRemoteActive) {
+                const nextVol = volume === 0 ? 80 : 0
+                setVolume(nextVol)
                 void remoteClient.setVolume(nextVol)
               } else {
-                usePlayerStore.getState().setVolume(nextVol / 100)
+                usePlayerStore.getState().toggleMute()
+                setVolume(Math.round(usePlayerStore.getState().volume * 100))
               }
             }}
             className="text-zinc-400 hover:text-white cursor-pointer"

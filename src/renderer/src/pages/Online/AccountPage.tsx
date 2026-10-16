@@ -4,8 +4,16 @@ import { Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 
 export default function AccountPage(): ReactElement {
-  const { configured, user, authError, signIn, signUp, signInWithProvider, clearAuthError } =
-    useOnlineStore()
+  const {
+    configured,
+    user,
+    authError,
+    isAuthenticating,
+    signIn,
+    signUp,
+    signInWithProvider,
+    clearAuthError
+  } = useOnlineStore()
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -17,6 +25,8 @@ export default function AccountPage(): ReactElement {
   const navigate = useNavigate()
   const location = useLocation()
   const returnTo = (location.state as any)?.returnTo || '/profile'
+
+  const isBusy = busy || isAuthenticating
 
   if (user) return <Navigate to={returnTo} replace />
 
@@ -62,11 +72,7 @@ export default function AccountPage(): ReactElement {
       <div className="w-full max-w-md">
         <div className="mb-7 flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-elevated text-text">
-            {mode === 'login' ? (
-              <LockKeyhole className="h-5 w-5" />
-            ) : (
-              <UserPlus className="h-5 w-5" />
-            )}
+            {mode === 'login' ? <LockKeyhole className="h-5 w-5" /> : <UserPlus className="h-5 w-5" />}
           </div>
           <div>
             <h1 className="text-2xl font-bold text-text">
@@ -87,9 +93,9 @@ export default function AccountPage(): ReactElement {
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
-                disabled={busy}
+                disabled={isBusy}
                 onClick={() => void startSocialSignIn('google')}
-                className="flex h-11 items-center justify-center gap-2 rounded-md border border-border bg-surface text-sm font-semibold text-text hover:bg-surface-elevated disabled:opacity-50"
+                className="flex h-11 items-center justify-center gap-2 rounded-md border border-border bg-surface text-sm font-semibold text-text hover:bg-surface-elevated disabled:opacity-50 cursor-pointer"
               >
                 <span className="text-base font-bold" aria-hidden="true">
                   G
@@ -98,9 +104,9 @@ export default function AccountPage(): ReactElement {
               </button>
               <button
                 type="button"
-                disabled={busy}
+                disabled={isBusy}
                 onClick={() => void startSocialSignIn('discord')}
-                className="flex h-11 items-center justify-center gap-2 rounded-md border border-border bg-surface text-sm font-semibold text-text hover:bg-surface-elevated disabled:opacity-50"
+                className="flex h-11 items-center justify-center gap-2 rounded-md border border-border bg-surface text-sm font-semibold text-text hover:bg-surface-elevated disabled:opacity-50 cursor-pointer"
               >
                 <MessageCircle className="h-4 w-4" />
                 Discord
@@ -159,12 +165,18 @@ export default function AccountPage(): ReactElement {
                 />
               </label>
               {(error || authError) && <p className="text-sm text-danger">{error || authError}</p>}
-              {message && <p className="text-sm text-text-muted">{message}</p>}
+              {isAuthenticating && (
+                <div className="flex items-center gap-2 text-sm text-accent">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Completing sign-in...</span>
+                </div>
+              )}
+              {message && !isAuthenticating && <p className="text-sm text-text-muted">{message}</p>}
               <button
-                disabled={busy}
-                className="flex w-full items-center justify-center gap-2 rounded-full bg-text py-3 text-sm font-bold text-canvas hover:opacity-90 disabled:opacity-50"
+                disabled={isBusy}
+                className="flex w-full items-center justify-center gap-2 rounded-full bg-text py-3 text-sm font-bold text-canvas hover:opacity-90 disabled:opacity-50 cursor-pointer"
               >
-                {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+                {isBusy && <Loader2 className="h-4 w-4 animate-spin" />}
                 {mode === 'login' ? 'Sign in' : 'Register'}
               </button>
             </form>
@@ -178,7 +190,7 @@ export default function AccountPage(): ReactElement {
             setMessage('')
             clearAuthError()
           }}
-          className="mt-5 w-full text-center text-sm font-semibold text-text-muted hover:text-text"
+          className="mt-5 w-full text-center text-sm font-semibold text-text-muted hover:text-text cursor-pointer"
         >
           {mode === 'login' ? 'New here? Create an account' : 'Already have an account? Sign in'}
         </button>

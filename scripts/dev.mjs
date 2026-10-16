@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execSync, spawn } from 'child_process'
+import { compileProviders } from './compile-providers.mjs'
 
 const args = process.argv.slice(2)
 const isPublic = args.includes('--public')
@@ -41,10 +42,19 @@ if (isPublic) {
   console.log('=========================================\n')
 }
 
+if (!isPublic) {
+  try {
+    await compileProviders()
+  } catch (err) {
+    console.warn('[Felo Dev] Notice: Providers auto-compile skipped/failed:', err?.message || err)
+  }
+}
+
 const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx'
 const child = spawn(npxCmd, ['electron-vite', 'dev'], {
   stdio: 'inherit',
-  env: process.env
+  env: process.env,
+  shell: true
 })
 
 child.on('exit', (code) => {

@@ -36,7 +36,7 @@ export default function OnlineGate({ children }: { children: ReactNode }): React
     return (
       <div className="flex min-h-[60vh] w-full flex-col items-center justify-center p-6 text-center select-none">
         <div className="w-full max-w-md rounded-3xl border border-white/10 bg-surface-elevated/70 p-6 sm:p-8 shadow-2xl backdrop-blur-md text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-surface border border-border text-primary">
             {roomCode ? <Radio className="h-7 w-7 animate-pulse" /> : <LogIn className="h-7 w-7" />}
           </div>
           <h1 className="mt-4 text-xl sm:text-2xl font-black text-text tracking-tight">
@@ -58,7 +58,7 @@ export default function OnlineGate({ children }: { children: ReactNode }): React
           </Link>
 
           <div className="mt-4 text-[11px] text-text-muted/80">
-            💡 Supports Google & Discord 1-click social sign-in.
+            Supports Google & Discord 1-click social sign-in.
           </div>
         </div>
       </div>

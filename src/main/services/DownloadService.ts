@@ -21,33 +21,44 @@ interface ExternalProviders {
   QobuzClient?: any
   DeezerClient?: any
   slsk?: any
-  getSoulseekCredentials?: (accounts: any) => { user: string; pass: string }
+  getSoulseekCredentials?: (accounts: any, db?: any) => { user: string; pass: string }
   formatSoulseekError?: (error: unknown) => string
 }
 
 let _providersCache: ExternalProviders | null = null
-let _providersAttempted = false
 
 async function getExternalProviders(): Promise<ExternalProviders | null> {
   // If explicitly requested to run in public mode, disable proprietary external providers
   if (process.env.FELO_MODE === 'public') {
     return null
   }
-  if (_providersAttempted) return _providersCache
-  _providersAttempted = true
+  if (_providersCache) return _providersCache
   try {
     const candidatePaths = [
       process.env.FELO_PROVIDERS_PATH,
-      path.resolve(process.cwd(), 'src/main/providers/index.ts'),
-      path.resolve(process.cwd(), 'src/main/providers/index.js'),
-      path.resolve(process.cwd(), '../felo-private/src/main/providers/index.ts'),
-      path.resolve(process.cwd(), '../felo-private/src/main/providers/index.js'),
-      path.resolve(__dirname, '../providers/index.js'),
-      path.resolve(__dirname, '../providers/index.cjs'),
       app.isPackaged ? path.join(process.resourcesPath, 'providers', 'index.cjs') : null,
-      app.isPackaged ? path.join(process.resourcesPath, 'providers', 'index.js') : null,
+      path.join(process.resourcesPath || '', 'providers', 'index.cjs'),
       path.resolve(process.cwd(), 'resources', 'providers', 'index.cjs'),
-      path.resolve(process.cwd(), 'resources', 'providers', 'index.js')
+      path.resolve(__dirname, '../../resources/providers', 'index.cjs'),
+      path.resolve(__dirname, '../resources/providers', 'index.cjs'),
+      app.isPackaged
+        ? path.join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'providers', 'index.cjs')
+        : null,
+      path.resolve(
+        typeof app.getAppPath === 'function' ? app.getAppPath() : '',
+        'resources',
+        'providers',
+        'index.cjs'
+      ),
+      path.resolve(
+        typeof app.getAppPath === 'function' ? path.dirname(app.getAppPath()) : '',
+        'providers',
+        'index.cjs'
+      ),
+      path.resolve(process.cwd(), 'src/main/providers/index.js'),
+      path.resolve(process.cwd(), 'resources', 'providers', 'index.js'),
+      path.resolve(__dirname, '../providers/index.cjs'),
+      path.resolve(__dirname, '../providers/index.js')
     ].filter(Boolean) as string[]
 
     const dynamicImport = new Function('m', 'return import(m)')
@@ -63,8 +74,9 @@ async function getExternalProviders(): Promise<ExternalProviders | null> {
             const fileUrl = pathToFileURL(cand).href
             mod = await dynamicImport(fileUrl)
           }
-          if (mod && (mod.QobuzClient || mod.DeezerClient || mod.slsk)) {
-            _providersCache = mod as ExternalProviders
+          const resolved = mod?.default || mod
+          if (resolved && (resolved.QobuzClient || resolved.DeezerClient || resolved.slsk)) {
+            _providersCache = resolved as ExternalProviders
             break
           }
         } catch (err) {
@@ -78,8 +90,9 @@ async function getExternalProviders(): Promise<ExternalProviders | null> {
       try {
         const specifier = '../providers' + '/index'
         const mod = await dynamicImport(specifier)
-        if (mod && (mod.QobuzClient || mod.DeezerClient || mod.slsk)) {
-          _providersCache = mod as ExternalProviders
+        const resolved = mod?.default || mod
+        if (resolved && (resolved.QobuzClient || resolved.DeezerClient || resolved.slsk)) {
+          _providersCache = resolved as ExternalProviders
         }
       } catch {
         _providersCache = null
@@ -1253,7 +1266,7 @@ export class DownloadService {
     return new Promise((resolve, reject) => {
       let credentials: { user: string; pass: string }
       try {
-        credentials = providers.getSoulseekCredentials!(accounts)
+        credentials = providers.getSoulseekCredentials!(accounts, getDb())
       } catch (error) {
         reject(error)
         return
@@ -2263,7 +2276,7 @@ export class DownloadService {
     const slsk = providers.slsk
     const formatSoulseekError = providers.formatSoulseekError || ((e: any) => String(e?.message || e))
 
-    const credentials = providers.getSoulseekCredentials(request.accounts)
+    const credentials = providers.getSoulseekCredentials(request.accounts, getDb())
 
     let targetFileObj: any
     try {

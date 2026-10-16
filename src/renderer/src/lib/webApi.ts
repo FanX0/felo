@@ -1,4 +1,15 @@
 import { parseBlob, selectCover } from 'music-metadata'
+import {
+  AUDIO_FILE_ACCEPT,
+  isAudioFileCandidate,
+  stripRecognizedAudioFileExtension,
+  resolveAudioMime,
+  probeAudioDuration,
+  filenameExtension
+} from './audioFile'
+import { fmtTime } from './songUtils'
+import { probeAudioChannelCount } from './audioHeader'
+import { registerLocalSlotPoolFile } from './jitAudioPipeline'
 
 interface CatalogSearchItem {
   id: string
@@ -36,17 +47,6 @@ const WEB_LIBRARY_DB = 'felo-web-library'
 const WEB_LIBRARY_STORE = 'roots'
 const WEB_LIBRARY_FILES_STORE = 'files'
 const WEB_PLAYLISTS_KEY = 'felo-web-playlists'
-const supportedAudioExtensions = new Set(['mp3', 'flac', 'm4a', 'wav', 'ogg', 'opus', 'aac', 'wma'])
-const audioMimeTypes: Record<string, string> = {
-  mp3: 'audio/mpeg',
-  flac: 'audio/flac',
-  m4a: 'audio/mp4',
-  wav: 'audio/wav',
-  ogg: 'audio/ogg',
-  opus: 'audio/ogg; codecs=opus',
-  aac: 'audio/aac',
-  wma: 'audio/x-ms-wma'
-}
 const browserSongs = new Map<string, any>()
 interface BrowserPlaylistRecord {
   id: string
@@ -96,20 +96,31 @@ let browserLibraryPromise: Promise<void> | null = null
 function openBrowserLibraryDatabase(): Promise<IDBDatabase> {
   if (databasePromise) return databasePromise
   databasePromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open(WEB_LIBRARY_DB, 2)
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(WEB_LIBRARY_STORE)) {
-        request.result.createObjectStore(WEB_LIBRARY_STORE, { keyPath: 'id' })
+    try {
+      const request = indexedDB.open(WEB_LIBRARY_DB, 2)
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains(WEB_LIBRARY_STORE)) {
+          request.result.createObjectStore(WEB_LIBRARY_STORE, { keyPath: 'id' })
+        }
+        if (!request.result.objectStoreNames.contains(WEB_LIBRARY_FILES_STORE)) {
+          const filesStore = request.result.createObjectStore(WEB_LIBRARY_FILES_STORE, {
+            keyPath: 'id'
+          })
+          filesStore.createIndex('rootId', 'rootId', { unique: false })
+        }
       }
-      if (!request.result.objectStoreNames.contains(WEB_LIBRARY_FILES_STORE)) {
-        const filesStore = request.result.createObjectStore(WEB_LIBRARY_FILES_STORE, {
-          keyPath: 'id'
-        })
-        filesStore.createIndex('rootId', 'rootId', { unique: false })
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => {
+        databasePromise = null
+        reject(request.error)
       }
+      request.onblocked = () => {
+        console.warn('IndexedDB library database open was blocked by an active tab.')
+      }
+    } catch (e) {
+      databasePromise = null
+      reject(e)
     }
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
   })
   return databasePromise
 }
@@ -187,6 +198,22 @@ async function readPersistedFiles(
   })
 }
 
+async function readPersistedFileById(fileId: string): Promise<PersistedBrowserFile | null> {
+  try {
+    const database = await openBrowserLibraryDatabase()
+    return new Promise((resolve) => {
+      const request = database
+        .transaction(WEB_LIBRARY_FILES_STORE, 'readonly')
+        .objectStore(WEB_LIBRARY_FILES_STORE)
+        .get(fileId)
+      request.onsuccess = () => resolve((request.result as PersistedBrowserFile) || null)
+      request.onerror = () => resolve(null)
+    })
+  } catch {
+    return null
+  }
+}
+
 async function replacePersistedFiles(
   root: BrowserRoot,
   files: Array<{ file: File; relativePath: string }>,
@@ -253,8 +280,7 @@ function stableId(value: string): string {
 
 function formatCatalogDuration(milliseconds: unknown): string | null {
   if (typeof milliseconds !== 'number' || !Number.isFinite(milliseconds)) return null
-  const totalSeconds = Math.floor(milliseconds / 1000)
-  return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, '0')}`
+  return fmtTime(Math.floor(milliseconds / 1000))
 }
 
 function normalizeCatalogString(value: string): string {
@@ -712,71 +738,13 @@ async function searchBrowserMusicBrainz(query: string): Promise<CatalogSearchRes
   }
 }
 
-function lastFmImageUrl(images: unknown): string {
-  if (!Array.isArray(images)) return ''
-  for (const size of ['extralarge', 'large', 'medium', 'small']) {
-    const image = images.find((item: any) => item?.size === size)?.['#text']
-    if (typeof image === 'string' && image.trim()) {
-      return image.trim().replace(/^http:\/\//i, 'https://')
-    }
-  }
-  return ''
-}
-
-async function searchBrowserLastFm(query: string): Promise<CatalogSearchResults> {
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    return {
-      'Top Results': [],
-      Artists: [],
-      Albums: [],
-      Songs: []
-    }
-  }
-  const apiKey = await webApi.getSetting('search.lastFmApiKey')
-  if (typeof apiKey !== 'string' || !apiKey.trim()) {
-    throw new Error('Last.fm API key is not configured. Add one in Settings.')
-  }
-  const makeRequest = async (method: string, parameter: string) => {
-    const params = new URLSearchParams({
-      method,
-      api_key: apiKey.trim(),
-      format: 'json',
-      limit: '25',
-      [parameter]: query.trim()
-    })
-    return fetchJson(`https://ws.audioscrobbler.com/2.0/?${params}`, 'Last.fm search')
-  }
-  const [trackData, artistData, albumData] = await Promise.all([
-    makeRequest('track.search', 'track'),
-    makeRequest('artist.search', 'artist'),
-    makeRequest('album.search', 'album')
-  ])
-  const mapItem = (item: any, type: string, index: number): CatalogSearchItem => ({
-    id: `lastfm-${type.toLowerCase()}-${item.mbid || `${item.artist || ''}-${item.name}-${index}`}`,
-    title: String(item.name || 'Unknown'),
-    artist: String(item.artist || (type === 'Artist' ? 'Last.fm Artist' : '')),
-    album: type === 'Album' ? 'Album' : '',
-    type,
-    duration: null,
-    trackCount: null,
-    url: String(item.url || ''),
-    thumbnail: lastFmImageUrl(item.image),
-    explicit: false
-  })
-  const songs = (trackData?.results?.trackmatches?.track || []).map((item: any, i: number) =>
-    mapItem(item, 'Song', i)
-  )
-  const artists = (artistData?.results?.artistmatches?.artist || []).map((item: any, i: number) =>
-    mapItem(item, 'Artist', i)
-  )
-  const albums = (albumData?.results?.albummatches?.album || []).map((item: any, i: number) =>
-    mapItem(item, 'Album', i)
-  )
+async function searchBrowserLastFm(_query: string): Promise<CatalogSearchResults> {
+  // Last.fm search is restricted to the private desktop application
   return {
-    'Top Results': [...songs, ...artists, ...albums].slice(0, 5),
-    Songs: songs,
-    Artists: artists,
-    Albums: albums
+    'Top Results': [],
+    Songs: [],
+    Artists: [],
+    Albums: []
   }
 }
 
@@ -878,7 +846,8 @@ async function fetchLrclib(
 ): Promise<LrclibLyrics | LrclibLyrics[] | null> {
   try {
     const response = await fetch(`https://lrclib.net/api${endpoint}?${params.toString()}`, {
-      headers: { Accept: 'application/json' }
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(6000)
     })
     if (!response.ok) return null
     return (await response.json()) as LrclibLyrics | LrclibLyrics[]
@@ -1127,8 +1096,7 @@ async function fetchBrowserLyrics(songInfo: {
 }
 
 function isAudioFile(file: File): boolean {
-  const extension = file.name.split('.').pop()?.toLowerCase() || ''
-  return file.type.startsWith('audio/') || supportedAudioExtensions.has(extension)
+  return isAudioFileCandidate(file)
 }
 
 async function collectDirectoryFiles(
@@ -1136,14 +1104,47 @@ async function collectDirectoryFiles(
   parentPath = ''
 ): Promise<Array<{ file: File; relativePath: string }>> {
   const files: Array<{ file: File; relativePath: string }> = []
-  for await (const [name, entry] of directory.entries()) {
-    const relativePath = parentPath ? `${parentPath}/${name}` : name
-    if (entry.kind === 'file') {
-      const file = await entry.getFile()
-      if (isAudioFile(file)) files.push({ file, relativePath })
-    } else if (entry.kind === 'directory') {
-      files.push(...(await collectDirectoryFiles(entry, relativePath)))
+  try {
+    if (typeof (directory as any).values === 'function') {
+      for await (const entry of (directory as any).values()) {
+        const name = (entry as any).name || ''
+        const relativePath = parentPath ? `${parentPath}/${name}` : name
+        if (entry.kind === 'file') {
+          try {
+            const file = await (entry as any).getFile()
+            if (isAudioFile(file)) files.push({ file, relativePath })
+          } catch (fileErr) {
+            console.warn(`Could not read file ${name}:`, fileErr)
+          }
+        } else if (entry.kind === 'directory') {
+          try {
+            files.push(...(await collectDirectoryFiles(entry as BrowserDirectoryHandle, relativePath)))
+          } catch (dirErr) {
+            console.warn(`Could not traverse folder ${name}:`, dirErr)
+          }
+        }
+      }
+    } else if (typeof (directory as any).entries === 'function') {
+      for await (const [name, entry] of (directory as any).entries()) {
+        const relativePath = parentPath ? `${parentPath}/${name}` : name
+        if (entry.kind === 'file') {
+          try {
+            const file = await (entry as any).getFile()
+            if (isAudioFile(file)) files.push({ file, relativePath })
+          } catch (fileErr) {
+            console.warn(`Could not read file ${name}:`, fileErr)
+          }
+        } else if (entry.kind === 'directory') {
+          try {
+            files.push(...(await collectDirectoryFiles(entry as BrowserDirectoryHandle, relativePath)))
+          } catch (dirErr) {
+            console.warn(`Could not traverse folder ${name}:`, dirErr)
+          }
+        }
+      }
     }
+  } catch (err) {
+    console.warn('Error reading directory entries:', err)
   }
   return files
 }
@@ -1159,6 +1160,10 @@ function pickFilesWithInput(options?: {
     if (options?.directory) {
       input.setAttribute('webkitdirectory', '')
       input.setAttribute('directory', '')
+      input.setAttribute('mozdirectory', '')
+      ;(input as any).webkitdirectory = true
+      ;(input as any).directory = true
+      ;(input as any).mozdirectory = true
     } else if (options?.accept) {
       input.accept = options.accept
     }
@@ -1166,6 +1171,8 @@ function pickFilesWithInput(options?: {
     input.style.top = '-9999px'
     input.style.left = '-9999px'
     input.style.opacity = '0'
+    input.style.width = '1px'
+    input.style.height = '1px'
 
     let resolved = false
     const cleanup = () => {
@@ -1198,7 +1205,7 @@ async function selectBrowserFiles(options?: { accept?: string }): Promise<string
   try {
     const files = await pickFilesWithInput({
       directory: false,
-      accept: options?.accept || 'audio/*,.mp3,.flac,.m4a,.wav,.ogg,.opus,.aac,.wma'
+      accept: options?.accept || AUDIO_FILE_ACCEPT
     })
     if (!files || files.length === 0) return null
     pendingDirectoryHandle = undefined
@@ -1213,7 +1220,7 @@ async function selectBrowserFiles(options?: { accept?: string }): Promise<string
     const folderFromPath = pendingFiles[0]?.relativePath.includes('/')
       ? pendingFiles[0].relativePath.split('/')[0]
       : null
-    pendingFolderName = folderFromPath || 'Device Music'
+    pendingFolderName = folderFromPath || 'Uploaded Music'
     return WEB_FOLDER_TOKEN
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') return null
@@ -1246,9 +1253,9 @@ async function selectBrowserFolder(options?: { forceFiles?: boolean }): Promise<
         pendingFolderName = directory.name || 'Browser folder'
         pendingFiles = await collectDirectoryFiles(directory)
         return pendingFiles.length ? WEB_FOLDER_TOKEN : null
-      } catch (error) {
+      } catch (error: any) {
         if (error instanceof DOMException && error.name === 'AbortError') return null
-        throw error
+        console.warn('showDirectoryPicker failed or restricted, falling back to directory input:', error)
       }
     }
 
@@ -1273,6 +1280,8 @@ async function selectBrowserFolder(options?: { forceFiles?: boolean }): Promise<
               : 'Browser folder'
           return WEB_FOLDER_TOKEN
         }
+      } else if (dirFiles === null) {
+        return null
       }
     } catch (e) {
       console.warn('Directory input failed, falling back to files:', e)
@@ -1284,6 +1293,24 @@ async function selectBrowserFolder(options?: { forceFiles?: boolean }): Promise<
     if (error instanceof DOMException && error.name === 'AbortError') return null
     throw error
   }
+}
+
+async function scanSelectedFiles(
+  files: FileList | File[],
+  folderName = 'Uploaded Music'
+): Promise<number> {
+  const fileArray = Array.from(files).filter(isAudioFile)
+  if (fileArray.length === 0) return 0
+
+  pendingDirectoryHandle = undefined
+  pendingFiles = fileArray.map((file) => ({
+    file,
+    relativePath:
+      (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
+  }))
+  pendingFolderName = folderName
+
+  return scanBrowserFolder(WEB_FOLDER_TOKEN)
 }
 
 function clearSongsForRoot(rootId: string): void {
@@ -1375,17 +1402,15 @@ async function createBrowserSong(
   file: File,
   relativePath: string
 ): Promise<any> {
-  const extension = file.name.includes('.')
-    ? file.name.slice(file.name.lastIndexOf('.') + 1).toLowerCase()
-    : ''
-  const baseName = file.name.replace(/\.[^/.]+$/, '')
+  const extension = filenameExtension(file.name)
+  const baseName = stripRecognizedAudioFileExtension(file.name)
   const separator = baseName.indexOf(' - ')
   const fallbackArtist = separator >= 0 ? baseName.slice(0, separator).trim() : 'Unknown Artist'
   const fallbackTitle = separator >= 0 ? baseName.slice(separator + 3).trim() : baseName
   const pathParts = relativePath.split('/')
   const fallbackAlbum = pathParts.length > 2 ? pathParts[pathParts.length - 2] : 'Unknown Album'
   const id = persistedFileId(root, file, relativePath)
-  const canonicalMimeType = audioMimeTypes[extension]
+  const canonicalMimeType = resolveAudioMime(file.name, file.type)
   const playableBlob =
     canonicalMimeType && file.type !== canonicalMimeType
       ? new Blob([file], { type: canonicalMimeType })
@@ -1393,9 +1418,22 @@ async function createBrowserSong(
 
   let metadata: Awaited<ReturnType<typeof parseBlob>> | null = null
   try {
-    metadata = await parseBlob(file, { duration: true })
+    metadata = await Promise.race([
+      parseBlob(file, { duration: true }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500))
+    ])
   } catch (error) {
     console.warn(`Unable to read metadata for ${file.name}:`, error)
+  }
+
+  let duration = metadata?.format.duration || 0
+  if (!duration || duration <= 0) {
+    try {
+      const probed = await probeAudioDuration(playableBlob)
+      if (probed && probed > 0) duration = probed
+    } catch {
+      // duration fallback
+    }
   }
 
   const picture = selectCover(metadata?.common.picture)
@@ -1407,12 +1445,16 @@ async function createBrowserSong(
       )
     : undefined
 
+  const codecStr = (metadata?.format.codec || extension || 'AUDIO').toUpperCase()
+
+  registerLocalSlotPoolFile(id, playableBlob)
+
   return {
     id,
     title: metadata?.common.title?.trim() || fallbackTitle,
     artist: metadata?.common.artist?.trim() || fallbackArtist,
     album: metadata?.common.album?.trim() || fallbackAlbum,
-    duration: metadata?.format.duration || 0,
+    duration,
     filePath: URL.createObjectURL(playableBlob),
     artworkPath,
     rootId: root.id,
@@ -1422,10 +1464,12 @@ async function createBrowserSong(
     bitrate: metadata?.format.bitrate || 0,
     sampleRate: metadata?.format.sampleRate || 0,
     bitDepth: metadata?.format.bitsPerSample,
-    channels: metadata?.format.numberOfChannels,
-    codec: metadata?.format.codec || extension.toUpperCase(),
-    container: metadata?.format.container || extension.toUpperCase(),
-    dateAdded: root.dateAdded
+    channels: metadata?.format.numberOfChannels ?? (await probeAudioChannelCount(playableBlob)) ?? undefined,
+    codec: codecStr,
+    container: codecStr,
+    dateAdded: root.dateAdded,
+    isLocalToDevice: true,
+    isOnline: false
   }
 }
 
@@ -1514,7 +1558,27 @@ async function addBrowserFiles(
 }
 
 async function scanBrowserFolder(folderToken: string): Promise<number> {
-  if (folderToken !== WEB_FOLDER_TOKEN) return 0
+  if (folderToken !== WEB_FOLDER_TOKEN) {
+    const existingRoot = [...browserRoots.values()].find(
+      (r) => r.path === folderToken || r.id === folderToken
+    )
+    if (existingRoot) {
+      if (existingRoot.handle) {
+        try {
+          const files = await collectDirectoryFiles(existingRoot.handle)
+          return await addBrowserFiles(existingRoot, files, false)
+        } catch (err) {
+          console.warn('Failed to rescan directory handle:', err)
+        }
+      }
+      const cached = await readPersistedFiles(existingRoot.id)
+      if (cached.length > 0) {
+        return await addBrowserFiles(existingRoot, cached, false)
+      }
+    }
+    return 0
+  }
+
   browserScanCancelled = false
   const rootId = stableId(`root:${pendingFolderName}`)
   const root: BrowserRoot = {
@@ -1528,9 +1592,12 @@ async function scanBrowserFolder(folderToken: string): Promise<number> {
   try {
     await persistRoot(root)
   } catch (error) {
-    if (!root.handle) throw error
     console.warn('The browser could not persist the folder handle; using the file cache.', error)
-    await persistRoot({ ...root, handle: undefined })
+    try {
+      await persistRoot({ ...root, handle: undefined })
+    } catch (innerErr) {
+      console.warn('Could not persist root metadata to IndexedDB:', innerErr)
+    }
   }
 
   emitBrowserScanProgress({
@@ -1546,14 +1613,13 @@ async function scanBrowserFolder(folderToken: string): Promise<number> {
   })
 
   const count = await addBrowserFiles(root, pendingFiles, true)
-  try {
-    await replacePersistedFiles(root, pendingFiles, true)
-  } catch (error) {
+  void replacePersistedFiles(root, pendingFiles, true).catch((error) => {
     console.warn('Unable to cache the browser library for offline restoration:', error)
-  }
+  })
   pendingFiles = []
   pendingDirectoryHandle = undefined
   window.dispatchEvent(new CustomEvent('felo:library-updated'))
+  window.dispatchEvent(new CustomEvent('fanxmusic:library-updated'))
   return count
 }
 
@@ -1767,9 +1833,13 @@ const webApi: Window['api'] = {
     executablePath: null
   }),
   launchMusicPresence: async () => ({ success: false, error: 'Desktop only' }),
+  relaunchApp: async () => {
+    window.location.reload()
+  },
   selectFolder: selectBrowserFolder,
   selectFiles: selectBrowserFiles,
   scanLibrary: scanBrowserFolder,
+  scanFiles: scanSelectedFiles,
   cancelLibraryScan: async () => {
     browserScanCancelled = true
     return true
@@ -1781,6 +1851,59 @@ const webApi: Window['api'] = {
   getSongs: async () => {
     await initializeBrowserLibrary()
     return [...browserSongs.values()]
+  },
+  readAudioFile: async (songIdOrPath: string, explicitPath?: string) => {
+    try {
+      await initializeBrowserLibrary()
+      const song = browserSongs.get(songIdOrPath)
+      const targetUrl =
+        explicitPath ||
+        song?.filePath ||
+        (songIdOrPath.startsWith('blob:') || songIdOrPath.startsWith('http') ? songIdOrPath : '')
+
+      let buffer: ArrayBuffer | null = null
+      let contentType = song?.codec || (song as any)?.format || 'audio/mpeg'
+
+      if (targetUrl) {
+        try {
+          const response = await fetch(targetUrl)
+          if (response.ok) {
+            buffer = await response.arrayBuffer()
+            contentType = response.headers.get('content-type') || contentType
+          }
+        } catch {
+          // targetUrl may be an expired blob URL; proceed to IndexedDB fallback
+        }
+      }
+
+      // Fallback: read directly from IndexedDB if fetch failed or targetUrl was revoked
+      if (!buffer && songIdOrPath) {
+        try {
+          const persisted = await readPersistedFileById(songIdOrPath)
+          if (persisted?.file) {
+            buffer = await persisted.file.arrayBuffer()
+            contentType = persisted.file.type || contentType
+            // Re-hydrate the blob URL and slot pool
+            const newBlobUrl = URL.createObjectURL(persisted.file)
+            if (song) song.filePath = newBlobUrl
+            registerLocalSlotPoolFile(songIdOrPath, persisted.file)
+          }
+        } catch {}
+      }
+
+      if (!buffer) {
+        return { success: false, error: 'File not found in browser library' }
+      }
+
+      return {
+        success: true,
+        data: buffer,
+        contentType,
+        size: buffer.byteLength
+      }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to read audio file in browser' }
+    }
   },
   getLibraryRoots: async () => {
     await initializeBrowserLibrary()
@@ -1823,6 +1946,7 @@ const webApi: Window['api'] = {
         artistName: string
         songCount: number
         artworkPath?: string
+        year?: number | string
       }
     >()
 
@@ -1831,10 +1955,11 @@ const webApi: Window['api'] = {
       const artistName = song.artist?.trim() || 'Unknown Artist'
       const key = `${albumTitle.toLowerCase()}:::${artistName.toLowerCase()}`
       const existing = albumMap.get(key)
+      const songArt = song.artworkPath || (song as any).artworkUrl
       if (existing) {
         existing.songCount++
-        if (!existing.artworkPath && song.artworkPath) {
-          existing.artworkPath = song.artworkPath
+        if (!existing.artworkPath && songArt) {
+          existing.artworkPath = songArt
         }
       } else {
         albumMap.set(key, {
@@ -1842,11 +1967,12 @@ const webApi: Window['api'] = {
           title: albumTitle,
           artistName,
           songCount: 1,
-          artworkPath: song.artworkPath
+          artworkPath: songArt,
+          year: (song as any).year
         })
       }
     }
-    return [...albumMap.values()].sort((a, b) => a.title.localeCompare(b.title))
+    return [...albumMap.values()].sort((a, b) => b.songCount - a.songCount || a.title.localeCompare(b.title))
   },
   searchAlbums: async (query?: string) => {
     const albums = await (webApi.getAlbums ? webApi.getAlbums() : [])
@@ -2011,7 +2137,32 @@ const webApi: Window['api'] = {
   getAppMode: async () => ({
     mode: 'public' as const,
     sources: ['Local Library']
-  })
+  }),
+  getYouTubeMetadata: async (urlOrId: string): Promise<{
+    success: boolean
+    videoId?: string
+    title?: string
+    channel?: string
+    thumbnailUrl?: string
+    error?: string
+  }> => {
+    try {
+      const match = urlOrId.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/)
+      const videoId = match ? match[1] : (urlOrId.length === 11 ? urlOrId : null)
+      if (!videoId) return { success: false, error: 'Invalid YouTube URL or ID' }
+      const res = await fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`)
+      const data = await res.json()
+      return {
+        success: true,
+        videoId,
+        title: (data?.title as string) || 'YouTube Track',
+        channel: (data?.author_name as string) || 'YouTube',
+        thumbnailUrl: (data?.thumbnail_url as string) || `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
+      }
+    } catch {
+      return { success: false, error: 'Failed to fetch YouTube metadata' }
+    }
+  }
 }
 
 export function installWebApi(): void {

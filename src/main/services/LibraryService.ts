@@ -852,7 +852,14 @@ export class LibraryService {
     return getDb()
       .prepare(
         `
-      SELECT al.*, ar.name as artistName, COUNT(s.id) as songCount
+      SELECT al.*,
+        COALESCE(al.artworkPath, (
+          SELECT s2.artworkPath
+          FROM songs s2
+          WHERE s2.albumId = al.id AND s2.artworkPath IS NOT NULL AND s2.artworkPath != ''
+          LIMIT 1
+        )) as artworkPath,
+        ar.name as artistName, COUNT(s.id) as songCount
       FROM albums al
       LEFT JOIN artists ar ON al.artistId = ar.id
       LEFT JOIN songs s ON s.albumId = al.id AND s.filePath NOT LIKE 'virtual:%'

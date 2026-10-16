@@ -4,6 +4,7 @@ export interface HomeSongItem {
   id: string
   title: string
   artist: string
+  artists?: Array<{ name: string; role?: 'primary' | 'featured' }>
   album?: string
   year?: string | number
   duration: number
@@ -11,6 +12,14 @@ export interface HomeSongItem {
   quality?: 'FLAC' | 'HD FLAC' | 'Hi-Res'
   isExplicit?: boolean
   previewUrl?: string
+  filePath?: string
+  codec?: string
+  container?: string
+  bitrate?: number
+  sampleRate?: number
+  bitDepth?: number
+  dateAdded?: number
+  size?: number
 }
 
 export interface HomeAlbumItem {

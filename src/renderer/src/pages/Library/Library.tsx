@@ -1,172 +1,44 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { usePlayerStore } from '../../hooks/usePlayerStore'
-import {
-  Search,
-  List,
-  RefreshCw,
-  Clock,
-  MoreVertical,
-  Play,
-  Pause,
-  Radio,
-  FolderOpen,
-  RotateCcw,
-  Trash2,
-  Plus,
-  ArrowUp,
-  Check,
-  Loader2,
-  Share2,
-  ListPlus,
-  Disc3,
-  User,
-  ChevronRight,
-  FileText,
-  X,
-  Laptop2,
-  Smartphone,
-  Download
-} from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useNavigate } from 'react-router-dom'
-import { toMediaUrl } from '../../lib/media'
 import { useLibraryScanStore } from '../../hooks/useLibraryScanStore'
-import type { DownloadTarget } from '../../components/DownloadPanel/DownloadPanel'
-import ArtistLinks from '../../components/Common/ArtistLinks'
 import SongCreditsModal from '../../components/Common/SongCreditsModal'
-import { parseArtists } from '../../lib/artistParser'
-import { cn } from '../../lib/utils'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { PersonalizationService } from '../../services/PersonalizationService'
-import { ArtworkImage } from '../Home/components/ArtworkImage'
-import { HighlightMatch } from '../../components/Common/HighlightMatch'
 import { remoteClient } from '../Remote/remoteClient'
 import { remoteLibraryService } from '../../services/RemoteLibraryService'
 import { useConnectedDeviceStore, normalizeDeviceId } from '../../hooks/useConnectedDeviceStore'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
-import { AppCapabilities } from '../../lib/appConfig'
-import { resolveSongAudioUrl, resolveSongDownloadUrl } from '../../lib/songAudioResolver'
+import { resolveSongAudioUrl } from '../../lib/songAudioResolver'
 import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
+import { audioDspEngine } from '../../lib/audioDspEngine'
+import { usePlayerStore } from '../../hooks/usePlayerStore'
 
-export interface SongArtist {
-  id?: string
-  name: string
-  role?: 'primary' | 'featured'
-}
+import type {
+  Song,
+  SongArtist,
+  LibraryProps,
+  LibrarySortKey,
+  SortDirection,
+  LibraryViewMode,
+  ActiveMenuState,
+  RemoteLibraryDevice
+} from './types'
+import { LibraryToolbar } from './components/LibraryToolbar'
+import { LibraryTableHeader } from './components/LibraryTableHeader'
+import { LibrarySongRow } from './components/LibrarySongRow'
+import { LibraryContextMenu } from './components/LibraryContextMenu'
+import { LibraryBatchToolbar } from './components/LibraryBatchToolbar'
+import { LibraryEmptyState } from './components/LibraryEmptyState'
 
-export interface Song {
-  id: string
-  title: string
-  artist: string
-  artists?: SongArtist[]
-  album: string
-  duration: number
-  filePath?: string
-  trackNumber?: number
-  genre?: string
-  size?: number
-  bitrate?: number
-  sampleRate?: number
-  bitDepth?: number
-  channels?: number
-  codec?: string
-  container?: string
-  artworkPath?: string
-  artworkUrl?: string
-  audioUrl?: string
-  downloadUrl?: string
-  isOnline?: boolean
-  dateAdded?: number
-  requestedBy?: string
-  isPriority?: boolean
-}
-
-interface LibraryProps {
-  onOpenDownloadPanel?: (target: DownloadTarget) => void
-}
-
-type LibrarySortKey = 'title' | 'dateAdded' | 'artist' | 'album' | 'duration' | 'default'
-type SortDirection = 'asc' | 'desc'
-type LibraryViewMode = 'compact' | 'list'
-
-function AnimatedPlayingWave() {
-  return (
-    <div className="flex items-end justify-center gap-[2.5px] h-3.5 w-3.5">
-      <span
-        className="w-[2.5px] bg-primary-amber rounded-full animate-pulse"
-        style={{ height: '70%' }}
-      />
-      <span
-        className="w-[2.5px] bg-primary-amber rounded-full animate-pulse"
-        style={{ height: '100%', animationDelay: '0.15s' }}
-      />
-      <span
-        className="w-[2.5px] bg-primary-amber rounded-full animate-pulse"
-        style={{ height: '80%', animationDelay: '0.3s' }}
-      />
-    </div>
-  )
-}
-
-function QualityPill({ song }: { song: Song }) {
-  const rawFormat = String(song.codec || song.container || '').toLowerCase()
-  const isLossless =
-    rawFormat.includes('flac') ||
-    rawFormat.includes('alac') ||
-    rawFormat.includes('wav') ||
-    rawFormat.includes('aiff')
-  const isHiRes =
-    (song.bitDepth && song.bitDepth >= 24) || (song.sampleRate && song.sampleRate >= 88200)
-
-  if (isHiRes) {
-    const rateKhz = song.sampleRate ? `${(song.sampleRate / 1000).toFixed(0)}k` : ''
-    return (
-      <span
-        title={`Hi-Res Audio: ${song.bitDepth || 24}-bit / ${song.sampleRate ? `${(song.sampleRate / 1000).toFixed(1)} kHz` : ''}`}
-        className="shrink-0 font-mono text-[11px] font-medium uppercase tracking-wider text-text-muted"
-      >
-        Hi-Res{rateKhz ? ` ${rateKhz}` : ''}
-      </span>
-    )
-  }
-
-  if (isLossless) {
-    return (
-      <span
-        title="Lossless CD Quality Audio"
-        className="shrink-0 font-mono text-[11px] font-medium uppercase tracking-wider text-text-muted"
-      >
-        Lossless
-      </span>
-    )
-  }
-
-  const format = rawFormat.includes('mp3') || /mpeg.*layer\s*3/.test(rawFormat)
-    ? 'MP3'
-    : rawFormat.includes('m4a') || rawFormat.includes('aac')
-      ? 'AAC'
-      : rawFormat.includes('opus')
-        ? 'OPUS'
-        : rawFormat.includes('ogg')
-          ? 'OGG'
-          : rawFormat.toUpperCase()
-
-  if (!format || format === 'UNKNOWN') return null
-
-  const kbps = song.bitrate ? `${Math.round(song.bitrate / 1000)}k` : ''
-
-  return (
-    <span className="shrink-0 font-mono text-[11px] font-medium uppercase tracking-wider text-text-muted/70">
-      {format}{kbps ? ` ${kbps}` : ''}
-    </span>
-  )
-}
+export type { Song, SongArtist }
 
 export default function Library({ onOpenDownloadPanel }: LibraryProps) {
   const [songs, setSongs] = useState<Song[]>([])
   const [isLoadingSongs, setIsLoadingSongs] = useState(true)
-  const [hasLoadedSongs, setHasLoadedSongs] = useState(false)
+  const [, setHasLoadedSongs] = useState(false)
   const { isScanning, progress: scanProgress, cancelScan } = useLibraryScanStore()
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchOpen, setIsSearchOpen] = useState(false)
@@ -176,12 +48,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
   const [viewMode, setViewMode] = useState<LibraryViewMode>('list')
   const [selectedSongIds, setSelectedSongIds] = useState<Set<string>>(new Set())
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null)
-  const [activeMenu, setActiveMenu] = useState<{
-    song: Song
-    index: number
-    x: number
-    y: number
-  } | null>(null)
+  const [activeMenu, setActiveMenu] = useState<ActiveMenuState | null>(null)
   const [creditsSong, setCreditsSong] = useState<Song | null>(null)
   const user = useOnlineStore((s) => s.user)
   const isElectronApp = typeof window !== 'undefined' && Boolean((window as any).electron)
@@ -200,6 +67,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
   const pcLibrarySongs = useConnectedDeviceStore((s) => s.pcLibrarySongs)
   const deviceLibraries = useConnectedDeviceStore((s) => s.deviceLibraries)
   const isLoadingPcLibrary = useConnectedDeviceStore((s) => s.isLoadingPcLibrary)
+  const isLoadingDeviceLibrary = useConnectedDeviceStore((s) => s.isLoadingDeviceLibrary)
   const discoveredDevices = useConnectedDeviceStore((s) => s.discoveredDevices)
   const requestPcLibrary = useConnectedDeviceStore((s) => s.requestPcLibrary)
   const loadCachedPcSongs = useConnectedDeviceStore((s) => s.loadCachedPcSongs)
@@ -207,26 +75,28 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
 
   const myDeviceId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : null
 
-  // Industry standard: Dynamic multi-device discovery (Plex / Spotify Connect style)
-  const remoteLibraryDevices = useMemo(() => {
-    const list: Array<{ id: string; device_name: string; device_type?: string; local_ip?: string }> = []
+  // Dynamic multi-device discovery
+  const remoteLibraryDevices: RemoteLibraryDevice[] = useMemo(() => {
+    const list: RemoteLibraryDevice[] = []
     const seen = new Set<string>()
+    const seenIps = new Set<string>()
 
-    // 1. Devices from discovered active devices
     for (const d of discoveredDevices) {
       if (d.id !== myDeviceId && d.is_active && !seen.has(d.id)) {
         seen.add(d.id)
+        if (d.local_ip) seenIps.add(d.local_ip)
         list.push({
           id: d.id,
           device_name:
             d.device_name || (d.device_type === 'mobile' ? 'Mobile Device' : 'Felo Desktop'),
           device_type: d.device_type,
-          local_ip: d.local_ip
+          local_ip: d.local_ip,
+          port: (d as any).port,
+          token: (d as any).token
         })
       }
     }
 
-    // 2. Active Remote currently broadcasting if not yet in list
     if (
       activeRemote?.activeDeviceId &&
       activeRemote.activeDeviceId !== myDeviceId &&
@@ -242,24 +112,31 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
       })
     }
 
-    // 2b. Local LAN desktop if configured via remoteClient
     const lanBase = remoteClient.getBaseUrl()
-    if (lanBase && !lanBase.includes('localhost') && !seen.has('lan-desktop')) {
+    if (lanBase && !lanBase.includes('localhost')) {
       try {
         const parsed = new URL(lanBase)
-        seen.add('lan-desktop')
-        list.push({
-          id: 'lan-desktop',
-          device_name: `Felo Desktop (${parsed.hostname})`,
-          device_type: 'desktop',
-          local_ip: parsed.hostname
-        })
+        const host = parsed.hostname
+        if (
+          host &&
+          !seenIps.has(host) &&
+          !seen.has('lan-desktop') &&
+          !list.some((d) => d.local_ip === host || d.device_name.includes(host))
+        ) {
+          seen.add('lan-desktop')
+          seenIps.add(host)
+          list.push({
+            id: 'lan-desktop',
+            device_name: `Felo Desktop (${host})`,
+            device_type: 'desktop',
+            local_ip: host
+          })
+        }
       } catch {
         // ignore invalid URL
       }
     }
 
-    // 3. Fallback: If on mobile/web and we have cached songs, active user, or simply accessing from mobile browser
     if (list.length === 0 && !isElectronApp) {
       list.push({
         id: 'default-pc',
@@ -269,7 +146,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     }
 
     return list
-  }, [discoveredDevices, myDeviceId, activeRemote, isElectronApp, pcLibrarySongs.length, user])
+  }, [discoveredDevices, myDeviceId, activeRemote, isElectronApp])
 
   const selectedRemoteDevice = useMemo(() => {
     if (librarySource === 'local') return null
@@ -283,10 +160,19 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
 
   const hasRemoteDevice = remoteLibraryDevices.length > 0
 
+  const isDeviceSyncing =
+    isLoadingSongs ||
+    isLoadingPcLibrary ||
+    Boolean(
+      selectedRemoteDevice?.id &&
+        isLoadingDeviceLibrary[normalizeDeviceId(selectedRemoteDevice.id)]
+    )
+
   useEffect(() => {
     const unsub = remoteClient.subscribeConnection(setIsRemoteConnected)
     return () => unsub()
   }, [])
+
   const { togglePlay, currentSongIndex, queue, isPlaying, enqueueSong } = usePlayerStore(
     useShallow((s) => ({
       togglePlay: s.togglePlay,
@@ -366,45 +252,54 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
         return
       }
 
-      // Viewing another device's library
       const targetDev =
         remoteLibraryDevices.find((d) => d.id === source) || remoteLibraryDevices[0]
       const canonicalDevId = normalizeDeviceId(targetDev?.id || source)
 
+      const configuredBase = remoteClient.getBaseUrl()
       const hasLanConfigured = Boolean(
-        remoteClient.getBaseUrl() && !remoteClient.getBaseUrl().includes('localhost')
+        configuredBase && !configuredBase.includes('localhost')
       )
       const isLanTarget = Boolean(
         targetDev?.local_ip ||
-        targetDev?.id === 'lan-desktop' ||
-        targetDev?.id === 'default-pc' ||
-        (targetDev?.device_type === 'desktop' && (remoteClient.getIsConnected() || hasLanConfigured))
+          targetDev?.id === 'lan-desktop' ||
+          targetDev?.id === 'default-pc' ||
+          (targetDev?.device_type === 'desktop' && (remoteClient.getIsConnected() || hasLanConfigured))
       )
 
-      if (isLanTarget && remoteClient.getIsConnected()) {
+      if (isLanTarget) {
         try {
-          const res = await remoteLibraryService.getSongs({ limit: 500 })
-          if (res.songs && res.songs.length > 0) {
-            const mapped: Song[] = res.songs.map((s) => ({
-              id: s.id,
-              title: s.title,
-              artist: s.artist,
-              album: s.album,
-              duration: s.duration,
-              filePath: remoteClient.getAudioStreamUrl(s.id),
-              audioUrl: remoteClient.getAudioStreamUrl(s.id),
-              artworkPath: remoteClient.getFullArtworkUrl(s.artworkUrl || s.id),
-              artworkUrl: remoteClient.getFullArtworkUrl(s.artworkUrl || s.id),
-              bitrate: s.bitrate,
-              sampleRate: s.sampleRate,
-              trackNumber: s.trackNumber,
-              genre: s.genre,
-              dateAdded: s.dateAdded,
-              isOnline: true
-            }))
-            useConnectedDeviceStore.getState().setDeviceLibrarySongs(canonicalDevId, mapped)
-            setSongs(mapped)
-            return
+          const directIp =
+            targetDev?.local_ip || (configuredBase ? new URL(configuredBase).hostname : null)
+          if (directIp) {
+            const port = targetDev?.port || 4788
+            const token = targetDev?.token || remoteClient.getToken() || ''
+            if (!remoteClient.getBaseUrl() || !remoteClient.getBaseUrl().includes(directIp)) {
+              remoteClient.configure(`http://${directIp}:${port}`, token)
+            }
+            const res = await remoteLibraryService.getSongs({ limit: 1000 })
+            if (res.songs && res.songs.length > 0) {
+              const mapped: Song[] = res.songs.map((s) => ({
+                id: s.id,
+                title: s.title,
+                artist: s.artist,
+                album: s.album,
+                duration: s.duration,
+                filePath: s.audioUrl || remoteClient.getAudioStreamUrl(s.id),
+                audioUrl: s.audioUrl || remoteClient.getAudioStreamUrl(s.id),
+                artworkPath: s.artworkUrl || remoteClient.getFullArtworkUrl(s.artworkUrl || s.id),
+                artworkUrl: s.artworkUrl || remoteClient.getFullArtworkUrl(s.artworkUrl || s.id),
+                bitrate: s.bitrate,
+                sampleRate: s.sampleRate,
+                trackNumber: s.trackNumber,
+                genre: s.genre,
+                dateAdded: s.dateAdded,
+                isOnline: true
+              }))
+              useConnectedDeviceStore.getState().setDeviceLibrarySongs(canonicalDevId, mapped)
+              setSongs(mapped)
+              return
+            }
           }
         } catch (err) {
           console.warn('[Library] Failed to query LAN remote library, falling back to Realtime/cache:', err)
@@ -442,23 +337,25 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     }
   }
 
-  // Sync fresh device library when received from Realtime
   useEffect(() => {
     if (librarySource !== 'local') {
       const devId = normalizeDeviceId(selectedRemoteDevice?.id || librarySource)
-      if (devId && devId in deviceLibraries) {
-        setSongs(deviceLibraries[devId])
+      const freshSongs =
+        deviceLibraries[devId] ||
+        (selectedRemoteDevice?.device_type === 'desktop' ? pcLibrarySongs : undefined) ||
+        deviceLibraries['default-pc']
+      if (freshSongs && freshSongs.length > 0) {
+        setSongs(freshSongs)
         setIsLoadingSongs(false)
         setHasLoadedSongs(true)
       }
     }
-  }, [librarySource, deviceLibraries, selectedRemoteDevice?.id])
+  }, [librarySource, deviceLibraries, pcLibrarySongs, selectedRemoteDevice?.id, selectedRemoteDevice?.device_type])
 
   useEffect(() => {
     void loadSongs(librarySource)
   }, [librarySource])
 
-  // Auto-refresh remote library when LAN reconnects
   useEffect(() => {
     if (isRemoteConnected && librarySource !== 'local') {
       void loadSongs(librarySource)
@@ -557,7 +454,6 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
         console.warn('Folder selection error, trying audio files fallback:', selectErr)
       }
 
-      // If folder selection returned nothing and we are on mobile / web, fallback to audio files selection
       if (!folderPath && !isElectronApp) {
         if (window.api?.selectFiles) {
           folderPath = await window.api.selectFiles()
@@ -602,7 +498,6 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
 
   const handleRowClick = (event: React.MouseEvent, index: number, song: Song) => {
     if (event.ctrlKey || event.metaKey) {
-      // Toggle selection of this song
       setSelectedSongIds((prev) => {
         const next = new Set(prev)
         if (next.has(song.id)) {
@@ -617,7 +512,6 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     }
 
     if (event.shiftKey && lastSelectedIndex !== null) {
-      // Range selection
       const start = Math.min(lastSelectedIndex, index)
       const end = Math.max(lastSelectedIndex, index)
       const range = filteredSongs.slice(start, end + 1).map((s) => s.id)
@@ -626,7 +520,6 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     }
 
     if (selectedSongIds.size > 0) {
-      // In multi-selection mode, clicking a row toggles its selection
       setSelectedSongIds((prev) => {
         const next = new Set(prev)
         if (next.has(song.id)) {
@@ -644,6 +537,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
   }
 
   const handlePlaySong = (index: number) => {
+    void audioDspEngine.resume()
     const targetSong = filteredSongs[index]
     if (!targetSong) return
 
@@ -679,7 +573,8 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     const resolvedSongs = filteredSongs.map((s) => ({
       ...s,
       filePath: resolveSongAudioUrl(s) || s.filePath,
-      isOnline: librarySource === 'local' ? false : s.isOnline
+      isOnline: librarySource === 'local' ? false : s.isOnline,
+      isLocalToDevice: librarySource === 'local' ? true : (s as any).isLocalToDevice
     }))
 
     requestPlayQueue(resolvedSongs, index, {
@@ -715,7 +610,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
         artist: song.artist,
         album: song.album,
         duration: song.duration,
-        artworkUrl: toMediaUrl(song.artworkPath) || song.artworkUrl
+        artworkUrl: song.artworkPath || song.artworkUrl
       })
     )
     navigate('/chat')
@@ -754,41 +649,6 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     )
   }
 
-  const formatDuration = (seconds: number) => {
-    if (!seconds || isNaN(seconds)) return '0:00'
-    const totalSeconds = Math.floor(seconds)
-    const mins = Math.floor(totalSeconds / 60)
-    const secs = totalSeconds % 60
-    return `${mins}:${secs.toString().padStart(2, '0')}`
-  }
-
-  const formatSize = (bytes?: number) => {
-    if (!bytes) return '0 MB'
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
-  }
-
-  const formatRelativeDate = (timestamp?: number) => {
-    if (!timestamp) return 'Unknown'
-    const ms = timestamp > 1e11 ? timestamp : timestamp * 1000
-    const elapsed = Math.max(0, Date.now() - ms)
-    const minutes = Math.floor(elapsed / 60_000)
-    if (minutes < 1) return 'Just now'
-    const hours = Math.floor(elapsed / 3_600_000)
-    if (hours < 24) return `${hours}h ago`
-    const days = Math.floor(hours / 24)
-    if (days < 30) return `${days}d ago`
-    return new Date(ms).toLocaleDateString()
-  }
-
-  const sortLabels: Record<LibrarySortKey, string> = {
-    default: 'Original order',
-    title: 'Title',
-    dateAdded: 'Recently added',
-    artist: 'Artist',
-    album: 'Album',
-    duration: 'Duration'
-  }
-
   const rowHeight = viewMode === 'compact' ? 46 : 56
 
   const virtualizer = useVirtualizer({
@@ -802,6 +662,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     virtualizer.measure()
   }, [viewMode, virtualizer])
 
+  // Keyboard Navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const activeEl = document.activeElement
@@ -812,7 +673,6 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
 
       if (isInput) return
 
-      // Select all visible songs: Ctrl+A or Cmd+A
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
         e.preventDefault()
         if (filteredSongs.length > 0) {
@@ -821,7 +681,6 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
         return
       }
 
-      // Deselect all: Escape
       if (e.key === 'Escape' && selectedSongIds.size > 0) {
         e.preventDefault()
         setSelectedSongIds(new Set())
@@ -829,14 +688,12 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
         return
       }
 
-      // Toggle Play/Pause on Space
       if (e.key === ' ' || e.code === 'Space') {
         e.preventDefault()
         togglePlay()
         return
       }
 
-      // Play selected song on Enter
       if (e.key === 'Enter') {
         e.preventDefault()
         if (lastSelectedIndex !== null && filteredSongs[lastSelectedIndex]) {
@@ -848,7 +705,6 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
         return
       }
 
-      // Arrow Down: move active selection down and scroll into view
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         if (filteredSongs.length === 0) return
@@ -870,7 +726,6 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
         return
       }
 
-      // Arrow Up: move active selection up and scroll into view
       if (e.key === 'ArrowUp') {
         e.preventDefault()
         if (filteredSongs.length === 0) return
@@ -899,390 +754,47 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
 
   return (
     <div className="h-full flex-1 flex flex-col pt-4 sm:pt-8 px-3 sm:px-6 pb-2 select-none relative">
-      {/* Header Sticky */}
-      <div className="mb-4 sm:mb-6 shrink-0">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-baseline gap-2.5 sm:gap-4 min-w-0">
-            <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-text tracking-tight truncate">
-              {librarySource === 'local'
-                ? 'My Library'
-                : selectedRemoteDevice
-                  ? `${selectedRemoteDevice.device_name} Library`
-                  : 'Remote Library'}
-            </h1>
-            <span className="text-xs sm:text-[13px] font-medium text-text-muted tabular-nums shrink-0">
-              {filteredSongs.length} {filteredSongs.length === 1 ? 'song' : 'songs'}
-              {searchQuery && songs.length !== filteredSongs.length && (
-                <span className="opacity-75 hidden sm:inline"> (of {songs.length})</span>
-              )}
-            </span>
-          </div>
+      <LibraryToolbar
+        librarySource={librarySource}
+        selectedRemoteDevice={selectedRemoteDevice}
+        songCount={filteredSongs.length}
+        totalSongCount={songs.length}
+        hasRemoteDevice={hasRemoteDevice}
+        remoteLibraryDevices={remoteLibraryDevices}
+        isElectronApp={isElectronApp}
+        isMobile={isMobile}
+        searchQuery={searchQuery}
+        isSearchOpen={isSearchOpen}
+        isViewMenuOpen={isViewMenuOpen}
+        sortKey={sortKey}
+        sortDirection={sortDirection}
+        viewMode={viewMode}
+        isLoadingSongs={isLoadingSongs}
+        isScanning={isScanning}
+        isSelectingFolder={isSelectingFolder}
+        scanProgress={scanProgress}
+        isLoadingPcLibrary={isLoadingPcLibrary}
+        isLoadingDeviceLibrary={isLoadingDeviceLibrary}
+        searchInputRef={searchInputRef}
+        viewMenuRef={viewMenuRef}
+        onSetLibrarySource={setLibrarySource}
+        onRefreshRemote={(dev) => {
+          void loadSongs(dev.id)
+          if (user?.id) void requestPcLibrary(user.id, dev.id)
+        }}
+        onSetSearchQuery={setSearchQuery}
+        onSetIsSearchOpen={setIsSearchOpen}
+        onSetIsViewMenuOpen={setIsViewMenuOpen}
+        onSort={handleSort}
+        onSetViewMode={setViewMode}
+        onRefreshLibrary={() => void loadSongs()}
+        onAddFolder={handleAddFolder}
+        onCancelScan={cancelScan}
+      />
 
-          {/* Dynamic Multi-Device Library Source Switcher (Industry Standard) */}
-          {hasRemoteDevice && (
-            <div className="flex items-center gap-1 p-1 rounded-xl bg-surface-elevated border border-border/60 text-xs shrink-0 shadow-sm max-w-[50vw] sm:max-w-none overflow-x-auto scrollbar-none">
-              <button
-                type="button"
-                onClick={() => setLibrarySource('local')}
-                className={cn(
-                  'px-3 py-1 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0',
-                  librarySource === 'local'
-                    ? 'bg-white/10 text-white shadow-sm'
-                    : 'text-text-muted hover:text-white'
-                )}
-              >
-                {isElectronApp || !isMobile ? (
-                  <Laptop2 className="w-3.5 h-3.5" />
-                ) : (
-                  <Smartphone className="w-3.5 h-3.5" />
-                )}
-                <span>This Device</span>
-              </button>
-
-              {remoteLibraryDevices.map((dev) => {
-                const isSelected =
-                  librarySource === dev.id ||
-                  (librarySource === 'pc' && remoteLibraryDevices[0]?.id === dev.id)
-                const isDevMobile =
-                  dev.device_type === 'mobile' ||
-                  /iphone|ipad|android|phone|mobile|ios/i.test(dev.device_name)
-                return (
-                  <button
-                    key={dev.id}
-                    type="button"
-                    onClick={() => {
-                      setLibrarySource(dev.id)
-                      if (user?.id) void requestPcLibrary(user.id, dev.id)
-                    }}
-                    className={cn(
-                      'px-3 py-1 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0',
-                      isSelected
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                        : 'text-text-muted hover:text-white'
-                    )}
-                  >
-                    {isDevMobile ? (
-                      <Smartphone className="w-3.5 h-3.5" />
-                    ) : (
-                      <Laptop2 className="w-3.5 h-3.5" />
-                    )}
-                    <span>{dev.device_name}</span>
-                    {isSelected && (
-                      <span
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          if (user?.id) void requestPcLibrary(user.id, dev.id)
-                        }}
-                        title={`Refresh library from ${dev.device_name}`}
-                        className="ml-0.5 p-0.5 hover:text-white transition"
-                      >
-                        <RefreshCw
-                          className={cn('w-3 h-3', isLoadingPcLibrary && 'animate-spin')}
-                        />
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-          )}
-
-          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-            {/* Desktop Expanding In-Library Search Filter */}
-            <div
-              className={cn(
-                'hidden md:flex h-11 origin-right items-center overflow-hidden rounded-full border border-border/60 bg-surface-elevated transition-all duration-300',
-                isSearchOpen ? 'w-64 px-3' : 'w-11'
-              )}
-            >
-              <button
-                type="button"
-                title="Search library"
-                onClick={() => setIsSearchOpen(true)}
-                className="flex h-11 w-11 shrink-0 items-center justify-center text-text-muted hover:text-white"
-              >
-                <Search className="h-4 w-4" />
-              </button>
-              <input
-                ref={searchInputRef}
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') {
-                    if (searchQuery) {
-                      setSearchQuery('')
-                    } else {
-                      setIsSearchOpen(false)
-                    }
-                  }
-                }}
-                onBlur={() => !searchQuery && setIsSearchOpen(false)}
-                placeholder="Filter library..."
-                aria-label="Filter library"
-                className={cn(
-                  'h-full min-w-0 flex-1 bg-transparent pr-1 text-sm text-white outline-none placeholder:text-text-muted',
-                  isSearchOpen ? 'opacity-100' : 'pointer-events-none opacity-0'
-                )}
-              />
-              {searchQuery && isSearchOpen && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchQuery('')
-                    searchInputRef.current?.focus()
-                  }}
-                  className="p-1 text-text-muted hover:text-white transition-colors shrink-0"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-
-            {/* Mobile Search Toggle Button */}
-            <button
-              type="button"
-              title="Search library"
-              onClick={() => {
-                setIsSearchOpen((open) => !open)
-                if (!isSearchOpen) {
-                  setTimeout(() => searchInputRef.current?.focus(), 50)
-                }
-              }}
-              className={cn(
-                'md:hidden flex h-9 w-9 items-center justify-center rounded-full border transition-colors',
-                isSearchOpen
-                  ? 'border-white/40 bg-white/20 text-white'
-                  : 'border-border/60 bg-surface-elevated text-text-muted hover:text-white'
-              )}
-            >
-              <Search className="h-4 w-4" />
-            </button>
-
-            {/* Sort & View Dropdown Menu */}
-            <div ref={viewMenuRef} className="relative">
-              <button
-                type="button"
-                title="Sort and view options"
-                aria-expanded={isViewMenuOpen}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  setIsViewMenuOpen((isOpen) => !isOpen)
-                }}
-                className={cn(
-                  'flex h-9 w-9 sm:h-11 sm:w-11 items-center justify-center rounded-full shadow-sm transition-colors border',
-                  isViewMenuOpen
-                    ? 'border-white/30 bg-white/20 text-white'
-                    : 'border-border/60 bg-surface-elevated text-text-muted hover:bg-hover hover:text-white'
-                )}
-              >
-                <List className="h-4 w-4" />
-              </button>
-              {isViewMenuOpen && (
-                <div
-                  className="absolute right-0 top-full z-[1000] mt-2 w-48 rounded-xl border border-border/80 bg-surface-elevated py-2.5 text-xs shadow-2xl backdrop-blur-md"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <div className="px-3 pb-1.5 text-[10px] font-bold text-text-muted uppercase tracking-wider">
-                    Sort by
-                  </div>
-                  {(['dateAdded', 'title', 'artist', 'album', 'duration', 'default'] as const).map(
-                    (key) => (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => handleSort(key)}
-                        className={cn(
-                          'flex w-full items-center justify-between px-3 py-1.5 text-left font-medium transition-colors hover:bg-white/10',
-                          sortKey === key ? 'text-white font-bold' : 'text-text-muted'
-                        )}
-                      >
-                        <span>{sortLabels[key]}</span>
-                        {sortKey === key && (
-                          <ArrowUp
-                            className={cn(
-                              'h-3.5 w-3.5 transition-transform text-white',
-                              sortDirection === 'desc' && 'rotate-180'
-                            )}
-                          />
-                        )}
-                      </button>
-                    )
-                  )}
-
-                  <div className="my-1.5 border-t border-border/40" />
-
-                  <div className="px-3 pb-1.5 text-[10px] font-bold text-text-muted uppercase tracking-wider">
-                    View mode
-                  </div>
-                  {(['compact', 'list'] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setViewMode(mode)}
-                      className={cn(
-                        'flex w-full items-center justify-between px-3 py-1.5 text-left font-medium transition-colors hover:bg-white/10',
-                        viewMode === mode ? 'text-white font-bold' : 'text-text-muted'
-                      )}
-                    >
-                      <span className="capitalize">{mode}</span>
-                      {viewMode === mode && <Check className="h-3.5 w-3.5" />}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Refresh Library Button */}
-            <button
-              type="button"
-              title="Refresh library"
-              onClick={() => void loadSongs()}
-              disabled={isLoadingSongs}
-              className="flex h-9 w-9 sm:h-11 sm:w-11 items-center justify-center rounded-full border border-border/60 bg-surface-elevated text-text-muted transition-colors hover:bg-hover hover:text-white"
-            >
-              <RefreshCw className={cn('h-4 w-4', isLoadingSongs && 'animate-spin')} />
-            </button>
-
-            {/* Add Folder Button */}
-            <button
-              type="button"
-              onClick={handleAddFolder}
-              disabled={isScanning || isSelectingFolder}
-              className="flex h-9 sm:h-11 items-center gap-1.5 sm:gap-2.5 rounded-full bg-white px-3 sm:px-5 text-xs sm:text-sm font-bold text-black transition-all hover:scale-[1.02] hover:bg-white/90 shadow-sm disabled:cursor-not-allowed disabled:opacity-60 shrink-0 whitespace-nowrap cursor-pointer"
-            >
-              {isScanning ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin text-primary-amber" />
-                  <span className="tabular-nums">
-                    {scanProgress?.percent !== undefined
-                      ? `${scanProgress.percent}%`
-                      : 'Scanning...'}
-                  </span>
-                </>
-              ) : isSelectingFolder ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin text-black" />
-                  <span>Selecting...</span>
-                </>
-              ) : (
-                <>
-                  <Plus className="h-4 w-4 stroke-[3]" />
-                  <span>{isMobile ? 'Add Music' : 'Add Folder'}</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* Mobile Full-Width In-Library Search Filter Row */}
-        {isSearchOpen && (
-          <div className="md:hidden mt-2.5 flex items-center gap-2 bg-surface-elevated border border-border/60 rounded-full px-3.5 py-1.5 animate-in fade-in slide-in-from-top-1">
-            <Search className="h-4 w-4 text-text-muted shrink-0" />
-            <input
-              ref={searchInputRef}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Filter library..."
-              className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-text-muted"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="p-1 text-text-muted hover:text-white"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQuery('')
-                setIsSearchOpen(false)
-              }}
-              className="text-xs font-semibold text-text-muted hover:text-white ml-1 shrink-0"
-            >
-              Done
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Scanning Banner */}
-      {isScanning && scanProgress && (
-        <div className="mb-5 rounded-2xl bg-[#1b1b1b] border border-border/80 p-4 shadow-xl backdrop-blur-md">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-amber/15 text-primary-amber border border-primary-amber/25">
-                <RefreshCw className="h-4 w-4 animate-spin" />
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-bold text-white tracking-wide">
-                    {scanProgress.status === 'discovering'
-                      ? 'Discovering Audio Files...'
-                      : scanProgress.status === 'committing'
-                        ? 'Saving To Database...'
-                        : 'Indexing Music Folder'}
-                  </h3>
-                  <span className="rounded-full bg-primary-amber/15 px-2 py-0.5 text-xs font-mono font-bold text-primary-amber border border-primary-amber/25 tabular-nums">
-                    {scanProgress.percent}%
-                  </span>
-                </div>
-                <p
-                  className="text-xs text-text-muted truncate mt-0.5"
-                  title={scanProgress.folderPath}
-                >
-                  {scanProgress.folderName} •{' '}
-                  <span className="text-white font-medium tabular-nums">
-                    {scanProgress.processedFiles} of {scanProgress.totalFiles} songs
-                  </span>
-                  {scanProgress.speed ? ` • ~${scanProgress.speed} songs/sec` : ''}
-                  {scanProgress.estimatedRemainingMs
-                    ? ` • ~${Math.round(scanProgress.estimatedRemainingMs / 1000)}s left`
-                    : ''}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-              <button
-                type="button"
-                onClick={() => cancelScan()}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 text-xs font-semibold transition-colors"
-              >
-                <X className="h-3.5 w-3.5" /> Stop Scan
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-3 space-y-1.5">
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#272727]">
-              <div
-                className="h-full bg-primary-amber transition-all duration-200"
-                style={{ width: `${Math.max(2, scanProgress.percent)}%` }}
-              />
-            </div>
-            {(scanProgress.currentTrack || scanProgress.currentFile) && (
-              <p className="text-[11px] text-text-muted truncate">
-                <span className="text-white/60">Reading:</span>{' '}
-                <span className="text-white font-medium">
-                  {scanProgress.currentTrack
-                    ? `${scanProgress.currentTrack.artist} - ${scanProgress.currentTrack.title}`
-                    : scanProgress.currentFile}
-                </span>
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Loading or Empty state */}
-      {isLoadingSongs && !hasLoadedSongs ? (
-        <div
-          className="flex flex-1 flex-col items-center justify-center gap-3 text-text-muted"
-          role="status"
-          aria-live="polite"
-        >
+      {/* Main View Area */}
+      {isLoadingSongs ? (
+        <div className="flex-1 flex flex-col items-center justify-center text-text-muted gap-3 min-h-[300px]">
           <Loader2 className="h-7 w-7 animate-spin text-primary-amber" />
           <div className="text-center">
             <p className="text-base font-semibold text-text">Loading your music library...</p>
@@ -1292,210 +804,32 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
           </div>
         </div>
       ) : songs.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center text-text-muted gap-4 p-6 text-center">
-          {librarySource !== 'local' ? (
-            <>
-              <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shadow-inner">
-                {isLoadingPcLibrary ? (
-                  <Loader2 className="w-7 h-7 animate-spin text-emerald-400" />
-                ) : selectedRemoteDevice?.device_type === 'mobile' ||
-                  /iphone|ipad|android|phone|mobile|ios/i.test(
-                    selectedRemoteDevice?.device_name || ''
-                  ) ? (
-                  <Smartphone className="w-7 h-7 text-emerald-400" />
-                ) : (
-                  <Laptop2 className="w-7 h-7 text-emerald-400" />
-                )}
-              </div>
-              <p className="text-base font-bold text-white">
-                {isLoadingPcLibrary
-                  ? `Syncing ${selectedRemoteDevice?.device_name || 'Device'} Library...`
-                  : `No Songs Loaded from ${selectedRemoteDevice?.device_name || 'Device'}`}
-              </p>
-              <p className="text-xs text-text-muted max-w-sm">
-                {isLoadingPcLibrary
-                  ? `Requesting track catalog from ${selectedRemoteDevice?.device_name || 'connected device'} over Realtime sync...`
-                  : `Ensure Felo is open on ${selectedRemoteDevice?.device_name || 'the device'} with songs in its library.`}
-              </p>
-              <div className="flex flex-wrap items-center justify-center gap-3 mt-1">
-                <button
-                  type="button"
-                  disabled={isLoadingPcLibrary}
-                  onClick={() => user?.id && void requestPcLibrary(user.id, selectedRemoteDevice?.id)}
-                  className="flex h-10 items-center gap-2 rounded-full bg-emerald-500 hover:bg-emerald-400 px-5 text-xs font-bold text-black transition-all hover:scale-[1.02] shadow-md cursor-pointer disabled:opacity-50"
-                >
-                  <RefreshCw className={cn("h-3.5 w-3.5", isLoadingPcLibrary && "animate-spin")} />
-                  <span>{isLoadingPcLibrary ? 'Syncing...' : `Sync from ${selectedRemoteDevice?.device_name || 'Device'}`}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLibrarySource('local')}
-                  className="flex h-10 items-center gap-2 rounded-full border border-border/80 bg-surface-elevated px-4 text-xs font-medium text-text-muted hover:text-white transition cursor-pointer"
-                >
-                  <span>This Device</span>
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-white/70 shadow-inner">
-                <FolderOpen className="w-7 h-7 text-emerald-400" />
-              </div>
-              <p className="text-base font-bold text-white">Your library is currently empty.</p>
-              <p className="text-xs text-text-muted max-w-sm text-center">
-                {isElectronApp
-                  ? 'Add a local music folder to scan and index all your high-resolution and lossless audio tracks.'
-                  : 'Add a music folder or audio files from your mobile device storage to listen offline anytime with lossless audio quality.'}
-              </p>
-              <div className="flex flex-wrap items-center justify-center gap-3 mt-2">
-                <button
-                  type="button"
-                  onClick={handleAddFolder}
-                  disabled={isScanning || isSelectingFolder}
-                  className="flex h-11 items-center gap-2 rounded-full bg-white px-6 text-sm font-bold text-black transition-all hover:scale-[1.02] hover:bg-white/90 shadow-md cursor-pointer disabled:opacity-60"
-                >
-                  {isSelectingFolder ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-black" />
-                  ) : (
-                    <Plus className="h-4 w-4 stroke-[3]" />
-                  )}
-                  <span>
-                    {isSelectingFolder
-                      ? 'Selecting Folder...'
-                      : isMobile
-                        ? 'Add Music Folder'
-                        : 'Add Local Music Folder'}
-                  </span>
-                </button>
-                {!isElectronApp && (
-                  <button
-                    type="button"
-                    onClick={handleAddFiles}
-                    disabled={isScanning}
-                    className="flex h-11 items-center gap-2 rounded-full border border-white/20 bg-surface-elevated px-5 text-sm font-medium text-white transition-all hover:scale-[1.02] hover:bg-hover shadow-md cursor-pointer disabled:opacity-60"
-                  >
-                    <FolderOpen className="h-4 w-4 text-emerald-400" />
-                    <span>Select Audio Files</span>
-                  </button>
-                )}
-                {hasRemoteDevice && (
-                  <button
-                    type="button"
-                    onClick={() => setLibrarySource(remoteLibraryDevices[0]?.id || 'pc')}
-                    className="flex h-11 items-center gap-2 rounded-full bg-emerald-500 hover:bg-emerald-400 px-6 text-sm font-bold text-black transition-all hover:scale-[1.02] shadow-md cursor-pointer"
-                  >
-                    <Laptop2 className="h-4 w-4" />
-                    <span>Browse {remoteLibraryDevices[0]?.device_name || 'Device'}</span>
-                  </button>
-                )}
-              </div>
-            </>
-          )}
-        </div>
+        <LibraryEmptyState
+          librarySource={librarySource}
+          selectedRemoteDevice={selectedRemoteDevice}
+          isDeviceSyncing={isDeviceSyncing}
+          isElectronApp={isElectronApp}
+          isMobile={isMobile}
+          isScanning={isScanning}
+          isSelectingFolder={isSelectingFolder}
+          hasRemoteDevice={hasRemoteDevice}
+          remoteLibraryDevices={remoteLibraryDevices}
+          onSyncDevice={() => {
+            void loadSongs(librarySource)
+            if (user?.id) void requestPcLibrary(user.id, selectedRemoteDevice?.id)
+          }}
+          onSwitchToLocal={() => setLibrarySource('local')}
+          onAddFolder={handleAddFolder}
+          onAddFiles={handleAddFiles}
+          onBrowseRemote={(devId) => setLibrarySource(devId)}
+        />
       ) : (
         <div className="flex-1 flex flex-col min-h-0">
-          {/* Interactive Clickable Table Header */}
-          <div className="grid grid-cols-[32px_minmax(0,1fr)_76px] gap-2 border-b border-border/30 bg-surface px-2 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-text-muted sticky top-0 z-10 shrink-0 md:grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_160px] md:gap-3 md:px-3 xl:grid-cols-[40px_minmax(0,2.2fr)_minmax(0,1.25fr)_minmax(110px,0.8fr)_minmax(180px,1fr)] xl:gap-4 xl:px-4">
-            <button
-              type="button"
-              onClick={() => handleSort('default')}
-              title="Sort by original order"
-              className={cn(
-                'text-center hover:text-text transition-colors flex items-center justify-center gap-1',
-                sortKey === 'default' ? 'text-white font-bold' : 'text-text-muted'
-              )}
-            >
-              <span>#</span>
-              {sortKey === 'default' && (
-                <ArrowUp
-                  className={cn(
-                    'w-3 h-3 transition-transform text-white',
-                    sortDirection === 'desc' && 'rotate-180'
-                  )}
-                />
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleSort('title')}
-              title="Sort by Title"
-              className={cn(
-                'flex items-center gap-1.5 hover:text-text transition-colors text-left',
-                sortKey === 'title' ? 'text-white font-bold' : 'text-text-muted'
-              )}
-            >
-              <span>Title</span>
-              {sortKey === 'title' && (
-                <ArrowUp
-                  className={cn(
-                    'w-3 h-3 transition-transform text-white',
-                    sortDirection === 'desc' && 'rotate-180'
-                  )}
-                />
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleSort('album')}
-              title="Sort by Album"
-              className={cn(
-                'hidden min-w-0 md:flex items-center gap-1.5 hover:text-text transition-colors text-left',
-                sortKey === 'album' ? 'text-white font-bold' : 'text-text-muted'
-              )}
-            >
-              <span>Album</span>
-              {sortKey === 'album' && (
-                <ArrowUp
-                  className={cn(
-                    'w-3 h-3 transition-transform text-white',
-                    sortDirection === 'desc' && 'rotate-180'
-                  )}
-                />
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleSort('dateAdded')}
-              title="Sort by Date added"
-              className={cn(
-                'hidden min-w-0 items-center gap-1.5 hover:text-text transition-colors text-left xl:flex',
-                sortKey === 'dateAdded' ? 'text-white font-bold' : 'text-text-muted'
-              )}
-            >
-              <span>Date added</span>
-              {sortKey === 'dateAdded' && (
-                <ArrowUp
-                  className={cn(
-                    'w-3 h-3 transition-transform text-white',
-                    sortDirection === 'desc' && 'rotate-180'
-                  )}
-                />
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleSort('duration')}
-              title="Sort by Duration"
-              className={cn(
-                'flex items-center justify-end gap-1.5 pr-1 md:pr-8 hover:text-text transition-colors ml-auto',
-                sortKey === 'duration' ? 'text-white font-bold' : 'text-text-muted'
-              )}
-            >
-              <Clock className="w-3.5 h-3.5" />
-              {sortKey === 'duration' && (
-                <ArrowUp
-                  className={cn(
-                    'w-3 h-3 transition-transform text-white',
-                    sortDirection === 'desc' && 'rotate-180'
-                  )}
-                />
-              )}
-            </button>
-          </div>
+          <LibraryTableHeader
+            sortKey={sortKey}
+            sortDirection={sortDirection}
+            onSort={handleSort}
+          />
 
           {/* Virtual Table Body */}
           <div ref={parentRef} key={viewMode} className="flex-1 overflow-y-auto mt-1 pb-36 md:pb-16">
@@ -1511,149 +845,26 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
                 const song = filteredSongs[index]
                 const isActive = queue[currentSongIndex]?.id === song.id
                 const isSelected = selectedSongIds.has(song.id)
-                const artworkUrl = toMediaUrl(song.artworkPath) || song.artworkUrl
 
                 return (
-                  <div
+                  <LibrarySongRow
                     key={song.id}
+                    song={song}
+                    index={index}
+                    isActive={isActive}
+                    isPlaying={isPlaying}
+                    isSelected={isSelected}
+                    hasMultiSelection={selectedSongIds.size > 0}
+                    viewMode={viewMode}
+                    rowHeight={rowHeight}
+                    searchQuery={searchQuery}
+                    top={virtualRow.start}
+                    size={virtualRow.size}
+                    isMenuActive={activeMenu?.song.id === song.id}
                     onClick={(e) => handleRowClick(e, index, song)}
-                    className={cn(
-                      'absolute top-0 left-0 grid w-full grid-cols-[32px_minmax(0,1fr)_76px] items-center gap-2 rounded-lg px-2 text-[13px] group cursor-pointer transition-colors md:grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_160px] md:gap-3 md:px-3 xl:grid-cols-[40px_minmax(0,2.2fr)_minmax(0,1.25fr)_minmax(110px,0.8fr)_minmax(180px,1fr)] xl:gap-4 xl:px-4',
-                      isSelected
-                        ? 'bg-white/10 border border-white/20 text-white'
-                        : isActive
-                          ? 'bg-hover'
-                          : 'hover:bg-hover/50'
-                    )}
-                    style={{
-                      height: `${viewMode === 'compact' ? rowHeight : virtualRow.size}px`,
-                      transform: `translateY(${virtualRow.start}px)`
-                    }}
-                  >
-                    {/* Index / Animated Soundwave / Checkmark / Play-Pause Icon */}
-                    <div className="relative flex h-5 items-center justify-center text-center font-medium">
-                      {isSelected ? (
-                        <div className="flex items-center justify-center text-primary-amber">
-                          <Check className="h-4 w-4 stroke-[2.5]" />
-                        </div>
-                      ) : selectedSongIds.size > 0 ? (
-                        <div className="h-3.5 w-3.5 rounded border border-border/70 group-hover:border-primary-amber flex items-center justify-center transition-colors" />
-                      ) : isActive && isPlaying ? (
-                        <>
-                          <span className="group-hover:hidden">
-                            <AnimatedPlayingWave />
-                          </span>
-                          <span className="hidden group-hover:flex items-center justify-center text-primary-amber">
-                            <Pause className="h-4 w-4 fill-current" />
-                          </span>
-                        </>
-                      ) : isActive && !isPlaying ? (
-                        <>
-                          <span className="text-primary-amber group-hover:hidden text-xs">❚❚</span>
-                          <span className="hidden group-hover:flex items-center justify-center text-primary-amber">
-                            <Play className="h-4 w-4 fill-current ml-0.5" />
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <span className="text-text-muted group-hover:hidden text-xs tabular-nums">
-                            {index + 1}
-                          </span>
-                          <span className="hidden group-hover:flex items-center justify-center text-text">
-                            <Play className="h-4 w-4 fill-current ml-0.5" />
-                          </span>
-                        </>
-                      )}
-                    </div>
-
-                    {/* Title + Artwork + Artist */}
-                    <div className="flex items-center gap-3 overflow-hidden">
-                      <div
-                        className={cn(
-                          'relative rounded-md bg-surface-elevated shrink-0 shadow-sm flex items-center justify-center overflow-hidden border border-border/30',
-                          viewMode === 'compact' ? 'h-8 w-8' : 'h-10 w-10'
-                        )}
-                      >
-                        <ArtworkImage
-                          src={artworkUrl}
-                          title={song.title}
-                          artist={song.artist}
-                          className="absolute inset-0 h-full w-full object-cover"
-                          fallbackIcon={<span className="text-[8px] text-text-muted font-bold">Art</span>}
-                        />
-                      </div>
-                      <div className="flex flex-col overflow-hidden">
-                        <span
-                          className={cn(
-                            'font-semibold truncate text-sm',
-                            isActive ? 'text-primary-amber' : 'text-text'
-                          )}
-                        >
-                          <HighlightMatch text={song.title} query={searchQuery} />
-                        </span>
-                        <div className="text-[12px] truncate max-w-full text-text-muted">
-                          <ArtistLinks
-                            artist={song.artist}
-                            artists={song.artists}
-                            linkClassName="text-text-muted hover:text-text hover:underline text-[12px]"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Album Column */}
-                    <div
-                      onClick={(e) => handleAlbumClick(e, song.artist, song.album)}
-                      title={song.album ? `Go to album: ${song.album}` : undefined}
-                      className="hidden min-w-0 truncate text-xs text-text-muted hover:underline hover:text-text md:block cursor-pointer"
-                    >
-                      {song.album ? (
-                        <HighlightMatch text={song.album} query={searchQuery} />
-                      ) : (
-                        '-'
-                      )}
-                    </div>
-
-                    {/* Date Added Column */}
-                    <div
-                      className="hidden min-w-0 truncate text-xs text-text-muted xl:block"
-                      title={
-                        song.dateAdded
-                          ? new Date(
-                              song.dateAdded > 1e11 ? song.dateAdded : song.dateAdded * 1000
-                            ).toLocaleString()
-                          : undefined
-                      }
-                    >
-                      {formatRelativeDate(song.dateAdded)}
-                    </div>
-
-                    {/* Quality Badges + Duration + Menu Actions */}
-                    <div className="flex min-w-0 items-center justify-end gap-2 pr-1 text-text-muted xl:gap-3 xl:pr-2">
-                      <div className="hidden xl:flex items-center">
-                        <QualityPill song={song} />
-                      </div>
-                      <span className="shrink-0 text-xs tabular-nums text-text-muted">
-                        {formatDuration(song.duration)}
-                      </span>
-                      <span className="hidden shrink-0 text-[11px] font-mono text-text-muted/60 2xl:inline">
-                        {formatSize(song.size)}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={(event) => handleMenuOpen(event, song, index)}
-                        title="More options"
-                        className={cn(
-                          'h-7 w-7 shrink-0 rounded-md flex items-center justify-center transition-all',
-                          activeMenu?.song.id === song.id
-                            ? 'opacity-100 text-text bg-hover'
-                            : 'opacity-70 md:opacity-0 text-text-muted md:group-hover:opacity-100 hover:text-text hover:bg-hover'
-                        )}
-                      >
-                        <MoreVertical className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
+                    onMenuOpen={(e) => handleMenuOpen(e, song, index)}
+                    onAlbumClick={(e) => handleAlbumClick(e, song.artist, song.album)}
+                  />
                 )
               })}
             </div>
@@ -1662,308 +873,58 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
       )}
 
       {/* Floating Multi-Select Batch Actions Toolbar */}
-      {selectedSongIds.size > 0 && (
-        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-surface-elevated/95 border border-border/80 px-5 py-2.5 rounded-full shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-2">
-          <span className="text-xs font-bold text-text tabular-nums">
-            {selectedSongIds.size} {selectedSongIds.size === 1 ? 'song' : 'songs'} selected
-          </span>
-          <div className="h-4 w-[1px] bg-border/60" />
-          <button
-            type="button"
-            onClick={() => {
-              const selectedSongs = filteredSongs.filter((s) => selectedSongIds.has(s.id))
-              if (selectedSongs.length > 0) {
-                requestPlayQueue(selectedSongs, 0, {
-                  type: 'library',
-                  title: `Selected (${selectedSongs.length} tracks)`,
-                  route: '/library'
-                })
-              }
-            }}
-            className="flex items-center gap-1.5 text-xs font-bold text-white hover:text-white/80 transition-colors"
-          >
-            <Play className="w-3.5 h-3.5 fill-current" /> Play Selected
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const selectedSongs = filteredSongs.filter((s) => selectedSongIds.has(s.id))
-              selectedSongs.forEach((song) => enqueueSong(song))
-              setSelectedSongIds(new Set())
-            }}
-            className="flex items-center gap-1.5 text-xs font-semibold text-text-muted hover:text-text transition-colors"
-          >
-            <ListPlus className="w-3.5 h-3.5" /> Add to Queue
-          </button>
-          <div className="h-4 w-[1px] bg-border/60" />
-          <button
-            type="button"
-            onClick={() => {
-              if (selectedSongIds.size === filteredSongs.length) {
-                setSelectedSongIds(new Set())
-              } else {
-                setSelectedSongIds(new Set(filteredSongs.map((s) => s.id)))
-              }
-            }}
-            className="text-xs font-semibold text-text-muted hover:text-text transition-colors"
-          >
-            {selectedSongIds.size === filteredSongs.length ? 'Deselect All' : 'Select All'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setSelectedSongIds(new Set())}
-            title="Clear selection (Esc)"
-            className="p-1 rounded-full text-text-muted hover:text-text hover:bg-hover transition-colors ml-1"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
+      <LibraryBatchToolbar
+        selectedCount={selectedSongIds.size}
+        totalCount={filteredSongs.length}
+        onPlaySelected={() => {
+          const selectedSongs = filteredSongs.filter((s) => selectedSongIds.has(s.id))
+          if (selectedSongs.length > 0) {
+            requestPlayQueue(selectedSongs, 0, {
+              type: 'library',
+              title: `Selected (${selectedSongs.length} tracks)`,
+              route: '/library'
+            })
+          }
+        }}
+        onQueueSelected={() => {
+          const selectedSongs = filteredSongs.filter((s) => selectedSongIds.has(s.id))
+          selectedSongs.forEach((song) => enqueueSong(song))
+          setSelectedSongIds(new Set())
+        }}
+        onToggleSelectAll={() => {
+          if (selectedSongIds.size === filteredSongs.length) {
+            setSelectedSongIds(new Set())
+          } else {
+            setSelectedSongIds(new Set(filteredSongs.map((s) => s.id)))
+          }
+        }}
+        onClearSelection={() => setSelectedSongIds(new Set())}
+      />
 
       {/* Context Menu */}
       {activeMenu && (
-        <div
-          className="fixed z-[9999] w-[250px] rounded-xl border border-white/15 bg-[#1a1a1a] p-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.8),0_2px_8px_rgba(0,0,0,0.4)] backdrop-blur-md"
-          style={{ left: activeMenu.x, top: activeMenu.y }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          {isRemoteConnected && (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  void remoteClient.play(activeMenu.song.id)
-                  setActiveMenu(null)
-                }}
-                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-semibold text-emerald-400 hover:bg-emerald-500/10 transition-colors"
-              >
-                <Laptop2 className="h-3.5 w-3.5" />
-                Play on PC
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const downloadUrl = resolveSongDownloadUrl(activeMenu.song)
-                  if (downloadUrl) {
-                    const a = document.createElement('a')
-                    a.href = downloadUrl
-                    a.setAttribute('download', '')
-                    a.target = '_blank'
-                    a.rel = 'noopener noreferrer'
-                    document.body.appendChild(a)
-                    a.click()
-                    document.body.removeChild(a)
-                  } else {
-                    remoteClient.downloadSong(activeMenu.song.id)
-                  }
-                  setActiveMenu(null)
-                }}
-                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted hover:bg-white/10 hover:text-text transition-colors"
-              >
-                <Download className="h-3.5 w-3.5" />
-                Transfer / Download to Phone
-              </button>
-              <div className="my-1 border-t border-white/10" />
-            </>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              handlePlaySong(activeMenu.index)
-              setActiveMenu(null)
-            }}
-            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted transition-colors hover:bg-white/10 hover:text-text"
-          >
-            <Play className="h-3.5 w-3.5 fill-current" />
-            Play
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              enqueueSong(activeMenu.song)
-              setActiveMenu(null)
-            }}
-            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted transition-colors hover:bg-white/10 hover:text-text"
-          >
-            <ListPlus className="h-3.5 w-3.5" />
-            Add to Queue
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void handleStartSongRadio(activeMenu.song)
-              setActiveMenu(null)
-            }}
-            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted transition-colors hover:bg-white/10 hover:text-text"
-          >
-            <Radio className="h-3.5 w-3.5 text-primary-amber" />
-            Start Song Radio
-          </button>
-          {activeMenu.song.artist && (
-            <button
-              type="button"
-              onClick={() => {
-                void handleStartArtistRadio(activeMenu.song.artist || '')
-                setActiveMenu(null)
-              }}
-              className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted transition-colors hover:bg-white/10 hover:text-text"
-            >
-              <Radio className="h-3.5 w-3.5 text-primary-amber" />
-              Start Artist Radio
-            </button>
-          )}
-          {activeMenu.song.album && (
-            <button
-              type="button"
-              onClick={() => {
-                navigate(
-                  `/album/${encodeURIComponent(activeMenu.song.artist || 'Unknown Artist')}/${encodeURIComponent(activeMenu.song.album || '')}`
-                )
-                setActiveMenu(null)
-              }}
-              className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted transition-colors hover:bg-white/10 hover:text-text"
-            >
-              <Disc3 className="h-3.5 w-3.5" />
-              Go to Album
-            </button>
-          )}
-          {(() => {
-            const menuArtists = activeMenu.song.artists?.length
-              ? activeMenu.song.artists
-              : parseArtists(activeMenu.song.artist)
-
-            if (menuArtists.length <= 1) {
-              const artistName = menuArtists[0]?.name || activeMenu.song.artist || 'Unknown Artist'
-              return (
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigate(`/artist/${encodeURIComponent(artistName)}`)
-                    setActiveMenu(null)
-                  }}
-                  className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted transition-colors hover:bg-white/10 hover:text-text"
-                >
-                  <User className="h-3.5 w-3.5" />
-                  Go to Artist
-                </button>
-              )
-            }
-
-            const isNearRightEdge = activeMenu.x > window.innerWidth - 440
-            const isNearBottomEdge = activeMenu.y > window.innerHeight - 250
-
-            return (
-              <div className="relative group/artist-sub">
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted transition-colors hover:bg-white/10 hover:text-text"
-                >
-                  <div className="flex items-center gap-3">
-                    <User className="h-3.5 w-3.5" />
-                    <span>Go to Artist</span>
-                  </div>
-                  <ChevronRight className="h-3.5 w-3.5 text-text-muted/60 transition-transform group-hover/artist-sub:translate-x-0.5" />
-                </button>
-                <div
-                  className={`absolute ${
-                    isNearRightEdge ? 'right-full mr-1' : 'left-full ml-1'
-                  } ${
-                    isNearBottomEdge ? 'bottom-0' : 'top-0'
-                  } hidden group-hover/artist-sub:flex flex-col min-w-[200px] rounded-lg border border-border/80 bg-surface-elevated/95 p-1.5 shadow-2xl backdrop-blur-md z-50`}
-                >
-                  <div className="px-2.5 py-1 text-[10px] font-bold text-text-muted uppercase tracking-wider border-b border-border/40 mb-1">
-                    Track Artists
-                  </div>
-                  {menuArtists.map((a, i) => (
-                    <button
-                      key={`${a.name}-${i}`}
-                      type="button"
-                      onClick={() => {
-                        navigate(`/artist/${encodeURIComponent(a.name)}`)
-                        setActiveMenu(null)
-                      }}
-                      className="flex items-center justify-between rounded-md px-2.5 py-1.5 text-left text-xs font-medium text-text-muted hover:bg-white/10 hover:text-text transition-colors"
-                    >
-                      <span className="truncate pr-2">{a.name}</span>
-                      <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-white/5 text-text-muted/70">
-                        {i === 0 && a.role !== 'featured' ? 'Lead' : 'Feat'}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )
-          })()}
-          <button
-            type="button"
-            onClick={() => {
-              setCreditsSong(activeMenu.song)
-              setActiveMenu(null)
-            }}
-            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted transition-colors hover:bg-white/10 hover:text-text"
-          >
-            <FileText className="h-3.5 w-3.5" />
-            Show Credits
-          </button>
-          <button
-            type="button"
-            onClick={() => handleShareSong(activeMenu.song)}
-            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted transition-colors hover:bg-white/10 hover:text-text"
-          >
-            <Share2 className="h-3.5 w-3.5" />
-            Share to Friend Chat
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              handleShowInExplorer(activeMenu.song)
-              setActiveMenu(null)
-            }}
-            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted transition-colors hover:bg-white/10 hover:text-text"
-          >
-            <FolderOpen className="h-3.5 w-3.5" />
-            Show in Explorer
-          </button>
-          {AppCapabilities.downloads && (
-            <button
-              type="button"
-              onClick={() => {
-                onOpenDownloadPanel?.({
-                  id: activeMenu.song.id,
-                  title: activeMenu.song.title,
-                  artist: activeMenu.song.artist,
-                  album: activeMenu.song.album || '',
-                  duration: activeMenu.song.duration || 0,
-                  filePath: activeMenu.song.filePath,
-                  artworkPath: activeMenu.song.artworkPath,
-                  size: activeMenu.song.size,
-                  sampleRate: activeMenu.song.sampleRate,
-                  isOnline: false,
-                  autoDownload: false,
-                  autoPlay: false
-                })
-                setActiveMenu(null)
-              }}
-              className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted transition-colors hover:bg-white/10 hover:text-text"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              Replace Audio / Re-download
-            </button>
-          )}
-          <div className="mx-2 my-1 h-px bg-white/10" />
-          <button
-            type="button"
-            onClick={() => {
-              handleRemoveSong(activeMenu.song)
-              setActiveMenu(null)
-            }}
-            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs text-danger transition-colors hover:bg-danger/10"
-          >
-            <Trash2 className="h-3.5 w-3.5 fill-current" />
-            Remove from Library
-          </button>
-        </div>
+        <LibraryContextMenu
+          activeMenu={activeMenu}
+          isRemoteConnected={isRemoteConnected}
+          onClose={() => setActiveMenu(null)}
+          onPlaySong={handlePlaySong}
+          onEnqueueSong={enqueueSong}
+          onStartSongRadio={(song) => void handleStartSongRadio(song)}
+          onStartArtistRadio={(artist) => void handleStartArtistRadio(artist)}
+          onGoToAlbum={(artist, album) => {
+            navigate(`/album/${encodeURIComponent(artist)}/${encodeURIComponent(album)}`)
+          }}
+          onGoToArtist={(artist) => {
+            navigate(`/artist/${encodeURIComponent(artist)}`)
+          }}
+          onShowCredits={(song) => setCreditsSong(song)}
+          onShareSong={handleShareSong}
+          onShowInExplorer={handleShowInExplorer}
+          onRemoveSong={handleRemoveSong}
+          onOpenDownloadPanel={onOpenDownloadPanel}
+        />
       )}
+
       <SongCreditsModal
         song={creditsSong}
         isOpen={Boolean(creditsSong)}

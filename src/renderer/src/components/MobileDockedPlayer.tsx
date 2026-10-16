@@ -3,12 +3,14 @@ import { Play, Pause, SkipForward, Laptop2, Smartphone, Radio, Globe } from 'luc
 import { remoteClient, type RemotePlayerState } from '../pages/Remote/remoteClient'
 import { usePlayerStore } from '../hooks/usePlayerStore'
 import { useOnlineStore } from '../hooks/useOnlineStore'
+import { useListeningStore } from '../hooks/useListeningStore'
 import {
   useConnectedDeviceStore,
   sendDeviceCommand
 } from '../hooks/useConnectedDeviceStore'
 import { getCurrentDeviceId } from '../lib/deviceInfo'
 import { resolveEffectivePlaybackState } from '../lib/playbackStateResolver'
+import PingPongMarquee from './Common/PingPongMarquee'
 
 interface MobileDockedPlayerProps {
   onExpand: () => void
@@ -23,6 +25,8 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
 
   const user = useOnlineStore((s) => s.user)
   const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
+  const activeRoom = useListeningStore((s) => s.joinedRoom || s.hostRoom)
+  const joinedRoom = useListeningStore((s) => s.joinedRoom)
   const myDeviceId = getCurrentDeviceId()
 
   const localQueue = usePlayerStore((s) => s.queue)
@@ -58,6 +62,7 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
     activeRemote,
     lanState: remoteState,
     isLanConnected: isRemoteConnected,
+    joinedRoom,
     myDeviceId
   })
 
@@ -171,28 +176,40 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
 
       {/* Title & Device Badge */}
       <div className="flex-1 min-w-0 pr-1">
-        <h4 className="text-xs font-bold text-white truncate leading-tight">{title}</h4>
+        <PingPongMarquee
+          text={title}
+          active={isPlaying}
+          speed={32}
+          className="text-xs font-bold text-white leading-tight"
+        />
         <div className="flex items-center gap-2 mt-0.5 text-[11px] text-zinc-400 truncate">
           <span className="truncate">{artist}</span>
           <span className="text-zinc-600">•</span>
-          <button
-            type="button"
-            onClick={handleDeviceClick}
-            className={`shrink-0 flex items-center gap-1 font-semibold text-[10px] transition ${
-              isRemote ? 'text-emerald-400 hover:text-emerald-300' : 'text-zinc-400 hover:text-zinc-300'
-            }`}
-          >
-            {deviceCategory === 'app_pc' ? (
-              <Laptop2 className="w-3 h-3 text-emerald-400" />
-            ) : deviceCategory === 'web_pc' ? (
-              <Globe className="w-3.5 h-3.5 text-emerald-400" />
-            ) : (
-              <Smartphone className={`w-3 h-3 ${isRemote ? 'text-emerald-400' : 'text-zinc-300'}`} />
-            )}
-            <span>
-              {isRemote ? `Listening on ${deviceName}` : deviceName}
+          {activeRoom ? (
+            <span className="shrink-0 flex items-center gap-1 font-semibold text-[10px] text-emerald-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="truncate max-w-[120px]">Together: {activeRoom.name}</span>
             </span>
-          </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleDeviceClick}
+              className={`shrink-0 flex items-center gap-1 font-semibold text-[10px] transition ${
+                isRemote ? 'text-emerald-400 hover:text-emerald-300' : 'text-zinc-400 hover:text-zinc-300'
+              }`}
+            >
+              {deviceCategory === 'app_pc' ? (
+                <Laptop2 className="w-3 h-3 text-emerald-400" />
+              ) : deviceCategory === 'web_pc' ? (
+                <Globe className="w-3.5 h-3.5 text-emerald-400" />
+              ) : (
+                <Smartphone className={`w-3 h-3 ${isRemote ? 'text-emerald-400' : 'text-zinc-300'}`} />
+              )}
+              <span>
+                {isRemote ? `Listening on ${deviceName}` : deviceName}
+              </span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -233,7 +250,7 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
       {/* Sliver Progress Bar on bottom of docked player */}
       <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-white/10 rounded-full overflow-hidden">
         <div
-          className="h-full bg-white transition-all duration-300"
+          className="h-full bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.9)] transition-all duration-300"
           style={{ width: `${progressPercent}%` }}
         />
       </div>

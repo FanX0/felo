@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { AlertTriangle, Home, RotateCcw } from 'lucide-react'
+import { triggerChunkLoadRecovery } from '../lib/swUpdateCoordinator'
 
 interface ErrorBoundaryProps {
   children: ReactNode
@@ -26,6 +27,14 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
   public componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
     console.error('[ErrorBoundary caught error]:', error?.message, errorInfo?.componentStack)
     this.setState({ componentStack: errorInfo?.componentStack })
+
+    const isChunkError =
+      /Failed to fetch dynamically imported module|error loading dynamically imported module|ChunkLoadError/i.test(
+        error?.message || ''
+      )
+    if (isChunkError) {
+      triggerChunkLoadRecovery(error)
+    }
   }
 
   private handleReset = (): void => {

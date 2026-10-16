@@ -1065,9 +1065,9 @@ function ProfileWorkspace(): ReactElement {
             )}
             <p className="mt-3 sm:mt-4 text-xs sm:text-sm font-bold text-white/80">
               @{viewedProfile.username} <span className="mx-1 text-white/40">•</span>{' '}
-              {playlists.length} online {playlists.length === 1 ? 'playlist' : 'playlists'}
+              {playlists.length} {playlists.length === 1 ? 'playlist' : 'playlists'}
               <span className="mx-1 text-white/40">•</span>
-              {followerCount} followers
+              {followerCount} {followerCount === 1 ? 'follower' : 'followers'}
               <span className="mx-1 text-white/40">•</span>
               {followingCount} following
             </p>
@@ -1146,24 +1146,32 @@ function ProfileWorkspace(): ReactElement {
                     Message
                   </button>
 
-                  <button
-                    type="button"
-                    disabled={joining || !friendRoom}
-                    onClick={() => void listenTogether()}
-                    title={
-                      friendRoom
-                        ? `Join ${viewedProfile.display_name}'s session`
-                        : `${viewedProfile.display_name} is not listening now`
-                    }
-                    className="flex h-10 items-center gap-2 rounded-full bg-white px-5 text-sm font-black text-black hover:bg-white/90 disabled:cursor-not-allowed disabled:bg-surface-elevated disabled:text-text-muted"
-                  >
-                    {joining ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
+                  {friendRoom ? (
+                    <button
+                      type="button"
+                      disabled={joining}
+                      onClick={() => void listenTogether()}
+                      title={`Join ${viewedProfile.display_name}'s room directly without code`}
+                      className="flex h-10 items-center gap-2 rounded-full bg-emerald-400 hover:bg-emerald-300 px-5 text-sm font-black text-black transition-all shadow-sm"
+                    >
+                      {joining ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Radio className="h-4 w-4 animate-pulse" />
+                      )}
+                      <span>Room Ready • Join</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled
+                      title={`${viewedProfile.display_name} has not created a listening room yet`}
+                      className="flex h-10 items-center gap-2 rounded-full bg-surface-elevated px-5 text-sm font-bold text-text-muted cursor-not-allowed opacity-60"
+                    >
                       <Radio className="h-4 w-4" />
-                    )}
-                    {friendRoom ? 'Listen together' : 'Not listening now'}
-                  </button>
+                      <span>No Active Room</span>
+                    </button>
+                  )}
                 </>
               )}
             </>
@@ -1475,17 +1483,21 @@ function ProfileWorkspace(): ReactElement {
         <section className="mt-8">
           <div className="flex items-end justify-between">
             <div>
-              <h2 className="text-2xl font-black text-text">Online playlists</h2>
+              <h2 className="text-2xl font-black text-text">Playlists</h2>
               <p className="mt-1 text-sm text-text-muted">Playlists available to you</p>
             </div>
-
           </div>
           {playlists.length > 0 ? (
             <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
               {playlists.slice(0, 5).map((playlist) => (
                 <div
                   key={playlist.id}
-                  className="group min-w-0 rounded-md bg-surface p-3 transition-colors hover:bg-hover"
+                  onClick={() => {
+                    if (playlist.source_local_playlist_id) {
+                      navigate(`/playlists/${playlist.source_local_playlist_id}`)
+                    }
+                  }}
+                  className={`group min-w-0 rounded-md bg-surface p-3 transition-colors hover:bg-hover ${playlist.source_local_playlist_id ? 'cursor-pointer' : ''}`}
                 >
                   <div className="flex aspect-square items-center justify-center rounded-md bg-surface-elevated">
                     <ListMusic className="h-12 w-12 text-text-muted transition-colors group-hover:text-text" />
@@ -1501,7 +1513,7 @@ function ProfileWorkspace(): ReactElement {
             <div className="mt-5 flex min-h-40 flex-col items-center justify-center border-y border-border/60 text-center">
               <ListMusic className="h-8 w-8 text-text-muted" />
               <p className="mt-3 text-sm font-bold text-text-muted">
-                No online playlists are visible
+                No playlists are visible
               </p>
             </div>
           )}

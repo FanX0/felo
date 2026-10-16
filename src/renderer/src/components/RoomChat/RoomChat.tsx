@@ -67,8 +67,8 @@ export default function RoomChat({
 
       if (cmd === 'invite') {
         const msg = roomCode
-          ? `🎧 Room Code: **${roomCode}** • Join our live session in Felo with this code!`
-          : `🎧 Listen Together session is active in this room!`
+          ? `Room Code: **${roomCode}** • Join our live session in Felo with this code!`
+          : `Listen Together session is active in this room!`
         try {
           await sendMessage(roomId, msg)
         } catch (err: any) {
@@ -79,8 +79,8 @@ export default function RoomChat({
 
       if (cmd === 'np' || cmd === 'nowplaying') {
         const msg = currentSong
-          ? `🎶 **Now Playing:** **${currentSong.title}** by **${currentSong.artist}**`
-          : `🔇 No track currently playing.`
+          ? `**Now Playing:** **${currentSong.title}** by **${currentSong.artist}**`
+          : `No track currently playing.`
         try {
           await sendMessage(roomId, msg)
         } catch (err: any) {
@@ -93,13 +93,13 @@ export default function RoomChat({
         if (isHost) {
           player.playNext(true)
           try {
-            await sendMessage(roomId, `⏭️ Skipped track`)
+            await sendMessage(roomId, `Skipped track`)
           } catch {
             // ignore
           }
         } else {
           try {
-            await sendMessage(roomId, `⏭️ Requested skip`)
+            await sendMessage(roomId, `Requested skip`)
           } catch (err: any) {
             setSendError(err?.message || 'Failed to send message')
           }
@@ -111,13 +111,13 @@ export default function RoomChat({
         if (isHost) {
           player.setIsPlaying(false)
           try {
-            await sendMessage(roomId, `⏸️ Paused playback`)
+            await sendMessage(roomId, `Paused playback`)
           } catch {
             // ignore
           }
         } else {
           try {
-            await sendMessage(roomId, `⏸️ Requested pause`)
+            await sendMessage(roomId, `Requested pause`)
           } catch (err: any) {
             setSendError(err?.message || 'Failed to send message')
           }
@@ -129,13 +129,13 @@ export default function RoomChat({
         if (isHost) {
           player.setIsPlaying(true)
           try {
-            await sendMessage(roomId, `▶️ Resumed playback`)
+            await sendMessage(roomId, `Resumed playback`)
           } catch {
             // ignore
           }
         } else {
           try {
-            await sendMessage(roomId, `▶️ Requested resume`)
+            await sendMessage(roomId, `Requested resume`)
           } catch (err: any) {
             setSendError(err?.message || 'Failed to send message')
           }
@@ -154,7 +154,7 @@ export default function RoomChat({
             )
             if (match) {
               player.enqueueSong(match)
-              await sendMessage(roomId, `🎶 Queued: **${match.title}** by **${match.artist}**`)
+              await sendMessage(roomId, `Queued: **${match.title}** by **${match.artist}**`)
               return
             } else {
               void downloadTrackInBackground(
@@ -167,7 +167,7 @@ export default function RoomChat({
               )
               await sendMessage(
                 roomId,
-                `📥 Song not in library. Downloading **"${query}"** via your prioritized providers...`
+                `Song not in library. Downloading **"${query}"** via your prioritized providers...`
               )
               return
             }
@@ -176,7 +176,7 @@ export default function RoomChat({
           }
         }
         try {
-          await sendMessage(roomId, `🎵 Song request: "${query}"`)
+          await sendMessage(roomId, `Song request: "${query}"`)
         } catch (err: any) {
           setSendError(err?.message || 'Failed to send message')
         }
@@ -187,7 +187,7 @@ export default function RoomChat({
         try {
           await sendMessage(
             roomId,
-            `📥 **Download Felo Music Player:** https://bit.ly/47iv3PK`
+            `**Download Felo Music Player:** https://bit.ly/47iv3PK`
           )
         } catch (err: any) {
           setSendError(err?.message || 'Failed to send message')
@@ -199,7 +199,7 @@ export default function RoomChat({
         try {
           await sendMessage(
             roomId,
-            `💡 Available Chat Commands: /play <song>, /skip, /pause, /resume, /np, /invite, /download`
+            `Available Chat Commands: /play <song>, /skip, /pause, /resume, /np, /invite, /download`
           )
         } catch (err: any) {
           setSendError(err?.message || 'Failed to send message')
@@ -255,6 +255,17 @@ export default function RoomChat({
           </div>
         ) : (
           messages.map((msg) => {
+            if (msg.isLocalSystem) {
+              return (
+                <div key={msg.id} className="flex justify-center my-2 animate-in fade-in zoom-in-95 duration-200">
+                  <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs shadow-md backdrop-blur-sm select-text text-center">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span className="font-medium">{msg.body}</span>
+                  </div>
+                </div>
+              )
+            }
+
             const isMe = msg.sender_id === user?.id
             return (
               <div

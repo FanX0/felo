@@ -27,7 +27,6 @@ self.addEventListener('install', (event) => {
           console.warn('[SW] Partial pre-cache failure (assets will be cached on first request):', err)
         }
       })
-      .then(() => self.skipWaiting())
   )
 })
 
@@ -207,6 +206,18 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('message', (event) => {
   if (event.data === 'SKIP_WAITING' || event.data?.type === 'SKIP_WAITING') {
     self.skipWaiting()
+  }
+
+  if (event.data?.type === 'FELO_SW_GENERATION_REQUEST') {
+    const requestId = event.data.requestId
+    const client = event.source
+    if (client && typeof client.postMessage === 'function') {
+      client.postMessage({
+        type: 'FELO_SW_GENERATION_RESPONSE',
+        requestId,
+        version: VERSION
+      })
+    }
   }
 
   if (event.data === 'CLEAR_CACHES' || event.data?.type === 'CLEAR_CACHES') {

@@ -90,15 +90,15 @@ export function AppleChartsTab({
         <button
           type="button"
           onClick={() => setSelectedAppleChart(null)}
-          className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-surface-elevated/80 px-4 py-2 text-xs font-bold text-white transition-all hover:bg-hover hover:scale-105"
+          className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-elevated px-4 py-2 text-xs font-semibold text-text transition-all hover:bg-hover hover:text-white"
         >
           <ArrowLeft className="h-4 w-4" />
           <span>Back to Apple charts</span>
         </button>
 
         {/* Hero Header */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-end gap-6 rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-surface-elevated/90 p-6 sm:p-8 shadow-2xl">
-          <div className="relative h-40 w-40 shrink-0 overflow-hidden rounded-xl bg-surface shadow-2xl">
+        <div className="flex flex-col sm:flex-row items-start sm:items-end gap-6 rounded-2xl border border-border bg-surface-elevated p-6 sm:p-8 shadow-sm">
+          <div className="relative h-40 w-40 shrink-0 overflow-hidden rounded-xl bg-surface border border-border shadow-sm">
             <ArtworkImage
               src={selectedAppleChart.coverUrl}
               title={selectedAppleChart.name}
@@ -107,7 +107,7 @@ export function AppleChartsTab({
             />
           </div>
           <div className="min-w-0 flex-1">
-            <span className="inline-flex items-center gap-1.5 rounded-md bg-black/60 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-white border border-white/10">
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-surface border border-border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
               {selectedAppleChart.badge || 'Apple Music Chart'}
             </span>
             <h1 className="mt-2 text-2xl sm:text-4xl font-black tracking-tight text-white">
@@ -122,28 +122,33 @@ export function AppleChartsTab({
                 type="button"
                 disabled={appleTracks.length === 0}
                 onClick={handlePlayChart}
-                className="flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-xs font-black text-black shadow-xl transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
+                className="flex items-center gap-2 rounded-full bg-primary hover:bg-primary-hover text-primary-foreground px-5 py-2.5 text-xs font-bold shadow-sm transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
               >
-                <Play className="h-4 w-4 fill-black ml-0.5" />
+                <Play className="h-4 w-4 fill-current ml-0.5" />
                 <span>Play Chart</span>
               </button>
-              <span className="text-xs font-bold text-text-muted">
+              <span className="text-xs font-semibold text-text-muted">
                 {appleTracks.length} tracks
               </span>
             </div>
           </div>
         </div>
 
-        {/* Tracks List */}
-        <div className="space-y-2">
-          <h3 className="text-lg font-black text-white px-1">Tracklist</h3>
+        {/* Tracks List - Parity with Local Song List */}
+        <div className="flex flex-col rounded-xl border border-border bg-surface overflow-hidden">
+          <div className="grid grid-cols-[36px_minmax(0,1fr)_80px] sm:grid-cols-[40px_minmax(0,2fr)_minmax(0,1.2fr)_140px] items-center gap-3 border-b border-border px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted bg-surface-elevated/40">
+            <div className="text-center font-medium">#</div>
+            <div>Title</div>
+            <div className="hidden sm:block">Album</div>
+            <div className="text-right pr-2">Duration</div>
+          </div>
 
           {isLoadingAppleTracks ? (
-            <div className="space-y-2">
+            <div className="space-y-2 p-3">
               {Array.from({ length: 10 }).map((_, i) => (
                 <div
                   key={i}
-                  className="flex items-center gap-3 rounded-xl bg-surface-elevated/40 px-4 py-3 animate-pulse"
+                  className="flex items-center gap-3 rounded-lg bg-surface-elevated/40 px-4 py-3 animate-pulse"
                 >
                   <div className="w-7 h-4 rounded bg-white/10" />
                   <div className="h-10 w-10 shrink-0 rounded-lg bg-white/10" />
@@ -163,13 +168,13 @@ export function AppleChartsTab({
               <button
                 type="button"
                 onClick={() => setSelectedAppleChart({ ...selectedAppleChart })}
-                className="mt-2 rounded-full bg-surface-elevated px-5 py-2 text-xs font-bold text-white hover:bg-hover border border-white/10"
+                className="mt-2 rounded-full bg-surface-elevated px-5 py-2 text-xs font-bold text-white hover:bg-hover border border-border"
               >
                 Retry
               </button>
             </div>
           ) : (
-            <div className="space-y-1">
+            <div className="divide-y divide-border/40">
               {appleTracks.map((track) => {
                 const isInLibrary = libraryIndex.has(track.title, track.artist)
                 const isCurrent = currentSong?.title === track.title
@@ -196,14 +201,16 @@ export function AppleChartsTab({
                   <div
                     key={track.id}
                     onClick={() => void onPlaySong(trackSongItem)}
-                    className="group flex cursor-pointer items-center justify-between gap-3 rounded-xl px-3 py-2 transition-colors hover:bg-hover"
+                    className={`group grid grid-cols-[36px_minmax(0,1fr)_80px] sm:grid-cols-[40px_minmax(0,2fr)_minmax(0,1.2fr)_140px] items-center gap-3 px-3 py-2 text-[13px] hover:bg-hover/50 cursor-pointer transition-colors ${
+                      isCurrent ? 'bg-surface-elevated' : ''
+                    }`}
                   >
-                    <div className="flex min-w-0 flex-1 items-center gap-3">
-                      <span className="w-7 shrink-0 text-right text-sm font-black text-text-muted tabular-nums">
-                        {track.rank}
-                      </span>
+                    <div className="text-center text-xs font-medium text-text-muted tabular-nums">
+                      {track.rank}
+                    </div>
 
-                      <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-surface shadow-sm">
+                    <div className="flex items-center gap-3 overflow-hidden min-w-0">
+                      <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-md bg-surface-elevated border border-border shadow-sm">
                         <ArtworkImage
                           src={track.artworkUrl}
                           title={track.title}
@@ -219,31 +226,29 @@ export function AppleChartsTab({
                           }}
                           className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100"
                         >
-                          <Play className="h-5 w-5 fill-white text-white ml-0.5" />
+                          <Play className="h-4 w-4 fill-white text-white ml-0.5" />
                         </button>
                       </div>
 
-                      <div className="min-w-0 flex-1">
+                      <div className="flex flex-col overflow-hidden min-w-0">
                         <p
-                          className={`truncate text-sm font-bold ${
-                            isCurrent ? 'text-primary-amber' : 'text-white'
+                          className={`truncate text-sm font-semibold ${
+                            isCurrent ? 'text-primary font-bold' : 'text-text'
                           }`}
                         >
                           {stripSourceSuffix(track.title)}
                         </p>
                         <p className="truncate text-xs text-text-muted mt-0.5">
                           {track.artist}
-                          {track.album && (
-                            <>
-                              <span className="text-white/20"> • </span>
-                              {stripSourceSuffix(track.album)}
-                            </>
-                          )}
                         </p>
                       </div>
                     </div>
 
-                    <div className="flex shrink-0 items-center gap-2 pr-2">
+                    <div className="hidden sm:block min-w-0 truncate text-xs text-text-muted">
+                      {track.album ? stripSourceSuffix(track.album) : '-'}
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2.5 pr-1">
                       {track.duration && track.duration > 0 && (
                         <span className="text-xs text-text-muted tabular-nums">
                           {Math.floor(track.duration / 60)}:
@@ -267,16 +272,10 @@ export function AppleChartsTab({
                               ? 'In your library (Click to choose source or replace)'
                               : 'Download track to library'
                         }
-                        className={`h-7 w-7 flex items-center justify-center rounded-full transition-all ${
-                          isDownloading
-                            ? 'text-primary-amber'
-                            : isInLibrary
-                              ? 'text-text-muted hover:text-white hover:bg-white/10'
-                              : 'text-text-muted opacity-0 group-hover:opacity-100 hover:text-white hover:bg-white/10'
-                        }`}
+                        className="h-7 w-7 flex items-center justify-center rounded-full text-text-muted hover:text-white hover:bg-hover transition-all"
                       >
                         {isDownloading ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <Loader2 className="h-4 w-4 animate-spin text-primary" />
                         ) : isInLibrary ? (
                           <CheckCircle2 className="h-4 w-4" />
                         ) : (
@@ -369,14 +368,14 @@ export function AppleChartsTab({
               onClick={() => setAppleSection(tab.id)}
               className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
                 isActive
-                  ? 'bg-white text-black shadow-md'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
                   : 'bg-surface-elevated text-text-muted hover:bg-hover hover:text-white'
               }`}
             >
               <span>{tab.label}</span>
               <span
                 className={`rounded-full px-1.5 py-0.2 text-[10px] font-black ${
-                  isActive ? 'bg-black/15 text-black' : 'bg-white/10 text-text-muted'
+                  isActive ? 'bg-primary-foreground/15 text-primary-foreground' : 'bg-white/10 text-text-muted'
                 }`}
               >
                 {tab.count}

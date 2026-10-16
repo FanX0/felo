@@ -189,28 +189,96 @@ export function useHomeData() {
       const valid = librarySongs.filter(
         (s) => s.filePath && !String(s.filePath).startsWith('virtual:')
       )
-      const localRecommendations: HomeSongItem[] = valid.slice(0, 30).map((s) => ({
+      const localRecommendations: HomeSongItem[] = valid.slice(0, 50).map((s) => ({
         id: s.id,
         title: s.title,
         artist: s.artist,
+        artists: s.artists,
         album: s.album,
         duration: s.duration,
-        artworkUrl: (toMediaUrl(s.artworkPath) || undefined) as string | undefined
+        artworkUrl: (toMediaUrl(s.artworkPath) || s.artworkUrl || undefined) as string | undefined,
+        codec: s.codec,
+        container: s.container,
+        bitrate: s.bitrate,
+        sampleRate: s.sampleRate,
+        bitDepth: s.bitDepth,
+        filePath: s.filePath,
+        dateAdded: s.dateAdded,
+        size: s.size
       }))
       setRecommendedSongs(localRecommendations)
 
-      const albumMap = new Map<string, HomeAlbumItem>()
-      for (const song of valid) {
-        if (!song.album || albumMap.has(song.album)) continue
-        albumMap.set(song.album, {
-          id: `local-album-${song.album}`,
-          title: song.album,
-          artist: song.artist || 'Various Artists',
-          artworkUrl: (toMediaUrl(song.artworkPath) || undefined) as string | undefined,
-          songCount: 1
-        })
-      }
-      setRecommendedAlbums(Array.from(albumMap.values()).slice(0, 12))
+      // Load true local albums from SQLite database / IndexedDB web library
+      void (async () => {
+        try {
+          if (window.api?.getAlbums) {
+            const raw = await window.api.getAlbums()
+            if (Array.isArray(raw) && raw.length > 0) {
+              setRecommendedAlbums(
+                raw.map((a: any) => ({
+                  id: String(a.id || `local-album-${a.title}`),
+                  title: a.title,
+                  artist: a.artistName || a.artist || 'Various Artists',
+                  artworkUrl: (toMediaUrl(a.artworkPath) || a.artworkUrl || undefined) as string | undefined,
+                  songCount: a.songCount || 1,
+                  year: a.year
+                }))
+              )
+              return
+            }
+          }
+        } catch (e) {
+          console.warn('window.api.getAlbums failed, falling back to local songs scan:', e)
+        }
+
+        // Fallback: aggregate from all valid librarySongs
+        const albumMap = new Map<
+          string,
+          {
+            album: string
+            artist: string
+            artworkUrl?: string
+            songCount: number
+            year?: string | number
+          }
+        >()
+
+        for (const song of valid) {
+          const albumName = song.album?.trim()
+          if (!albumName || albumName.toLowerCase() === 'unknown album') continue
+          const artistName = song.artist?.trim() || 'Various Artists'
+          const key = `${albumName.toLowerCase()}:::${artistName.toLowerCase()}`
+          const existing = albumMap.get(key)
+          const art = (toMediaUrl(song.artworkPath) || song.artworkUrl || undefined) as string | undefined
+          if (existing) {
+            existing.songCount++
+            if (!existing.artworkUrl && art) existing.artworkUrl = art
+          } else {
+            albumMap.set(key, {
+              album: albumName,
+              artist: artistName,
+              artworkUrl: art,
+              songCount: 1,
+              year: (song as any).year
+            })
+          }
+        }
+
+        const sorted = Array.from(albumMap.values()).sort(
+          (a, b) => b.songCount - a.songCount || a.album.localeCompare(b.album)
+        )
+
+        setRecommendedAlbums(
+          sorted.slice(0, 24).map((item) => ({
+            id: `local-album-${item.album}`,
+            title: item.album,
+            artist: item.artist,
+            artworkUrl: item.artworkUrl,
+            songCount: item.songCount,
+            year: item.year
+          }))
+        )
+      })()
     }
   }, [librarySongs])
 

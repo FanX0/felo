@@ -16,8 +16,11 @@ export const AppCapabilities = {
   // Online music discovery tabs (Apple charts, Spotify playlists, AOTY, Last.fm)
   onlineDiscovery: !isPublicMode,
 
-  // Online external catalog search (Apple Music, MusicBrainz, Last.fm)
+  // Online external catalog search (Apple Music, MusicBrainz)
   onlineSearch: !isPublicMode,
+
+  // Last.fm search & metadata (Private desktop app only, excluded from web & public releases)
+  lastFm: !isPublicMode,
 
   // Direct file downloads & provider scrapers (Enabled ONLY in private desktop app)
   downloads: !isPublicMode,

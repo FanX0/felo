@@ -105,7 +105,113 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
   const [inputBody, setInputBody] = useState('')
   const [searchFilter, setSearchFilter] = useState('')
   const [sendError, setSendError] = useState<string | null>(null)
+  const [otherMemberRoom, setOtherMemberRoom] = useState<any | null>(null)
+  const [friendsWithRooms, setFriendsWithRooms] = useState<Set<string>>(new Set())
+  const [isJoiningRoom, setIsJoiningRoom] = useState(false)
+  const [roomActionNotice, setRoomActionNotice] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  // Track if chat partner currently has an active listening room (as host or member)
+  useEffect(() => {
+    const friendId = activeConversation?.otherMember?.id
+    if (!friendId) {
+      setOtherMemberRoom(null)
+      return
+    }
+
+    let isCancelled = false
+    const checkRoom = async () => {
+      try {
+        const supabase = getSupabase()
+        const { data: hostRoom } = await supabase
+          .from('listening_rooms')
+          .select('*')
+          .eq('host_id', friendId)
+          .eq('is_active', true)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+
+        if (!isCancelled && hostRoom) {
+          setOtherMemberRoom(hostRoom)
+          return
+        }
+
+        // Check if member in an active room
+        const { data: memberRows } = await supabase
+          .from('listening_room_members')
+          .select('room_id')
+          .eq('user_id', friendId)
+          .limit(1)
+
+        if (!isCancelled && memberRows && memberRows.length > 0) {
+          const { data: joinedRoom } = await supabase
+            .from('listening_rooms')
+            .select('*')
+            .eq('id', memberRows[0].room_id)
+            .eq('is_active', true)
+            .maybeSingle()
+
+          if (!isCancelled) {
+            setOtherMemberRoom(joinedRoom || null)
+          }
+        } else if (!isCancelled) {
+          setOtherMemberRoom(null)
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    void checkRoom()
+    const timer = setInterval(checkRoom, 8000)
+    return () => {
+      isCancelled = true
+      clearInterval(timer)
+    }
+  }, [activeConversation?.otherMember?.id])
+
+  // Track active rooms for friends in the quick row
+  useEffect(() => {
+    if (!friends || friends.length === 0) {
+      setFriendsWithRooms(new Set())
+      return
+    }
+
+    let isCancelled = false
+    const loadRooms = async () => {
+      try {
+        const friendIds = friends.map((f) => f.id)
+        const supabase = getSupabase()
+        const [{ data: hostRooms }, { data: memberRows }] = await Promise.all([
+          supabase
+            .from('listening_rooms')
+            .select('host_id')
+            .in('host_id', friendIds)
+            .eq('is_active', true),
+          supabase
+            .from('listening_room_members')
+            .select('user_id, room_id')
+            .in('user_id', friendIds)
+        ])
+
+        if (isCancelled) return
+        const activeIds = new Set<string>()
+        ;(hostRooms || []).forEach((r: any) => activeIds.add(r.host_id))
+        ;(memberRows || []).forEach((m: any) => activeIds.add(m.user_id))
+        setFriendsWithRooms(activeIds)
+      } catch {
+        // ignore
+      }
+    }
+
+    void loadRooms()
+    const timer = setInterval(loadRooms, 12000)
+    return () => {
+      isCancelled = true
+      clearInterval(timer)
+    }
+  }, [friends])
 
   // 1. Load conversations & friends on mount
   useEffect(() => {
@@ -297,6 +403,7 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
             <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
               {filteredFriends.map((friend) => {
                 const isActive = activeConversation?.otherMember.id === friend.id
+                const hasRoom = friendsWithRooms.has(friend.id)
                 return (
                   <button
                     key={friend.id}
@@ -305,18 +412,28 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
                     className={`group flex flex-col items-center gap-1 shrink-0 p-1.5 rounded-xl transition-all ${
                       isActive ? 'bg-surface-elevated text-text border border-border' : 'hover:bg-hover text-text-muted hover:text-text'
                     }`}
-                    title={`Chat with ${friend.display_name}`}
+                    title={hasRoom ? `${friend.display_name} has an active party room! Click to chat & join` : `Chat with ${friend.display_name}`}
                   >
-                    <div className="relative flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface text-xs font-black text-text overflow-hidden shadow-sm">
+                    <div className="relative flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface text-xs font-black text-text shadow-sm">
                       {friend.avatar_url ? (
-                        <img src={friend.avatar_url} alt="" className="h-full w-full object-cover" />
+                        <img src={friend.avatar_url} alt="" className="h-full w-full rounded-full object-cover" />
                       ) : (
                         friend.display_name.slice(0, 1).toUpperCase()
                       )}
+                      {hasRoom && (
+                        <span
+                          className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full border-2 border-surface bg-emerald-500 shadow-sm"
+                          title="In Party Room"
+                        >
+                          <Radio className="h-2.5 w-2.5 animate-pulse text-black" />
+                        </span>
+                      )}
                     </div>
-                    <span className={`max-w-[54px] truncate text-[10px] font-bold ${isActive ? 'text-text' : 'text-text-muted'}`}>
-                      {friend.display_name.split(' ')[0]}
-                    </span>
+                    <div className="flex items-center justify-center gap-0.5 max-w-[58px]">
+                      <span className={`truncate text-[10px] font-bold ${hasRoom ? 'text-emerald-400 font-black' : isActive ? 'text-text' : 'text-text-muted'}`}>
+                        {friend.display_name.split(' ')[0]}
+                      </span>
+                    </div>
                   </button>
                 )
               })}
@@ -344,7 +461,7 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
               const isSelected = activeConversation?.id === conv.id
               const lastMsgText = conv.lastMessage
                 ? conv.lastMessage.song
-                  ? `🎵 Shared: ${conv.lastMessage.song.title}`
+                  ? `Shared: ${conv.lastMessage.song.title}`
                   : conv.lastMessage.body
                 : 'No messages yet'
 
@@ -423,21 +540,44 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
 
               <div className="flex items-center gap-2">
                 {/* Listen Together quick link */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    void useListeningStore
-                      .getState()
-                      .listenAlongWithFriend(activeConversation.otherMember.id)
-                      .then(() => navigate('/listen-together'))
-                      .catch(() => navigate('/listen-together'))
-                  }}
-                  title="Listen together in real-time"
-                  className="flex items-center gap-1.5 rounded-full border border-border bg-surface-elevated hover:bg-hover hover:text-text px-3.5 py-1.5 text-xs font-bold text-text-muted transition-all shadow-sm"
-                >
-                  <Radio className="h-3.5 w-3.5" />
-                  <span>Listen Together</span>
-                </button>
+                {otherMemberRoom ? (
+                  <button
+                    type="button"
+                    disabled={isJoiningRoom}
+                    onClick={async () => {
+                      setIsJoiningRoom(true)
+                      try {
+                        await useListeningStore.getState().listenAlongWithFriend(activeConversation.otherMember.id)
+                        navigate('/listen-together')
+                      } catch (err: any) {
+                        setRoomActionNotice(err?.message || 'Could not join session.')
+                        setTimeout(() => setRoomActionNotice(null), 4000)
+                      } finally {
+                        setIsJoiningRoom(false)
+                      }
+                    }}
+                    title={`Join ${activeConversation.otherMember.display_name}'s room directly without code`}
+                    className="flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/15 hover:bg-emerald-500/25 px-3.5 py-1.5 text-xs font-black text-emerald-400 transition-all shadow-sm hover:scale-105 active:scale-95"
+                  >
+                    <Radio className="h-3.5 w-3.5 animate-pulse text-emerald-400" />
+                    <span>Room Ready • Join</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRoomActionNotice(
+                        `${activeConversation.otherMember.display_name} has not created a listening room yet. The host must create a room first.`
+                      )
+                      setTimeout(() => setRoomActionNotice(null), 4500)
+                    }}
+                    title="Friend has not created a room yet"
+                    className="flex items-center gap-1.5 rounded-full border border-border bg-surface-elevated/60 px-3.5 py-1.5 text-xs font-bold text-text-muted transition-all opacity-60 hover:opacity-100"
+                  >
+                    <Radio className="h-3.5 w-3.5 text-text-muted" />
+                    <span>No Active Room</span>
+                  </button>
+                )}
 
                 {/* Profile Link */}
                 <NavLink
@@ -449,6 +589,12 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
                 </NavLink>
               </div>
             </header>
+
+            {roomActionNotice && (
+              <div className="mx-6 mt-3 rounded-xl border border-border bg-surface-elevated px-4 py-2 text-xs font-semibold text-text animate-fade-in">
+                {roomActionNotice}
+              </div>
+            )}
 
             {/* Messages Scroll Area */}
             <div className="flex-1 overflow-y-auto p-6 space-y-3">
@@ -516,7 +662,7 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
                             }`}
                           >
                             <div className="flex items-center gap-3">
-                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-amber/20 text-primary-amber border border-primary-amber/30">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface border border-border text-primary">
                                 <Music2 className="h-5 w-5" />
                               </div>
                               <div className="min-w-0 flex-1">
@@ -651,7 +797,7 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
       {/* Error Banner - visible in both active and empty states */}
       {error && (
         <div className="absolute bottom-16 left-80 right-0 border-t border-danger/30 bg-danger/10 px-6 py-2 text-xs font-bold text-danger z-10">
-          ⚠ {error}
+          {error}
         </div>
       )}
     </div>

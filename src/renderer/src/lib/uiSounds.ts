@@ -1,0 +1,348 @@
+/**
+ * Felo UI Sounds — Direct Port from MUSIXQUARE
+ *
+ * Code-generated pitchless micro-transient tactile sounds for UI feedback.
+ * Intentionally bypasses the media-effects graph (no EQ or Reverb alteration).
+ */
+
+import { audioDspEngine } from './audioDspEngine'
+
+const STORAGE_KEY = 'felo-ui-sounds-enabled'
+const SESSION_SOUND_COOLDOWN_MS = 300
+const UI_TOUCH_COOLDOWN_MS = 35
+const ANNOUNCEMENT_LOW_FREQUENCY_HZ = 523.25
+const ANNOUNCEMENT_HIGH_FREQUENCY_HZ = 659.25
+const ATTENTION_OUTPUT_GAIN = 2.5
+
+type OutputGraph = {
+  context: AudioContext
+  touchInput: GainNode
+  attentionInput: GainNode
+}
+
+type ToneOptions = {
+  from: number
+  to?: number
+  delay?: number
+  duration: number
+  gain: number
+  attack: number
+  release: number
+  pan?: number
+}
+
+let outputGraph: OutputGraph | null = null
+let enabledCache: boolean | null = null
+let preferenceRevision = 0
+let lastUiTouchAt = Number.NEGATIVE_INFINITY
+let lastSessionSoundAt = Number.NEGATIVE_INFINITY
+let initialized = false
+let removeDomListeners: (() => void) | null = null
+
+function nowMs(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
+export function isUiSoundsEnabled(): boolean {
+  if (enabledCache !== null) return enabledCache
+  try {
+    const val = localStorage.getItem(STORAGE_KEY)
+    enabledCache = val === null ? true : val === '1' // default ON
+  } catch {
+    enabledCache = true
+  }
+  return enabledCache
+}
+
+export function setUiSoundsEnabled(enabled: boolean): void {
+  preferenceRevision += 1
+  enabledCache = enabled
+  try {
+    localStorage.setItem(STORAGE_KEY, enabled ? '1' : '0')
+  } catch {
+    // ignore
+  }
+}
+
+function canPlayUiSound(force = false): boolean {
+  return (
+    (force || isUiSoundsEnabled()) &&
+    (typeof document === 'undefined' || document.visibilityState !== 'hidden')
+  )
+}
+
+function ensureOutputGraph(context: AudioContext): OutputGraph {
+  if (outputGraph?.context === context) return outputGraph
+
+  const createCompressor = () => {
+    const compressor = context.createDynamicsCompressor()
+    compressor.threshold.value = -24
+    compressor.knee.value = 24
+    compressor.ratio.value = 4
+    compressor.attack.value = 0.003
+    compressor.release.value = 0.18
+    return compressor
+  }
+
+  const touchInput = context.createGain()
+  const touchCompressor = createCompressor()
+  touchInput.gain.value = 1
+  touchInput.connect(touchCompressor)
+  touchCompressor.connect(context.destination)
+
+  const attentionInput = context.createGain()
+  const attentionCompressor = createCompressor()
+  const attentionOutput = context.createGain()
+  attentionInput.gain.value = 1
+  attentionOutput.gain.value = ATTENTION_OUTPUT_GAIN
+  attentionInput.connect(attentionCompressor)
+  attentionCompressor.connect(attentionOutput)
+  attentionOutput.connect(context.destination)
+
+  outputGraph = { context, touchInput, attentionInput }
+  return outputGraph
+}
+
+function resumeFromGesture(): void {
+  if (!canPlayUiSound()) return
+  try {
+    const context = audioDspEngine.getAudioContext()
+    if (context.state !== 'running') void context.resume().catch(() => undefined)
+  } catch {
+    // Web Audio optional UI enhancement
+  }
+}
+
+async function readyOutput(force = false): Promise<OutputGraph | null> {
+  if (!canPlayUiSound(force)) return null
+  try {
+    const context = audioDspEngine.getAudioContext()
+    if (context.state !== 'running') {
+      await context.resume().catch(() => undefined)
+    }
+    if (context.state !== 'running' || !canPlayUiSound(force)) {
+      return null
+    }
+    return ensureOutputGraph(context)
+  } catch {
+    return null
+  }
+}
+
+function connectWithPan(
+  context: AudioContext,
+  source: AudioNode,
+  destination: AudioNode,
+  pan = 0
+): void {
+  try {
+    const panner = context.createStereoPanner()
+    panner.pan.value = pan
+    source.connect(panner)
+    panner.connect(destination)
+  } catch {
+    source.connect(destination)
+  }
+}
+
+function scheduleTone(
+  context: AudioContext,
+  destination: AudioNode,
+  baseTime: number,
+  options: ToneOptions
+): void {
+  const start = baseTime + (options.delay ?? 0)
+  const end = start + options.duration
+  const oscillator = context.createOscillator()
+  const gain = context.createGain()
+
+  oscillator.type = 'sine'
+  oscillator.frequency.setValueAtTime(options.from, start)
+  oscillator.frequency.exponentialRampToValueAtTime(options.to ?? options.from, end)
+
+  gain.gain.setValueAtTime(0.0001, start)
+  gain.gain.exponentialRampToValueAtTime(options.gain, start + options.attack)
+  gain.gain.exponentialRampToValueAtTime(0.0001, end + options.release)
+
+  oscillator.connect(gain)
+  connectWithPan(context, gain, destination, options.pan)
+  oscillator.start(start)
+  oscillator.stop(end + options.release + 0.01)
+}
+
+function schedulePitchlessTouch(context: AudioContext, destination: AudioNode, time: number): void {
+  const duration = 0.025
+  const totalDuration = 0.055
+  const body = 0.42
+  const snap = 0.22
+  const damping = 1.25
+  const amplitude = 0.34
+  const targetLevel = 0.075
+  const length = Math.max(1, Math.ceil(context.sampleRate * totalDuration))
+  const buffer = context.createBuffer(1, length, context.sampleRate)
+  const samples = buffer.getChannelData(0)
+  const pulses = [
+    [0.0006, 0.00042, 1],
+    [0.00135, 0.0006, -0.72],
+    [0.0026, 0.0009, 0.42],
+    [0.0049, 0.00145, -0.24],
+    [0.0084, 0.0022, 0.13]
+  ] as const
+  let peak = 0
+
+  for (let i = 0; i < samples.length; i += 1) {
+    const localTime = i / context.sampleRate
+    if (localTime > duration) break
+    const attack = Math.min(1, localTime / 0.00055)
+    const decay = Math.exp(-localTime * (86 * damping))
+    let pulseValue = 0
+    for (const [center, width, pulseGain] of pulses) {
+      const distance = (localTime - center) / width
+      pulseValue += Math.exp(-(distance * distance)) * pulseGain
+    }
+    const contact = pulseValue * decay * attack
+    const weight = body + snap * Math.exp(-localTime * 360)
+    const fadeIn = Math.min(1, localTime / 0.001)
+    const sample = contact * weight * amplitude * fadeIn
+    samples[i] = sample
+    peak = Math.max(peak, Math.abs(sample))
+  }
+
+  if (peak > 0) {
+    const scale = targetLevel / peak
+    for (let i = 0; i < samples.length; i += 1) samples[i] *= scale
+  }
+
+  const source = context.createBufferSource()
+  source.buffer = buffer
+  source.connect(destination)
+  source.start(time)
+}
+
+function scheduleMicroEcho(
+  context: AudioContext,
+  destination: AudioNode,
+  time: number,
+  frequency: number
+): void {
+  scheduleTone(context, destination, time, {
+    from: frequency,
+    duration: 0.18,
+    gain: 0.064,
+    attack: 0.003,
+    release: 0.14,
+    pan: -0.025
+  })
+  scheduleTone(context, destination, time, {
+    from: frequency,
+    delay: 0.13,
+    duration: 0.22,
+    gain: 0.026,
+    attack: 0.003,
+    release: 0.18,
+    pan: 0.04
+  })
+}
+
+async function playTouch(force = false): Promise<void> {
+  const revision = preferenceRevision
+  const output = await readyOutput(force)
+  if (!output || revision !== preferenceRevision) return
+  schedulePitchlessTouch(output.context, output.touchInput, output.context.currentTime + 0.006)
+}
+
+export function playUiTouchSound(options: { force?: boolean } = {}): void {
+  const now = nowMs()
+  if (!options.force && now - lastUiTouchAt < UI_TOUCH_COOLDOWN_MS) return
+  lastUiTouchAt = now
+  playTouch(options.force === true).catch(() => undefined)
+}
+
+export function playAnnouncementSound(): void {
+  readyOutput().then((output) => {
+    if (!output) return
+    const time = output.context.currentTime + 0.008
+    scheduleTone(output.context, output.attentionInput, time, {
+      from: ANNOUNCEMENT_LOW_FREQUENCY_HZ,
+      duration: 0.16,
+      gain: 0.055,
+      attack: 0.004,
+      release: 0.12,
+      pan: -0.04
+    })
+    scheduleTone(output.context, output.attentionInput, time, {
+      from: ANNOUNCEMENT_HIGH_FREQUENCY_HZ,
+      delay: 0.095,
+      duration: 0.23,
+      gain: 0.068,
+      attack: 0.004,
+      release: 0.18,
+      pan: 0.04
+    })
+  }).catch(() => undefined)
+}
+
+function playSessionSound(frequency: number): void {
+  const now = nowMs()
+  if (now - lastSessionSoundAt < SESSION_SOUND_COOLDOWN_MS) return
+  lastSessionSoundAt = now
+  readyOutput().then((output) => {
+    if (!output) return
+    scheduleMicroEcho(
+      output.context,
+      output.attentionInput,
+      output.context.currentTime + 0.008,
+      frequency
+    )
+  }).catch(() => undefined)
+}
+
+export function playParticipantJoinSound(): void {
+  playSessionSound(ANNOUNCEMENT_HIGH_FREQUENCY_HZ)
+}
+
+export function playParticipantLeaveSound(): void {
+  playSessionSound(ANNOUNCEMENT_LOW_FREQUENCY_HZ)
+}
+
+function isEligibleButton(target: EventTarget | null): target is HTMLElement {
+  if (!(target instanceof Element)) return false
+  const button = target.closest<HTMLElement>('button, [role="button"]')
+  if (!button) return false
+  if (button.matches(':disabled, [aria-disabled="true"], [data-ui-sound="off"]')) return false
+  if (button.closest('[data-ui-sound="off"]')) return false
+  if (button.matches('.playlist-reorder-handle, [role="slider"]')) return false
+  return true
+}
+
+export function initUiSounds(): void {
+  if (initialized) return
+  initialized = true
+
+  const handleClick = (event: MouseEvent) => {
+    if (!event.isTrusted || !isUiSoundsEnabled() || !isEligibleButton(event.target)) return
+    playUiTouchSound()
+  }
+  const handlePointerDown = (event: PointerEvent) => {
+    if (event.isTrusted) resumeFromGesture()
+  }
+  const handleKeyDown = (event: KeyboardEvent) => {
+    if (event.isTrusted && (event.key === 'Enter' || event.key === ' ')) resumeFromGesture()
+  }
+
+  document.addEventListener('click', handleClick)
+  document.addEventListener('pointerdown', handlePointerDown, { capture: true, passive: true })
+  document.addEventListener('keydown', handleKeyDown, { capture: true })
+  removeDomListeners = () => {
+    document.removeEventListener('click', handleClick)
+    document.removeEventListener('pointerdown', handlePointerDown, { capture: true })
+    document.removeEventListener('keydown', handleKeyDown, { capture: true })
+  }
+}
+
+export function destroyUiSounds(): void {
+  removeDomListeners?.()
+  removeDomListeners = null
+  initialized = false
+  outputGraph = null
+}

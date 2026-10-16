@@ -10,8 +10,15 @@ import {
 } from '../lib/downloadConfig'
 import { findMatchingLibrarySong, scoreProviderMatch, cleanSearchQuery } from '../lib/songMatching'
 import type { Song } from '../pages/Library/Library'
+import { getLocalSlotPoolFile, getCachedAudioBlobUrl } from '../lib/jitAudioPipeline'
+
+import { useConnectedDeviceStore } from '../hooks/useConnectedDeviceStore'
+import { isElectron } from '../lib/appConfig'
 
 export default function PlaybackStreamBridge(): null {
+  const playbackTarget = useConnectedDeviceStore((s) => s.playbackTarget)
+  const devicePlaybackMode = useConnectedDeviceStore((s) => s.devicePlaybackMode)
+
   const isPlaying = usePlayerStore((s) => s.isPlaying)
   const isBuffering = usePlayerStore((s) => s.isBuffering)
   const isAudioActive = usePlayerStore((s) => s.isAudioActive)
@@ -19,6 +26,12 @@ export default function PlaybackStreamBridge(): null {
   const currentSongIndex = usePlayerStore((s) => s.currentSongIndex)
   const queue = usePlayerStore((s) => s.queue)
   const repeatMode = usePlayerStore((s) => s.repeatMode)
+
+  // Remote Controller Guard flag:
+  // If this device is acting as a Remote Controller, targeting Desktop, or not running
+  // in Electron desktop environment, it must NEVER search providers or download audio locally.
+  const isStreamBridgeDisabled =
+    playbackTarget === 'desktop' || devicePlaybackMode === 'remote_controller' || !isElectron
 
   const activeStreamingKeyRef = useRef<string | null>(null)
   const activeTransferIdRef = useRef<string | null>(null)
@@ -32,6 +45,8 @@ export default function PlaybackStreamBridge(): null {
   // -------------------------------------------------------------
   useEffect(() => {
     let isCancelled = false
+
+    if (isStreamBridgeDisabled) return
 
     if (!isAudioActive || currentSongIndex < 0 || currentSongIndex >= queue.length) {
       if (isBuffering && isAudioActive) usePlayerStore.getState().setIsBuffering(false)
@@ -47,8 +62,24 @@ export default function PlaybackStreamBridge(): null {
       }
     }
 
-    // If active track already has local file on disk, we are ready to play
-    if (currentSong.filePath && !currentSong.filePath.startsWith('virtual:')) {
+    // If active track already has local file on disk, in RAM slot pool, cached in memory,
+    // or has a reachable audio stream URL (blob:, http:, data:), we are ready to play without provider acquisition
+    const hasLocalSlot = currentSong.id ? Boolean(getLocalSlotPoolFile(currentSong.id)) : false
+    const hasCachedBlob = currentSong.id ? Boolean(getCachedAudioBlobUrl(currentSong.id)) : false
+    const isJitOrRoomTrack =
+      currentSong.album === 'MUSIXQUARE Queue' ||
+      currentSong.id?.startsWith('jit-') ||
+      currentSong.id?.startsWith('synced-') ||
+      currentSong.id?.startsWith('web-')
+    const hasPlayableUrl = Boolean(
+      (currentSong.filePath && !currentSong.filePath.startsWith('virtual:')) ||
+      (currentSong.audioUrl && (currentSong.audioUrl.startsWith('blob:') || currentSong.audioUrl.startsWith('http') || currentSong.audioUrl.startsWith('data:'))) ||
+      hasLocalSlot ||
+      hasCachedBlob ||
+      isJitOrRoomTrack
+    )
+
+    if (hasPlayableUrl) {
       if (isBuffering) usePlayerStore.getState().setIsBuffering(false)
       activeStreamingKeyRef.current = null
       activeTransferIdRef.current = null
@@ -346,13 +377,15 @@ export default function PlaybackStreamBridge(): null {
       isCancelled = true
       activeInFlightRef.current = false
     }
-  }, [currentSongIndex, queue, isPlaying, isBuffering, isAudioActive])
+  }, [currentSongIndex, queue, isPlaying, isBuffering, isAudioActive, isStreamBridgeDisabled])
 
   // -------------------------------------------------------------
   // 2. PREDICTIVE LOOKAHEAD PREFETCH (NEXT UPCOMING TRACK)
   // -------------------------------------------------------------
   useEffect(() => {
     let isCancelled = false
+
+    if (isStreamBridgeDisabled) return
 
     // Only prefetch if this tab is the active audio owner and currently playing audio stably
     if (!isAudioActive || !isPlaying || queue.length === 0 || currentSongIndex < 0) return
@@ -376,8 +409,19 @@ export default function PlaybackStreamBridge(): null {
     const nextSong: Song | undefined = queue[nextIndex]
     if (!nextSong || !nextSong.title) return
 
-    // If next track already has local file on disk, nothing to prefetch
-    if (nextSong.filePath && !nextSong.filePath.startsWith('virtual:')) return
+    // If next track already has local file on disk, in RAM slot pool, cached, or is JIT track, nothing to prefetch
+    if (
+      (nextSong.filePath && !nextSong.filePath.startsWith('virtual:')) ||
+      (nextSong.audioUrl && (nextSong.audioUrl.startsWith('blob:') || nextSong.audioUrl.startsWith('http'))) ||
+      (nextSong.id && getLocalSlotPoolFile(nextSong.id)) ||
+      (nextSong.id && getCachedAudioBlobUrl(nextSong.id)) ||
+      nextSong.album === 'MUSIXQUARE Queue' ||
+      nextSong.id?.startsWith('jit-') ||
+      nextSong.id?.startsWith('synced-') ||
+      nextSong.id?.startsWith('web-')
+    ) {
+      return
+    }
 
     const key = `${nextSong.title.toLowerCase()}::${(nextSong.artist || '').toLowerCase()}`
 
@@ -555,7 +599,7 @@ export default function PlaybackStreamBridge(): null {
       clearTimeout(timer)
       prefetchInFlightRef.current = false
     }
-  }, [isPlaying, currentSongIndex, queue, repeatMode, isShuffle, isBuffering, isAudioActive])
+  }, [isPlaying, currentSongIndex, queue, repeatMode, isShuffle, isBuffering, isAudioActive, isStreamBridgeDisabled])
 
   return null
 }

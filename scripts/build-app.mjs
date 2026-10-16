@@ -42,13 +42,27 @@ function runCapture(cmd) {
 
 function cleanLingeringProcesses() {
   if (process.platform === 'win32') {
+    for (const exe of ['electron.exe', 'Felo.exe']) {
+      try {
+        const list = execSync(`tasklist /FI "IMAGENAME eq ${exe}" /FO CSV /NH`, { encoding: 'utf-8' })
+        if (list && list.toLowerCase().includes(exe.toLowerCase())) {
+          console.log(`[Felo Build] Terminating lingering ${exe} processes...`)
+          execSync(`taskkill /F /IM ${exe}`, { stdio: 'ignore' })
+        }
+      } catch {}
+    }
+  }
+}
+
+function cleanUnpackedDir() {
+  const unpackedDir = path.join(ROOT_DIR, 'dist', 'win-unpacked')
+  if (fs.existsSync(unpackedDir)) {
     try {
-      const list = execSync('tasklist /FI "IMAGENAME eq electron.exe" /FO CSV /NH', { encoding: 'utf-8' })
-      if (list && list.toLowerCase().includes('electron.exe')) {
-        console.log('[Felo Build] Terminating lingering background Electron processes...')
-        execSync('taskkill /F /IM electron.exe', { stdio: 'ignore' })
-      }
-    } catch {}
+      console.log('[Felo Build] Preparing clean dist/win-unpacked staging directory...')
+      fs.rmSync(unpackedDir, { recursive: true, force: true })
+    } catch (err) {
+      console.warn('[Felo Build] Warning: Could not clean win-unpacked directory:', err.message)
+    }
   }
 }
 
@@ -104,6 +118,8 @@ async function buildPublic() {
   run('npx electron-vite build', { FELO_MODE: 'public' })
 
   // 5. Package with electron-builder
+  cleanLingeringProcesses()
+  cleanUnpackedDir()
   const targetFlags = getBuilderTargetFlags()
   console.log(`\n[Felo Build] Packaging Public App Setup via electron-builder (${targetFlags || 'default'})...`)
   run(`npx electron-builder --config electron-builder.public.yml ${targetFlags}`, { FELO_MODE: 'public' })
@@ -136,6 +152,8 @@ async function buildPrivate() {
   run('npx electron-vite build', { FELO_MODE: 'private' })
 
   // 4. Package with electron-builder
+  cleanLingeringProcesses()
+  cleanUnpackedDir()
   const targetFlags = getBuilderTargetFlags()
   console.log(`\n[Felo Build] Packaging Private App Setup via electron-builder (${targetFlags || 'default'})...`)
   run(`npx electron-builder --config electron-builder.private.yml ${targetFlags}`, { FELO_MODE: 'private' })

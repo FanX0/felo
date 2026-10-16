@@ -136,3 +136,28 @@
     background: rgba(255, 255, 255, 0.3);
   }
 }
+
+/* Smooth Ping-Pong Marquee Animation for Overflowing Text */
+@keyframes marquee-pingpong {
+  0%, 20% {
+    transform: translateX(0);
+  }
+  50%, 70% {
+    transform: translateX(var(--marquee-offset, 0px));
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+.marquee-content {
+  display: inline;
+  white-space: nowrap;
+}
+
+.marquee-overflowing {
+  display: inline-block;
+  animation: marquee-pingpong var(--marquee-duration, 8s) cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  will-change: transform;
+}
+

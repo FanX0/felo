@@ -9,6 +9,10 @@ export interface MobileLyricsSong {
   album?: string
   duration?: number
   artworkUrl?: string
+  lyrics?: {
+    plainLyrics?: string
+    syncedLyrics?: string
+  }
 }
 
 interface MobileLyricsSheetProps {
@@ -81,32 +85,55 @@ export default function MobileLyricsSheet({
   const getCurrentTimeRef = useRef(getCurrentTime)
   getCurrentTimeRef.current = getCurrentTime
 
+  const lastLoadedSongKeyRef = useRef<string | null>(null)
+
   useEffect(() => {
     if (!isOpen || !song) return
+
+    const songKey = `${song.id}::${song.title}::${song.artist}`
+    if (lastLoadedSongKeyRef.current === songKey && (syncedLines.length > 0 || plainLyrics)) {
+      return
+    }
 
     let mounted = true
     setIsLoading(true)
     setSyncedLines([])
     setPlainLyrics('')
+    lastLoadedSongKeyRef.current = songKey
 
     const loadLyrics = async () => {
       try {
         let result: { syncedLyrics?: string; plainLyrics?: string } | null = null
 
-        // 0. Check localStorage cached lyrics from DevicePresenceBridge (broadcast from host PC)
-        if (song.id) {
-          const cachedStr = localStorage.getItem(`felo_lyrics_${song.id}`)
-          if (cachedStr) {
-            try {
-              const cached = JSON.parse(cachedStr)
-              if (cached.syncedLyrics || cached.plainLyrics) {
-                result = cached
-              }
-            } catch {}
+        // 0. Direct attached lyrics from room / song payload (instant 0ms sync)
+        if (song.lyrics && (song.lyrics.syncedLyrics || song.lyrics.plainLyrics)) {
+          result = song.lyrics
+        }
+
+        // 1. Check localStorage cached lyrics (support both normalized and id-based keys)
+        if (!result) {
+          const cleanT = song.title?.toLowerCase().trim() || ''
+          const cleanA = song.artist?.toLowerCase().trim() || ''
+          const cacheKeys = [
+            cleanT && cleanA ? `felo-lyrics:${cleanT}:::${cleanA}` : null,
+            song.id ? `felo_lyrics_${song.id}` : null
+          ].filter(Boolean) as string[]
+
+          for (const k of cacheKeys) {
+            const cachedStr = localStorage.getItem(k)
+            if (cachedStr) {
+              try {
+                const cached = JSON.parse(cachedStr)
+                if (cached.syncedLyrics || cached.plainLyrics) {
+                  result = cached
+                  break
+                }
+              } catch {}
+            }
           }
         }
 
-        // 1. Try direct LAN remote endpoint if connected to desktop Electron app
+        // 2. Try direct LAN remote endpoint if connected to desktop Electron app
         if (!result && remoteClient.getIsConnected() && song.id) {
           try {
             const lanLyrics = await remoteClient.getLyrics(song.id)
@@ -118,7 +145,7 @@ export default function MobileLyricsSheet({
           }
         }
 
-        // 2. Fallback to universal webApi / LRCLIB fetcher
+        // 3. Fallback to universal webApi / LRCLIB fetcher
         if (!result && window.api?.fetchLyrics) {
           try {
             const fetched = await window.api.fetchLyrics({
@@ -143,10 +170,26 @@ export default function MobileLyricsSheet({
         } else if (result?.plainLyrics) {
           setPlainLyrics(result.plainLyrics)
         }
+
+        // Cache result locally for future instant access
+        if (result && (result.syncedLyrics || result.plainLyrics)) {
+          try {
+            const cleanT = song.title?.toLowerCase().trim() || ''
+            const cleanA = song.artist?.toLowerCase().trim() || ''
+            if (cleanT && cleanA) {
+              localStorage.setItem(`felo-lyrics:${cleanT}:::${cleanA}`, JSON.stringify(result))
+            }
+            if (song.id) {
+              localStorage.setItem(`felo_lyrics_${song.id}`, JSON.stringify(result))
+            }
+          } catch {}
+        }
       } catch (err) {
         console.warn('[MobileLyricsSheet] Failed to load lyrics:', err)
       } finally {
-        if (!mounted) setIsLoading(false)
+        if (mounted) {
+          setIsLoading(false)
+        }
       }
     }
 
@@ -155,7 +198,7 @@ export default function MobileLyricsSheet({
     return () => {
       mounted = false
     }
-  }, [isOpen, song?.id, song?.title, song?.artist])
+  }, [isOpen, song?.id, song?.title, song?.artist, song?.lyrics])
 
   // High-precision smooth active line tracking
   useEffect(() => {
@@ -184,9 +227,7 @@ export default function MobileLyricsSheet({
 
     checkActiveLine()
 
-    if (!isPlaying && !getCurrentTimeRef.current) return
-
-    const interval = setInterval(checkActiveLine, 100)
+    const interval = setInterval(checkActiveLine, isPlaying ? 100 : 250)
     return () => clearInterval(interval)
   }, [isOpen, isPlaying, syncedLines, currentTime])
 

@@ -20,6 +20,20 @@ export function applyDocumentTheme(accentEnabled: boolean, accentColor: string):
     root.style.setProperty('--app-accent-hover', hover)
     root.style.setProperty('--app-accent-foreground', foreground)
   }
+
+  // Keep browser status bar / mobile chrome in sync with Felo dark canvas
+  try {
+    let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+    if (!meta) {
+      meta = document.createElement('meta')
+      meta.name = 'theme-color'
+      document.head.appendChild(meta)
+    }
+    meta.setAttribute('content', '#000000')
+    document.documentElement.style.colorScheme = 'dark'
+  } catch {
+    // SSR / non-DOM guard
+  }
 }
 
 /**
@@ -28,7 +42,7 @@ export function applyDocumentTheme(accentEnabled: boolean, accentColor: string):
 export function initTheme(): void {
   try {
     const enabled = localStorage.getItem('felo_accent_enabled') === 'true'
-    const color = localStorage.getItem('felo_accent_color') || '#3b82f6'
+    const color = localStorage.getItem('felo_accent_color') || '#10b981'
     applyDocumentTheme(enabled, color)
   } catch (err) {
     console.warn('Failed to load initial theme from localStorage:', err)

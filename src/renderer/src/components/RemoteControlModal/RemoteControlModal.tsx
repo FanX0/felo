@@ -302,13 +302,25 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
 
   const handleSelectWebTarget = async (target: PlaybackTarget) => {
     setCurrentTarget(target)
+    useConnectedDeviceStore.getState().setPlaybackTarget(target)
+    if (target === 'desktop') {
+      useConnectedDeviceStore.getState().setDevicePlaybackMode('remote_controller')
+      usePlayerStore.getState().setIsPlaying(false)
+    } else if (target === 'mobile') {
+      useConnectedDeviceStore.getState().setDevicePlaybackMode('local')
+      useConnectedDeviceStore.getState().claimPlayback()
+    }
     await remoteClient.setTargetDevice(target)
   }
 
   const handleConnectToDiscovered = async (device: UserConnectedDevice) => {
-    if (!device.local_ip) return
-    const targetUrl = `http://${device.local_ip}:${device.port || 4788}`
-    remoteClient.configure(targetUrl, device.token || '')
+    if (device.local_ip) {
+      const targetUrl = `http://${device.local_ip}:${device.port || 4788}`
+      remoteClient.configure(targetUrl, device.token || '')
+    }
+    useConnectedDeviceStore.getState().setPlaybackTarget('desktop')
+    useConnectedDeviceStore.getState().setDevicePlaybackMode('remote_controller')
+    usePlayerStore.getState().setIsPlaying(false)
     await handleSelectWebTarget('desktop')
   }
 

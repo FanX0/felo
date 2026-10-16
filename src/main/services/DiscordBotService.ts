@@ -601,7 +601,8 @@ export class DiscordBotService {
             name: 'query',
             description: 'Song title, artist, or album to search & play',
             type: 3,
-            required: true
+            required: true,
+            autocomplete: true
           },
           {
             name: 'action',
@@ -1071,6 +1072,48 @@ export class DiscordBotService {
           components: []
         }
       })
+      return
+    }
+
+    if (customId === 'player_prev') {
+      await this.sendPlayerCommand({ type: 'previous' })
+      await this.respondInteraction(interaction.id, interaction.token, {
+        type: 4,
+        data: { flags: 64, content: '⏮️ Playing previous track.' }
+      })
+      return
+    }
+
+    if (customId === 'player_pause_toggle') {
+      const willResume = !this.playerState.isPlaying
+      await this.sendPlayerCommand({ type: willResume ? 'resume' : 'pause' })
+      await this.respondInteraction(interaction.id, interaction.token, {
+        type: 4,
+        data: { flags: 64, content: willResume ? '▶️ Playback resumed.' : '⏸️ Playback paused.' }
+      })
+      return
+    }
+
+    if (customId === 'player_skip') {
+      await this.sendPlayerCommand({ type: 'skip' })
+      await this.respondInteraction(interaction.id, interaction.token, {
+        type: 4,
+        data: { flags: 64, content: '⏭️ Skipped track.' }
+      })
+      return
+    }
+
+    if (customId === 'player_stop') {
+      await this.sendPlayerCommand({ type: 'stop' })
+      await this.respondInteraction(interaction.id, interaction.token, {
+        type: 4,
+        data: { flags: 64, content: '⏹️ Playback stopped.' }
+      })
+      return
+    }
+
+    if (customId === 'player_queue') {
+      await this.handleSlashQueue(interaction, 1)
       return
     }
   }
@@ -1592,24 +1635,84 @@ export class DiscordBotService {
     const progressBar = this.renderProgressBar(pos, dur)
     const roomCode = this.playerState.listeningRoomCode
 
+    const isPlaying = this.playerState.isPlaying
+    const components: any[] = [
+      {
+        type: 1,
+        components: [
+          {
+            type: 2,
+            style: 2,
+            custom_id: 'player_prev',
+            label: 'Previous',
+            emoji: { name: '⏮️' }
+          },
+          {
+            type: 2,
+            style: isPlaying ? 2 : 3,
+            custom_id: 'player_pause_toggle',
+            label: isPlaying ? 'Pause' : 'Resume',
+            emoji: { name: isPlaying ? '⏸️' : '▶️' }
+          },
+          {
+            type: 2,
+            style: 2,
+            custom_id: 'player_skip',
+            label: 'Skip',
+            emoji: { name: '⏭️' }
+          },
+          {
+            type: 2,
+            style: 2,
+            custom_id: 'player_stop',
+            label: 'Stop',
+            emoji: { name: '⏹️' }
+          },
+          {
+            type: 2,
+            style: 2,
+            custom_id: 'player_queue',
+            label: 'Queue',
+            emoji: { name: '📜' }
+          }
+        ]
+      }
+    ]
+
+    if (roomCode) {
+      components.push({
+        type: 1,
+        components: [
+          {
+            type: 2,
+            style: 5,
+            label: 'Open Web Player',
+            emoji: { name: '🌐' },
+            url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+          }
+        ]
+      })
+    }
+
     await this.respondInteraction(interaction.id, interaction.token, {
       type: 4,
       data: {
         embeds: [
           {
-            title: this.playerState.isPlaying ? '🔊 Now Playing' : '⏸️ Currently Paused',
+            title: isPlaying ? '🔊 Now Playing' : '⏸️ Currently Paused',
             description:
               `**${song.title}**\nby **${song.artist}**\n*Album:* ${song.album || 'Single'}\n\n` +
               `${progressBar}\n\`${this.formatDuration(pos)} / ${this.formatDuration(dur)}\` (${progressPercent}%)\n\n` +
               (roomCode
                 ? `🎧 **Listen Together Room Code:** \`${roomCode}\`\n*Join with code in Felo to listen along!*`
                 : `🎧 *Playing locally in Felo desktop*`),
-            color: this.playerState.isPlaying ? 0x10b981 : 0xf59e0b,
+            color: isPlaying ? 0x10b981 : 0xf59e0b,
             footer: {
               text: `Felo Music Player • ${this.playerState.listeningRoomMembers || 1} Listener(s)`
             }
           }
-        ]
+        ],
+        components
       }
     })
   }

@@ -317,9 +317,11 @@ export default function DevicePresenceBridge() {
     const handleLibraryRequest = async (payload?: any) => {
       const isTargetMe =
         payload?.targetDeviceId === deviceId ||
+        payload?.targetDeviceId === 'lan-desktop' ||
         ((!payload?.targetDeviceId ||
           payload.targetDeviceId === 'default-pc' ||
-          payload.targetDeviceId === 'pc') &&
+          payload.targetDeviceId === 'pc' ||
+          payload.targetDeviceId === 'desktop') &&
           (isElectron || isDesktopDevice))
       if (!isTargetMe) return
 
@@ -339,7 +341,23 @@ export default function DevicePresenceBridge() {
             rawSongs = currentQueue
           }
         }
-        if (rawSongs.length === 0) return
+        if (rawSongs.length === 0) {
+          // Immediate empty response to acknowledge peer request without timeout
+          await channel.send({
+            type: 'broadcast',
+            event: 'device_library_response',
+            payload: {
+              transferId: `empty-${Date.now()}`,
+              deviceId,
+              requesterDeviceId: payload?.requesterDeviceId,
+              chunkIndex: 0,
+              totalChunks: 1,
+              songs: [],
+              totalSongs: 0
+            }
+          })
+          return
+        }
 
         let streamBase = ''
         let downloadBase = ''
@@ -423,7 +441,15 @@ export default function DevicePresenceBridge() {
 
     const handleLibraryResponse = (payload: any) => {
       if (!payload || payload.deviceId === deviceId) return
-      if (payload.requesterDeviceId && payload.requesterDeviceId !== deviceId) return
+      if (payload.requesterDeviceId) {
+        const baseDeviceId = typeof window !== 'undefined' ? localStorage.getItem('felo_device_id') : null
+        const isForMe =
+          payload.requesterDeviceId === deviceId ||
+          deviceId.startsWith(payload.requesterDeviceId) ||
+          payload.requesterDeviceId.startsWith(deviceId) ||
+          (baseDeviceId && (payload.requesterDeviceId.includes(baseDeviceId) || baseDeviceId.includes(payload.requesterDeviceId)))
+        if (!isForMe) return
+      }
 
       const {
         transferId = 'default',
@@ -823,6 +849,17 @@ export default function DevicePresenceBridge() {
 
     channelRef.current = channel
 
+    const handleCustomRequestLib = (e: any) => {
+      if (channelRef.current && e.detail) {
+        void channelRef.current.send({
+          type: 'broadcast',
+          event: 'request_device_library',
+          payload: e.detail
+        })
+      }
+    }
+    window.addEventListener('felo:request-device-library', handleCustomRequestLib)
+
     // 4. Stale activePlayback TTL cleanup
     // If no playback_state update arrives within REMOTE_PLAYBACK_STALE_MS,
     // the remote playback is considered abandoned (device crashed/disconnected)
@@ -841,6 +878,7 @@ export default function DevicePresenceBridge() {
     window.addEventListener('beforeunload', handleUnload)
 
     return () => {
+      window.removeEventListener('felo:request-device-library', handleCustomRequestLib)
       if (heartbeatTimerRef.current) {
         clearInterval(heartbeatTimerRef.current)
       }

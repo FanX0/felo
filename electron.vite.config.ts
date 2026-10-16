@@ -21,6 +21,9 @@ export default defineConfig({
     define: defineMode
   },
   renderer: {
+    server: {
+      host: true
+    },
     resolve: {
       alias: {
         '@renderer': resolve('src/renderer/src')

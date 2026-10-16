@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { remoteClient, type RemotePlayerState } from './remoteClient'
 import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
 import MobileNowPlaying from './MobileNowPlaying'
@@ -7,8 +8,11 @@ import MobileSearchSheet from './MobileSearchSheet'
 import MobileDeviceSheet from './MobileDeviceSheet'
 import MobileLyricsSheet from './MobileLyricsSheet'
 import MobileSleepTimerModal from './MobileSleepTimerModal'
+import AudioFxModal from '../../components/Audio/AudioFxModal'
+import ManualSyncModal from '../../components/Online/ManualSyncModal'
 
 export default function RemotePhoneView() {
+  const navigate = useNavigate()
   const [state, setState] = useState<RemotePlayerState>(remoteClient.getState())
   const [isConnected, setIsConnected] = useState(remoteClient.getIsConnected())
   const [isQueueOpen, setIsQueueOpen] = useState(false)
@@ -138,60 +142,81 @@ export default function RemotePhoneView() {
     }
   }
 
+  const handleExitRemote = () => {
+    // If the URL has hash or query parameters locking into remote mode, clear them
+    const hash = window.location.hash || ''
+    const search = window.location.search || ''
+    if (hash.toLowerCase().includes('remote') || search.toLowerCase().includes('mode=remote')) {
+      const cleanUrl = window.location.origin + window.location.pathname.replace(/\/remote.*/, '')
+      window.location.href = cleanUrl.endsWith('/') ? cleanUrl : cleanUrl + '/'
+    } else {
+      navigate('/')
+    }
+  }
+
   return (
-    <div className="fixed inset-0 w-full h-[100dvh] min-h-[100dvh] max-h-[100dvh] bg-[#121212] overflow-hidden flex flex-col font-sans select-none antialiased">
-      {/* Main Full-Screen Spotify Player View */}
-      <MobileNowPlaying
-        state={state}
-        isConnected={isConnected}
-        onOpenQueue={() => setIsQueueOpen(true)}
-        onOpenSearch={() => setIsSearchOpen(true)}
-        onOpenDevices={() => setIsDevicesOpen(true)}
-        onOpenLyrics={() => setIsLyricsOpen(true)}
-        onOpenSleepTimer={() => setIsSleepTimerOpen(true)}
-        sleepTimerBadge={sleepTimerBadge}
-      />
+    <div className="fixed inset-0 w-full h-[100dvh] min-h-[100dvh] max-h-[100dvh] bg-[#0c0c0c] overflow-hidden flex flex-col items-center justify-center font-sans select-none antialiased">
+      <div className="w-full max-w-md h-full flex flex-col relative shadow-2xl bg-[#121212] overflow-hidden">
+        {/* Main Full-Screen Spotify Player View */}
+        <MobileNowPlaying
+          state={state}
+          isConnected={isConnected}
+          onOpenQueue={() => setIsQueueOpen(true)}
+          onOpenSearch={() => setIsSearchOpen(true)}
+          onOpenDevices={() => setIsDevicesOpen(true)}
+          onOpenLyrics={() => setIsLyricsOpen(true)}
+          onOpenSleepTimer={() => setIsSleepTimerOpen(true)}
+          sleepTimerBadge={sleepTimerBadge}
+          onExitRemote={handleExitRemote}
+        />
 
-      {/* Up Next / Queue Overlay Sheet */}
-      <MobileQueueSheet
-        state={state}
-        isOpen={isQueueOpen}
-        onClose={() => setIsQueueOpen(false)}
-      />
+        {/* Up Next / Queue Overlay Sheet */}
+        <MobileQueueSheet
+          state={state}
+          isOpen={isQueueOpen}
+          onClose={() => setIsQueueOpen(false)}
+        />
 
-      {/* Search Library Overlay Sheet */}
-      <MobileSearchSheet
-        isOpen={isSearchOpen}
-        onClose={() => setIsSearchOpen(false)}
-        targetDeviceId={activePlayback?.activeDeviceId}
-        targetDeviceName={activePlayback?.activeDeviceName}
-      />
+        {/* Search Library Overlay Sheet */}
+        <MobileSearchSheet
+          isOpen={isSearchOpen}
+          onClose={() => setIsSearchOpen(false)}
+          targetDeviceId={activePlayback?.activeDeviceId}
+          targetDeviceName={activePlayback?.activeDeviceName}
+        />
 
-      {/* Spotify Connect Devices Overlay Sheet */}
-      <MobileDeviceSheet
-        state={state}
-        isConnected={isConnected}
-        isOpen={isDevicesOpen}
-        onClose={() => setIsDevicesOpen(false)}
-      />
+        {/* Spotify Connect Devices Overlay Sheet */}
+        <MobileDeviceSheet
+          state={state}
+          isConnected={isConnected}
+          isOpen={isDevicesOpen}
+          onClose={() => setIsDevicesOpen(false)}
+        />
 
-      {/* Real-time Synced Karaoke Lyrics Sheet */}
-      <MobileLyricsSheet
-        song={state.song}
-        currentTime={state.position}
-        isPlaying={state.isPlaying}
-        isOpen={isLyricsOpen}
-        onClose={() => setIsLyricsOpen(false)}
-        onSeek={(time) => void remoteClient.seek(time)}
-      />
+        {/* Real-time Synced Karaoke Lyrics Sheet */}
+        <MobileLyricsSheet
+          song={state.song}
+          currentTime={state.position}
+          isPlaying={state.isPlaying}
+          isOpen={isLyricsOpen}
+          onClose={() => setIsLyricsOpen(false)}
+          onSeek={(time) => void remoteClient.seek(time)}
+        />
 
-      {/* Sleep Timer Modal */}
-      <MobileSleepTimerModal
-        isOpen={isSleepTimerOpen}
-        onClose={() => setIsSleepTimerOpen(false)}
-        onTimerSet={handleSetSleepTimer}
-        activeTimer={sleepTimer}
-      />
+        {/* Sleep Timer Modal */}
+        <MobileSleepTimerModal
+          isOpen={isSleepTimerOpen}
+          onClose={() => setIsSleepTimerOpen(false)}
+          onTimerSet={handleSetSleepTimer}
+          activeTimer={sleepTimer}
+        />
+
+        {/* Spatial Audio & Multi-Device DSP Modal (Virtual Effects, EQ, Reverb) */}
+        <AudioFxModal />
+
+        {/* Manual Sync (ms) Latency Calibration Modal */}
+        <ManualSyncModal />
+      </div>
     </div>
   )
 }

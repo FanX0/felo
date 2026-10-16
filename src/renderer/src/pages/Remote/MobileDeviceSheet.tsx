@@ -13,11 +13,13 @@ import {
   Sparkles,
   ChevronDown,
   ChevronUp,
-  Link2
+  Link2,
+  SlidersHorizontal
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { remoteClient, type RemotePlayerState, type PlaybackTarget } from './remoteClient'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
+import { useListeningStore } from '../../hooks/useListeningStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import {
   useConnectedDeviceStore,
@@ -264,6 +266,8 @@ export default function MobileDeviceSheet({
             song: localSong,
             position: localPlayer.currentTime
           })
+        } else {
+          localPlayer.setIsPlaying(false)
         }
       }
       await remoteClient.setTargetDevice(target)
@@ -274,20 +278,24 @@ export default function MobileDeviceSheet({
 
   const handleConnectToDevice = async (device: UserConnectedDevice) => {
     const category = getDeviceCategory(device)
-    if (device.local_ip) {
+    const isPc = isPcDevice(category)
+    const target: PlaybackTarget = isPc ? 'desktop' : 'mobile'
+
+    if (device.local_ip && isPc) {
       const targetUrl = `http://${device.local_ip}:${device.port || 4788}`
       remoteClient.configure(targetUrl, device.token || '')
+    }
+
+    if (target === 'desktop') {
       useConnectedDeviceStore.getState().setPlaybackTarget('desktop')
+      useConnectedDeviceStore.getState().setDevicePlaybackMode('remote_controller')
+      usePlayerStore.getState().setIsPlaying(false)
+      if (user?.id) {
+        void sendDeviceCommand(user.id, device.id, 'play')
+      }
       await handleSelectDevice('desktop')
-    } else if (user?.id && activeRemote?.activeDeviceId === device.id) {
-      // Cloud-only handover
-      useConnectedDeviceStore.getState().setPlaybackTarget(isPcDevice(category) ? 'desktop' : 'mobile')
-      await sendDeviceCommand(user.id, device.id, 'play')
-    } else if (user?.id) {
-      useConnectedDeviceStore.getState().setPlaybackTarget(isPcDevice(category) ? 'desktop' : 'mobile')
-      await sendDeviceCommand(user.id, device.id, 'play')
     } else {
-      await handleSelectDevice(isPcDevice(category) ? 'desktop' : 'mobile')
+      await handleSelectDevice('mobile')
     }
   }
 
@@ -617,6 +625,30 @@ export default function MobileDeviceSheet({
                 <div className="w-6 h-6 rounded-full border border-zinc-600 shrink-0" />
               )}
             </button>
+
+            {currentTarget === 'both' && (
+              <div className="flex items-center justify-between px-3 py-2 bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-xs mt-1">
+                <span className="text-zinc-300 font-medium">Fine-tune dual device sync</span>
+                <button
+                  type="button"
+                  disabled={useListeningStore.getState().myRole === 'host'}
+                  onClick={() => {
+                    if (useListeningStore.getState().myRole !== 'host') {
+                      useListeningStore.getState().setIsManualSyncModalOpen(true)
+                    }
+                  }}
+                  title={useListeningStore.getState().myRole === 'host' ? 'Manual sync is disabled for host' : 'Fine-tune dual device sync'}
+                  className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition flex items-center gap-1 ${
+                    useListeningStore.getState().myRole === 'host'
+                      ? 'bg-white/5 text-zinc-500 opacity-40 cursor-not-allowed border-white/5'
+                      : 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border-emerald-500/40 cursor-pointer'
+                  }`}
+                >
+                  <SlidersHorizontal className={`w-3 h-3 ${useListeningStore.getState().myRole === 'host' ? 'text-zinc-500' : 'text-emerald-400'}`} />
+                  <span>Manual Sync (ms)</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
