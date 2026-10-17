@@ -21,29 +21,38 @@ if (typeof window !== 'undefined') {
 export function detectOS(): DetectedOS {
   if (typeof window === 'undefined' || typeof navigator === 'undefined') return 'other'
 
-  const ua = navigator.userAgent || ''
+  // 1. User-Agent Client Hints (modern Chromium, Chrome, Edge, Android)
+  const clientHintPlatform = ((navigator as any).userAgentData?.platform || '').toLowerCase()
+  if (clientHintPlatform.includes('win')) return 'windows'
+  if (clientHintPlatform.includes('android')) return 'android'
+  if (clientHintPlatform.includes('mac') && (navigator.maxTouchPoints || 0) <= 1) return 'mac'
+  if (clientHintPlatform.includes('linux')) return 'linux'
 
-  if (/android/i.test(ua)) {
+  const ua = navigator.userAgent || ''
+  const platform = navigator.platform || ''
+
+  if (/android/i.test(ua) || /android/i.test(platform)) {
     return 'android'
   }
 
-  // iOS check (includes iPad on iOS 13+ reporting as Macintosh)
+  // iOS check (iPhone, iPod, iPad, and iPadOS 13+ which masks as MacIntel with touch points)
   const isIos =
     /iPad|iPhone|iPod/.test(ua) ||
-    (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1)
+    /iPad|iPhone|iPod/.test(platform) ||
+    ((platform === 'MacIntel' || /Macintosh/i.test(ua)) && (navigator.maxTouchPoints || 0) > 1)
   if (isIos) {
     return 'ios'
   }
 
-  if (/Windows/i.test(ua)) {
+  if (/Windows/i.test(ua) || /Win/i.test(platform)) {
     return 'windows'
   }
 
-  if (/Macintosh|Mac OS X/i.test(ua)) {
+  if (/Macintosh|Mac OS X/i.test(ua) || /Mac/i.test(platform)) {
     return 'mac'
   }
 
-  if (/Linux/i.test(ua)) {
+  if (/Linux/i.test(ua) || /Linux/i.test(platform)) {
     return 'linux'
   }
 

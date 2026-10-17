@@ -153,7 +153,6 @@ export default function DownloadPage() {
           note: 'AppImage & .deb packages with Discord bot daemon'
         }
       case 'windows':
-      default:
         return {
           title: 'Windows',
           primaryLabel: 'Download for Windows (.exe)',
@@ -163,10 +162,14 @@ export default function DownloadPage() {
           badge: 'Windows 10 / 11 (64-bit) • v1.1.0-beta.1',
           note: 'WASAPI exclusive stream • Discord Rich Presence • Local audio scan'
         }
+      case 'other':
+      default:
+        return null
     }
   }
 
-  const hero = getHeroRecommendation()
+  // Only show hero recommendation on web if the OS was accurately detected
+  const hero = isNativeApp ? null : getHeroRecommendation()
 
   return (
     <div className="w-full min-h-full flex flex-col items-center px-4 py-8 md:py-16 max-w-6xl mx-auto text-text select-none">
@@ -186,29 +189,31 @@ export default function DownloadPage() {
           management on all your mobile and desktop devices.
         </p>
 
-        {/* Dynamic Recommended CTA Card */}
-        <div className="w-full max-w-md mt-6 p-6 sm:p-7 rounded-2xl bg-surface-elevated border border-border shadow-sm flex flex-col items-center gap-4 transition-all hover:border-border/80">
-          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-text-muted">
-            {hero.icon}
-            <span>Recommended for your {hero.title}</span>
-          </div>
+        {/* Dynamic Recommended CTA Card (Only shown if OS is accurately detected and running on web) */}
+        {hero && (
+          <div className="w-full max-w-md mt-6 p-6 sm:p-7 rounded-2xl bg-surface-elevated border border-border shadow-sm flex flex-col items-center gap-4 transition-all hover:border-border/80">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-text-muted">
+              {hero.icon}
+              <span>Recommended for your {hero.title}</span>
+            </div>
 
-          <a
-            href={hero.primaryHref}
-            download={hero.downloadName}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full h-12 rounded-full bg-primary hover:bg-primary-hover text-primary-foreground font-bold text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-sm transition-all duration-200 hover:scale-[1.02] active:scale-95 cursor-pointer"
-          >
-            <Download className="w-4 h-4 stroke-[2.5]" />
-            <span>{hero.primaryLabel}</span>
-          </a>
+            <a
+              href={hero.primaryHref}
+              download={hero.downloadName}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full h-12 rounded-full bg-primary hover:bg-primary-hover text-primary-foreground font-bold text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-sm transition-all duration-200 hover:scale-[1.02] active:scale-95 cursor-pointer"
+            >
+              <Download className="w-4 h-4 stroke-[2.5]" />
+              <span>{hero.primaryLabel}</span>
+            </a>
 
-          <div className="text-center space-y-1">
-            <div className="text-xs font-semibold text-text">{hero.badge}</div>
-            <div className="text-[11px] text-text-muted">{hero.note}</div>
+            <div className="text-center space-y-1">
+              <div className="text-xs font-semibold text-text">{hero.badge}</div>
+              <div className="text-[11px] text-text-muted">{hero.note}</div>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Filter / Quick-Nav Switcher Tabs */}
         <div className="flex items-center justify-center p-1 rounded-full bg-surface-elevated border border-border mt-6 gap-1">
