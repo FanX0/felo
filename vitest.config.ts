@@ -47,7 +47,7 @@ export default defineConfig({
           }
         },
         test: {
-          include: ['tests/unit/renderer/**/*.test.ts', 'tests/integration/**/*.test.{ts,tsx}'],
+          include: ['tests/unit/renderer/**/*.test.{ts,tsx}', 'tests/integration/**/*.test.{ts,tsx}'],
           environment: 'jsdom',
           setupFiles: ['tests/setup/vitest.setup.renderer.ts'],
           globals: true
