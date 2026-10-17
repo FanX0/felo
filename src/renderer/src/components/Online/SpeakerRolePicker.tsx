@@ -11,6 +11,7 @@ import { useDspStore, type SpeakerRole } from '../../hooks/useDspStore'
 import { useListeningStore } from '../../hooks/useListeningStore'
 import { useThemeStore } from '../../hooks/useThemeStore'
 import { playUiTouchSound } from '../../lib/uiSounds'
+import Slider from '../Common/Slider'
 
 interface SpeakerRolePickerProps {
   className?: string
@@ -103,12 +104,11 @@ export const SpeakerRolePicker = memo(function SpeakerRolePicker({
       <div className={`flex flex-col gap-2 ${className}`}>
         <div className="flex items-center justify-between text-xs">
           <span className="font-semibold text-zinc-300 flex items-center gap-1.5">
-            <Volume2 className="w-3.5 h-3.5 text-primary" />
+            <Volume2 className="w-3.5 h-3.5 text-text-muted" />
             {title}
           </span>
           <span
-            className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-primary/20 text-primary border border-primary/30 uppercase"
-            style={{ color: activeColor }}
+            className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-surface-elevated text-text-muted border border-border/60 uppercase"
           >
             {speakerRole}
           </span>
@@ -124,15 +124,13 @@ export const SpeakerRolePicker = memo(function SpeakerRolePicker({
                 onClick={() => handleSelectRole(role)}
                 className={`flex flex-col items-center justify-center py-2 px-1.5 rounded-lg border text-xs font-semibold transition-all cursor-pointer ${
                   isSelected
-                    ? 'bg-primary/20 border-primary text-white shadow-sm ring-1 ring-primary/40'
-                    : 'bg-white/5 border-white/5 text-zinc-400 hover:text-white hover:bg-white/10'
+                    ? 'bg-primary text-primary-foreground font-bold border-transparent shadow-sm'
+                    : 'bg-surface-elevated border-border/60 text-text-muted hover:text-white hover:bg-hover'
                 }`}
-                style={isSelected ? { borderColor: activeColor } : undefined}
                 title={shortLabel}
               >
                 <Icon
                   className="w-4 h-4 mb-1"
-                  style={isSelected ? { color: activeColor } : undefined}
                 />
                 <span className="text-[11px] truncate w-full text-center">{shortLabel}</span>
               </button>
@@ -148,15 +146,14 @@ export const SpeakerRolePicker = memo(function SpeakerRolePicker({
                 {subCutoff} Hz
               </span>
             </div>
-            <input
-              type="range"
+            <Slider
               min={60}
               max={200}
               step={5}
               value={subCutoff}
-              onChange={(e) => handleCutoffChange(parseInt(e.target.value, 10))}
-              className="w-full h-1 bg-white/20 rounded appearance-none cursor-pointer accent-primary"
-              style={{ accentColor: activeColor }}
+              onChange={handleCutoffChange}
+              className="w-full h-3"
+              ariaLabel="Subwoofer Cutoff"
             />
           </div>
         )}
@@ -169,14 +166,13 @@ export const SpeakerRolePicker = memo(function SpeakerRolePicker({
       <div className="flex items-center justify-between">
         <div>
           <h4 className="text-sm font-bold text-white flex items-center gap-2">
-            <Volume2 className="w-4 h-4 text-primary" style={{ color: activeColor }} />
+            <Volume2 className="w-4 h-4 text-text-muted" />
             {title}
           </h4>
           <p className="text-xs text-zinc-400 mt-0.5">{description}</p>
         </div>
         <span
-          className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-primary/20 text-primary border border-primary/30 uppercase tracking-wider"
-          style={{ color: activeColor }}
+          className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-surface-elevated text-text-muted border border-border/60 uppercase tracking-wider"
         >
           {speakerRole}
         </span>
@@ -193,54 +189,53 @@ export const SpeakerRolePicker = memo(function SpeakerRolePicker({
               onClick={() => handleSelectRole(role)}
               className={`flex flex-col items-start justify-between p-3 rounded-xl border text-left transition-all cursor-pointer ${
                 isSelected
-                  ? 'bg-primary/20 border-primary text-white shadow-md ring-1 ring-primary/40'
-                  : 'bg-[#181f2c]/80 border-transparent text-zinc-400 hover:text-white hover:bg-[#20293a]'
+                  ? 'bg-primary text-primary-foreground font-bold border-transparent shadow-sm'
+                  : 'bg-surface-elevated border-border/60 text-text-muted hover:text-white hover:bg-hover'
               }`}
-              style={isSelected ? { borderColor: activeColor } : undefined}
             >
               <div className="flex items-center justify-between w-full mb-2">
                 <Icon
                   className="w-4 h-4"
-                  style={isSelected ? { color: activeColor } : undefined}
                 />
-                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-white/10 text-zinc-300 font-bold">
+                <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded font-bold ${
+                  isSelected ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-surface text-text-muted border border-border/40'
+                }`}>
                   {badge}
                 </span>
               </div>
-              <span className="text-xs font-semibold text-white leading-tight">{label}</span>
+              <span className="text-xs font-semibold leading-tight">{label}</span>
             </button>
           )
         })}
       </div>
 
       {/* Active Role Hint */}
-      <div className="p-3 rounded-xl bg-white/5 border border-white/5 text-xs text-zinc-300 flex items-start gap-2.5">
-        <Sliders className="w-4 h-4 text-primary shrink-0 mt-0.5" style={{ color: activeColor }} />
-        <p className="text-[11px] leading-relaxed text-zinc-300">
+      <div className="p-3 rounded-xl bg-surface-elevated border border-border/60 text-xs text-text-muted flex items-start gap-2.5">
+        <Sliders className="w-4 h-4 text-text-muted shrink-0 mt-0.5" />
+        <p className="text-[11px] leading-relaxed text-text-muted">
           {ROLES.find((r) => r.role === speakerRole)?.hint}
         </p>
       </div>
 
       {/* Subwoofer Cutoff Slider */}
       {showCutoffSlider && speakerRole === 'subwoofer' && (
-        <div className="p-3.5 rounded-xl bg-primary/10 border border-primary/20 space-y-2 animate-in fade-in duration-200">
+        <div className="p-3.5 rounded-xl bg-surface-elevated border border-border/60 space-y-2 animate-in fade-in duration-200">
           <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-white">Subwoofer Low-Pass Filter</span>
-            <span className="font-mono font-bold text-primary" style={{ color: activeColor }}>
+            <span className="font-semibold text-text">Subwoofer Low-Pass Filter</span>
+            <span className="font-mono font-bold text-text">
               {subCutoff} Hz
             </span>
           </div>
-          <input
-            type="range"
+          <Slider
             min={60}
             max={200}
             step={5}
             value={subCutoff}
-            onChange={(e) => handleCutoffChange(parseInt(e.target.value, 10))}
-            className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-primary"
-            style={{ accentColor: activeColor }}
+            onChange={handleCutoffChange}
+            className="w-full h-4"
+            ariaLabel="Subwoofer Low-Pass Filter"
           />
-          <div className="flex justify-between text-[10px] text-zinc-400 font-mono">
+          <div className="flex justify-between text-[10px] text-text-muted font-mono">
             <span>60 Hz (Deep Sub)</span>
             <span>120 Hz (Balanced)</span>
             <span>200 Hz (Punchy Bass)</span>

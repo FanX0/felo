@@ -13,6 +13,7 @@ import { useNotificationStore } from '../../stores/useNotificationStore'
 import { useListeningStore } from '../../stores/listening'
 import { getSupabase } from '../../lib/supabase'
 import { cn } from '../../lib/utils'
+import Avatar from '../Common/Avatar'
 
 interface NotificationDropdownProps {
   isOpen: boolean
@@ -264,16 +265,12 @@ export default function NotificationDropdown({
                 >
                   <div className="flex items-start gap-3">
                     {/* Inviter Avatar */}
-                    <div className="relative h-10 w-10 shrink-0 rounded-full border border-border bg-surface-elevated overflow-hidden text-xs font-black flex items-center justify-center text-text">
-                      {inviter?.avatar_url ? (
-                        <img
-                          src={inviter.avatar_url}
-                          alt=""
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        inviter?.display_name?.slice(0, 1).toUpperCase() || 'H'
-                      )}
+                    <div className="relative shrink-0">
+                      <Avatar
+                        src={inviter?.avatar_url}
+                        fallbackText={inviter?.display_name || 'Host'}
+                        size="md"
+                      />
                       <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-400 border border-canvas" />
                     </div>
 
@@ -360,17 +357,12 @@ export default function NotificationDropdown({
                   className="rounded-xl border border-secondary-cyan/20 bg-gradient-to-br from-secondary-cyan/10 via-surface/60 to-surface p-3 transition-all hover:border-secondary-cyan/40 shadow-xs"
                 >
                   <div className="flex items-start gap-3">
-                    <div className="relative h-10 w-10 shrink-0 rounded-full border border-border bg-surface-elevated overflow-hidden text-xs font-black flex items-center justify-center text-text">
-                      {requester?.avatar_url ? (
-                        <img
-                          src={requester.avatar_url}
-                          alt=""
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        requester?.display_name?.slice(0, 1).toUpperCase() || 'U'
-                      )}
-                    </div>
+                    <Avatar
+                      src={requester?.avatar_url}
+                      fallbackText={requester?.display_name || 'User'}
+                      size="md"
+                      className="shrink-0"
+                    />
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-1">

@@ -24,10 +24,13 @@ import { toMediaUrl } from '../../lib/media'
 import type { Song } from '../../pages/Library/Library'
 import ArtistLinks from '../Common/ArtistLinks'
 import { ArtworkImage } from '../../pages/Home/components/ArtworkImage'
+import { useIsMobile } from '../../hooks/useIsMobile'
+import { cn } from '../../lib/utils'
 
 interface QueueDrawerProps {
   isOpen: boolean
   onClose: () => void
+  isMobile?: boolean
 }
 
 function formatDuration(seconds?: number): string {
@@ -38,7 +41,9 @@ function formatDuration(seconds?: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
-export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
+export default function QueueDrawer({ isOpen, onClose, isMobile: isMobileProp }: QueueDrawerProps) {
+  const isMobileHook = useIsMobile()
+  const isMobile = isMobileProp ?? isMobileHook
   const user = useOnlineStore((s) => s.user)
   const { isExternalDevicePlaying, activeRemoteDevice, requestPlayQueue } = usePlaybackArbitration()
   const queue = usePlayerStore((s) => s.queue)
@@ -103,69 +108,65 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
 
   if (!isOpen) return null
 
-  const drawerContent = (
+  const content = (
     <>
-      <div
-        className="fixed inset-0 z-[99999] bg-black/70 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
-        onClick={onClose}
-      />
-      <aside
-        aria-label="Play Queue"
-        className="fixed inset-0 sm:inset-y-0 sm:left-auto sm:right-0 z-[99999] flex w-full max-w-full sm:max-w-[380px] flex-col border-t sm:border-t-0 sm:border-l border-white/10 bg-[#121212] shadow-2xl transition-transform animate-in slide-in-from-bottom sm:slide-in-from-right duration-200 pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] select-none"
-      >
-        {/* Mobile Drag Indicator */}
+      {/* Mobile Drag Indicator */}
+      {isMobile && (
         <div
           onTouchStart={handleTouchStart}
           onTouchEnd={handleTouchEnd}
           onClick={onClose}
-          className="sm:hidden w-full flex flex-col items-center pt-2.5 pb-1 cursor-pointer shrink-0"
+          className="w-full flex flex-col items-center pt-2.5 pb-1 cursor-pointer shrink-0"
           title="Swipe or tap to close"
         >
           <div className="w-12 h-1.5 rounded-full bg-white/30" />
         </div>
+      )}
 
-        {/* Header */}
-        <div
-          onTouchStart={handleTouchStart}
-          onTouchEnd={handleTouchEnd}
-          className="flex h-14 sm:h-16 shrink-0 items-center justify-between border-b border-white/10 px-4 sm:px-5 pt-[env(safe-area-inset-top,0px)] bg-[#121212]"
-        >
-          <div className="flex items-center gap-2.5 min-w-0">
-            <ListMusic className="h-5 w-5 text-primary shrink-0" />
-            <h2 className="text-base font-bold text-white truncate">Queue</h2>
-            {isShuffle && (
-              <span
-                title="Shuffle is active"
-                className="flex items-center gap-1 text-[11px] font-mono font-medium text-primary shrink-0"
-              >
-                <Shuffle className="h-3 w-3" />
-                Shuffled
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {upcomingSongs.length > 0 && (
-              <button
-                type="button"
-                onClick={() => clearUpcomingQueue(true)}
-                title="Clear upcoming queue (preserves active priority requests)"
-                className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold text-text-muted transition-colors hover:bg-white/10 hover:text-danger cursor-pointer whitespace-nowrap active:scale-95"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                <span>Clear</span>
-              </button>
-            )}
+      {/* Header */}
+      <div
+        onTouchStart={isMobile ? handleTouchStart : undefined}
+        onTouchEnd={isMobile ? handleTouchEnd : undefined}
+        className={cn(
+          'flex shrink-0 items-center justify-between border-b border-border/60 px-4 sm:px-5 bg-canvas select-none',
+          isMobile ? 'h-14 pt-[env(safe-area-inset-top,0px)]' : 'h-16'
+        )}
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <ListMusic className="h-5 w-5 text-primary shrink-0" />
+          <h2 className="text-base font-bold text-white truncate">Queue</h2>
+          {isShuffle && (
+            <span
+              title="Shuffle is active"
+              className="flex items-center gap-1 text-[11px] font-mono font-medium text-primary shrink-0"
+            >
+              <Shuffle className="h-3 w-3" />
+              Shuffled
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {upcomingSongs.length > 0 && (
             <button
               type="button"
-              onClick={onClose}
-              title="Close queue"
-              className="flex h-9 w-9 sm:h-8 sm:w-8 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-white/10 hover:text-white cursor-pointer active:scale-95"
+              onClick={() => clearUpcomingQueue(true)}
+              title="Clear upcoming queue (preserves active priority requests)"
+              className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold text-text-muted transition-colors hover:bg-white/10 hover:text-danger cursor-pointer whitespace-nowrap active:scale-95"
             >
-              <ChevronDown className="h-5 w-5 sm:hidden" />
-              <X className="h-4 w-4 hidden sm:block" />
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>Clear</span>
             </button>
-          </div>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            title="Close queue"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-hover hover:text-white cursor-pointer active:scale-95"
+          >
+            {isMobile ? <ChevronDown className="h-5 w-5" /> : <X className="h-4 w-4" />}
+          </button>
         </div>
+      </div>
 
         {/* Content */}
         <div
@@ -392,13 +393,38 @@ export default function QueueDrawer({ isOpen, onClose }: QueueDrawerProps) {
           <span>Now Playing</span>
         </button>
       )}
-    </aside>
-  </>
+    </>
+  )
+
+  if (!isMobile) {
+    return (
+      <aside
+        aria-label="Play Queue"
+        className="h-full w-full shrink-0 overflow-hidden rounded-xl border border-border/70 bg-canvas shadow-2xl no-drag flex flex-col relative select-none"
+      >
+        {content}
+      </aside>
+    )
+  }
+
+  const mobileDrawer = (
+    <>
+      <div
+        className="fixed inset-0 z-[99999] bg-black/70 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
+        onClick={onClose}
+      />
+      <aside
+        aria-label="Play Queue"
+        className="fixed inset-0 z-[99999] flex w-full max-w-full flex-col border-t border-white/10 bg-canvas shadow-2xl transition-transform animate-in slide-in-from-bottom duration-200 pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] select-none"
+      >
+        {content}
+      </aside>
+    </>
   )
 
   if (typeof document !== 'undefined') {
-    return createPortal(drawerContent, document.body)
+    return createPortal(mobileDrawer, document.body)
   }
 
-  return drawerContent
+  return mobileDrawer
 }

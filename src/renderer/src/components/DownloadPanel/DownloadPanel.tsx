@@ -528,7 +528,7 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
 
   if (!panelSong) {
     return (
-      <aside className="w-[380px] h-full bg-[#111317] border-l border-border/70 shrink-0 flex flex-col shadow-2xl">
+      <aside className="w-full h-full bg-[#111317] border border-border/70 rounded-xl shrink-0 flex flex-col shadow-2xl overflow-hidden">
         <div className="h-14 flex items-center justify-between px-4 border-b border-border/60">
           <h2 className="text-sm font-bold text-text">Download Source</h2>
           <button
@@ -548,7 +548,7 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
   }
 
   return (
-    <aside className="w-[390px] h-full bg-[#111317] border-l border-border/70 shrink-0 flex flex-col shadow-2xl">
+    <aside className="w-full h-full bg-[#111317] border border-border/70 rounded-xl shrink-0 flex flex-col shadow-2xl overflow-hidden">
       <div className="h-14 flex items-center justify-between px-4 border-b border-border/60">
         <h2 className="text-sm font-bold text-text">Download Source</h2>
         <button

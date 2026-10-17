@@ -985,7 +985,7 @@ export default function LyricsPage() {
       {activePlayback.isRemote && (
         <div className="absolute left-3 top-3 sm:left-7 sm:top-5 z-20 flex items-center gap-2">
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/50 border border-white/15 text-xs text-zinc-300 backdrop-blur-xl shadow-lg">
-            <Laptop2 className="w-3.5 h-3.5 text-emerald-400" />
+            <Laptop2 className="w-3.5 h-3.5 text-white" />
             <span className="font-semibold truncate max-w-[140px] sm:max-w-[240px]">
               {activePlayback.activeDeviceName}
             </span>

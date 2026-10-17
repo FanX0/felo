@@ -59,12 +59,15 @@ export function resolveSongAudioUrl(song?: Song | null): string | null {
     return toMediaUrl(song.filePath)
   }
 
-  // 3. If song has an explicit HTTP/HTTPS playable URL
+  // 3. If song has an explicit HTTP/HTTPS playable URL or preview URL
   if (song.filePath && /^https?:/i.test(song.filePath)) {
     return song.filePath
   }
   if (song.audioUrl && /^https?:/i.test(song.audioUrl)) {
     return song.audioUrl
+  }
+  if ((song as any).previewUrl && /^https?:/i.test((song as any).previewUrl)) {
+    return (song as any).previewUrl
   }
 
   // 4. Resolve via discovered active desktop device with local LAN IP

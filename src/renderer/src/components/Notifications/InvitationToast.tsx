@@ -3,6 +3,7 @@ import { Headphones, Music2, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useNotificationStore } from '../../stores/useNotificationStore'
 import { useListeningStore } from '../../stores/listening'
+import Avatar from '../Common/Avatar'
 
 export default function InvitationToast(): ReactElement | null {
   const navigate = useNavigate()
@@ -45,12 +46,12 @@ export default function InvitationToast(): ReactElement | null {
       <div className="rounded-2xl border border-primary-amber/40 bg-surface-elevated/95 p-4 shadow-2xl backdrop-blur-xl text-text">
         <div className="flex items-start gap-3">
           {/* Inviter Avatar */}
-          <div className="relative h-10 w-10 shrink-0 rounded-full border border-border bg-surface overflow-hidden text-xs font-black flex items-center justify-center text-text">
-            {inviter?.avatar_url ? (
-              <img src={inviter.avatar_url} alt="" className="h-full w-full object-cover" />
-            ) : (
-              inviter?.display_name?.slice(0, 1).toUpperCase() || 'H'
-            )}
+          <div className="relative shrink-0">
+            <Avatar
+              src={inviter?.avatar_url}
+              fallbackText={inviter?.display_name || 'Host'}
+              size="md"
+            />
             <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-400 border border-canvas" />
           </div>
 

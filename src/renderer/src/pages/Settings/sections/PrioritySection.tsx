@@ -103,7 +103,7 @@ export function PrioritySection({ downloadPriority, setDownloadPriority }: Prior
                       current.length > 1 ? current.filter((id) => id !== source.id) : current
                     )
                   }
-                  className="h-8 w-8 rounded-full border border-danger/40 bg-danger/10 flex items-center justify-center text-danger hover:bg-danger/20"
+                  className="h-8 w-8 rounded-full bg-danger hover:bg-danger/90 flex items-center justify-center text-white transition-colors shadow-xs"
                 >
                   <X className="h-4 w-4" />
                 </button>

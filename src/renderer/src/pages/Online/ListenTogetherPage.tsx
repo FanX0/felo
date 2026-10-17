@@ -31,7 +31,7 @@ import {
 } from './components'
 
 function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProps): ReactElement {
-  const { user } = useOnlineStore()
+  const { user, profile } = useOnlineStore()
   const [searchParams, setSearchParams] = useSearchParams()
   const transfers = useDownloadStore((state) => state.transfers)
   const {
@@ -516,10 +516,15 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       const memberList: RoomMemberInfo[] = (profileRows || []).map((p) => {
         const info = roleMap.get(p.id)
         const role = p.id === activeRoom.host_id ? 'host' : info?.role || 'listener'
+        const effectiveAvatar =
+          p.avatar_url ||
+          (p.id === user?.id
+            ? profile?.avatar_url || user?.user_metadata?.avatar_url || user?.user_metadata?.picture || null
+            : null)
         return {
           userId: p.id,
-          displayName: p.display_name || 'User',
-          avatarUrl: p.avatar_url,
+          displayName: p.display_name || (p.id === user?.id ? (profile?.display_name || 'User') : 'User'),
+          avatarUrl: effectiveAvatar,
           isHost: role === 'host',
           role,
           speaker_role: info?.speakerRole || 'center',
@@ -632,7 +637,9 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       }
 
       const activeList: LiveFriendSession[] = []
+      const roomsDict: Record<string, ListeningRoom> = {}
       friendRoomsMap.forEach((room, friendId) => {
+        roomsDict[friendId] = room
         activeList.push({
           profile: profilesMap.get(friendId) || {
             id: friendId,
@@ -645,6 +652,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       })
 
       setLiveFriends(activeList)
+      useListeningStore.getState().setLiveFriendRooms(roomsDict)
     } catch (err) {
       console.warn('Could not load live friends:', err)
     } finally {
@@ -701,6 +709,8 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
             return {
               ...m,
               isOnline: onlineIds.has(m.userId),
+              displayName: p?.displayName || m.displayName,
+              avatarUrl: p?.avatarUrl || m.avatarUrl,
               speaker_role: p?.speakerRole || m.speaker_role || 'center',
               sub_cutoff: typeof p?.subCutoff === 'number' ? p.subCutoff : m.sub_cutoff
             }
@@ -731,8 +741,8 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
         if (status === 'SUBSCRIBED' && user) {
           await channel.track({
             userId: user.id,
-            displayName: user.user_metadata?.display_name || user.email?.split('@')[0] || 'User',
-            avatarUrl: user.user_metadata?.avatar_url || null,
+            displayName: profile?.display_name || user.user_metadata?.display_name || user.email?.split('@')[0] || 'User',
+            avatarUrl: profile?.avatar_url || user.user_metadata?.avatar_url || user.user_metadata?.picture || null,
             isHost: false,
             speakerRole: useDspStore.getState().speakerRole || 'center',
             subCutoff: useDspStore.getState().subCutoff || 120
@@ -772,6 +782,8 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
             return {
               ...m,
               isOnline: onlineIds.has(m.userId),
+              displayName: p?.displayName || m.displayName,
+              avatarUrl: p?.avatarUrl || m.avatarUrl,
               speaker_role: p?.speakerRole || m.speaker_role || 'center',
               sub_cutoff: typeof p?.subCutoff === 'number' ? p.subCutoff : m.sub_cutoff
             }
@@ -807,8 +819,8 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
         if (status === 'SUBSCRIBED' && user) {
           await channel.track({
             userId: user.id,
-            displayName: user.user_metadata?.display_name || user.email?.split('@')[0] || 'Host',
-            avatarUrl: user.user_metadata?.avatar_url || null,
+            displayName: profile?.display_name || user.user_metadata?.display_name || user.email?.split('@')[0] || 'Host',
+            avatarUrl: profile?.avatar_url || user.user_metadata?.avatar_url || user.user_metadata?.picture || null,
             isHost: true,
             speakerRole: useDspStore.getState().speakerRole || 'center',
             subCutoff: useDspStore.getState().subCutoff || 120

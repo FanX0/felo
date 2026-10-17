@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { Play, Pause, SkipForward, Laptop2, Smartphone, Radio, Globe } from 'lucide-react'
+import { Play, Pause, SkipForward, Laptop2, Smartphone, MonitorSpeaker, Globe } from 'lucide-react'
 import { remoteClient, type RemotePlayerState } from '../pages/Remote/remoteClient'
 import { usePlayerStore } from '../hooks/usePlayerStore'
 import { useOnlineStore } from '../hooks/useOnlineStore'
@@ -195,15 +195,15 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
               type="button"
               onClick={handleDeviceClick}
               className={`shrink-0 flex items-center gap-1 font-semibold text-[10px] transition ${
-                isRemote ? 'text-emerald-400 hover:text-emerald-300' : 'text-zinc-400 hover:text-zinc-300'
+                isRemote ? 'text-white hover:text-white/80' : 'text-zinc-400 hover:text-zinc-300'
               }`}
             >
               {deviceCategory === 'app_pc' ? (
-                <Laptop2 className="w-3 h-3 text-emerald-400" />
+                <Laptop2 className="w-3 h-3 text-white" />
               ) : deviceCategory === 'web_pc' ? (
-                <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                <Globe className="w-3.5 h-3.5 text-white" />
               ) : (
-                <Smartphone className={`w-3 h-3 ${isRemote ? 'text-emerald-400' : 'text-zinc-300'}`} />
+                <Smartphone className={`w-3 h-3 ${isRemote ? 'text-white' : 'text-zinc-300'}`} />
               )}
               <span>
                 {isRemote ? `Listening on ${deviceName}` : deviceName}
@@ -221,7 +221,7 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
           title="Connect to a device"
           className="w-8 h-8 rounded-full flex items-center justify-center text-zinc-400 hover:text-white transition cursor-pointer"
         >
-          <Radio className="w-4 h-4" />
+          <MonitorSpeaker className="w-4 h-4" />
         </button>
 
         <button

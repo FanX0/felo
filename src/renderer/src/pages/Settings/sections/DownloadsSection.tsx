@@ -7,6 +7,7 @@ import {
   STREAM_CACHE_SETTING
 } from '../../../lib/downloadConfig'
 import { SettingsSection } from '../components/SettingsSection'
+import Slider from '../../../components/Common/Slider'
 
 interface DownloadsSectionProps {
   downloadLocation: string
@@ -108,7 +109,7 @@ export function DownloadsSection({
                     <button
                       type="button"
                       onClick={handleResetDownloadLocation}
-                      className="rounded-full border border-danger/30 bg-surface-elevated px-3 py-2 text-xs font-bold text-danger hover:bg-danger/20 transition-colors"
+                      className="rounded-full bg-danger hover:bg-danger/90 px-3 py-2 text-xs font-bold text-white transition-colors shadow-xs"
                       title="Reset to default directory"
                     >
                       Reset
@@ -190,13 +191,14 @@ export function DownloadsSection({
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                <input
-                  type="range"
+                <Slider
                   min={1}
                   max={10}
+                  step={1}
                   value={streamCacheLimit}
-                  onChange={(event) => setStreamCacheLimit(Number(event.target.value))}
-                  className="w-36 accent-white"
+                  onChange={setStreamCacheLimit}
+                  className="w-36"
+                  ariaLabel="Stream cache limit in songs"
                 />
                 <span className="w-16 text-sm font-bold text-text">
                   {streamCacheLimit} songs

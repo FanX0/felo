@@ -1,15 +1,10 @@
 import { type ReactElement, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import {
-  User,
-  Settings as SettingsIcon,
-  EyeOff,
-  LogOut,
-  LogIn
-} from 'lucide-react'
+import { User, Settings as SettingsIcon, EyeOff, LogOut, LogIn } from 'lucide-react'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { usePrivateSessionStore } from '../../hooks/usePrivateSessionStore'
 import { cn } from '../../lib/utils'
+import Avatar from '../Common/Avatar'
 
 interface AccountDropdownMenuProps {
   isOpen: boolean
@@ -82,18 +77,24 @@ export default function AccountDropdownMenu({
       )}
     >
       {/* User Info Header */}
-      <div className="px-4 py-3 border-b border-border/80">
-        <div className="flex items-center justify-between gap-1.5">
+      <div className="px-4 py-3 border-b border-border/80 flex items-center gap-3">
+        {user ? (
+          <Avatar
+            src={profile?.avatar_url}
+            fallbackText={profile?.display_name || user?.email}
+            metadataFallback={user?.user_metadata?.avatar_url || user?.user_metadata?.picture}
+            size="sm"
+            className="shrink-0"
+          />
+        ) : null}
+        <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-bold text-text">
             {profile?.display_name || (user ? 'Online profile' : 'Local listener')}
           </p>
+          <p className="truncate text-xs text-text-muted">
+            {user?.email || (configured && initialized ? 'Not signed in' : 'Local account')}
+          </p>
         </div>
-        <p className="truncate text-xs text-text-muted">
-          {user?.email ||
-            (configured && initialized
-              ? 'Not signed in'
-              : 'Local account')}
-        </p>
       </div>
 
       <div className="py-1">

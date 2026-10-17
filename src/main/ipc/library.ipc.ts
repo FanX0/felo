@@ -91,6 +91,29 @@ export function registerLibraryIpc(): void {
     return await LibraryService.getSongs()
   })
 
+  // Library: Toggle song favorite (Like / Unlike)
+  ipcMain.handle(
+    'library:toggleFavorite',
+    async (_, songId: string, isFavorite?: boolean, songData?: any) => {
+      try {
+        const validSongId = validateWith(SafeEntityIdSchema, songId)
+        return await LibraryService.toggleFavorite(validSongId, isFavorite, songData)
+      } catch {
+        return { id: songId, isFavorite: false }
+      }
+    }
+  )
+
+  // Library: Get liked songs
+  ipcMain.handle('library:getLikedSongs', async () => {
+    return await LibraryService.getLikedSongs()
+  })
+
+  // Library: Get liked count
+  ipcMain.handle('library:getLikedCount', async () => {
+    return await LibraryService.getLikedCount()
+  })
+
   // Library: Read audio file buffer directly from local disk (for Listen Together cloud ingestion)
   ipcMain.handle(
     'library:readAudioFile',

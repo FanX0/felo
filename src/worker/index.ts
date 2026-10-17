@@ -558,7 +558,7 @@ export const SLASH_COMMANDS = [
   },
   {
     name: 'download',
-    description: 'Get official download links for Felo Music Player'
+    description: 'Get download links for Android, iOS, PC Setup, and Web Player'
   },
   {
     name: 'help',
@@ -620,6 +620,70 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
   // Type 3: Message Component Interactions (Buttons, Select Menus)
   if (interaction.type === 3) {
     const customId = interaction.data?.custom_id || ''
+
+    // Download button interaction handle
+    if (customId === 'cmd_download' || customId === 'download_app' || customId === 'queue_download') {
+      return jsonResponse({
+        type: 4,
+        data: {
+          flags: 64,
+          embeds: [
+            {
+              title: '⚡ Download & Web Access — Felo Music Player',
+              description:
+                `Experience crystal-clear lossless music streaming, personal library management, and real-time Listen Together sessions with friends!\n\n` +
+                `📲 **Download Page (Android, iOS & PC):**\nhttps://felo.feloapp.workers.dev/#/download\n\n` +
+                `💻 **Desktop App Setup (.exe):**\nhttps://github.com/FanX0/felo/releases/latest/download/Felo-Setup.exe\n\n` +
+                `🤖 **Android APK Direct:**\nhttps://github.com/FanX0/felo/releases/latest/download/Felo.apk\n\n` +
+                `🌐 **Instant Web Player (Zero Install):**\nhttps://felo.feloapp.workers.dev\n\n` +
+                `✨ **Key Features:**\n` +
+                `• 🎧 **Lossless Hi-Res Audio** (Bit-perfect FLAC / 320kbps MP3)\n` +
+                `• 🌐 **Listen Together** (Real-time WebRTC sync across friends)\n` +
+                `• 🤖 **Universal Discord Bot** (Control player from any server)\n` +
+                `• ⚡ **Real-Time Synchronized Playback & Queue Control**`,
+              color: 0x10b981,
+              footer: { text: 'Felo Music • Available on Web, Android, iOS & Desktop' }
+            }
+          ],
+          components: [
+            {
+              type: 1,
+              components: [
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Download Apps (Android/iOS/PC)',
+                  emoji: { name: '📲' },
+                  url: 'https://felo.feloapp.workers.dev/#/download'
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Download PC Setup (.exe)',
+                  emoji: { name: '💻' },
+                  url: 'https://github.com/FanX0/felo/releases/latest/download/Felo-Setup.exe'
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Download Android APK',
+                  emoji: { name: '🤖' },
+                  url: 'https://github.com/FanX0/felo/releases/latest/download/Felo.apk'
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Open Web Player',
+                  emoji: { name: '🌐' },
+                  url: 'https://felo.feloapp.workers.dev'
+                }
+              ]
+            }
+          ]
+        }
+      })
+    }
+
     const roomCode = await supabase.getChannelBinding(channelId)
     if (!roomCode) {
       return jsonResponse({
@@ -1066,9 +1130,9 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 {
                   type: 2,
                   style: 5,
-                  label: 'Download Desktop App',
-                  emoji: { name: '📥' },
-                  url: 'https://bit.ly/47iv3PK'
+                  label: 'Download Apps (Android/iOS/PC)',
+                  emoji: { name: '📲' },
+                  url: 'https://felo.feloapp.workers.dev/#/download'
                 }
               ]
             }
@@ -1179,17 +1243,20 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
         data: {
           embeds: [
             {
-              title: '⚡ Download Felo Music Player',
+              title: '⚡ Download & Web Access — Felo Music Player',
               description:
                 `Experience crystal-clear lossless music streaming, personal library management, and real-time Listen Together sessions with friends!\n\n` +
-                `🔗 **Direct Download Link:** https://bit.ly/47iv3PK\n\n` +
+                `📲 **Download Page (Android, iOS & PC):**\nhttps://felo.feloapp.workers.dev/#/download\n\n` +
+                `💻 **Desktop App Setup (.exe):**\nhttps://github.com/FanX0/felo/releases/latest/download/Felo-Setup.exe\n\n` +
+                `🤖 **Android APK Direct:**\nhttps://github.com/FanX0/felo/releases/latest/download/Felo.apk\n\n` +
+                `🌐 **Instant Web Player (Zero Install):**\nhttps://felo.feloapp.workers.dev\n\n` +
                 `✨ **Key Features:**\n` +
-                `• 🎧 **Lossless Hi-Res Audio** (FLAC / 320kbps MP3)\n` +
-                `• 🌐 **Listen Together** (Real-time P2P sync across friends)\n` +
+                `• 🎧 **Lossless Hi-Res Audio** (Bit-perfect FLAC / 320kbps MP3)\n` +
+                `• 🌐 **Listen Together** (Real-time WebRTC sync across friends)\n` +
                 `• 🤖 **Universal Discord Bot** (Control player from any server)\n` +
                 `• ⚡ **Real-Time Synchronized Playback & Queue Control**`,
               color: 0x10b981,
-              footer: { text: 'Felo Desktop Music • Windows, macOS & Linux' }
+              footer: { text: 'Felo Music • Available on Web, Android, iOS & Desktop' }
             }
           ],
           components: [
@@ -1199,9 +1266,30 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 {
                   type: 2,
                   style: 5,
-                  label: 'Download Felo App',
-                  emoji: { name: '📥' },
-                  url: 'https://bit.ly/47iv3PK'
+                  label: 'Download Apps (Android/iOS/PC)',
+                  emoji: { name: '📲' },
+                  url: 'https://felo.feloapp.workers.dev/#/download'
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Download PC Setup (.exe)',
+                  emoji: { name: '💻' },
+                  url: 'https://github.com/FanX0/felo/releases/latest/download/Felo-Setup.exe'
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Download Android APK',
+                  emoji: { name: '🤖' },
+                  url: 'https://github.com/FanX0/felo/releases/latest/download/Felo.apk'
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Open Web Player',
+                  emoji: { name: '🌐' },
+                  url: 'https://felo.feloapp.workers.dev'
                 }
               ]
             }
@@ -1229,8 +1317,8 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 `2. Click **Listen Together** in the sidebar to get your **6-letter Room Code** (e.g. \`AB12CD\`).\n` +
                 `3. In this Discord channel, type: **\`/connect code:AB12CD\`**.\n` +
                 `*(Great for listeners, Chromebooks, Mac, mobile, or anyone without installing software!)*\n\n` +
-                `#### 💻 Option 2: Desktop App (PC / Mac / Linux)\n` +
-                `1. Click **\`[📥 Download Desktop App]\`** below.\n` +
+                `#### 💻 Option 2: Mobile or Desktop App (Android / iOS / PC / Mac / Linux)\n` +
+                `1. Click **\`[📲 Download Apps (Android, iOS & PC)]\`** below.\n` +
                 `2. Open Felo, play music, and click **Listen Together** to see your **6-letter Room Code**.\n` +
                 `3. In this Discord channel, type: **\`/connect code:AB12CD\`**.\n` +
                 `*(Best for lossless local audio, offline library management, and streaming PC sound to Discord Voice!)*\n\n` +
@@ -1273,9 +1361,9 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 {
                   type: 2,
                   style: 5,
-                  label: '2. Download Desktop App',
-                  emoji: { name: '📥' },
-                  url: 'https://bit.ly/47iv3PK'
+                  label: '2. Download Apps (Android/iOS/PC)',
+                  emoji: { name: '📲' },
+                  url: 'https://felo.feloapp.workers.dev/#/download'
                 },
                 {
                   type: 2,
@@ -1325,9 +1413,9 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                   {
                     type: 2,
                     style: 5,
-                    label: 'Download Desktop App',
-                    emoji: { name: '📥' },
-                    url: 'https://bit.ly/47iv3PK'
+                    label: 'Download Apps (Android/iOS/PC)',
+                    emoji: { name: '📲' },
+                    url: 'https://felo.feloapp.workers.dev/#/download'
                   }
                 ]
               }
@@ -1378,9 +1466,9 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 {
                   type: 2,
                   style: 5,
-                  label: 'Download Desktop App',
-                  emoji: { name: '📥' },
-                  url: 'https://bit.ly/47iv3PK'
+                  label: 'Download Apps (Android/iOS/PC)',
+                  emoji: { name: '📲' },
+                  url: 'https://felo.feloapp.workers.dev/#/download'
                 }
               ]
             }
@@ -1398,7 +1486,7 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
           flags: 64,
           embeds: [
             {
-              title: '⚠️ Choose Web Player or Desktop App to Connect',
+              title: '⚠️ Choose Web Player or Apps to Connect',
               description:
                 `To play or control music in this channel, link it to an active **Felo Listen Together** session.\n\n` +
                 `You can choose either option:\n\n` +
@@ -1406,9 +1494,9 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 `1. Click **Open Web Player** below.\n` +
                 `2. Go to **Listen Together** in the sidebar to get your **6-character Room Code** (e.g. \`AB12CD\`).\n` +
                 `3. Type **\`/connect code:AB12CD\`** in this channel.\n\n` +
-                `💻 **Option 2: Desktop App (PC / Mac / Linux)**\n` +
-                `1. Click **Download Desktop App** below.\n` +
-                `2. Open Felo on your computer to get your **6-character Room Code**.\n` +
+                `💻 **Option 2: Mobile or Desktop App (Android / iOS / PC / Mac / Linux)**\n` +
+                `1. Click **Download Apps (Android/iOS/PC)** below.\n` +
+                `2. Open Felo on your computer or phone to get your **6-character Room Code**.\n` +
                 `3. Type **\`/connect code:AB12CD\`** in this channel.\n\n` +
                 `*Once connected, everyone in this server can use \`/play\` to search & queue any song!*`,
               color: 0xf59e0b
@@ -1428,9 +1516,9 @@ async function handleDiscordInteractions(request: Request, env: Env): Promise<Re
                 {
                   type: 2,
                   style: 5,
-                  label: 'Download Desktop App',
-                  emoji: { name: '📥' },
-                  url: 'https://bit.ly/47iv3PK'
+                  label: 'Download Apps (Android/iOS/PC)',
+                  emoji: { name: '📲' },
+                  url: 'https://felo.feloapp.workers.dev/#/download'
                 }
               ]
             }
@@ -2276,6 +2364,20 @@ function jsonResponse(body: Record<string, unknown>): Response {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
+
+    // Direct Download URL Shortcuts
+    if (url.pathname === '/download' || url.pathname === '/downloads') {
+      return Response.redirect(`${url.origin}/#/download`, 302)
+    }
+    if (url.pathname === '/setup' || url.pathname === '/download/pc' || url.pathname === '/download/exe') {
+      return Response.redirect('https://github.com/FanX0/felo/releases/latest/download/Felo-Setup.exe', 302)
+    }
+    if (url.pathname === '/download/apk' || url.pathname === '/apk') {
+      return Response.redirect('https://github.com/FanX0/felo/releases/latest/download/Felo.apk', 302)
+    }
+    if (url.pathname === '/download/ipa' || url.pathname === '/ipa') {
+      return Response.redirect('https://github.com/FanX0/felo/releases/latest/download/Felo.ipa', 302)
+    }
 
     // Discord Slash Commands Webhook Endpoint
     // Discord sends POST to the Interaction URL configured in Discord Portal

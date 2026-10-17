@@ -35,6 +35,31 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
     return null
   }
 
+  // In development mode or local host environment, unregister any active service worker and clear cache to prevent stale builds from lingering
+  const isLocalHost =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1' ||
+      window.location.hostname.endsWith('.local'))
+
+  if (import.meta.env.DEV || isLocalHost) {
+    try {
+      const registrations = await navigator.serviceWorker.getRegistrations()
+      for (const reg of registrations) {
+        await reg.unregister()
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys()
+        for (const key of keys) {
+          await caches.delete(key)
+        }
+      }
+    } catch (err) {
+      console.warn('[PWA] Dev mode service worker cleanup notice:', err)
+    }
+    return null
+  }
+
   try {
     const registration = await navigator.serviceWorker.register('/sw.js', {
       scope: '/'

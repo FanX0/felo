@@ -440,7 +440,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         void window.api.getSongs().then((songs: Song[]) => {
           if (Array.isArray(songs) && songs.length > 0) {
             const sorted = [...songs].sort((a, b) => (b.dateAdded || 0) - (a.dateAdded || 0))
-            get().setQueue(sorted, 0)
+            get().setQueue(sorted, 0, {
+              type: 'library',
+              title: 'Your Library',
+              route: '/library'
+            })
           }
         })
       }

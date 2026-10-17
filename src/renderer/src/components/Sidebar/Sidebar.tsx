@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   AlertCircle,
   Bot,
@@ -29,7 +29,9 @@ import type { Playlist } from '../../pages/Playlists/types'
 import type { DownloadTarget } from '../DownloadPanel/DownloadPanel'
 import CreatePlaylistModal from '../../pages/Playlists/CreatePlaylistModal'
 import SupportAboutModal from '../Common/SupportAboutModal'
-import { AppCapabilities } from '../../lib/appConfig'
+import { AppCapabilities, isElectron } from '../../lib/appConfig'
+
+const PLAYLIST_ORDER_SETTING = 'sidebar-playlist-order'
 
 interface SidebarProps {
   isOpen?: boolean
@@ -41,7 +43,11 @@ type UpdateStatus = Awaited<ReturnType<Window['api']['checkForUpdates']>>
 
 export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }: SidebarProps) {
   const [songCount, setSongCount] = useState<number>(0)
+  const [likedCount, setLikedCount] = useState<number>(0)
   const [playlists, setPlaylists] = useState<Playlist[]>([])
+  const [draggedPlaylistId, setDraggedPlaylistId] = useState<string | null>(null)
+  const [dragOverPlaylistId, setDragOverPlaylistId] = useState<string | null>(null)
+  const [dropPosition, setDropPosition] = useState<'before' | 'after' | null>(null)
   const [isCreatePlaylistOpen, setIsCreatePlaylistOpen] = useState(false)
   const [isSupportModalOpen, setIsSupportModalOpen] = useState(false)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
@@ -56,6 +62,8 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
   const clearTransfers = useDownloadStore((s) => s.clearTransfers)
   const { requestPlaySong } = usePlaybackArbitration()
   const navigate = useNavigate()
+  const location = useLocation()
+  const dragJustEndedRef = useRef(false)
 
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
@@ -73,12 +81,119 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
         const songs = await window.api.getSongs()
         setSongCount(songs?.length || 0)
       }
+      if (window.api?.getLikedCount) {
+        const count = await window.api.getLikedCount()
+        setLikedCount(count || 0)
+      }
       if (window.api?.getPlaylists) {
-        setPlaylists(((await window.api.getPlaylists()) || []) as Playlist[])
+        let list = (((await window.api.getPlaylists()) || []) as Playlist[])
+        let savedOrder: string[] = []
+        try {
+          const saved = await window.api?.getSetting?.(PLAYLIST_ORDER_SETTING)
+          if (Array.isArray(saved)) {
+            savedOrder = saved
+          } else {
+            const local =
+              localStorage.getItem(`felo-setting:${PLAYLIST_ORDER_SETTING}`) ||
+              localStorage.getItem(PLAYLIST_ORDER_SETTING)
+            if (local) savedOrder = JSON.parse(local)
+          }
+        } catch {}
+
+        if (savedOrder.length > 0) {
+          const orderMap = new Map(savedOrder.map((id, index) => [id, index]))
+          list = [...list].sort((a, b) => {
+            const idxA = orderMap.has(a.id) ? orderMap.get(a.id)! : 9999
+            const idxB = orderMap.has(b.id) ? orderMap.get(b.id)! : 9999
+            return idxA - idxB
+          })
+        }
+        setPlaylists(list)
       }
     } catch (err) {
-      console.error('Failed to load song count:', err)
+      console.error('Failed to load stats in Sidebar:', err)
     }
+  }
+
+  const handleReorderPlaylists = (sourceId: string, targetId: string, position: 'before' | 'after') => {
+    const fromIndex = playlists.findIndex((p) => p.id === sourceId)
+    let toIndex = playlists.findIndex((p) => p.id === targetId)
+    if (fromIndex === -1 || toIndex === -1) return
+
+    if (position === 'after' && fromIndex > toIndex) {
+      toIndex = toIndex + 1
+    } else if (position === 'before' && fromIndex < toIndex) {
+      toIndex = toIndex - 1
+    }
+
+    const reordered = [...playlists]
+    const [moved] = reordered.splice(fromIndex, 1)
+    reordered.splice(Math.max(0, toIndex), 0, moved)
+
+    setPlaylists(reordered)
+
+    const newOrder = reordered.map((p) => p.id)
+    void window.api?.setSetting?.(PLAYLIST_ORDER_SETTING, newOrder)
+    try {
+      localStorage.setItem(`felo-setting:${PLAYLIST_ORDER_SETTING}`, JSON.stringify(newOrder))
+      localStorage.setItem(PLAYLIST_ORDER_SETTING, JSON.stringify(newOrder))
+    } catch {}
+  }
+
+  const handleDragStart = (e: React.DragEvent<HTMLDivElement>, playlist: Playlist) => {
+    dragJustEndedRef.current = false
+    setDraggedPlaylistId(playlist.id)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', playlist.id)
+
+    // Industry standard drag preview: show the floating playlist card box instead of browser link text
+    const currentTarget = e.currentTarget
+    const rect = currentTarget.getBoundingClientRect()
+
+    const ghost = currentTarget.cloneNode(true) as HTMLElement
+    ghost.style.position = 'fixed'
+    ghost.style.top = '-9999px'
+    ghost.style.left = '-9999px'
+    ghost.style.width = `${rect.width}px`
+    ghost.style.height = `${rect.height}px`
+    ghost.style.boxSizing = 'border-box'
+    ghost.style.pointerEvents = 'none'
+    ghost.style.zIndex = '999999'
+    ghost.style.opacity = '0.96'
+    ghost.style.transform = 'translateZ(0)'
+    ghost.style.borderRadius = '8px'
+    ghost.style.backgroundColor = '#1f1f1f'
+    ghost.style.border = '1px solid rgba(255, 255, 255, 0.15)'
+    ghost.style.boxShadow = '0 16px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08)'
+
+    ghost.classList.remove('opacity-30', 'opacity-40', 'scale-[0.98]', 'hover:bg-hover/60')
+
+    document.body.appendChild(ghost)
+
+    const offsetX = Math.min(Math.max(16, e.clientX - rect.left), rect.width - 16)
+    const offsetY = Math.min(Math.max(16, e.clientY - rect.top), rect.height - 16)
+
+    e.dataTransfer.setDragImage(ghost, offsetX, offsetY)
+
+    const cleanup = () => {
+      if (ghost.parentNode) {
+        ghost.parentNode.removeChild(ghost)
+      }
+    }
+    requestAnimationFrame(cleanup)
+    setTimeout(cleanup, 100)
+  }
+
+  const handlePlaylistClick = (playlistId: string, e: React.MouseEvent) => {
+    if (dragJustEndedRef.current) {
+      dragJustEndedRef.current = false
+      return
+    }
+    if (e.metaKey || e.ctrlKey || e.button === 1) {
+      window.open(`#/playlists/${playlistId}`, '_blank')
+      return
+    }
+    navigate(`/playlists/${playlistId}`)
   }
 
   useEffect(() => {
@@ -87,10 +202,12 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
     window.addEventListener('felo:library-updated', handleLibraryUpdate)
     window.addEventListener('fanxmusic:library-updated', handleLibraryUpdate)
     window.addEventListener('felo:playlists-updated', handleLibraryUpdate)
+    window.addEventListener('felo:favorites-updated', handleLibraryUpdate)
     return () => {
       window.removeEventListener('felo:library-updated', handleLibraryUpdate)
       window.removeEventListener('fanxmusic:library-updated', handleLibraryUpdate)
       window.removeEventListener('felo:playlists-updated', handleLibraryUpdate)
+      window.removeEventListener('felo:favorites-updated', handleLibraryUpdate)
     }
   }, [])
 
@@ -216,6 +333,19 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
             <Music2 className="h-5 w-5 text-white" />
           </NavLink>
 
+          <NavLink
+            to="/playlists/liked"
+            title={`Liked Songs - ${likedCount} songs`}
+            className={({ isActive }) =>
+              cn(
+                'flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/50 bg-gradient-to-br from-[#450af5] to-[#8e8ee5] shadow-sm transition-all hover:scale-105 active:scale-95 no-drag',
+                isActive ? 'ring-2 ring-white/60' : 'hover:opacity-90'
+              )
+            }
+          >
+            <Heart className="h-5 w-5 fill-white text-white" />
+          </NavLink>
+
           {playlists.length > 0 ? (
             playlists.map((playlist) => (
               <NavLink
@@ -256,7 +386,33 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
           )}
         </div>
 
-        <div className="w-full border-t border-border/40 bg-surface px-3 py-3">
+        <div className="w-full border-t border-border/40 bg-surface px-3 py-3 flex flex-col items-center gap-2">
+          {!isElectron && (
+            <NavLink
+              to="/download"
+              title="Download Felo for Android, iOS & Desktop"
+              className={({ isActive }) =>
+                cn(
+                  'flex h-10 w-10 items-center justify-center rounded-full border border-border/50 transition-colors no-drag cursor-pointer',
+                  isActive
+                    ? 'border-primary/60 bg-primary/20 text-primary'
+                    : 'bg-surface-elevated text-text-muted hover:bg-hover hover:text-primary'
+                )
+              }
+            >
+              <Download className="h-4 w-4" />
+            </NavLink>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setIsSupportModalOpen(true)}
+            title="Support Felo"
+            className="flex h-10 w-10 items-center justify-center rounded-full border border-border/50 bg-surface-elevated text-rose-500 transition-colors hover:bg-rose-500/15 hover:scale-105 active:scale-95 no-drag cursor-pointer"
+          >
+            <Heart className="h-4 w-4 fill-rose-500 text-rose-500" />
+          </button>
+
           {AppCapabilities.downloads && (
             <button
               type="button"
@@ -280,6 +436,18 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
             </button>
           )}
         </div>
+
+        {isSupportModalOpen && (
+          <SupportAboutModal
+            isOpen={isSupportModalOpen}
+            onClose={() => setIsSupportModalOpen(false)}
+            currentVersion={updateStatus?.currentVersion || '1.1.0-beta.1'}
+            latestVersion={updateStatus?.latestVersion}
+            updateAvailable={updateStatus?.status === 'available'}
+            releaseUrl={updateStatus?.releaseUrl}
+            onOpenSettings={() => navigate('/settings')}
+          />
+        )}
       </aside>
     )
   }
@@ -337,39 +505,128 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
               </div>
             </NavLink>
 
+            {/* Liked Songs Item (Spotify-Style) */}
+            <NavLink
+              to="/playlists/liked"
+              className={({ isActive }) =>
+                cn(
+                  'flex items-center gap-3 rounded-md px-2 py-2 no-drag transition-colors group',
+                  isActive ? 'bg-surface-elevated text-text' : 'hover:bg-hover/60'
+                )
+              }
+            >
+              <div className="w-12 h-12 rounded bg-gradient-to-br from-[#450af5] to-[#8e8ee5] flex items-center justify-center shrink-0 shadow-sm transition-transform group-hover:scale-105">
+                <Heart className="w-5 h-5 fill-white text-white" />
+              </div>
+              <div className="flex flex-col overflow-hidden min-w-0">
+                <span className="text-[15px] font-bold text-text truncate">Liked Songs</span>
+                <span className="text-[12px] text-text-muted truncate flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary/80 shrink-0" />
+                  Playlist • {likedCount} {likedCount === 1 ? 'song' : 'songs'}
+                </span>
+              </div>
+            </NavLink>
+
             {playlists.length > 0 ? (
-              playlists.map((playlist) => (
-                <NavLink
-                  key={playlist.id}
-                  to={`/playlists/${playlist.id}`}
-                  className={({ isActive }) =>
-                    cn(
-                      'flex items-center gap-3 rounded-md px-2 py-2 no-drag transition-colors',
-                      isActive ? 'bg-surface-elevated text-text' : 'hover:bg-hover/60'
-                    )
-                  }
-                >
-                  {playlist.artworkPath ? (
-                    <img
-                      src={toMediaUrl(playlist.artworkPath) ?? undefined}
-                      alt=""
-                      className="h-12 w-12 shrink-0 rounded object-cover shadow-sm"
-                    />
-                  ) : (
-                    <div className="h-12 w-12 shrink-0 rounded border border-border/50 bg-surface-elevated flex items-center justify-center shadow-sm">
-                      <ListMusic className="h-5 w-5 text-text-muted" />
+              playlists.map((playlist) => {
+                const isDragging = draggedPlaylistId === playlist.id
+                const isOver = dragOverPlaylistId === playlist.id
+                const isActive = location.pathname === `/playlists/${playlist.id}`
+
+                return (
+                  <div
+                    key={playlist.id}
+                    role="button"
+                    tabIndex={0}
+                    draggable
+                    onClick={(e) => handlePlaylistClick(playlist.id, e)}
+                    onAuxClick={(e) => handlePlaylistClick(playlist.id, e)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        navigate(`/playlists/${playlist.id}`)
+                      }
+                    }}
+                    onDragStart={(e) => handleDragStart(e, playlist)}
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      e.dataTransfer.dropEffect = 'move'
+                      if (draggedPlaylistId && draggedPlaylistId !== playlist.id) {
+                        const rect = e.currentTarget.getBoundingClientRect()
+                        const midY = rect.top + rect.height / 2
+                        const pos = e.clientY < midY ? 'before' : 'after'
+                        setDragOverPlaylistId(playlist.id)
+                        setDropPosition(pos)
+                      }
+                    }}
+                    onDragLeave={(e) => {
+                      if (e.currentTarget.contains(e.relatedTarget as Node)) return
+                      if (dragOverPlaylistId === playlist.id) {
+                        setDragOverPlaylistId(null)
+                        setDropPosition(null)
+                      }
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      if (!draggedPlaylistId || draggedPlaylistId === playlist.id) {
+                        setDraggedPlaylistId(null)
+                        setDragOverPlaylistId(null)
+                        setDropPosition(null)
+                        return
+                      }
+                      handleReorderPlaylists(
+                        draggedPlaylistId,
+                        playlist.id,
+                        dropPosition || 'after'
+                      )
+                      setDraggedPlaylistId(null)
+                      setDragOverPlaylistId(null)
+                      setDropPosition(null)
+                    }}
+                    onDragEnd={() => {
+                      setDraggedPlaylistId(null)
+                      setDragOverPlaylistId(null)
+                      setDropPosition(null)
+                      dragJustEndedRef.current = true
+                      setTimeout(() => {
+                        dragJustEndedRef.current = false
+                      }, 150)
+                    }}
+                    className={cn(
+                      'relative flex items-center gap-3 rounded-md px-2 py-2 no-drag transition-colors select-none cursor-pointer',
+                      isActive ? 'bg-surface-elevated text-text' : 'hover:bg-hover/60 text-text-muted hover:text-text',
+                      isDragging && 'opacity-30 scale-[0.98]',
+                      isOver &&
+                        dropPosition === 'before' &&
+                        'before:absolute before:-top-0.5 before:left-1 before:right-1 before:h-0.5 before:bg-primary before:rounded-full before:z-20 before:shadow-[0_0_8px_var(--color-primary)]',
+                      isOver &&
+                        dropPosition === 'after' &&
+                        'after:absolute after:-bottom-0.5 after:left-1 after:right-1 after:h-0.5 after:bg-primary after:rounded-full after:z-20 after:shadow-[0_0_8px_var(--color-primary)]'
+                    )}
+                  >
+                    {playlist.artworkPath ? (
+                      <img
+                        src={toMediaUrl(playlist.artworkPath) ?? undefined}
+                        alt=""
+                        className="h-12 w-12 shrink-0 rounded object-cover shadow-sm pointer-events-none select-none"
+                        draggable={false}
+                      />
+                    ) : (
+                      <div className="h-12 w-12 shrink-0 rounded border border-border/50 bg-surface-elevated flex items-center justify-center shadow-sm select-none">
+                        <ListMusic className="h-5 w-5 text-text-muted" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex flex-col flex-1 select-none pointer-events-none">
+                      <span className="truncate text-[15px] font-bold text-text">
+                        {playlist.name}
+                      </span>
+                      <span className="truncate text-[12px] text-text-muted">
+                        Playlist • {playlist.songCount || 0} songs
+                      </span>
                     </div>
-                  )}
-                  <div className="min-w-0 flex flex-col">
-                    <span className="truncate text-[15px] font-bold text-text">
-                      {playlist.name}
-                    </span>
-                    <span className="truncate text-[12px] text-text-muted">
-                      Playlist • {playlist.songCount || 0} songs
-                    </span>
                   </div>
-                </NavLink>
-              ))
+                )
+              })
             ) : (
               <NavLink
                 to="/playlists"
@@ -395,70 +652,37 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
         </div>
       </div>
 
-      <div className="mt-auto p-3">
-        <div
-          className={`group relative flex w-full items-center justify-between rounded-xl border p-2.5 transition-all duration-200 no-drag ${
-            updateStatus?.status === 'available'
-              ? 'border-primary-amber/40 bg-primary-amber/10 hover:bg-primary-amber/15 shadow-sm'
-              : 'border-white/5 bg-surface/75 hover:border-white/10 hover:bg-surface-elevated/90'
-          }`}
-        >
-          {/* Main button to open Support & About */}
-          <button
-            type="button"
-            onClick={() => setIsSupportModalOpen(true)}
-            title={
-              updateStatus?.status === 'available'
-                ? `Update v${updateStatus.latestVersion} available • Click to view`
-                : 'Felo Free & Open Source • Click for About & Support'
+      <div className="mt-auto p-3 space-y-2">
+        {!isElectron && (
+          <NavLink
+            to="/download"
+            title="Download Felo for Android, iOS & Desktop"
+            className={({ isActive }) =>
+              cn(
+                'group flex w-full items-center justify-center gap-2 rounded-xl border py-2.5 px-3 transition-all duration-200 cursor-pointer no-drag shadow-sm text-xs font-semibold',
+                isActive
+                  ? 'border-primary/50 bg-primary/15 text-primary'
+                  : 'border-white/5 bg-surface/75 text-text hover:border-white/10 hover:bg-surface-elevated/90'
+              )
             }
-            className="flex min-w-0 flex-1 items-center gap-2.5 text-left focus:outline-none cursor-pointer"
           >
-            <span
-              className={`h-2 w-2 shrink-0 rounded-full transition-transform group-hover:scale-125 ${
-                updateStatus?.status === 'available'
-                  ? 'animate-pulse bg-primary-amber shadow-[0_0_8px_rgba(245,158,11,0.6)]'
-                  : updateStatus === null
-                    ? 'animate-pulse bg-text-muted'
-                    : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]'
-              }`}
-            />
-            <div className="min-w-0 flex items-center gap-1.5">
-              <span className="truncate text-xs font-bold text-text">Felo</span>
-              <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-400 border border-emerald-500/25">
-                Free
-              </span>
-              {updateStatus?.status === 'available' && (
-                <span className="rounded bg-primary-amber/25 px-1.5 py-0.5 text-[9px] font-bold text-primary-amber animate-pulse">
-                  Update
-                </span>
-              )}
-            </div>
-          </button>
+            <Download className="h-4 w-4 text-primary transition-transform duration-200 group-hover:scale-110" />
+            <span>Download App</span>
+          </NavLink>
+        )}
 
-          {/* Quick Action: Support Heart + Version tag */}
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                setIsSupportModalOpen(true)
-              }}
-              title="Support Felo (Saweria, Trakteer, Solana)"
-              className="flex h-6 w-6 items-center justify-center rounded-lg text-text-muted transition-all duration-150 hover:bg-rose-500/15 hover:text-rose-400 active:scale-95 cursor-pointer"
-            >
-              <Heart className="h-3.5 w-3.5 fill-rose-500/20 text-rose-400" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsSupportModalOpen(true)}
-              title="View version & support details"
-              className="text-[11px] font-mono text-text-muted hover:text-text transition-colors cursor-pointer"
-            >
-              v{updateStatus?.latestVersion || updateStatus?.currentVersion || '1.1.0'}
-            </button>
-          </div>
-        </div>
+        {/* Simple Centered Support Button */}
+        <button
+          type="button"
+          onClick={() => setIsSupportModalOpen(true)}
+          title="Support Felo"
+          className="group flex w-full items-center justify-center gap-2 rounded-xl border border-white/5 bg-surface/75 py-2.5 px-3 transition-all duration-200 hover:border-white/10 hover:bg-surface-elevated/90 active:scale-[0.99] cursor-pointer no-drag shadow-sm"
+        >
+          <Heart className="h-4 w-4 fill-rose-500 text-rose-500 transition-transform duration-200 group-hover:scale-110" />
+          <span className="text-xs font-semibold text-text group-hover:text-white transition-colors">
+            Support
+          </span>
+        </button>
       </div>
 
       {/* Transfers / Download Footer */}
@@ -652,7 +876,7 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
                                     className="flex w-full items-center gap-2.5 rounded px-2.5 py-1.5 text-left text-xs font-medium text-text-muted hover:bg-white/10 hover:text-text"
                                   >
                                     <FolderOpen className="h-3.5 w-3.5" />
-                                    <span>Show in Explorer</span>
+                                    <span>Open file location</span>
                                   </button>
                                 )}
 

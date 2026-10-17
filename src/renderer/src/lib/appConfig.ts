@@ -6,11 +6,23 @@
 export const isElectron =
   typeof window !== 'undefined' && Boolean((window as any).electron)
 
+// True when running inside native mobile or desktop app (Capacitor or Electron)
+export const isNativeApp =
+  typeof window !== 'undefined' &&
+  Boolean(
+    (window as any).electron ||
+      (window as any).api ||
+      (window as any).Capacitor?.isNativePlatform?.() ||
+      (window as any).Capacitor
+  )
+
 // Public local-first mode is active on open-source releases & web deployments (where window.api is undefined or VITE_APP_MODE is 'public')
 export const isPublicMode =
   typeof window === 'undefined' ||
   !isElectron ||
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_APP_MODE === 'public')
+  (typeof import.meta !== 'undefined' &&
+    ((import.meta as any).env?.VITE_APP_MODE === 'public' ||
+      (import.meta as any).env?.FELO_MODE === 'public'))
 
 export const AppCapabilities = {
   // Online music discovery tabs (Apple charts, Spotify playlists, AOTY, Last.fm)

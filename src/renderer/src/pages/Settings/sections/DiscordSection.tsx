@@ -9,8 +9,7 @@ import {
   Copy,
   ListMusic,
   Download,
-  Info,
-  RotateCcw
+  Info
 } from 'lucide-react'
 import { useListeningStore } from '../../../hooks/useListeningStore'
 import { isElectron } from '../../../lib/appConfig'
@@ -18,6 +17,8 @@ import { getSupabase, isSupabaseConfigured } from '../../../lib/supabase'
 import { Toggle } from '../components/Toggle'
 import { SettingRow } from '../components/SettingRow'
 import { SettingsSection } from '../components/SettingsSection'
+import DiscordIcon from '../../../components/Common/DiscordIcon'
+import musicPresencePreview from '../../../assets/music-presence-preview.png'
 import type { DiscordBinding, PresenceStatus } from '../types'
 
 export function DiscordSection() {
@@ -67,14 +68,6 @@ export function DiscordSection() {
       window.removeEventListener('focus', handleFocus)
     }
   }, [])
-
-  const handleRestartApp = async () => {
-    try {
-      await window.api?.relaunchApp?.()
-    } catch {
-      // ignore
-    }
-  }
 
   const handleSetupMusicPresence = async () => {
     if (!isElectron) {
@@ -213,8 +206,9 @@ export function DiscordSection() {
         description="Share what you're listening to with Discord Rich Presence and system media controls."
       >
         {!isElectron ? (
-          <div className="p-4 rounded-xl bg-surface-elevated/60 border border-border/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="space-y-1.5 flex-1 min-w-0">
+          <>
+            <div className="p-4 rounded-xl bg-surface-elevated/60 border border-border/50 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="space-y-2.5 flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs font-bold text-text">Discord Rich Presence & Music Presence</span>
                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30 uppercase tracking-wide">
@@ -224,40 +218,67 @@ export function DiscordSection() {
               <p className="text-[11px] text-text-muted leading-relaxed">
                 Web browsers operate in a sandboxed security environment and cannot access local OS IPC pipes to communicate directly with Discord and Music Presence desktop apps. To display your currently playing tracks on Discord, please use the desktop version of Felo.
               </p>
+              <div className="flex items-center gap-2 shrink-0 flex-wrap pt-1">
+                <a
+                  href="https://musicpresence.app"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface border border-border hover:bg-surface-elevated text-xs font-medium text-text shrink-0 transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5 text-text-muted" />
+                  <span>Music Presence</span>
+                  <ExternalLink className="w-3 h-3 text-text-muted" />
+                </a>
+                <a
+                  href="https://github.com/FanX0/felo/releases"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary hover:bg-primary/90 text-xs font-medium text-primary-foreground shrink-0 transition-colors"
+                >
+                  <span>Download App</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
             </div>
-            <div className="flex items-center gap-2 shrink-0 flex-wrap">
-              <a
-                href="https://musicpresence.app"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface border border-border hover:bg-surface-elevated text-xs font-medium text-text shrink-0 transition-colors"
-              >
-                <Download className="w-3.5 h-3.5 text-text-muted" />
-                <span>Music Presence</span>
-                <ExternalLink className="w-3 h-3 text-text-muted" />
-              </a>
-              <a
-                href="https://github.com/FanX0/felo/releases"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary hover:bg-primary/90 text-xs font-medium text-primary-foreground shrink-0 transition-colors"
-              >
-                <span>Download App</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
+
+            <div className="shrink-0 flex flex-col items-center sm:items-start md:items-center self-center md:self-start">
+              <div className="flex items-center gap-1.5 mb-1.5 text-[10px] font-bold tracking-wider text-text-muted uppercase">
+                <DiscordIcon className="w-3.5 h-3.5 fill-[#5865F2] text-[#5865F2]" />
+                <span>Discord Status Preview</span>
+              </div>
+              <div className="rounded-xl overflow-hidden shadow-lg border border-white/10 bg-[#1e1f22] p-1 ring-1 ring-black/40">
+                <img
+                  src={musicPresencePreview}
+                  alt="Discord Status Preview - Listening to Felo"
+                  className="w-[275px] max-w-full h-auto rounded-lg select-none block"
+                  loading="lazy"
+                />
+              </div>
             </div>
           </div>
+          <SettingRow
+            label="Discord Rich Presence"
+            hint="Desktop App Only: Web browsers run in a secure sandbox and cannot communicate directly with local Discord or Music Presence processes."
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-zinc-500/15 text-zinc-400 border border-zinc-500/30 uppercase tracking-wide">
+                Disabled on Web
+              </span>
+              <Toggle enabled={false} disabled={true} onChange={() => {}} />
+            </div>
+          </SettingRow>
+        </>
         ) : (
           <>
             {/* Detection & Connection Status */}
             <div className="p-3.5 rounded-xl bg-surface-elevated/60 border border-border/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <span
-                  className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                  className={`w-2 h-2 rounded-full shrink-0 ${
                     presenceStatus?.running
-                      ? 'bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.7)]'
+                      ? 'bg-emerald-400'
                       : presenceStatus?.configured
-                        ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)]'
+                        ? 'bg-amber-400'
                         : presenceStatus?.installed
                           ? 'bg-sky-400'
                           : 'bg-zinc-500'
@@ -266,17 +287,10 @@ export function DiscordSection() {
                 <div>
                   <div className="text-xs font-semibold text-text flex items-center gap-1.5 flex-wrap">
                     <span>Music Presence (Discord Integration)</span>
-                    <span
-                      className={`text-[10px] px-2 py-0.5 rounded-full border font-mono font-medium ${
-                        presenceStatus?.running
-                          ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
-                          : presenceStatus?.configured
-                            ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
-                            : presenceStatus?.installed
-                              ? 'bg-sky-500/15 border-sky-500/30 text-sky-300'
-                              : 'bg-surface border-border/60 text-text-muted'
-                      }`}
-                    >
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30 uppercase tracking-wide">
+                      Desktop App Feature
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full border border-border/60 bg-surface-elevated text-text-muted font-mono font-medium">
                       {presenceStatus?.running
                         ? 'Active & Running'
                         : presenceStatus?.configured
@@ -342,70 +356,77 @@ export function DiscordSection() {
               </div>
             </div>
 
-            {/* Informative Music Presence Instructions */}
-            <div className="p-3.5 rounded-xl bg-surface-elevated/40 border border-border/60 text-xs space-y-2.5">
-              <div className="flex items-center gap-2 text-text font-semibold">
-                <Info className="w-4 h-4 text-primary shrink-0" />
-                <span>How to Set Up Music Presence with Felo:</span>
-              </div>
-              <div className="space-y-2 text-[11px] text-text-muted leading-relaxed">
-                <div className="flex items-start gap-2">
-                  <span className="w-4 h-4 rounded-full bg-primary/10 text-primary font-mono font-bold flex items-center justify-center shrink-0 text-[10px] mt-0.5">
-                    1
-                  </span>
-                  <div>
-                    <span className="font-semibold text-text">Download & install Music Presence first:</span>{' '}
-                    If you haven't installed it yet, get the free desktop app from{' '}
-                    <a
-                      href="https://musicpresence.app"
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={(e) => {
-                        if (window.api?.openExternal) {
-                          e.preventDefault()
-                          void window.api.openExternal('https://musicpresence.app')
-                        }
-                      }}
-                      className="text-primary hover:underline font-semibold inline-flex items-center gap-0.5"
-                    >
-                      musicpresence.app
-                      <ExternalLink className="w-2.5 h-2.5 inline" />
-                    </a>{' '}
-                    and finish the installation.
+            {/* Informative Music Presence Instructions & Preview */}
+            <div className="p-3.5 rounded-xl bg-surface-elevated/40 border border-border/60 text-xs">
+              <div className="flex flex-col md:flex-row items-start justify-between gap-4">
+                <div className="space-y-2.5 flex-1 min-w-0">
+                  <div className="flex items-center gap-2 text-text font-semibold">
+                    <Info className="w-4 h-4 text-text-muted shrink-0" />
+                    <span>How to Set Up Music Presence with Felo:</span>
+                  </div>
+                  <div className="space-y-2 text-[11px] text-text-muted leading-relaxed">
+                    <div className="flex items-start gap-2">
+                      <span className="w-4 h-4 rounded-full bg-surface-elevated border border-border/60 text-text font-mono font-bold flex items-center justify-center shrink-0 text-[10px] mt-0.5">
+                        1
+                      </span>
+                      <div>
+                        <span className="font-semibold text-text">Download & install Music Presence first:</span>{' '}
+                        If you haven't installed it yet, get the free desktop app from{' '}
+                        <a
+                          href="https://musicpresence.app"
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => {
+                            if (window.api?.openExternal) {
+                              e.preventDefault()
+                              void window.api.openExternal('https://musicpresence.app')
+                            }
+                          }}
+                          className="text-text hover:underline font-semibold inline-flex items-center gap-0.5"
+                        >
+                          musicpresence.app
+                          <ExternalLink className="w-2.5 h-2.5 inline text-text-muted" />
+                        </a>{' '}
+                        and finish the installation.
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-2">
+                      <span className="w-4 h-4 rounded-full bg-surface-elevated border border-border/60 text-text font-mono font-bold flex items-center justify-center shrink-0 text-[10px] mt-0.5">
+                        2
+                      </span>
+                      <div>
+                        <span className="font-semibold text-text">Link Felo to Music Presence:</span>{' '}
+                        Click <span className="text-text font-semibold">{presenceStatus?.configured ? '"Re-link Discord"' : '"Setup Discord"'}</span> above. Felo will automatically inject its player profile and Discord icons instantly without needing to restart.
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-2">
+                      <span className="w-4 h-4 rounded-full bg-surface-elevated border border-border/60 text-text font-mono font-bold flex items-center justify-center shrink-0 text-[10px] mt-0.5">
+                        3
+                      </span>
+                      <div>
+                        <span className="font-semibold text-text">Launch Music Presence & Discord:</span>{' '}
+                        Start Music Presence, open Discord, and make sure{' '}
+                        <span className="text-text font-semibold">"Display current activity as a status message"</span> is enabled in Discord Settings &gt; Activity Privacy. Your songs will show live on your Discord profile!
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                <div className="flex items-start gap-2">
-                  <span className="w-4 h-4 rounded-full bg-primary/10 text-primary font-mono font-bold flex items-center justify-center shrink-0 text-[10px] mt-0.5">
-                    2
-                  </span>
-                  <div>
-                    <span className="font-semibold text-text">Exit and reopen Felo if already running:</span>{' '}
-                    If Felo was already running when you downloaded or installed Music Presence, please{' '}
-                    <span className="text-text font-semibold">exit Felo completely and open it again</span>. Felo will automatically detect Music Presence and configure its player integration files on startup.
-                    {isElectron && (
-                      <button
-                        type="button"
-                        onClick={handleRestartApp}
-                        className="inline-flex items-center gap-1 ml-1.5 px-2 py-0.5 rounded bg-surface border border-border hover:bg-surface-elevated text-[10px] font-medium text-text transition-colors cursor-pointer"
-                        title="Restart Felo to re-scan integrations"
-                      >
-                        <RotateCcw className="w-3 h-3 text-text-muted" />
-                        <span>Restart Felo</span>
-                      </button>
-                    )}
+                {/* Status Preview Card */}
+                <div className="shrink-0 flex flex-col items-center sm:items-start md:items-center self-center md:self-start pt-1 md:pt-0">
+                  <div className="flex items-center gap-1.5 mb-1.5 text-[10px] font-bold tracking-wider text-text-muted uppercase">
+                    <DiscordIcon className="w-3.5 h-3.5 fill-[#5865F2] text-[#5865F2]" />
+                    <span>Discord Status Preview</span>
                   </div>
-                </div>
-
-                <div className="flex items-start gap-2">
-                  <span className="w-4 h-4 rounded-full bg-primary/10 text-primary font-mono font-bold flex items-center justify-center shrink-0 text-[10px] mt-0.5">
-                    3
-                  </span>
-                  <div>
-                    <span className="font-semibold text-text">Launch Music Presence & Discord:</span>{' '}
-                    Start Music Presence, open Discord, and make sure{' '}
-                    <span className="text-text font-semibold">"Display current activity as a status message"</span> is enabled in Discord Settings &gt; Activity Privacy. Click{' '}
-                    <span className="text-text font-semibold">"Re-link Discord"</span> above if needed, and your songs will show live on your Discord profile!
+                  <div className="rounded-xl overflow-hidden shadow-lg border border-white/10 bg-[#1e1f22] p-1 ring-1 ring-black/40 transition-transform hover:scale-[1.02]">
+                    <img
+                      src={musicPresencePreview}
+                      alt="Discord Status Preview - Listening to Felo"
+                      className="w-[275px] max-w-full h-auto rounded-lg select-none block"
+                      loading="lazy"
+                    />
                   </div>
                 </div>
               </div>
@@ -426,17 +447,29 @@ export function DiscordSection() {
 
             <SettingRow
               label="Discord Rich Presence"
-              hint="Show currently playing track in your Discord status."
+              hint={
+                !presenceStatus?.installed && !presenceStatus?.configured
+                  ? 'Desktop App Feature: Install Music Presence desktop app to enable Discord Rich Presence.'
+                  : discordRpcEnabled
+                    ? 'Show currently playing track in your Discord status.'
+                    : 'Sync disabled: Felo will not broadcast your track to Discord.'
+              }
             >
-              <Toggle
-                enabled={discordRpcEnabled}
-                onChange={(val) => {
-                  setDiscordRpcEnabled(val)
-                  if (val && !presenceStatus?.configured) {
-                    void handleSetupMusicPresence()
-                  }
-                }}
-              />
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 uppercase tracking-wide">
+                  Desktop App Only
+                </span>
+                <Toggle
+                  enabled={discordRpcEnabled}
+                  disabled={!presenceStatus?.installed && !presenceStatus?.configured}
+                  onChange={(val) => {
+                    setDiscordRpcEnabled(val)
+                    if (val && !presenceStatus?.configured) {
+                      void handleSetupMusicPresence()
+                    }
+                  }}
+                />
+              </div>
             </SettingRow>
             {discordRpcEnabled && (
               <SettingRow
@@ -471,11 +504,11 @@ export function DiscordSection() {
         <div className="p-4 rounded-2xl bg-[#121316] border border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <span
-              className={`w-3 h-3 rounded-full shrink-0 ${
+              className={`w-2 h-2 rounded-full shrink-0 ${
                 discordBinding
-                  ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
+                  ? 'bg-emerald-400'
                   : hostRoom?.code
-                    ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.5)] animate-pulse'
+                    ? 'bg-amber-400'
                     : 'bg-zinc-500'
               }`}
             />
@@ -488,13 +521,7 @@ export function DiscordSection() {
                       ? 'Ready for Discord Connection'
                       : 'Official Bot Idle'}
                 </span>
-                <span className={`text-[10px] px-2.5 py-0.5 rounded-full border font-mono font-medium ${
-                  discordBinding
-                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
-                    : hostRoom?.code
-                      ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
-                      : 'bg-surface border-border/60 text-text-muted'
-                }`}>
+                <span className="text-[10px] px-2.5 py-0.5 rounded-full border border-border/60 bg-surface-elevated text-text-muted font-mono font-medium">
                   {discordBinding
                     ? 'Linked via /connect'
                     : hostRoom?.code
@@ -521,9 +548,9 @@ export function DiscordSection() {
                   setCopiedConnectCmd(true)
                   setTimeout(() => setCopiedConnectCmd(false), 2000)
                 }}
-                className="px-3.5 py-1.5 rounded-full bg-[#18191d] border border-white/[0.1] hover:border-primary/50 hover:text-primary text-text text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                className="px-3.5 py-1.5 rounded-full bg-[#18191d] border border-white/[0.1] hover:border-border text-text text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
               >
-                {copiedConnectCmd ? <Check className="w-3.5 h-3.5 text-primary" /> : <Copy className="w-3.5 h-3.5" />}
+                {copiedConnectCmd ? <Check className="w-3.5 h-3.5 text-text" /> : <Copy className="w-3.5 h-3.5" />}
                 <span>{copiedConnectCmd ? 'Copied /connect' : 'Copy /connect'}</span>
               </button>
             ) : (
@@ -560,20 +587,51 @@ export function DiscordSection() {
         {/* Official Discord Bot (1-Click) */}
         <div className="mt-4 p-4 rounded-xl bg-surface-elevated/40 border border-border/60 space-y-3.5">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <span className="p-2 rounded-lg bg-surface-elevated text-text border border-border">
-                <Bot className="w-5 h-5" />
-              </span>
+            <div className="flex items-start gap-2.5">
+              <Bot className="w-5 h-5 text-text shrink-0 mt-0.5" />
               <div>
                 <h4 className="text-xs font-bold text-text flex items-center gap-2">
                   <span>Official Felo Discord Bot</span>
-                  <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-primary/10 border border-primary/25 text-primary font-mono font-semibold">
+                  <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-surface-elevated border border-border/60 text-text-muted font-mono font-bold">
                     1 Official Bot Access
                   </span>
                 </h4>
                 <p className="text-[11px] text-text-muted mt-0.5">
                   Zero token setup. All users simply link to the official bot using <code className="text-text font-mono font-semibold">/connect</code> in Discord.
                 </p>
+                <div className="flex items-center gap-2 pt-1.5 flex-wrap">
+                  <a
+                    href="https://discord.gg/K4We3eBqQ"
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => {
+                      if (window.api?.openExternal) {
+                        e.preventDefault()
+                        void window.api.openExternal('https://discord.gg/K4We3eBqQ')
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-surface-elevated border border-border/60 text-xs font-bold text-text hover:bg-hover transition-colors shadow-sm cursor-pointer"
+                  >
+                    <DiscordIcon className="w-3.5 h-3.5 text-text-muted" />
+                    <span>Join Discord Community</span>
+                    <ExternalLink className="w-3.5 h-3.5 text-text-muted" />
+                  </a>
+                  <a
+                    href="https://felo.feloapp.workers.dev"
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => {
+                      if (window.api?.openExternal) {
+                        e.preventDefault()
+                        void window.api.openExternal('https://felo.feloapp.workers.dev')
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-surface-elevated border border-border/60 text-xs font-medium text-text hover:bg-hover transition-colors cursor-pointer"
+                  >
+                    <span>Web Player: felo.feloapp.workers.dev</span>
+                    <ExternalLink className="w-3 h-3 text-text-muted" />
+                  </a>
+                </div>
               </div>
             </div>
           </div>
@@ -696,6 +754,7 @@ export function DiscordSection() {
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
             {[
+              ['/web', 'Direct link & button to open Felo Web Player'],
               ['/connect <code>', 'Links Discord channel to your active Felo room'],
               ['/play <song>', 'Searches and queues songs to play in your room'],
               ['/queue', 'Shows upcoming songs in the 3-tier room queue'],
@@ -704,6 +763,7 @@ export function DiscordSection() {
               ['/nowplaying', 'Current song, cover art, progress & room code'],
               ['/volume <0-100>', 'Adjusts host playback volume (0-100%)'],
               ['/invite', 'Posts Room Code + 1-Click Web Join Link for friends'],
+              ['/download', 'Web Player & Desktop App download links'],
               ['/disconnect', 'Unbinds this Discord channel from the room'],
               ['/help', 'Interactive beginner guide & quick-start buttons']
             ].map(([cmd, desc]) => (

@@ -17,7 +17,9 @@ export interface RoomSlice {
   members: RoomMember[]
   pendingLeaveAndPlay: (() => void) | null
   discordPriorityEnabled: boolean
+  liveFriendRooms: Record<string, ListeningRoom>
 
+  setLiveFriendRooms: (rooms: Record<string, ListeningRoom>) => void
   setHostRoom: (room: ListeningRoom | null) => void
   setJoinedRoom: (room: ListeningRoom | null) => void
   setMemberCount: (count: number) => void

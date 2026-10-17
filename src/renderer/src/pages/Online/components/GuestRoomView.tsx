@@ -26,6 +26,8 @@ import { AppCapabilities } from '../../../lib/appConfig'
 import { getSupabase } from '../../../lib/supabase'
 import RoomChat from '../../../components/RoomChat/RoomChat'
 import SettingsSyncSection from '../../../components/Online/SettingsSyncSection'
+import Slider from '../../../components/Common/Slider'
+import Avatar from '../../../components/Common/Avatar'
 
 interface GuestRoomViewProps {
   joinedRoom: ListeningRoom
@@ -186,7 +188,7 @@ export default function GuestRoomView({
             type="button"
             onClick={handleLeaveSession}
             disabled={busy}
-            className="flex items-center gap-2 rounded-full bg-danger/15 border border-danger/30 hover:bg-danger hover:text-white px-4 py-2 text-xs font-bold text-danger transition-all disabled:opacity-50 cursor-pointer"
+            className="flex items-center gap-2 rounded-full bg-danger hover:bg-danger/90 text-white px-4 py-2 text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shadow-sm"
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogOut className="h-3.5 w-3.5" />}
             <span>Stop Listening</span>
@@ -326,15 +328,14 @@ export default function GuestRoomView({
               >
                 {deviceAudioVolume === 0 ? <VolumeX className="h-4 w-4 text-danger" /> : <Volume2 className="h-4 w-4" />}
               </button>
-              <input
-                type="range"
+              <Slider
                 min={0}
                 max={1}
                 step={0.01}
                 value={deviceAudioVolume}
-                onChange={(e) => setDeviceAudioVolume(parseFloat(e.target.value))}
-                className="w-28 sm:w-36 h-1.5 bg-surface rounded-lg appearance-none cursor-pointer accent-primary"
-                title="Stream Volume"
+                onChange={setDeviceAudioVolume}
+                className="w-28 sm:w-36"
+                ariaLabel="Stream Volume"
               />
               <span className="text-[11px] font-mono text-text-muted min-w-[32px]">
                 {Math.round(deviceAudioVolume * 100)}%
@@ -715,13 +716,14 @@ export default function GuestRoomView({
                   className="flex items-center gap-2 rounded-full border border-border bg-surface-elevated pl-1.5 pr-3 py-1 text-xs font-bold text-text hover:bg-hover transition-all cursor-pointer shadow-xs group"
                   title={`Click to view profile of ${m.displayName}`}
                 >
-                  <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full overflow-hidden border border-border bg-surface text-[10px] font-black text-text">
-                    {m.avatarUrl ? (
-                      <img src={m.avatarUrl} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      m.displayName.slice(0, 1).toUpperCase()
-                    )}
-                  </div>
+                  <Avatar
+                    src={m.avatarUrl}
+                    fallbackText={m.displayName}
+                    size="2xs"
+                    className="border-border bg-surface text-text font-black"
+                    showInitials={true}
+                    maxInitials={1}
+                  />
                   {m.isOnline && (
                     <span className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" title="Online" />
                   )}

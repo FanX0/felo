@@ -1,6 +1,12 @@
+import { cn } from '../../../lib/utils'
 import type { Song } from '../types'
 
-export function QualityPill({ song }: { song: Song }) {
+interface QualityPillProps {
+  song: Song
+  className?: string
+}
+
+export function QualityPill({ song, className }: QualityPillProps) {
   const rawFormat = String(song.codec || song.container || '').toLowerCase()
   const isLossless =
     rawFormat.includes('flac') ||
@@ -15,7 +21,10 @@ export function QualityPill({ song }: { song: Song }) {
     return (
       <span
         title={`Hi-Res Audio: ${song.bitDepth || 24}-bit / ${song.sampleRate ? `${(song.sampleRate / 1000).toFixed(1)} kHz` : ''}`}
-        className="shrink-0 font-mono text-[11px] font-medium uppercase tracking-wider text-text-muted"
+        className={cn(
+          'shrink-0 font-mono text-[11px] font-medium uppercase tracking-wider text-text-muted whitespace-nowrap',
+          className
+        )}
       >
         Hi-Res{rateKhz ? ` ${rateKhz}` : ''}
       </span>
@@ -26,7 +35,10 @@ export function QualityPill({ song }: { song: Song }) {
     return (
       <span
         title="Lossless CD Quality Audio"
-        className="shrink-0 font-mono text-[11px] font-medium uppercase tracking-wider text-text-muted"
+        className={cn(
+          'shrink-0 font-mono text-[11px] font-medium uppercase tracking-wider text-text-muted whitespace-nowrap',
+          className
+        )}
       >
         Lossless
       </span>
@@ -48,7 +60,12 @@ export function QualityPill({ song }: { song: Song }) {
   const kbps = song.bitrate ? `${Math.round(song.bitrate / 1000)}k` : ''
 
   return (
-    <span className="shrink-0 font-mono text-[11px] font-medium uppercase tracking-wider text-text-muted/70">
+    <span
+      className={cn(
+        'shrink-0 font-mono text-[11px] font-medium uppercase tracking-wider text-text-muted/70 whitespace-nowrap',
+        className
+      )}
+    >
       {format}{kbps ? ` ${kbps}` : ''}
     </span>
   )

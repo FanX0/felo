@@ -4,6 +4,7 @@ import {
   Disc3,
   Download,
   FileText,
+  FolderOpen,
   ListPlus,
   Play,
   Trash2,
@@ -159,6 +160,31 @@ export function PlaylistSongMenu({
         <FileText className="h-4 w-4" />
         <span>Show Credits</span>
       </button>
+
+      {Boolean(
+        song.filePath &&
+          !song.filePath.startsWith('virtual:') &&
+          !song.filePath.startsWith('http://') &&
+          !song.filePath.startsWith('https://')
+      ) && (
+        <button
+          type="button"
+          onClick={async () => {
+            if (song.filePath) {
+              try {
+                await window.api?.revealInExplorer?.(song.filePath)
+              } catch (err) {
+                console.error('Failed to open file location:', err)
+              }
+            }
+            onClose()
+          }}
+          className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text cursor-pointer"
+        >
+          <FolderOpen className="h-4 w-4" />
+          <span>Open file location</span>
+        </button>
+      )}
 
       {AppCapabilities.downloads && (
         <>

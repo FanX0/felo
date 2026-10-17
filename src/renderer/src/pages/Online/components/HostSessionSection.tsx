@@ -27,6 +27,7 @@ import type { RoomMemberInfo } from '../types'
 import { formatBytes, formatTime } from '../utils'
 import { isYouTubeSong } from '../../../lib/youtubeService'
 import SettingsSyncSection from '../../../components/Online/SettingsSyncSection'
+import Avatar from '../../../components/Common/Avatar'
 
 interface HostSessionSectionProps {
   hostRoom: ListeningRoom
@@ -185,11 +186,11 @@ export default function HostSessionSection({
               type="button"
               onClick={handleEndHostSession}
               disabled={busy}
-              className="flex items-center gap-1.5 rounded-xl border border-danger/30 bg-danger/10 hover:bg-danger text-danger hover:text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-full bg-danger hover:bg-danger/90 text-white px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer active:scale-95 shadow-sm disabled:opacity-50"
               title="End this group session"
             >
               <LogOut className="h-3.5 w-3.5" />
-              <span>End</span>
+              <span>End Session</span>
             </button>
           </div>
         </div>
@@ -258,7 +259,7 @@ export default function HostSessionSection({
                       Broadcasting Device Sound Live
                     </span>
                     {isDeviceAudioMuted ? (
-                      <span className="rounded-full bg-danger/15 border border-danger/30 px-2 py-0.5 text-[10px] font-mono font-bold text-danger">
+                      <span className="rounded-full bg-danger px-2 py-0.5 text-[10px] font-mono font-bold text-white shadow-xs">
                         BROADCAST MUTED
                       </span>
                     ) : (
@@ -385,13 +386,14 @@ export default function HostSessionSection({
                 className="flex items-center gap-2 rounded-full border border-border bg-surface pl-1.5 pr-3 py-1 text-xs font-medium text-text hover:border-border/80 hover:bg-surface-elevated transition-all cursor-pointer shadow-xs group"
                 title={`Click to view profile of ${m.displayName}`}
               >
-                <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full overflow-hidden border border-border bg-surface-elevated text-[10px] font-bold text-text">
-                  {m.avatarUrl ? (
-                    <img src={m.avatarUrl} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    m.displayName.slice(0, 1).toUpperCase()
-                  )}
-                </div>
+                <Avatar
+                  src={m.avatarUrl}
+                  fallbackText={m.displayName}
+                  size="2xs"
+                  className="border-border bg-surface-elevated text-text font-bold"
+                  showInitials={true}
+                  maxInitials={1}
+                />
                 {m.isOnline && (
                   <span className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" title="Online" />
                 )}

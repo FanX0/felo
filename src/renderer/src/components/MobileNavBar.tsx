@@ -1,6 +1,8 @@
 import { Home, Search, Library, Radio, User } from 'lucide-react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useOnlineStore } from '../hooks/useOnlineStore'
+import Avatar from './Common/Avatar'
+import { cn } from '../lib/utils'
 
 const triggerHaptic = () => {
   if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
@@ -19,7 +21,7 @@ interface MobileNavBarProps {
 export default function MobileNavBar({ onOpenAccountMenu }: MobileNavBarProps = {}) {
   const navigate = useNavigate()
   const location = useLocation()
-  const { user } = useOnlineStore()
+  const { user, profile } = useOnlineStore()
   const currentPath = location.pathname.toLowerCase()
 
   const isHome = currentPath === '/' || currentPath === ''
@@ -125,7 +127,7 @@ export default function MobileNavBar({ onOpenAccountMenu }: MobileNavBarProps = 
         )}
       </button>
 
-      {/* 5. Account */}
+      {/* 5. Account / Profile */}
       <button
         type="button"
         onClick={() => handleNav(user ? '/profile' : '/account', isAccount)}
@@ -133,8 +135,27 @@ export default function MobileNavBar({ onOpenAccountMenu }: MobileNavBarProps = 
           isAccount ? 'text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'
         }`}
       >
-        <User className={`w-5 h-5 ${isAccount ? 'stroke-[2.5] text-emerald-400' : 'stroke-[1.8]'}`} />
-        <span className={isAccount ? 'text-white' : ''}>Account</span>
+        {user ? (
+          <div className="relative flex items-center justify-center">
+            <Avatar
+              src={profile?.avatar_url}
+              fallbackText={profile?.display_name || user?.email}
+              metadataFallback={user?.user_metadata?.avatar_url || user?.user_metadata?.picture}
+              size="2xs"
+              className={cn(
+                'border transition-all',
+                isAccount
+                  ? 'border-emerald-400 ring-2 ring-emerald-400/40 text-emerald-300'
+                  : 'border-white/20 text-zinc-300'
+              )}
+              showInitials={true}
+              maxInitials={1}
+            />
+          </div>
+        ) : (
+          <User className={`w-5 h-5 ${isAccount ? 'stroke-[2.5] text-emerald-400' : 'stroke-[1.8]'}`} />
+        )}
+        <span className={isAccount ? 'text-white' : ''}>{user ? 'Profile' : 'Account'}</span>
         {isAccount && (
           <span className="absolute bottom-0.5 w-1 h-1 rounded-full bg-emerald-400" />
         )}

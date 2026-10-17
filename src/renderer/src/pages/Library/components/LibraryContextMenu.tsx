@@ -69,7 +69,7 @@ export function LibraryContextMenu({
               void remoteClient.play(song.id)
               onClose()
             }}
-            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-semibold text-emerald-400 hover:bg-emerald-500/10 transition-colors cursor-pointer"
+            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-semibold text-text hover:bg-white/10 transition-colors cursor-pointer"
           >
             <Laptop2 className="h-3.5 w-3.5" />
             Play on PC
@@ -266,7 +266,7 @@ export function LibraryContextMenu({
         className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-xs font-medium text-text-muted transition-colors hover:bg-white/10 hover:text-text cursor-pointer"
       >
         <FolderOpen className="h-3.5 w-3.5" />
-        Show in Explorer
+        Open file location
       </button>
 
       {AppCapabilities.downloads && (

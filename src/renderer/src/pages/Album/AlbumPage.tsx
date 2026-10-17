@@ -3,8 +3,10 @@ import { createPortal } from 'react-dom'
 import {
   CheckCircle2,
   ChevronRight,
+  Clock,
   Download,
   FileText,
+  FolderOpen,
   Laptop2,
   ListPlus,
   Loader2,
@@ -31,6 +33,7 @@ import { remoteClient } from '../Remote/remoteClient'
 import { remoteLibraryService } from '../../services/RemoteLibraryService'
 import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
 import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
+import { QualityPill } from '../Library/components/QualityPill'
 
 interface AlbumPageProps {
   onOpenDownloadPanel?: (target: DownloadTarget) => void
@@ -189,6 +192,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
   useEffect(() => {
     let cancelled = false
     const loadAlbum = async () => {
+      setError('')
       // 1. Dual-source offline-first: immediately populate any existing local tracks
       const localAlbumSongs = librarySongs.filter(
         (song) =>
@@ -213,6 +217,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
           setTracks(localMapped)
           const firstArt = localMapped.find((s) => s.thumbnail)?.thumbnail
           if (firstArt) setArtwork(firstArt)
+          setError('')
           setLoading(false)
         }
       } else {
@@ -287,7 +292,9 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
             setLoading(false)
             return
           }
-          setError('Album not found in your local library.')
+          if (tracks.length === 0) {
+            setError('Album not found in your local library.')
+          }
         }
         if (!cancelled) setLoading(false)
         return
@@ -668,12 +675,20 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
       </div>
 
       {loading && <div className="py-12 text-center text-[#b3b3b3]">Loading album tracks...</div>}
-      {!loading && error && <div className="py-12 text-center text-red-300">{error}</div>}
+      {!loading && error && tracks.length === 0 && <div className="py-12 text-center text-red-300">{error}</div>}
       {!loading && !error && !tracks.length && (
         <div className="py-12 text-center text-[#b3b3b3]">No tracks found for this album.</div>
       )}
-      {!loading && !error && tracks.length > 0 && (
-        <div className="mt-6 flex flex-col">
+      {!loading && tracks.length > 0 && (
+        <div className="mt-6 flex flex-col rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
+          <div className="grid grid-cols-[36px_minmax(0,1fr)_80px] sm:grid-cols-[40px_minmax(0,2fr)_140px] items-center gap-3 border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#a7a7a7] bg-white/[0.04]">
+            <div className="text-center font-medium">#</div>
+            <div>Title</div>
+            <div className="flex items-center justify-end gap-1.5 pr-2">
+              <Clock className="w-3.5 h-3.5" />
+            </div>
+          </div>
+          <div className="divide-y divide-white/5">
           {tracks.map((track, index) => {
             const currentQueueSong = queue[currentSongIndex]
             const isCurrent =
@@ -774,13 +789,13 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                 <span className="min-w-0">
                   <span className="flex items-center gap-2 truncate font-bold">
                     <span className={`truncate ${isCurrent ? 'text-primary-amber' : 'text-white'}`}>{track.title}</span>
-                    <span
-                      className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${
-                        track.localSong ? 'bg-surface-elevated text-text-muted border border-border/60' : 'bg-white/5 text-[#a7a7a7]'
-                      }`}
-                    >
-                      {track.localSong ? 'In Library' : 'Online'}
-                    </span>
+                    {track.localSong ? (
+                      <QualityPill song={track.localSong} />
+                    ) : (
+                      <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-bold text-[#a7a7a7]">
+                        Online
+                      </span>
+                    )}
                   </span>
                   <div className="block truncate text-sm text-[#a7a7a7]">
                     <ArtistLinks
@@ -842,7 +857,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                       }
                       const rect = e.currentTarget.getBoundingClientRect()
                       const menuWidth = 220
-                      const menuHeight = 220
+                      const menuHeight = 280
                       setActiveMenu((curr) =>
                         curr?.track.id === track.id
                           ? null
@@ -850,7 +865,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                               track,
                               song,
                               x: Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12),
-                              y: Math.min(rect.bottom + 8, window.innerHeight - menuHeight - 12)
+                              y: Math.max(12, Math.min(rect.bottom + 8, window.innerHeight - menuHeight - 12))
                             }
                       )
                     }}
@@ -867,6 +882,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
               </div>
             )
           })}
+          </div>
         </div>
       )}
 
@@ -885,7 +901,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                     void remoteClient.play(activeMenu.song.id)
                     setActiveMenu(null)
                   }}
-                  className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm font-semibold text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+                  className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm font-semibold text-text hover:bg-white/10 transition-colors"
                 >
                   <Laptop2 className="h-4 w-4" />
                   Play on PC
@@ -1001,11 +1017,39 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                 setCreditsSong(activeMenu.song)
                 setActiveMenu(null)
               }}
-              className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+              className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text cursor-pointer"
             >
               <FileText className="h-4 w-4" />
               Show Credits
             </button>
+            {(() => {
+              const targetFilePath =
+                (activeMenu.song.filePath && !activeMenu.song.filePath.startsWith('virtual:') && activeMenu.song.filePath) ||
+                (activeMenu.track.localSong?.filePath && !activeMenu.track.localSong.filePath.startsWith('virtual:') && activeMenu.track.localSong.filePath)
+              const hasLocalFile = Boolean(
+                targetFilePath &&
+                  !targetFilePath.startsWith('http://') &&
+                  !targetFilePath.startsWith('https://')
+              )
+              if (!hasLocalFile || !targetFilePath) return null
+              return (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await window.api?.revealInExplorer?.(targetFilePath)
+                    } catch (err) {
+                      console.error('Failed to open file location:', err)
+                    }
+                    setActiveMenu(null)
+                  }}
+                  className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-text-muted transition-colors hover:bg-white/10 hover:text-text cursor-pointer"
+                >
+                  <FolderOpen className="h-4 w-4" />
+                  Open file location
+                </button>
+              )
+            })()}
             {!activeMenu.track.localSong && AppCapabilities.downloads && (
               <button
                 type="button"

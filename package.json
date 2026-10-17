@@ -55,7 +55,7 @@
     "mobile:sync": "npm run build:web && npx cap sync",
     "mobile:sync:ios": "npm run build:web && npx cap sync ios",
     "mobile:sync:android": "npm run build:web && npx cap sync android",
-    "mobile:apk": "npm run build:web && npx cap sync android && cd android && gradlew.bat assembleDebug",
+    "mobile:apk": "npm run build:web && npx cap sync android && cd android && gradlew.bat assembleDebug && node -e \"const fs=require('fs'); const src=fs.existsSync('app/build/outputs/apk/debug/Felo.apk') ? 'app/build/outputs/apk/debug/Felo.apk' : 'app/build/outputs/apk/debug/app-debug.apk'; fs.copyFileSync(src, '../dist/Felo.apk'); console.log('✓ Output: dist/Felo.apk');\"",
     "mobile:android": "npx cap open android",
     "mobile:ios": "npx cap open ios",
     "sync:private": "node scripts/repo-sync.mjs private",

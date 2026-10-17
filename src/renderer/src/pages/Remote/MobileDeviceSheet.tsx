@@ -7,7 +7,7 @@ import {
   Wifi,
   ShieldCheck,
   Check,
-  Radio,
+  MonitorSpeaker,
   User,
   RefreshCw,
   Sparkles,
@@ -315,24 +315,24 @@ export default function MobileDeviceSheet({
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-[60] bg-[#121212] flex flex-col text-white animate-in slide-in-from-bottom duration-200 select-none pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))]"
+      className="fixed inset-0 z-[60] bg-surface flex flex-col text-text animate-in slide-in-from-bottom duration-200 select-none pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))]"
     >
       {/* Top Drag Handle Indicator */}
-      <div className="w-10 h-1.5 rounded-full bg-white/20 mx-auto mt-2 mb-1 shrink-0" />
+      <div className="w-10 h-1.5 rounded-full bg-border mx-auto mt-2 mb-1 shrink-0" />
 
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-[#181818]/60 backdrop-blur-md">
+      <header className="flex items-center justify-between px-6 py-4 border-b border-border bg-surface-elevated/80 backdrop-blur-md">
         <div className="flex items-center gap-2.5">
-          <Radio className="w-6 h-6 text-emerald-400" />
+          <MonitorSpeaker className="w-6 h-6 text-primary" />
           <div>
-            <h2 className="text-lg font-bold">Connect to a Device</h2>
-            <p className="text-xs text-zinc-400">Choose where to output audio</p>
+            <h2 className="text-lg font-bold text-text">Connect to a Device</h2>
+            <p className="text-xs text-text-muted">Choose where to output audio</p>
           </div>
         </div>
         <button
           type="button"
           onClick={onClose}
-          className="w-9 h-9 rounded-full flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
+          className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition cursor-pointer"
         >
           <X className="w-5 h-5" />
         </button>
@@ -343,14 +343,14 @@ export default function MobileDeviceSheet({
         {/* SECTION 1: CONNECTED & DISCOVERED DEVICES */}
         <div className="space-y-3">
           <div className="flex items-center justify-between px-1">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-              <Radio className="w-3.5 h-3.5 text-emerald-400" />
+            <h3 className="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5">
+              <MonitorSpeaker className="w-3.5 h-3.5 text-primary" />
               <span>Available Devices ({allDevices.length})</span>
             </h3>
             <button
               type="button"
               onClick={() => void fetchDevices()}
-              className="text-[11px] text-zinc-400 hover:text-white flex items-center gap-1 transition cursor-pointer"
+              className="text-[11px] text-text-muted hover:text-text flex items-center gap-1 transition cursor-pointer"
               title="Refresh discovered devices"
             >
               <RefreshCw className={`w-3 h-3 ${isLoadingDevices ? 'animate-spin' : ''}`} />
@@ -370,7 +370,11 @@ export default function MobileDeviceSheet({
                   Boolean(device.local_ip && remoteClient.getBaseUrl().includes(device.local_ip)) ||
                   (isConnected && device.id === 'lan-desktop')
                 const isDeviceActive =
-                  isDevicePlaying || (currentTarget === 'desktop' && isLanMatch)
+                  isDevicePlaying ||
+                  (currentTarget === 'desktop' &&
+                    (isLanMatch ||
+                      activeRemote?.activeDeviceId === device.id ||
+                      (Boolean(device.device_name) && Boolean(state.deviceName) && device.device_name === state.deviceName)))
 
                 return (
                   <button
@@ -378,18 +382,18 @@ export default function MobileDeviceSheet({
                     type="button"
                     onClick={() => void handleConnectToDevice(device)}
                     disabled={switching}
-                    className={`w-full p-4 rounded-2xl text-left transition flex items-center justify-between border cursor-pointer ${
+                    className={`w-full p-4 rounded-2xl text-left transition-colors flex items-center justify-between border cursor-pointer ${
                       isDeviceActive
-                        ? 'bg-white/[0.08] border-emerald-500/50 shadow-lg shadow-emerald-500/5'
-                        : 'bg-white/[0.03] border-white/5 hover:bg-white/[0.06] hover:border-white/20'
+                        ? 'bg-surface-elevated border-primary/40 shadow-sm'
+                        : 'bg-surface border-border hover:bg-surface-elevated'
                     }`}
                   >
                     <div className="flex items-center gap-3.5 min-w-0">
                       <div
                         className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
                           isDeviceActive
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                            : 'bg-zinc-800 text-zinc-400'
+                            ? 'bg-surface border border-primary/30 text-primary'
+                            : 'bg-surface-elevated border border-border text-text-muted'
                         }`}
                       >
                         {devCategory === 'app_pc' ? (
@@ -400,10 +404,6 @@ export default function MobileDeviceSheet({
                           <Globe
                             className={`w-6 h-6 ${isDeviceActive && (state.isPlaying || isDevicePlaying) ? 'animate-pulse' : ''}`}
                           />
-                        ) : devCategory === 'app_mobile' ? (
-                          <Smartphone
-                            className={`w-6 h-6 ${isDeviceActive && (state.isPlaying || isDevicePlaying) ? 'animate-pulse' : ''}`}
-                          />
                         ) : (
                           <Smartphone
                             className={`w-6 h-6 ${isDeviceActive && (state.isPlaying || isDevicePlaying) ? 'animate-pulse' : ''}`}
@@ -412,31 +412,21 @@ export default function MobileDeviceSheet({
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <h4 className="text-sm font-bold text-white truncate">
+                          <h4 className="text-sm font-bold text-text truncate">
                             {device.device_name || (isDevPc ? 'Felo Desktop' : 'Mobile Device')}
                           </h4>
-                          <span
-                            className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
-                              devCategory === 'app_pc'
-                                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                                : devCategory === 'web_pc'
-                                  ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
-                                  : devCategory === 'app_mobile'
-                                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                            }`}
-                          >
+                          <span className="rounded border border-border bg-surface px-1.5 py-0.5 text-[9px] font-mono font-bold text-text-muted">
                             {devLabel}
                           </span>
                           {isDeviceActive && (
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300">
+                            <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] font-mono font-bold text-primary">
                               {isDevicePlaying ? 'Currently Playing' : 'Active Output'}
                             </span>
                           )}
                         </div>
                         <p
                           className={`text-xs mt-0.5 truncate ${
-                            isDeviceActive ? 'text-emerald-400 font-medium' : 'text-zinc-400'
+                            isDeviceActive ? 'text-primary font-medium' : 'text-text-muted'
                           }`}
                         >
                           {isDevicePlaying && activeRemote?.song
@@ -455,23 +445,23 @@ export default function MobileDeviceSheet({
                     </div>
 
                     {isDeviceActive ? (
-                      <div className="w-7 h-7 rounded-full bg-emerald-400 flex items-center justify-center text-black shrink-0">
+                      <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center text-primary-foreground shrink-0">
                         <Check className="w-4 h-4 stroke-[3]" />
                       </div>
                     ) : (
-                      <div className="w-6 h-6 rounded-full border border-zinc-600 shrink-0" />
+                      <div className="w-6 h-6 rounded-full border border-border shrink-0" />
                     )}
                   </button>
                 )
               })}
             </div>
           ) : (
-            <div className="p-5 rounded-2xl bg-zinc-900/60 border border-white/5 text-center flex flex-col items-center">
-              <Laptop2 className="w-8 h-8 text-zinc-600 mb-2" />
-              <p className="text-xs font-semibold text-zinc-300">
+            <div className="p-5 rounded-2xl bg-surface border border-border text-center flex flex-col items-center">
+              <Laptop2 className="w-8 h-8 text-text-muted opacity-40 mb-2" />
+              <p className="text-xs font-bold text-text">
                 No active Felo players found
               </p>
-              <p className="text-[11px] text-zinc-500 max-w-xs mt-1 leading-relaxed">
+              <p className="text-[11px] text-text-muted max-w-xs mt-1 leading-relaxed">
                 Open Felo on your computer or phone. Make sure both devices are on the same Wi-Fi or signed in to the same account.
               </p>
             </div>
@@ -480,7 +470,7 @@ export default function MobileDeviceSheet({
 
         {/* SECTION 2: PLAYBACK OUTPUT TARGETS */}
         <div>
-          <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-3 px-1">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-text-muted mb-3 px-1">
             Playback Target
           </h3>
 
@@ -490,18 +480,18 @@ export default function MobileDeviceSheet({
               type="button"
               onClick={() => handleSelectDevice('mobile')}
               disabled={switching}
-              className={`w-full p-4 rounded-2xl text-left transition flex items-center justify-between border cursor-pointer ${
+              className={`w-full p-4 rounded-2xl text-left transition-colors flex items-center justify-between border cursor-pointer ${
                 currentTarget === 'mobile'
-                  ? 'bg-white/[0.08] border-white/40 shadow-lg shadow-white/5'
-                  : 'bg-white/[0.03] border-white/5 hover:bg-white/[0.06] hover:border-white/20'
+                  ? 'bg-surface-elevated border-primary/40 shadow-sm'
+                  : 'bg-surface border-border hover:bg-surface-elevated'
               }`}
             >
               <div className="flex items-center gap-3.5 min-w-0">
                 <div
                   className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
                     currentTarget === 'mobile'
-                      ? 'bg-white/10 text-white'
-                      : 'bg-zinc-800 text-zinc-400'
+                      ? 'bg-surface border border-primary/30 text-primary'
+                      : 'bg-surface-elevated border border-border text-text-muted'
                   }`}
                 >
                   {deviceInfo.category === 'app_pc' ? (
@@ -520,19 +510,19 @@ export default function MobileDeviceSheet({
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <h4 className="text-sm font-bold text-white truncate">{thisDeviceName}</h4>
+                    <h4 className="text-sm font-bold text-text truncate">{thisDeviceName}</h4>
                     {currentTarget === 'mobile' && (
-                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-white/20 text-white">
+                      <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] font-mono font-bold text-primary">
                         This Device
                       </span>
                     )}
-                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-zinc-800 text-zinc-300 border border-white/10">
+                    <span className="rounded border border-border bg-surface px-1.5 py-0.5 text-[9px] font-mono font-bold text-text-muted">
                       {deviceInfo.categoryLabel}
                     </span>
                   </div>
                   <p
                     className={`text-xs mt-0.5 truncate ${
-                      currentTarget === 'mobile' ? 'text-white font-medium' : 'text-zinc-400'
+                      currentTarget === 'mobile' ? 'text-primary font-medium' : 'text-text-muted'
                     }`}
                   >
                     {currentTarget === 'mobile'
@@ -545,11 +535,11 @@ export default function MobileDeviceSheet({
               </div>
 
               {currentTarget === 'mobile' ? (
-                <div className="w-7 h-7 rounded-full bg-white flex items-center justify-center text-black shrink-0">
+                <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center text-primary-foreground shrink-0">
                   <Check className="w-4 h-4 stroke-[3]" />
                 </div>
               ) : (
-                <div className="w-6 h-6 rounded-full border border-zinc-600 shrink-0" />
+                <div className="w-6 h-6 rounded-full border border-border shrink-0" />
               )}
             </button>
 
@@ -558,18 +548,18 @@ export default function MobileDeviceSheet({
               type="button"
               onClick={() => handleSelectDevice('both')}
               disabled={switching}
-              className={`w-full p-4 rounded-2xl text-left transition flex items-center justify-between border cursor-pointer ${
+              className={`w-full p-4 rounded-2xl text-left transition-colors flex items-center justify-between border cursor-pointer ${
                 currentTarget === 'both'
-                  ? 'bg-white/[0.08] border-emerald-500/40 shadow-lg shadow-emerald-500/5'
-                  : 'bg-white/[0.03] border-white/5 hover:bg-white/[0.06] hover:border-white/20'
+                  ? 'bg-surface-elevated border-primary/40 shadow-sm'
+                  : 'bg-surface border-border hover:bg-surface-elevated'
               }`}
             >
               <div className="flex items-center gap-3.5 min-w-0">
                 <div
                   className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
                     currentTarget === 'both'
-                      ? 'bg-gradient-to-br from-amber-500/20 to-emerald-500/20 text-white border border-white/20'
-                      : 'bg-zinc-800 text-zinc-400'
+                      ? 'bg-surface border border-primary/30 text-primary'
+                      : 'bg-surface-elevated border border-border text-text-muted'
                   }`}
                 >
                   <div className="relative flex items-center justify-center">
@@ -577,25 +567,25 @@ export default function MobileDeviceSheet({
                       className={`w-5 h-5 -mr-1.5 ${currentTarget === 'both' && state.isPlaying ? 'animate-pulse' : ''}`}
                     />
                     <Smartphone
-                      className={`w-4 h-4 text-emerald-400 ${currentTarget === 'both' && state.isPlaying ? 'animate-pulse' : ''}`}
+                      className={`w-4 h-4 text-primary ${currentTarget === 'both' && state.isPlaying ? 'animate-pulse' : ''}`}
                     />
                   </div>
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <h4 className="text-sm font-bold text-white truncate">Play on Both Devices</h4>
+                    <h4 className="text-sm font-bold text-text truncate">Play on Both Devices</h4>
                     {currentTarget === 'both' && (
                       <div className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                        <span className="w-2 h-2 rounded-full bg-primary" />
                         {state.isPlaying && (
                           <div className="flex items-end gap-0.5 h-3">
-                            <span className="w-0.5 h-full bg-emerald-400 animate-pulse" />
+                            <span className="w-0.5 h-full bg-primary animate-pulse" />
                             <span
-                              className="w-0.5 h-2/3 bg-emerald-400 animate-pulse"
+                              className="w-0.5 h-2/3 bg-primary animate-pulse"
                               style={{ animationDelay: '150ms' }}
                             />
                             <span
-                              className="w-0.5 h-4/5 bg-emerald-400 animate-pulse"
+                              className="w-0.5 h-4/5 bg-primary animate-pulse"
                               style={{ animationDelay: '300ms' }}
                             />
                           </div>
@@ -605,7 +595,7 @@ export default function MobileDeviceSheet({
                   </div>
                   <p
                     className={`text-xs mt-0.5 truncate ${
-                      currentTarget === 'both' ? 'text-emerald-400 font-medium' : 'text-zinc-400'
+                      currentTarget === 'both' ? 'text-primary font-medium' : 'text-text-muted'
                     }`}
                   >
                     {currentTarget === 'both'
@@ -618,17 +608,17 @@ export default function MobileDeviceSheet({
               </div>
 
               {currentTarget === 'both' ? (
-                <div className="w-7 h-7 rounded-full bg-white flex items-center justify-center text-black shrink-0">
+                <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center text-primary-foreground shrink-0">
                   <Check className="w-4 h-4 stroke-[3]" />
                 </div>
               ) : (
-                <div className="w-6 h-6 rounded-full border border-zinc-600 shrink-0" />
+                <div className="w-6 h-6 rounded-full border border-border shrink-0" />
               )}
             </button>
 
             {currentTarget === 'both' && (
-              <div className="flex items-center justify-between px-3 py-2 bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-xs mt-1">
-                <span className="text-zinc-300 font-medium">Fine-tune dual device sync</span>
+              <div className="flex items-center justify-between px-3 py-2 bg-surface border border-border rounded-xl text-xs mt-1">
+                <span className="text-text-muted font-medium">Fine-tune dual device sync</span>
                 <button
                   type="button"
                   disabled={useListeningStore.getState().myRole === 'host'}
@@ -640,11 +630,11 @@ export default function MobileDeviceSheet({
                   title={useListeningStore.getState().myRole === 'host' ? 'Manual sync is disabled for host' : 'Fine-tune dual device sync'}
                   className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition flex items-center gap-1 ${
                     useListeningStore.getState().myRole === 'host'
-                      ? 'bg-white/5 text-zinc-500 opacity-40 cursor-not-allowed border-white/5'
-                      : 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border-emerald-500/40 cursor-pointer'
+                      ? 'bg-surface text-text-muted opacity-40 cursor-not-allowed border-border'
+                      : 'bg-surface-elevated hover:bg-hover text-text border-border cursor-pointer'
                   }`}
                 >
-                  <SlidersHorizontal className={`w-3 h-3 ${useListeningStore.getState().myRole === 'host' ? 'text-zinc-500' : 'text-emerald-400'}`} />
+                  <SlidersHorizontal className={`w-3 h-3 ${useListeningStore.getState().myRole === 'host' ? 'text-text-muted' : 'text-primary'}`} />
                   <span>Manual Sync (ms)</span>
                 </button>
               </div>
@@ -654,14 +644,14 @@ export default function MobileDeviceSheet({
 
         {/* LOGGED OUT CALL TO ACTION BANNER (NON-BLOCKING) */}
         {!user && (
-          <div className="bg-gradient-to-br from-emerald-950/30 via-zinc-900 to-zinc-900 border border-emerald-500/20 rounded-2xl p-4 shadow-lg space-y-3">
+          <div className="border border-border bg-surface-elevated rounded-2xl p-4 shadow-sm space-y-3">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+              <div className="w-8 h-8 rounded-lg bg-surface border border-border flex items-center justify-center text-primary shrink-0">
                 <Sparkles className="w-4 h-4" />
               </div>
               <div className="min-w-0">
-                <h4 className="text-xs font-bold text-white">Enable Cloud Remote Control</h4>
-                <p className="text-[11px] text-emerald-400/90">
+                <h4 className="text-xs font-bold text-text">Enable Cloud Remote Control</h4>
+                <p className="text-[11px] text-text-muted">
                   Log in on PC and Phone for instant automatic discovery
                 </p>
               </div>
@@ -672,7 +662,7 @@ export default function MobileDeviceSheet({
                 onClose()
                 navigate('/account')
               }}
-              className="w-full py-2.5 rounded-xl bg-white text-black font-bold text-xs hover:bg-zinc-200 transition active:scale-95 shadow flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-primary-foreground font-bold text-xs transition active:scale-95 shadow-sm flex items-center justify-center gap-2 cursor-pointer"
             >
               <User className="w-4 h-4" />
               <span>Log In to Felo Account</span>
@@ -681,26 +671,26 @@ export default function MobileDeviceSheet({
         )}
 
         {/* MANUAL WI-FI IP CONNECTION ACCORDION */}
-        <div className="border border-white/10 rounded-2xl p-4 bg-white/[0.02]">
+        <div className="border border-border rounded-2xl p-4 bg-surface">
           <button
             type="button"
             onClick={() => setShowManualConnect(!showManualConnect)}
-            className="w-full flex items-center justify-between text-xs font-semibold text-zinc-300 hover:text-white transition cursor-pointer"
+            className="w-full flex items-center justify-between text-xs font-bold text-text hover:text-primary transition cursor-pointer"
           >
             <div className="flex items-center gap-2">
-              <Link2 className="w-4 h-4 text-emerald-400" />
+              <Link2 className="w-4 h-4 text-primary" />
               <span>Manual Wi-Fi Connection (IP & Token)</span>
             </div>
             {showManualConnect ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </button>
 
           {showManualConnect && (
-            <form onSubmit={handleManualConnectSubmit} className="mt-3.5 space-y-3 pt-3 border-t border-white/5">
-              <p className="text-[11px] text-zinc-400 leading-relaxed">
+            <form onSubmit={handleManualConnectSubmit} className="mt-3.5 space-y-3 pt-3 border-t border-border">
+              <p className="text-[11px] text-text-muted leading-relaxed">
                 If automatic discovery is blocked by your Wi-Fi router, enter your PC&apos;s local IP address and pairing token found in Felo Desktop &gt; Connect Your Phone.
               </p>
               <div>
-                <label className="block text-[11px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
+                <label className="block text-[11px] font-bold text-text-muted uppercase tracking-wider mb-1">
                   Desktop IP / Address
                 </label>
                 <input
@@ -708,11 +698,11 @@ export default function MobileDeviceSheet({
                   value={manualIp}
                   onChange={(e) => setManualIp(e.target.value)}
                   placeholder="http://192.168.1.5:4788"
-                  className="w-full bg-zinc-800 text-white px-3 py-2 rounded-xl border border-white/10 focus:border-emerald-500/50 outline-none text-xs font-mono"
+                  className="w-full bg-surface-elevated text-text px-3 py-2 rounded-xl border border-border focus:border-primary outline-none text-xs font-mono"
                 />
               </div>
               <div>
-                <label className="block text-[11px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
+                <label className="block text-[11px] font-bold text-text-muted uppercase tracking-wider mb-1">
                   Pairing Token (Optional)
                 </label>
                 <input
@@ -720,12 +710,12 @@ export default function MobileDeviceSheet({
                   value={manualToken}
                   onChange={(e) => setManualToken(e.target.value)}
                   placeholder="Token from desktop QR code"
-                  className="w-full bg-zinc-800 text-white px-3 py-2 rounded-xl border border-white/10 focus:border-emerald-500/50 outline-none text-xs font-mono"
+                  className="w-full bg-surface-elevated text-text px-3 py-2 rounded-xl border border-border focus:border-primary outline-none text-xs font-mono"
                 />
               </div>
               <button
                 type="submit"
-                className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs transition cursor-pointer active:scale-95 shadow"
+                className="w-full py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-primary-foreground font-bold text-xs transition cursor-pointer active:scale-95 shadow-sm"
               >
                 Connect to PC
               </button>
@@ -734,21 +724,21 @@ export default function MobileDeviceSheet({
         </div>
 
         {/* Feature Highlights Card */}
-        <div className="bg-white/[0.03] border border-white/5 rounded-2xl p-4 text-xs space-y-2.5 text-zinc-300">
+        <div className="bg-surface border border-border rounded-2xl p-4 text-xs space-y-2.5 text-text-muted">
           <div className="flex items-center gap-2.5">
-            <Radio className="w-4 h-4 text-emerald-400 shrink-0" />
+            <MonitorSpeaker className="w-4 h-4 text-primary shrink-0" />
             <span>Instant playback handover between PC and {deviceInfo.model || 'Phone'}</span>
           </div>
           <div className="flex items-center gap-2.5">
-            <Wifi className="w-4 h-4 text-zinc-400 shrink-0" />
+            <Wifi className="w-4 h-4 text-text-muted shrink-0" />
             <span>Local High-Quality Wi-Fi Audio Streaming</span>
           </div>
           <div className="flex items-center gap-2.5">
-            <ShieldCheck className="w-4 h-4 text-zinc-400 shrink-0" />
+            <ShieldCheck className="w-4 h-4 text-text-muted shrink-0" />
             <span>Seamless Spotify Connect across all your devices</span>
           </div>
           {user?.email && (
-            <div className="pt-1 text-[11px] text-zinc-500 font-mono truncate">
+            <div className="pt-1 text-[11px] text-text-muted/70 font-mono truncate">
               Connected Account: {user.email}
             </div>
           )}

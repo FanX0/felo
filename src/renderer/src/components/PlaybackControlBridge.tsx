@@ -3,8 +3,10 @@ import { usePlayerStore } from '../hooks/usePlayerStore'
 import { useListeningStore } from '../hooks/useListeningStore'
 import { useOnlineStore } from '../hooks/useOnlineStore'
 import { usePrivateSessionStore } from '../hooks/usePrivateSessionStore'
+import { useDirectChatStore } from '../hooks/useDirectChatStore'
 import { getActiveAudioElement } from '../lib/audioBridge'
 import { downloadTrackInBackground } from '../lib/backgroundDownloader'
+import { AppCapabilities } from '../lib/appConfig'
 import type { Song } from '../pages/Library/Library'
 
 type Command = {
@@ -31,6 +33,11 @@ type Command = {
     index?: number
     forceNew?: boolean
     preferredCode?: string
+    code?: string
+    roomId?: string
+    friendName?: string
+    friendId?: string
+    name?: string
   }
 }
 
@@ -243,7 +250,7 @@ export default function PlaybackControlBridge() {
               break
             case 'play-song': {
               const song = command.song
-              if (!song?.id || !song.filePath || song.filePath.startsWith('virtual:'))
+              if (!song?.id || (!song.filePath && !song.audioUrl && !(song as any).previewUrl))
                 throw new Error('SONG_NOT_PLAYABLE')
               window.dispatchEvent(
                 new CustomEvent('felo:bot-activity', {
@@ -365,8 +372,33 @@ export default function PlaybackControlBridge() {
             case 'download-and-play': {
               const query = command.query?.trim()
               const action = command.action || 'play_now'
-              const user = (command as any).user ? `@${(command as any).user}` : 'Discord'
+              const user = (command as any).user ? `@${(command as any).user}` : 'Bot'
               if (!query) throw new Error('QUERY_REQUIRED')
+
+              if (!AppCapabilities.downloads) {
+                // In Web mode (downloads disabled), directly play/enqueue without downloading
+                const song: Song = {
+                  id: `web-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  title: query,
+                  artist: 'Online Stream',
+                  album: '',
+                  duration: 0,
+                  filePath: `virtual:${query}`,
+                  isOnline: true
+                }
+                if (action === 'play_now') {
+                  player.enqueueSong(song)
+                  usePlayerStore.getState().playSong(player.queue.length - 1)
+                } else if (action === 'play_next') {
+                  player.enqueueSongNext(song)
+                } else {
+                  player.enqueueSong(song)
+                }
+                result = { ok: true, state: publish(), playing: true, query, action }
+                window.api.respondToExternalPlayerCommand(requestId, result)
+                return
+              }
+
               window.dispatchEvent(
                 new CustomEvent('felo:bot-activity', {
                   detail: {
@@ -409,11 +441,12 @@ export default function PlaybackControlBridge() {
                   player.toggleRepeat()
               }
               break
+            case 'create-room':
             case 'ensureRoom': {
               const listening = useListeningStore.getState()
               const online = useOnlineStore.getState()
               if (!online.user) {
-                result = { ok: false, error: 'NOT_LOGGED_IN' }
+                result = { ok: false, error: 'NOT_LOGGED_IN', message: 'You must be signed in to host a party room.' }
                 window.api.respondToExternalPlayerCommand(requestId, result)
                 return
               }
@@ -422,12 +455,154 @@ export default function PlaybackControlBridge() {
                 room = await listening.ensureHostRoom(true, Boolean(command.forceNew), command.preferredCode)
               }
               const code = room?.code || null
-              const name = room?.name || 'Listen Together'
+              const name = room?.name || command.name || 'Listen Together'
               const members = listening.memberCount || 1
+              const shareUrl = code ? `https://felo.feloapp.workers.dev/#/online/listen?code=${code}` : null
               if (code) {
                 window.api?.updateDiscordRoomInfo?.({ code, name, members })
               }
-              result = { ok: Boolean(code), code, name, members, state: publish() }
+              result = { ok: Boolean(code), code, name, members, shareUrl, state: publish() }
+              window.api.respondToExternalPlayerCommand(requestId, result)
+              return
+            }
+            case 'join-room': {
+              const listening = useListeningStore.getState()
+              const online = useOnlineStore.getState()
+              if (!online.user) {
+                result = { ok: false, error: 'NOT_LOGGED_IN', message: 'You must be signed in to join a room.' }
+                window.api.respondToExternalPlayerCommand(requestId, result)
+                return
+              }
+              const code = (command.code || command.query || '').trim().toUpperCase()
+              const roomId = command.roomId
+              if (!code && !roomId) {
+                result = { ok: false, error: 'ROOM_CODE_REQUIRED', message: 'Provide a 6-letter room code to join.' }
+                window.api.respondToExternalPlayerCommand(requestId, result)
+                return
+              }
+              try {
+                let room: any = null
+                if (code) {
+                  room = await listening.joinRoomByCode(code)
+                } else if (roomId) {
+                  room = await listening.joinRoomById(roomId)
+                }
+                result = {
+                  ok: Boolean(room),
+                  code: room?.code || code,
+                  name: room?.name || 'Listen Together',
+                  host_id: room?.host_id,
+                  members: listening.memberCount || 1,
+                  state: publish()
+                }
+              } catch (err: any) {
+                result = { ok: false, error: err?.message || 'JOIN_ROOM_FAILED' }
+              }
+              window.api.respondToExternalPlayerCommand(requestId, result)
+              return
+            }
+            case 'join-friend': {
+              const listening = useListeningStore.getState()
+              const online = useOnlineStore.getState()
+              if (!online.user) {
+                result = { ok: false, error: 'NOT_LOGGED_IN', message: 'You must be signed in to connect to friends.' }
+                window.api.respondToExternalPlayerCommand(requestId, result)
+                return
+              }
+              const friendQuery = String(command.friendName || command.query || '').trim().toLowerCase()
+              let targetFriendId = command.friendId
+              let targetFriendName = ''
+
+              const directChat = useDirectChatStore.getState()
+              let friendsList = directChat.friends || []
+              if (friendsList.length === 0 && directChat.loadFriends) {
+                await directChat.loadFriends()
+                friendsList = useDirectChatStore.getState().friends || []
+              }
+
+              if (!targetFriendId && friendQuery) {
+                const match = friendsList.find(
+                  (f) =>
+                    f.id.toLowerCase() === friendQuery ||
+                    f.username?.toLowerCase() === friendQuery ||
+                    f.display_name?.toLowerCase() === friendQuery ||
+                    f.username?.toLowerCase().includes(friendQuery) ||
+                    f.display_name?.toLowerCase().includes(friendQuery)
+                )
+                if (match) {
+                  targetFriendId = match.id
+                  targetFriendName = match.display_name || match.username
+                }
+              }
+
+              if (!targetFriendId) {
+                result = {
+                  ok: false,
+                  error: 'FRIEND_NOT_FOUND',
+                  message: `Could not find a friend matching "${friendQuery || 'unknown'}".`,
+                  availableFriends: friendsList.map((f) => ({ id: f.id, username: f.username, displayName: f.display_name }))
+                }
+                window.api.respondToExternalPlayerCommand(requestId, result)
+                return
+              }
+
+              try {
+                const room = await listening.listenAlongWithFriend(targetFriendId)
+                result = {
+                  ok: Boolean(room),
+                  friend: { id: targetFriendId, name: targetFriendName },
+                  code: room?.code,
+                  name: room?.name,
+                  host_id: room?.host_id,
+                  members: listening.memberCount || 1,
+                  state: publish()
+                }
+              } catch (err: any) {
+                result = {
+                  ok: false,
+                  error: err?.message || 'LISTEN_ALONG_FAILED',
+                  friend: { id: targetFriendId, name: targetFriendName }
+                }
+              }
+              window.api.respondToExternalPlayerCommand(requestId, result)
+              return
+            }
+            case 'leave-room': {
+              const listening = useListeningStore.getState()
+              if (listening.joinedRoom) {
+                try {
+                  await listening.leaveJoinedRoom()
+                } catch {
+                  listening.cleanupOnLeave()
+                }
+              } else if (listening.hostRoom) {
+                await listening.deactivateHostRoom?.()
+              }
+              result = { ok: true, state: publish() }
+              window.api.respondToExternalPlayerCommand(requestId, result)
+              return
+            }
+            case 'room-status': {
+              const listening = useListeningStore.getState()
+              const online = useOnlineStore.getState()
+              const directChat = useDirectChatStore.getState()
+              const activeRoom = listening.joinedRoom || listening.hostRoom
+              result = {
+                ok: true,
+                user: online.user ? { id: online.user.id, email: online.user.email } : null,
+                inRoom: Boolean(activeRoom && activeRoom.is_active),
+                isHost: Boolean(listening.hostRoom || (listening.joinedRoom && listening.joinedRoom.host_id === online.user?.id)),
+                code: activeRoom?.code || null,
+                name: activeRoom?.name || null,
+                members: listening.memberCount || 0,
+                friends: (directChat.friends || []).slice(0, 15).map((f) => ({
+                  id: f.id,
+                  username: f.username,
+                  displayName: f.display_name,
+                  inParty: Boolean(listening.liveFriendRooms?.[f.id])
+                })),
+                state: publish()
+              }
               window.api.respondToExternalPlayerCommand(requestId, result)
               return
             }

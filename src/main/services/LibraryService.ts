@@ -832,6 +832,60 @@ export class LibraryService {
     return songs
   }
 
+  static async toggleFavorite(songId: string, isFavorite?: boolean, songData?: any) {
+    const db = getDb()
+    const existing = db
+      .prepare('SELECT id, isFavorite FROM songs WHERE id = ?')
+      .get(songId) as { id: string; isFavorite: number } | undefined
+
+    let nextFavorite: number
+    if (existing) {
+      if (typeof isFavorite === 'boolean') {
+        nextFavorite = isFavorite ? 1 : 0
+      } else {
+        nextFavorite = existing.isFavorite ? 0 : 1
+      }
+      db.prepare('UPDATE songs SET isFavorite = ? WHERE id = ?').run(nextFavorite, songId)
+    } else if (songData && songData.title) {
+      nextFavorite = typeof isFavorite === 'boolean' ? (isFavorite ? 1 : 0) : 1
+      const virtualPath = songData.filePath || `virtual:favorite:${crypto.randomUUID()}`
+      db.prepare(
+        `INSERT INTO songs (id, title, artist, album, duration, filePath, size, isFavorite, playCount, artworkPath, dateAdded)
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?, 0, ?, strftime('%s', 'now'))`
+      ).run(
+        songId,
+        songData.title,
+        songData.artist || 'Unknown Artist',
+        songData.album || 'Unknown Album',
+        Number(songData.duration) || 0,
+        virtualPath,
+        nextFavorite,
+        songData.artworkPath || songData.artworkUrl || null
+      )
+    } else {
+      return { id: songId, isFavorite: false }
+    }
+
+    return { id: songId, isFavorite: Boolean(nextFavorite) }
+  }
+
+  static async getLikedSongs() {
+    const songs = getDb()
+      .prepare(
+        'SELECT * FROM songs WHERE isFavorite = 1 ORDER BY dateAdded DESC, rowid DESC'
+      )
+      .all() as any[]
+    this.attachSongArtists(songs)
+    return songs
+  }
+
+  static async getLikedCount(): Promise<number> {
+    const result = getDb()
+      .prepare('SELECT COUNT(*) AS count FROM songs WHERE isFavorite = 1')
+      .get() as { count: number } | undefined
+    return result?.count || 0
+  }
+
   static getArtists() {
     return getDb()
       .prepare(

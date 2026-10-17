@@ -67,6 +67,8 @@ export function getContentType(filePath: string): string {
       return 'audio/ogg'
     case 'aac':
       return 'audio/aac'
+    case 'wma':
+      return 'audio/x-ms-wma'
     default:
       return 'application/octet-stream'
   }

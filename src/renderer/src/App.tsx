@@ -4,6 +4,7 @@ import { cn } from './lib/utils'
 import Sidebar from './components/Sidebar/Sidebar'
 import Footer from './components/Footer/Footer'
 import AudioEngine from './components/AudioEngine'
+import AutoPlayBridge from './components/AutoPlayBridge'
 import YouTubePlayerBridge from './components/Audio/YouTubePlayerBridge'
 import CrossTabSyncBridge from './components/CrossTabSyncBridge'
 import DownloadPanel from './components/DownloadPanel/DownloadPanel'
@@ -21,6 +22,7 @@ import RemotePhoneView from './pages/Remote/RemotePhoneView'
 import OfflineNoticeToast from './components/OfflineNoticeToast'
 import ErrorBoundary from './components/ErrorBoundary'
 import FileDropOverlay from './components/Common/FileDropOverlay'
+import Avatar from './components/Common/Avatar'
 import MobileNavBar from './components/MobileNavBar'
 import AccountDropdownMenu from './components/AccountMenu/AccountDropdownMenu'
 import NotificationDropdown from './components/Notifications/NotificationDropdown'
@@ -35,14 +37,13 @@ import SessionLeaveDialog from './components/SessionLeaveDialog'
 import UpdateModalDialog from './components/Common/UpdateModalDialog'
 import { triggerChunkLoadRecovery } from './lib/swUpdateCoordinator'
 import AudioFxModal from './components/Audio/AudioFxModal'
+import AudioSettingsPanel from './components/Audio/AudioSettingsPanel'
+import { useDspStore } from './hooks/useDspStore'
 import ManualSyncModal from './components/Online/ManualSyncModal'
 import { initUiSounds } from './lib/uiSounds'
 import { remoteClient, type RemotePlayerState } from './pages/Remote/remoteClient'
 import { resolveEffectivePlaybackState } from './lib/playbackStateResolver'
-import {
-  useConnectedDeviceStore,
-  sendDeviceCommand
-} from './hooks/useConnectedDeviceStore'
+import { useConnectedDeviceStore, sendDeviceCommand } from './hooks/useConnectedDeviceStore'
 import { getCurrentDeviceId } from './lib/deviceInfo'
 import { AppCapabilities, isElectron } from './lib/appConfig'
 import { useIsMobile } from './hooks/useIsMobile'
@@ -52,7 +53,6 @@ import { useListeningStore, useIsPlayerLocked } from './hooks/useListeningStore'
 import { AppRoutes } from './routes'
 import {
   Search as SearchIcon,
-  User,
   EyeOff,
   Globe,
   Database,
@@ -62,6 +62,7 @@ import {
   ChevronRight,
   Users,
   Bell,
+  Download,
   Minus,
   Square,
   X
@@ -70,7 +71,6 @@ import { useAppStore } from './hooks/useAppStore'
 import { useOnlineStore } from './hooks/useOnlineStore'
 import { usePlayerStore } from './hooks/usePlayerStore'
 import { useNotificationStore } from './stores/useNotificationStore'
-
 
 function FeloMark({ className = 'w-5 h-5' }: { className?: string }) {
   return (
@@ -148,7 +148,6 @@ function App() {
     () => localStorage.getItem('felo_sidebar_open') !== 'false'
   )
   const { user, profile, initialize } = useOnlineStore()
-
 
   // Mobile & Remote Player State
   const [isMobileNowPlayingOpen, setIsMobileNowPlayingOpen] = useState(false)
@@ -280,16 +279,13 @@ function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-
   // Global Keyboard Shortcuts (Shuffle, Repeat, Play/Pause, Seek, Volume, Search)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
       const isInput =
         target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.isContentEditable)
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
 
       // Search shortcut: Ctrl + K (global)
       if (!e.shiftKey && (e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
@@ -414,7 +410,10 @@ function App() {
         const key = 'felo_recent_searches'
         const existing = JSON.parse(localStorage.getItem(key) || '[]')
         const filtered = Array.isArray(existing)
-          ? existing.filter((item: string) => typeof item === 'string' && item.toLowerCase() !== trimmed.toLowerCase())
+          ? existing.filter(
+              (item: string) =>
+                typeof item === 'string' && item.toLowerCase() !== trimmed.toLowerCase()
+            )
           : []
         localStorage.setItem(key, JSON.stringify([trimmed, ...filtered].slice(0, 10)))
         window.dispatchEvent(new CustomEvent('felo:recent-searches-updated'))
@@ -429,11 +428,44 @@ function App() {
 
   const isMobileScreen = useIsMobile()
 
+  const isAudioModalOpen = useDspStore((s) => s.isAudioModalOpen)
+  const setIsAudioModalOpen = useDspStore((s) => s.setIsAudioModalOpen)
+
+  const isRightSidebarOpen =
+    !isMobileScreen && (isQueueOpen || isFriendActivityOpen || isDownloadPanelOpen || isAudioModalOpen)
+
+  const activeRightPanel: 'queue' | 'friends' | 'downloads' | 'audio' | null = isAudioModalOpen
+    ? 'audio'
+    : isQueueOpen
+      ? 'queue'
+      : isFriendActivityOpen
+        ? 'friends'
+        : isDownloadPanelOpen
+          ? 'downloads'
+          : null
+
+  const [renderedRightPanel, setRenderedRightPanel] = useState<
+    'queue' | 'friends' | 'downloads' | 'audio' | null
+  >(activeRightPanel)
+
+  useEffect(() => {
+    if (activeRightPanel) {
+      setRenderedRightPanel(activeRightPanel)
+      return undefined
+    }
+
+    const timer = window.setTimeout(() => {
+      setRenderedRightPanel(null)
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [activeRightPanel])
+
   const isSubPage =
     location.pathname.startsWith('/album/') ||
     location.pathname.startsWith('/artist/') ||
     location.pathname.startsWith('/playlists/') ||
     location.pathname === '/lyrics' ||
+    location.pathname.startsWith('/download') ||
     location.pathname === '/settings' ||
     location.pathname === '/chat' ||
     location.pathname.startsWith('/profile') ||
@@ -446,6 +478,7 @@ function App() {
     if (location.pathname.startsWith('/artist/')) return 'Artist'
     if (location.pathname.startsWith('/playlists/')) return 'Playlist'
     if (location.pathname === '/lyrics') return 'Lyrics'
+    if (location.pathname.startsWith('/download')) return 'Download App'
     if (location.pathname === '/settings') return 'Settings'
     if (location.pathname === '/chat') return 'Direct Messages'
     if (location.pathname.startsWith('/profile')) return 'Profile'
@@ -469,7 +502,6 @@ function App() {
     return <RemotePhoneView />
   }
 
-
   return (
     <div
       className={cn(
@@ -477,6 +509,7 @@ function App() {
       )}
     >
       <AudioEngine />
+      <AutoPlayBridge />
       <YouTubePlayerBridge />
       <CrossTabSyncBridge />
       <OfflineNoticeToast />
@@ -491,425 +524,462 @@ function App() {
       {isMobileScreen ? (
         <>
           <header className="fixed top-0 left-0 right-0 z-50 bg-canvas/95 backdrop-blur-md border-b border-border-subtle/40 px-3.5 pt-[env(safe-area-inset-top,0px)] h-[calc(3.5rem+env(safe-area-inset-top,0px))] flex items-center justify-between select-none">
-          {isSubPage ? (
-            <div className="flex items-center gap-1.5 text-text">
+            {isSubPage ? (
+              <div className="flex items-center gap-1.5 text-text">
+                <button
+                  type="button"
+                  onClick={() => navigate(-1)}
+                  title="Go back"
+                  className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition cursor-pointer -ml-1"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+                <span className="font-bold text-base tracking-tight truncate max-w-[180px]">
+                  {getSubPageTitle()}
+                </span>
+              </div>
+            ) : (
               <button
                 type="button"
-                onClick={() => navigate(-1)}
-                title="Go back"
-                className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition cursor-pointer -ml-1"
+                onClick={() => navigate('/')}
+                title="Felo Home (Beta)"
+                className="relative flex h-10 w-10 items-center justify-center rounded-full bg-surface-elevated text-text cursor-pointer select-none shadow-xs transition-colors hover:bg-hover active:scale-95"
               >
-                <ChevronLeft className="w-5 h-5" />
+                <FeloMark className="h-6 w-6" />
+                <span className="absolute -bottom-1 -right-1 px-1.5 py-[1px] rounded-full text-[9px] font-bold uppercase tracking-wider bg-surface-elevated border border-border/60 text-text-muted shadow-xs pointer-events-none select-none">
+                  Beta
+                </span>
               </button>
-              <span className="font-bold text-base tracking-tight truncate max-w-[180px]">
-                {getSubPageTitle()}
-              </span>
+            )}
+
+            <div className="flex items-center gap-1.5">
+              {!isElectron && (
+                <button
+                  type="button"
+                  onClick={() => navigate('/download')}
+                  title="Download Felo App (Android, iOS & Desktop)"
+                  className={cn(
+                    'h-8 px-2.5 rounded-full flex items-center gap-1 border text-xs font-bold transition shadow-xs active:scale-95 cursor-pointer no-drag',
+                    location.pathname.startsWith('/download')
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-surface-elevated hover:bg-hover border-border/80 text-text'
+                  )}
+                >
+                  <Download className="w-3.5 h-3.5 stroke-[2.5]" />
+                  <span className="text-[11px]">App</span>
+                </button>
+              )}
+              {isPrivateSession && (
+                <button
+                  type="button"
+                  onClick={togglePrivateSession}
+                  title="Private session is active (tap to turn off)"
+                  className="h-9 px-2.5 rounded-full flex items-center gap-1 bg-primary-amber/15 text-primary-amber border border-primary-amber/30 text-xs font-semibold hover:bg-primary-amber/25 transition cursor-pointer"
+                >
+                  <EyeOff className="w-3.5 h-3.5" />
+                  <span className="text-[11px] font-bold">Private</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  if (location.pathname === '/search') {
+                    const input = document.querySelector<HTMLInputElement>('input[type="search"]')
+                    input?.focus()
+                  } else {
+                    navigate('/search')
+                  }
+                }}
+                title="Search"
+                className={cn(
+                  'w-9 h-9 rounded-full flex items-center justify-center transition cursor-pointer',
+                  location.pathname.startsWith('/search')
+                    ? 'bg-hover text-text font-bold'
+                    : 'text-text-muted hover:text-text hover:bg-hover'
+                )}
+              >
+                <SearchIcon className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsNotificationOpen((prev) => !prev)}
+                title={
+                  unreadNotificationCount > 0
+                    ? `Notifications (${unreadNotificationCount} new)`
+                    : 'Notifications'
+                }
+                className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition cursor-pointer relative"
+              >
+                <Bell className="w-4 h-4" />
+                {unreadNotificationCount > 0 && (
+                  <span className="absolute top-1 right-1 min-w-[14px] h-[14px] px-0.5 bg-danger text-white text-[9px] font-black rounded-full flex items-center justify-center ring-2 ring-canvas shadow-xs">
+                    {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsProfileOpen((prev) => !prev)}
+                title={
+                  user
+                    ? isPrivateSession
+                      ? 'Account (Private session active)'
+                      : 'Account'
+                    : 'Sign in'
+                }
+                className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition cursor-pointer relative"
+              >
+                <Avatar
+                  src={profile?.avatar_url}
+                  fallbackText={profile?.display_name || user?.email}
+                  metadataFallback={user?.user_metadata?.avatar_url || user?.user_metadata?.picture}
+                  size="custom"
+                  className="h-7 w-7 border-transparent"
+                  showInitials={false}
+                />
+                {isPrivateSession && (
+                  <span
+                    title="Private session active"
+                    className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-primary-amber rounded-full border-2 border-canvas shadow"
+                  />
+                )}
+              </button>
             </div>
-          ) : (
+          </header>
+          <NotificationDropdown
+            isOpen={isNotificationOpen}
+            onClose={() => setIsNotificationOpen(false)}
+            isMobile={true}
+          />
+          <AccountDropdownMenu
+            isOpen={isProfileOpen}
+            onClose={() => setIsProfileOpen(false)}
+            isMobile={true}
+          />
+        </>
+      ) : (
+        <header className="hidden md:flex absolute top-0 left-0 right-0 h-16 draggable-header items-center justify-between px-4 z-50 pointer-events-none">
+          <div className="w-[min(20vw,450px)] flex items-center gap-2 pointer-events-auto">
             <button
               type="button"
-              onClick={() => navigate('/')}
-              title="Felo Home"
-              className="flex items-center gap-2.5 text-text cursor-pointer select-none"
+              onClick={() => navigate(-1)}
+              title="Go back"
+              className="w-8 h-8 rounded-full no-drag flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition-colors"
             >
-              <FeloMark className="h-6 w-6 text-emerald-400" />
-              <span className="font-bold text-base tracking-tight">Felo</span>
+              <ChevronLeft className="w-5 h-5" />
             </button>
-          )}
+            <button
+              type="button"
+              onClick={() => navigate(1)}
+              title="Go forward"
+              className="w-8 h-8 rounded-full no-drag flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition-colors"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="flex-1 flex justify-center pointer-events-auto">
+            <button
+              type="button"
+              onClick={() => {
+                setIsSidebarOpen(true)
+                navigate('/')
+              }}
+              title="Felo Home (Beta)"
+              className="relative mr-3 flex h-12 w-12 items-center justify-center rounded-full bg-surface-elevated text-text no-drag shadow-md transition-colors hover:bg-hover"
+            >
+              <FeloMark className="h-7 w-7" />
+              <span className="absolute -bottom-1 -right-1 px-1.5 py-[1px] rounded-full text-[9px] font-bold uppercase tracking-wider bg-surface-elevated border border-border/60 text-text-muted shadow-xs pointer-events-none select-none">
+                Beta
+              </span>
+            </button>
+            <form
+              onSubmit={handleTopSearchSubmit}
+              className="flex items-center bg-surface-elevated rounded-full pl-5 pr-2 py-2 w-full max-w-[620px] no-drag focus-within:ring-1 focus-within:ring-text transition-all shadow-md relative"
+            >
+              <SearchIcon className="w-5 h-5 text-text-muted shrink-0" />
+              <input
+                ref={topSearchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onFocus={() => {
+                  const trimmed = searchQuery.trim()
+                  if (trimmed) {
+                    navigate(`/search?q=${encodeURIComponent(trimmed)}`)
+                  } else {
+                    navigate('/search')
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    if (searchQuery) {
+                      setSearchQuery('')
+                      navigate('/search')
+                    } else {
+                      topSearchInputRef.current?.blur()
+                    }
+                  }
+                }}
+                placeholder={
+                  AppCapabilities.onlineSearch
+                    ? 'What do you want to search for? (Ctrl+K)'
+                    : 'Search local library (songs, artists, albums)... (Ctrl+K)'
+                }
+                className="bg-transparent border-none outline-none text-[14px] font-medium text-text placeholder:text-text-muted w-full px-3"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('')
+                    navigate('/search')
+                    topSearchInputRef.current?.focus()
+                  }}
+                  title="Clear search"
+                  className="p-1.5 rounded-full text-text-muted hover:text-text hover:bg-hover transition-colors shrink-0 mr-1"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
 
-          <div className="flex items-center gap-1.5">
+              {/* Search Mode Selector */}
+              {AppCapabilities.onlineSearch && (
+                <div ref={searchModeRef} className="relative shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsSearchModeOpen(!isSearchModeOpen)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-canvas hover:bg-hover transition-colors text-xs font-medium text-text-muted hover:text-text border border-border/50"
+                  >
+                    {searchMode === 'local' && (
+                      <>
+                        <HardDrive className="w-3.5 h-3.5" /> Local
+                      </>
+                    )}
+                    {searchMode === 'apple_music' && (
+                      <>
+                        <Globe className="w-3.5 h-3.5" /> Apple Music
+                      </>
+                    )}
+                    {searchMode === 'musicbrainz' && (
+                      <>
+                        <Database className="w-3.5 h-3.5" /> MusicBrainz
+                      </>
+                    )}
+                    {AppCapabilities.lastFm && searchMode === 'lastfm' && (
+                      <>
+                        <Radio className="w-3.5 h-3.5" /> Last.fm
+                      </>
+                    )}
+                  </button>
+
+                  {isSearchModeOpen && (
+                    <div className="absolute right-0 top-full mt-2 w-48 bg-surface-elevated border border-border rounded-lg shadow-xl py-1.5 z-[100] animate-in fade-in slide-in-from-top-1">
+                      <div className="px-3 py-2 text-[10px] font-bold text-text-muted uppercase tracking-wider">
+                        Search Source
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchMode('local')
+                          setIsSearchModeOpen(false)
+                        }}
+                        className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'local' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
+                      >
+                        <HardDrive className="w-4 h-4" />
+                        Local Library
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchMode('apple_music')
+                          setIsSearchModeOpen(false)
+                        }}
+                        className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'apple_music' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
+                      >
+                        <Globe className="w-4 h-4" />
+                        Apple Music
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchMode('musicbrainz')
+                          setIsSearchModeOpen(false)
+                        }}
+                        className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'musicbrainz' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
+                      >
+                        <Database className="w-4 h-4" />
+                        MusicBrainz
+                      </button>
+
+                      {AppCapabilities.lastFm && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSearchMode('lastfm')
+                            setIsSearchModeOpen(false)
+                          }}
+                          className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'lastfm' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
+                        >
+                          <Radio className="w-4 h-4" />
+                          Last.fm
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </form>
+          </div>
+          <div className="flex items-center gap-3 pointer-events-auto mr-2">
+            {!isElectron && (
+              <button
+                type="button"
+                onClick={() => navigate('/download')}
+                title="Download Felo App (Android, iOS & Desktop)"
+                className="flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all border-none bg-white text-black hover:bg-white/90 active:scale-95 no-drag cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5 stroke-[2.5]" />
+                <span>Download App</span>
+              </button>
+            )}
             {isPrivateSession && (
               <button
                 type="button"
                 onClick={togglePrivateSession}
-                title="Private session is active (tap to turn off)"
-                className="h-9 px-2.5 rounded-full flex items-center gap-1 bg-primary-amber/15 text-primary-amber border border-primary-amber/30 text-xs font-semibold hover:bg-primary-amber/25 transition cursor-pointer"
+                title={`Private session active${remainingTimeStr ? ` (auto-ends in ${remainingTimeStr})` : ''} - click to turn off`}
+                className="h-8 px-3 rounded-full flex items-center gap-1.5 bg-primary-amber/15 text-primary-amber border border-primary-amber/30 text-xs font-semibold hover:bg-primary-amber/25 transition cursor-pointer"
               >
                 <EyeOff className="w-3.5 h-3.5" />
-                <span className="text-[11px] font-bold">Private</span>
+                <span>Private</span>
+                {remainingTimeStr && (
+                  <span className="text-[10px] opacity-75 font-normal">({remainingTimeStr})</span>
+                )}
               </button>
             )}
+            <div ref={notificationRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setIsNotificationOpen((prev) => !prev)}
+                title={
+                  unreadNotificationCount > 0
+                    ? `Notifications (${unreadNotificationCount} new)`
+                    : 'Notifications'
+                }
+                className={`w-10 h-10 rounded-full flex items-center justify-center no-drag transition-all shadow-sm relative ${
+                  isNotificationOpen
+                    ? 'bg-primary-amber text-canvas'
+                    : 'bg-surface-elevated text-text-muted hover:bg-hover hover:text-text'
+                }`}
+              >
+                <Bell className="w-5 h-5" />
+                {unreadNotificationCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-danger text-white text-[10px] font-black rounded-full flex items-center justify-center ring-2 ring-canvas shadow-md animate-in zoom-in-50">
+                    {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                  </span>
+                )}
+              </button>
+
+              <NotificationDropdown
+                isOpen={isNotificationOpen}
+                onClose={() => setIsNotificationOpen(false)}
+                isMobile={false}
+              />
+            </div>
             <button
               type="button"
               onClick={() => {
-                if (location.pathname === '/search') {
-                  const input = document.querySelector<HTMLInputElement>('input[type="search"]')
-                  input?.focus()
-                } else {
-                  navigate('/search')
-                }
-              }}
-              title="Search"
-              className={cn(
-                'w-9 h-9 rounded-full flex items-center justify-center transition cursor-pointer',
-                location.pathname.startsWith('/search')
-                  ? 'bg-hover text-text font-bold'
-                  : 'text-text-muted hover:text-text hover:bg-hover'
-              )}
-            >
-              <SearchIcon className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsNotificationOpen((prev) => !prev)}
-              title={unreadNotificationCount > 0 ? `Notifications (${unreadNotificationCount} new)` : 'Notifications'}
-              className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition cursor-pointer relative"
-            >
-              <Bell className="w-4 h-4" />
-              {unreadNotificationCount > 0 && (
-                <span className="absolute top-1 right-1 min-w-[14px] h-[14px] px-0.5 bg-danger text-white text-[9px] font-black rounded-full flex items-center justify-center ring-2 ring-canvas shadow-xs">
-                  {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
-                </span>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsProfileOpen((prev) => !prev)}
-              title={
-                user
-                  ? isPrivateSession
-                    ? 'Account (Private session active)'
-                    : 'Account'
-                  : 'Sign in'
-              }
-              className="w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition cursor-pointer relative"
-            >
-              {profile?.avatar_url ? (
-                <img
-                  src={profile.avatar_url}
-                  alt=""
-                  className="h-7 w-7 rounded-full object-cover"
-                />
-              ) : (
-                <User className="w-5 h-5" />
-              )}
-              {isPrivateSession && (
-                <span
-                  title="Private session active"
-                  className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-primary-amber rounded-full border-2 border-canvas shadow"
-                />
-              )}
-            </button>
-          </div>
-        </header>
-        <NotificationDropdown
-          isOpen={isNotificationOpen}
-          onClose={() => setIsNotificationOpen(false)}
-          isMobile={true}
-        />
-        <AccountDropdownMenu
-          isOpen={isProfileOpen}
-          onClose={() => setIsProfileOpen(false)}
-          isMobile={true}
-        />
-
-      </>
-      ) : (
-        <header className="hidden md:flex absolute top-0 left-0 right-0 h-16 draggable-header items-center justify-between px-4 z-50 pointer-events-none">
-        <div className="w-[min(20vw,450px)] flex items-center gap-2 pointer-events-auto">
-          <button
-            type="button"
-            onClick={() => navigate(-1)}
-            title="Go back"
-            className="w-8 h-8 rounded-full no-drag flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition-colors"
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate(1)}
-            title="Go forward"
-            className="w-8 h-8 rounded-full no-drag flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition-colors"
-          >
-            <ChevronRight className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="flex-1 flex justify-center pointer-events-auto">
-          <button
-            type="button"
-            onClick={() => {
-              setIsSidebarOpen(true)
-              navigate('/')
-            }}
-            title="Home"
-            className="mr-3 flex h-12 w-12 items-center justify-center rounded-full bg-surface-elevated text-text no-drag shadow-md transition-colors hover:bg-hover"
-          >
-            <FeloMark className="h-7 w-7" />
-          </button>
-          <form
-            onSubmit={handleTopSearchSubmit}
-            className="flex items-center bg-surface-elevated rounded-full pl-5 pr-2 py-2 w-full max-w-[620px] no-drag focus-within:ring-1 focus-within:ring-text transition-all shadow-md relative"
-          >
-            <SearchIcon className="w-5 h-5 text-text-muted shrink-0" />
-            <input
-              ref={topSearchInputRef}
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onFocus={() => {
-                const trimmed = searchQuery.trim()
-                if (trimmed) {
-                  navigate(`/search?q=${encodeURIComponent(trimmed)}`)
-                } else {
-                  navigate('/search')
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  if (searchQuery) {
-                    setSearchQuery('')
-                    navigate('/search')
-                  } else {
-                    topSearchInputRef.current?.blur()
+                setIsFriendActivityOpen((isOpen) => {
+                  const nextIsOpen = !isOpen
+                  if (nextIsOpen) {
+                    setIsDownloadPanelOpen(false)
+                    setDownloadTarget(null)
+                    setIsQueueOpen(false)
+                    setIsAudioModalOpen(false)
                   }
-                }
+                  return nextIsOpen
+                })
               }}
-              placeholder={
-                AppCapabilities.onlineSearch
-                  ? 'What do you want to search for? (Ctrl+K)'
-                  : 'Search local library (songs, artists, albums)... (Ctrl+K)'
-              }
-              className="bg-transparent border-none outline-none text-[14px] font-medium text-text placeholder:text-text-muted w-full px-3"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchQuery('')
-                  navigate('/search')
-                  topSearchInputRef.current?.focus()
-                }}
-                title="Clear search"
-                className="p-1.5 rounded-full text-text-muted hover:text-text hover:bg-hover transition-colors shrink-0 mr-1"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-
-            {/* Search Mode Selector */}
-            {AppCapabilities.onlineSearch && (
-              <div ref={searchModeRef} className="relative shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setIsSearchModeOpen(!isSearchModeOpen)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-canvas hover:bg-hover transition-colors text-xs font-medium text-text-muted hover:text-text border border-border/50"
-                >
-                  {searchMode === 'local' && (
-                    <>
-                      <HardDrive className="w-3.5 h-3.5" /> Local
-                    </>
-                  )}
-                  {searchMode === 'apple_music' && (
-                    <>
-                      <Globe className="w-3.5 h-3.5" /> Apple Music
-                    </>
-                  )}
-                  {searchMode === 'musicbrainz' && (
-                    <>
-                      <Database className="w-3.5 h-3.5" /> MusicBrainz
-                    </>
-                  )}
-                  {AppCapabilities.lastFm && searchMode === 'lastfm' && (
-                    <>
-                      <Radio className="w-3.5 h-3.5" /> Last.fm
-                    </>
-                  )}
-                </button>
-
-                {isSearchModeOpen && (
-                  <div className="absolute right-0 top-full mt-2 w-48 bg-surface-elevated border border-border rounded-lg shadow-xl py-1.5 z-[100] animate-in fade-in slide-in-from-top-1">
-                    <div className="px-3 py-2 text-[10px] font-bold text-text-muted uppercase tracking-wider">
-                      Search Source
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSearchMode('local')
-                        setIsSearchModeOpen(false)
-                      }}
-                      className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'local' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
-                    >
-                      <HardDrive className="w-4 h-4" />
-                      Local Library
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSearchMode('apple_music')
-                        setIsSearchModeOpen(false)
-                      }}
-                      className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'apple_music' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
-                    >
-                      <Globe className="w-4 h-4" />
-                      Apple Music
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSearchMode('musicbrainz')
-                        setIsSearchModeOpen(false)
-                      }}
-                      className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'musicbrainz' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
-                    >
-                      <Database className="w-4 h-4" />
-                      MusicBrainz
-                    </button>
-
-                    {AppCapabilities.lastFm && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSearchMode('lastfm')
-                          setIsSearchModeOpen(false)
-                        }}
-                        className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${searchMode === 'lastfm' ? 'text-white bg-white/10 font-medium' : 'text-text-muted hover:bg-hover hover:text-text'}`}
-                      >
-                        <Radio className="w-4 h-4" />
-                        Last.fm
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </form>
-        </div>
-        <div className="flex items-center gap-3 pointer-events-auto mr-2">
-          {isPrivateSession && (
-            <button
-              type="button"
-              onClick={togglePrivateSession}
-              title={`Private session active${remainingTimeStr ? ` (auto-ends in ${remainingTimeStr})` : ''} - click to turn off`}
-              className="h-8 px-3 rounded-full flex items-center gap-1.5 bg-primary-amber/15 text-primary-amber border border-primary-amber/30 text-xs font-semibold hover:bg-primary-amber/25 transition cursor-pointer"
-            >
-              <EyeOff className="w-3.5 h-3.5" />
-              <span>Private</span>
-              {remainingTimeStr && (
-                <span className="text-[10px] opacity-75 font-normal">({remainingTimeStr})</span>
-              )}
-            </button>
-          )}
-          <div ref={notificationRef} className="relative">
-            <button
-              type="button"
-              onClick={() => setIsNotificationOpen((prev) => !prev)}
-              title={unreadNotificationCount > 0 ? `Notifications (${unreadNotificationCount} new)` : 'Notifications'}
-              className={`w-10 h-10 rounded-full flex items-center justify-center no-drag transition-all shadow-sm relative ${
-                isNotificationOpen
+              title="Friend activity"
+              className={`w-10 h-10 rounded-full flex items-center justify-center no-drag transition-all shadow-sm ${
+                isFriendActivityOpen
                   ? 'bg-primary-amber text-canvas'
                   : 'bg-surface-elevated text-text-muted hover:bg-hover hover:text-text'
               }`}
             >
-              <Bell className="w-5 h-5" />
-              {unreadNotificationCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-danger text-white text-[10px] font-black rounded-full flex items-center justify-center ring-2 ring-canvas shadow-md animate-in zoom-in-50">
-                  {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
-                </span>
-              )}
+              <Users className="w-5 h-5" />
             </button>
-
-            <NotificationDropdown
-              isOpen={isNotificationOpen}
-              onClose={() => setIsNotificationOpen(false)}
-              isMobile={false}
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setIsFriendActivityOpen((isOpen) => {
-                const nextIsOpen = !isOpen
-                if (nextIsOpen) {
-                  setIsDownloadPanelOpen(false)
-                  setDownloadTarget(null)
-                }
-                return nextIsOpen
-              })
-            }}
-            title="Friend activity"
-            className={`w-10 h-10 rounded-full flex items-center justify-center no-drag transition-all shadow-sm ${
-              isFriendActivityOpen
-                ? 'bg-primary-amber text-canvas'
-                : 'bg-surface-elevated text-text-muted hover:bg-hover hover:text-text'
-            }`}
-          >
-            <Users className="w-5 h-5" />
-          </button>
-          <div ref={profileRef} className="relative">
-            <button
-              onClick={() => setIsProfileOpen(!isProfileOpen)}
-              title={isPrivateSession ? 'Profile (Private session active)' : 'Profile'}
-              className={`w-10 h-10 rounded-full bg-surface-elevated text-text-muted flex items-center justify-center no-drag hover:bg-hover hover:text-text transition-all shadow-sm relative ${
-                isPrivateSession ? 'ring-2 ring-primary-amber/60' : ''
-              }`}
-            >
-              {profile?.avatar_url ? (
-                <img
-                  src={profile.avatar_url}
-                  alt=""
-                  className="h-full w-full rounded-full object-cover"
+            <div ref={profileRef} className="relative">
+              <button
+                onClick={() => setIsProfileOpen(!isProfileOpen)}
+                title={isPrivateSession ? 'Profile (Private session active)' : 'Profile'}
+                className={`w-10 h-10 rounded-full bg-surface-elevated text-text-muted flex items-center justify-center no-drag hover:bg-hover hover:text-text transition-all shadow-sm relative ${
+                  isPrivateSession ? 'ring-2 ring-primary-amber/60' : ''
+                }`}
+              >
+                <Avatar
+                  src={profile?.avatar_url}
+                  fallbackText={profile?.display_name || user?.email}
+                  metadataFallback={user?.user_metadata?.avatar_url || user?.user_metadata?.picture}
+                  size="custom"
+                  className="h-full w-full border-transparent"
+                  showInitials={false}
                 />
-              ) : (
-                <User className="w-5 h-5" />
-              )}
-              {isPrivateSession && (
-                <span
-                  title="Private session active"
-                  className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-primary-amber text-canvas rounded-full flex items-center justify-center shadow"
-                >
-                  <EyeOff className="w-2.5 h-2.5" />
-                </span>
-              )}
-            </button>
+                {isPrivateSession && (
+                  <span
+                    title="Private session active"
+                    className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-primary-amber text-canvas rounded-full flex items-center justify-center shadow"
+                  >
+                    <EyeOff className="w-2.5 h-2.5" />
+                  </span>
+                )}
+              </button>
 
-            <AccountDropdownMenu
-              isOpen={isProfileOpen}
-              onClose={() => setIsProfileOpen(false)}
-              isMobile={false}
-            />
-          </div>
-          {isElectron && (
-            <div className="flex items-center gap-2 no-drag">
-              <button
-                type="button"
-                onClick={() => window.api?.minimizeWindow()}
-                title="Minimize"
-                className="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition-colors"
-              >
-                <Minus className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => window.api?.maximizeWindow()}
-                title="Maximize"
-                className="w-7 h-7 rounded-sm flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition-colors"
-              >
-                <Square className="w-3.5 h-3.5 fill-current" />
-              </button>
-              <button
-                type="button"
-                onClick={() => window.api?.closeWindow()}
-                title="Close"
-                className="w-7 h-7 rounded-sm flex items-center justify-center text-text-muted hover:text-danger hover:bg-danger/10 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <AccountDropdownMenu
+                isOpen={isProfileOpen}
+                onClose={() => setIsProfileOpen(false)}
+                isMobile={false}
+              />
             </div>
-          )}
-        </div>
-      </header>
+            {isElectron && (
+              <div className="flex items-center gap-2 no-drag">
+                <button
+                  type="button"
+                  onClick={() => window.api?.minimizeWindow()}
+                  title="Minimize"
+                  className="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition-colors"
+                >
+                  <Minus className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.api?.maximizeWindow()}
+                  title="Maximize"
+                  className="w-7 h-7 rounded-sm flex items-center justify-center text-text-muted hover:text-text hover:bg-hover transition-colors"
+                >
+                  <Square className="w-3.5 h-3.5 fill-current" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.api?.closeWindow()}
+                  title="Close"
+                  className="w-7 h-7 rounded-sm flex items-center justify-center text-text-muted hover:text-danger hover:bg-danger/10 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            )}
+          </div>
+        </header>
       )}
 
       {/* Main Layout Container */}
       <div
         className={cn(
           'flex-1 flex overflow-hidden pb-2 px-2 gap-2 relative',
-          isMobileScreen
-            ? 'pt-[calc(3.5rem+env(safe-area-inset-top,0px))] px-0 pb-0'
-            : 'pt-[64px]'
+          isMobileScreen ? 'pt-[calc(3.5rem+env(safe-area-inset-top,0px))] px-0 pb-0' : 'pt-[64px]'
         )}
       >
         {/* Left Sidebar (Desktop Only) */}
@@ -926,6 +996,8 @@ function App() {
                 onOpenDownloadPanel={(target) => {
                   setDownloadTarget(target)
                   setIsFriendActivityOpen(false)
+                  setIsQueueOpen(false)
+                  setIsAudioModalOpen(false)
                   setIsDownloadPanelOpen(true)
                 }}
               />
@@ -942,7 +1014,10 @@ function App() {
         >
           <section
             ref={mainContentRef}
-            className={cn('flex-1 overflow-y-auto relative no-drag', isMobileScreen && 'pb-36')}
+            className={cn(
+              'flex-1 overflow-y-auto relative no-drag',
+              isMobileScreen && location.pathname !== '/account' && 'pb-36'
+            )}
           >
             <div className="h-full min-h-full w-full flex flex-col flex-1">
               <ErrorBoundary>
@@ -950,6 +1025,8 @@ function App() {
                   onOpenDownloadPanel={(target) => {
                     setDownloadTarget(target)
                     setIsFriendActivityOpen(false)
+                    setIsQueueOpen(false)
+                    setIsAudioModalOpen(false)
                     setIsDownloadPanelOpen(true)
                   }}
                 />
@@ -957,17 +1034,40 @@ function App() {
             </div>
           </section>
         </main>
-        {AppCapabilities.downloads && isDownloadPanelOpen && (
-          <DownloadPanel
-            targetSong={downloadTarget}
-            onClose={() => {
-              setIsDownloadPanelOpen(false)
-              setDownloadTarget(null)
-            }}
-          />
-        )}
-        {isFriendActivityOpen && (
-          <FriendActivityPanel onClose={() => setIsFriendActivityOpen(false)} />
+        {/* Right Sidebar (Desktop Only) */}
+        {!isMobileScreen && (
+          <div
+            className={cn(
+              'hidden md:block h-full shrink-0 transition-[width,margin,opacity] duration-300 ease-out overflow-hidden relative',
+              isRightSidebarOpen
+                ? 'w-[380px] opacity-100 mr-0'
+                : 'w-0 opacity-0 -mr-2 pointer-events-none'
+            )}
+          >
+            <div className="w-[380px] h-full absolute top-0 right-0 overflow-hidden">
+              {renderedRightPanel === 'downloads' && AppCapabilities.downloads && (
+                <DownloadPanel
+                  targetSong={downloadTarget}
+                  onClose={() => {
+                    setIsDownloadPanelOpen(false)
+                    setDownloadTarget(null)
+                  }}
+                />
+              )}
+              {renderedRightPanel === 'friends' && (
+                <FriendActivityPanel onClose={() => setIsFriendActivityOpen(false)} />
+              )}
+              {renderedRightPanel === 'queue' && (
+                <QueueDrawer isOpen={isQueueOpen} onClose={() => setIsQueueOpen(false)} isMobile={false} />
+              )}
+              {renderedRightPanel === 'audio' && (
+                <AudioSettingsPanel
+                  onClose={() => setIsAudioModalOpen(false)}
+                  isModal={false}
+                />
+              )}
+            </div>
+          </div>
         )}
         <LibraryScanPill />
         <PlaybackNoticeToast />
@@ -991,6 +1091,10 @@ function App() {
                 onClose={() => setIsMobileNowPlayingOpen(false)}
                 onOpenQueue={() => {
                   setIsMobileNowPlayingOpen(false)
+                  setIsFriendActivityOpen(false)
+                  setIsDownloadPanelOpen(false)
+                  setIsAudioModalOpen(false)
+                  setDownloadTarget(null)
                   setIsQueueOpen(true)
                 }}
                 onOpenSearch={() => {
@@ -1042,16 +1146,41 @@ function App() {
         <div className="px-2 pb-2">
           <Footer
             isQueueOpen={isQueueOpen}
-            onToggleQueue={() => setIsQueueOpen((open) => !open)}
+            onToggleQueue={() => {
+              setIsQueueOpen((open) => {
+                const nextOpen = !open
+                if (nextOpen) {
+                  setIsFriendActivityOpen(false)
+                  setIsDownloadPanelOpen(false)
+                  setIsAudioModalOpen(false)
+                  setDownloadTarget(null)
+                }
+                return nextOpen
+              })
+            }}
+            onToggleAudioStudio={() => {
+              const nextOpen = !isAudioModalOpen
+              setIsAudioModalOpen(nextOpen)
+              if (nextOpen) {
+                setIsQueueOpen(false)
+                setIsFriendActivityOpen(false)
+                setIsDownloadPanelOpen(false)
+                setDownloadTarget(null)
+              }
+            }}
             onOpenDownloadPanel={(target) => {
               if (!AppCapabilities.downloads) return
               if (target) {
                 setDownloadTarget(target)
                 setIsFriendActivityOpen(false)
+                setIsQueueOpen(false)
+                setIsAudioModalOpen(false)
                 setIsDownloadPanelOpen(true)
               } else {
                 setDownloadTarget(null)
                 setIsFriendActivityOpen(false)
+                setIsQueueOpen(false)
+                setIsAudioModalOpen(false)
                 setIsDownloadPanelOpen((isOpen) => !isOpen)
               }
             }}
@@ -1059,8 +1188,10 @@ function App() {
         </div>
       )}
 
-      {/* Play Queue Overlay Drawer */}
-      <QueueDrawer isOpen={isQueueOpen} onClose={() => setIsQueueOpen(false)} />
+      {/* Mobile Play Queue Overlay Drawer */}
+      {isMobileScreen && (
+        <QueueDrawer isOpen={isQueueOpen} onClose={() => setIsQueueOpen(false)} isMobile />
+      )}
 
       {/* Session Leave & Play Confirmation Dialog */}
       <SessionLeaveDialog />
@@ -1068,10 +1199,10 @@ function App() {
       {/* Context-Aware New Version Update Dialog (MUSIXQUARE Architecture) */}
       <UpdateModalDialog />
 
-      {/* Spatial Audio & Multi-Device DSP Modal (MUSIXQUARE Audio) */}
-      <AudioFxModal />
+      {/* Mobile Spatial Audio & Multi-Device DSP Modal (MUSIXQUARE Audio) */}
+      {isMobileScreen && <AudioFxModal />}
 
-      {/* Manual Sync (ms) Latency Calibration Modal (MUSIXQUARE Sync) */}
+      {/* Audio Sync Latency Calibration Studio Modal */}
       <ManualSyncModal />
     </div>
   )

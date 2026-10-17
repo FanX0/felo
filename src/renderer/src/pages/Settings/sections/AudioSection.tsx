@@ -9,7 +9,6 @@ import {
   TrendingUp,
   TrendingDown,
   Activity,
-  Sparkles,
   MoveHorizontal,
   ChevronLeft,
   ChevronRight,
@@ -25,6 +24,7 @@ import { Toggle } from '../components/Toggle'
 import { SettingRow } from '../components/SettingRow'
 import { SettingsSection } from '../components/SettingsSection'
 import { McpSection } from './McpSection'
+import Slider from '../../../components/Common/Slider'
 
 export function AudioSection() {
   // Playback settings
@@ -101,16 +101,17 @@ export function AudioSection() {
       <SettingRow label="Crossfade" hint="Smoothly fade between tracks during playback.">
         <div className="flex items-center gap-3">
           {crossfadeEnabled && (
-            <div className="flex items-center gap-2">
-              <input
-                type="range"
+            <div className="flex items-center gap-2.5">
+              <Slider
                 min={1}
                 max={12}
+                step={1}
                 value={crossfadeDuration}
-                onChange={(e) => setCrossfadeDuration(Number(e.target.value))}
-                className="w-20 accent-white"
+                onChange={setCrossfadeDuration}
+                className="w-24"
+                ariaLabel="Crossfade duration"
               />
-              <span className="text-xs text-text-muted w-6">{crossfadeDuration}s</span>
+              <span className="text-xs font-mono text-text-muted w-6">{crossfadeDuration}s</span>
             </div>
           )}
           <Toggle enabled={crossfadeEnabled} onChange={setCrossfadeEnabled} />
@@ -188,8 +189,8 @@ export function AudioSection() {
               onClick={() => setShowReverbAdvanced(!showReverbAdvanced)}
               className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
                 showReverbAdvanced || reverbPreset === 'advanced'
-                  ? 'bg-primary/20 border-primary/40 text-primary'
-                  : 'bg-white/5 border-white/10 text-zinc-400 hover:text-white'
+                  ? 'bg-primary text-primary-foreground font-semibold border-transparent shadow-sm'
+                  : 'bg-surface-elevated border-border/60 text-text-muted hover:text-text hover:bg-hover'
               }`}
               title="Fine-tune Reverb parameters"
             >
@@ -212,8 +213,8 @@ export function AudioSection() {
                   }}
                   className={`flex flex-col items-center justify-center gap-2.5 p-5 rounded-2xl border transition-all cursor-pointer ${
                     isActive
-                      ? 'bg-primary/20 border-primary/60 text-primary ring-1 ring-primary/30 shadow-sm font-semibold'
-                      : 'bg-[#18191d] border-transparent text-zinc-400 hover:text-white hover:bg-[#22242a]'
+                      ? 'bg-primary text-primary-foreground font-bold border-transparent shadow-sm'
+                      : 'bg-surface-elevated border-border/60 text-text-muted hover:text-text hover:bg-hover'
                   }`}
                 >
                   {preset === 'studio' && <CircleDot className="w-5 h-5" />}
@@ -340,8 +341,8 @@ export function AudioSection() {
                 onClick={() => setShowEqAdvanced(!showEqAdvanced)}
                 className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
                   showEqAdvanced || eqPreset === 'advanced'
-                    ? 'bg-primary/20 border-primary/40 text-primary'
-                    : 'bg-white/5 border-white/10 text-zinc-400 hover:text-white'
+                    ? 'bg-primary text-primary-foreground font-semibold border-transparent shadow-sm'
+                    : 'bg-surface-elevated border-border/60 text-text-muted hover:text-text hover:bg-hover'
                 }`}
                 title="Toggle 5-Band EQ Sliders"
               >
@@ -365,8 +366,8 @@ export function AudioSection() {
                   }}
                   className={`flex flex-col items-center justify-center gap-2.5 p-5 rounded-2xl border transition-all cursor-pointer ${
                     isActive
-                      ? 'bg-primary/20 border-primary/60 text-primary ring-1 ring-primary/30 shadow-sm font-semibold'
-                      : 'bg-[#18191d] border-transparent text-zinc-400 hover:text-white hover:bg-[#22242a]'
+                      ? 'bg-primary text-primary-foreground font-bold border-transparent shadow-sm'
+                      : 'bg-surface-elevated border-border/60 text-text-muted hover:text-text hover:bg-hover'
                   }`}
                 >
                   {preset === 'bright' && <TrendingUp className="w-5 h-5" />}
@@ -427,8 +428,8 @@ export function AudioSection() {
               onClick={() => toggleVirtualEffect('bass')}
               className={`flex flex-col items-center justify-center gap-2.5 p-5 rounded-2xl border transition-all cursor-pointer ${
                 virtualBass
-                  ? 'bg-primary/20 border-primary/60 text-primary ring-1 ring-primary/30 shadow-sm font-semibold'
-                  : 'bg-[#18191d] border-transparent text-zinc-400 hover:text-white hover:bg-[#22242a]'
+                  ? 'bg-primary text-primary-foreground font-bold border-transparent shadow-sm'
+                  : 'bg-surface-elevated border-border/60 text-text-muted hover:text-text hover:bg-hover'
               }`}
             >
               <Activity className="w-5 h-5" />
@@ -440,11 +441,11 @@ export function AudioSection() {
               onClick={() => toggleVirtualEffect('treble')}
               className={`flex flex-col items-center justify-center gap-2.5 p-5 rounded-2xl border transition-all cursor-pointer ${
                 virtualTreble
-                  ? 'bg-primary/20 border-primary/60 text-primary ring-1 ring-primary/30 shadow-sm font-semibold'
-                  : 'bg-[#18191d] border-transparent text-zinc-400 hover:text-white hover:bg-[#22242a]'
+                  ? 'bg-primary text-primary-foreground font-bold border-transparent shadow-sm'
+                  : 'bg-surface-elevated border-border/60 text-text-muted hover:text-text hover:bg-hover'
               }`}
             >
-              <Sparkles className="w-5 h-5" />
+              <SlidersHorizontal className="w-5 h-5" />
               <span className="text-xs font-semibold">Treble</span>
             </button>
 
@@ -453,8 +454,8 @@ export function AudioSection() {
               onClick={() => toggleVirtualEffect('surround')}
               className={`flex flex-col items-center justify-center gap-2.5 p-5 rounded-2xl border transition-all cursor-pointer ${
                 virtualSurround
-                  ? 'bg-primary/20 border-primary/60 text-primary ring-1 ring-primary/30 shadow-sm font-semibold'
-                  : 'bg-[#18191d] border-transparent text-zinc-400 hover:text-white hover:bg-[#22242a]'
+                  ? 'bg-primary text-primary-foreground font-bold border-transparent shadow-sm'
+                  : 'bg-surface-elevated border-border/60 text-text-muted hover:text-text hover:bg-hover'
               }`}
             >
               <MoveHorizontal className="w-5 h-5" />
@@ -466,8 +467,8 @@ export function AudioSection() {
               onClick={() => toggleVirtualEffect('off')}
               className={`flex flex-col items-center justify-center gap-2.5 p-5 rounded-2xl border transition-all cursor-pointer ${
                 !virtualBass && !virtualTreble && !virtualSurround
-                  ? 'bg-primary/20 border-primary/60 text-primary ring-1 ring-primary/30 shadow-sm font-semibold'
-                  : 'bg-[#18191d] border-transparent text-zinc-400 hover:text-white hover:bg-[#22242a]'
+                  ? 'bg-primary text-primary-foreground font-bold border-transparent shadow-sm'
+                  : 'bg-surface-elevated border-border/60 text-text-muted hover:text-text hover:bg-hover'
               }`}
             >
               <Ban className="w-5 h-5" />
@@ -498,8 +499,8 @@ export function AudioSection() {
               onClick={() => setSpeakerRole('left')}
               className={`flex items-center justify-center gap-2 p-4 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
                 speakerRole === 'left'
-                  ? 'bg-primary/20 border-primary/60 text-primary ring-1 ring-primary/30 shadow-sm font-semibold'
-                  : 'bg-[#18191d] border-transparent text-zinc-400 hover:text-white hover:bg-[#22242a]'
+                  ? 'bg-primary text-primary-foreground font-bold border-transparent shadow-sm'
+                  : 'bg-surface-elevated border-border/60 text-text-muted hover:text-text hover:bg-hover'
               }`}
             >
               <ChevronLeft className="w-4 h-4" />
@@ -511,8 +512,8 @@ export function AudioSection() {
               onClick={() => setSpeakerRole('right')}
               className={`flex items-center justify-center gap-2 p-4 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
                 speakerRole === 'right'
-                  ? 'bg-primary/20 border-primary/60 text-primary ring-1 ring-primary/30 shadow-sm font-semibold'
-                  : 'bg-[#18191d] border-transparent text-zinc-400 hover:text-white hover:bg-[#22242a]'
+                  ? 'bg-primary text-primary-foreground font-bold border-transparent shadow-sm'
+                  : 'bg-surface-elevated border-border/60 text-text-muted hover:text-text hover:bg-hover'
               }`}
             >
               <span>Right Speaker</span>
@@ -524,8 +525,8 @@ export function AudioSection() {
               onClick={() => setSpeakerRole('subwoofer')}
               className={`flex items-center justify-center gap-2 p-4 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
                 speakerRole === 'subwoofer'
-                  ? 'bg-primary/20 border-primary/60 text-primary ring-1 ring-primary/30 shadow-sm font-semibold'
-                  : 'bg-[#18191d] border-transparent text-zinc-400 hover:text-white hover:bg-[#22242a]'
+                  ? 'bg-primary text-primary-foreground font-bold border-transparent shadow-sm'
+                  : 'bg-surface-elevated border-border/60 text-text-muted hover:text-text hover:bg-hover'
               }`}
             >
               <CircleDot className="w-4 h-4" />
@@ -537,8 +538,8 @@ export function AudioSection() {
               onClick={() => setSpeakerRole('center')}
               className={`flex items-center justify-center gap-2 p-4 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
                 speakerRole === 'center'
-                  ? 'bg-primary/20 border-primary/60 text-primary ring-1 ring-primary/30 shadow-sm font-semibold'
-                  : 'bg-[#18191d] border-transparent text-zinc-400 hover:text-white hover:bg-[#22242a]'
+                  ? 'bg-primary text-primary-foreground font-bold border-transparent shadow-sm'
+                  : 'bg-surface-elevated border-border/60 text-text-muted hover:text-text hover:bg-hover'
               }`}
             >
               <Music className="w-4 h-4" />
@@ -547,20 +548,19 @@ export function AudioSection() {
           </div>
 
           {speakerRole === 'subwoofer' && (
-            <div className="mt-3 p-4 rounded-xl bg-primary/10 border border-primary/20 space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
+            <div className="mt-3 p-4 rounded-xl bg-surface-elevated border border-border/60 space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
               <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold text-primary">Subwoofer Cutoff</span>
-                <span className="font-mono text-primary font-bold">{subCutoff} Hz</span>
+                <span className="font-semibold text-text">Subwoofer Cutoff</span>
+                <span className="font-mono text-text font-bold">{subCutoff} Hz</span>
               </div>
-              <input
-                type="range"
-                min="60"
-                max="200"
-                step="5"
+              <Slider
+                min={60}
+                max={200}
+                step={5}
                 value={subCutoff}
-                onChange={(e) => setSubCutoff(parseInt(e.target.value, 10))}
-                className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-primary"
-                style={{ accentColor: 'var(--app-accent)' }}
+                onChange={setSubCutoff}
+                className="w-full h-4"
+                ariaLabel="Subwoofer Cutoff"
               />
               <div className="flex justify-between text-[10px] text-zinc-500 font-mono">
                 <span>60 Hz (Deep Sub)</span>
@@ -584,7 +584,7 @@ export function AudioSection() {
               Streams local audio securely through custom sandboxed media pipeline.
             </p>
           </div>
-          <span className="px-2.5 py-1 rounded bg-white/10 text-white font-mono text-[11px]">
+          <span className="px-2.5 py-1 rounded-full bg-surface-elevated border border-border/60 text-text font-mono text-[11px] font-semibold">
             Active (media://)
           </span>
         </div>

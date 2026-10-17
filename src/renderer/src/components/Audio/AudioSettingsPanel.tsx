@@ -22,7 +22,8 @@ import {
   Info,
   Wifi,
   ShieldCheck,
-  Lock
+  Lock,
+  X
 } from 'lucide-react'
 import QRCode from 'qrcode'
 import SettingsSyncSection from '../Online/SettingsSyncSection'
@@ -52,7 +53,7 @@ interface AudioSettingsPanelProps {
 
 type AudioSubtab = 'general' | 'audio' | 'connect' | 'help'
 
-export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSettingsPanelProps) {
+export default function AudioSettingsPanel({ onClose, isModal: _isModal = false }: AudioSettingsPanelProps) {
   // Navigation
   const [activeSubtab, setActiveSubtab] = useState<AudioSubtab>('general')
 
@@ -215,31 +216,31 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
   const sampleRate = audioDspEngine.getAudioContext()?.sampleRate || 48000
 
   return (
-    <div className="flex flex-col h-full bg-[#0d1117] text-white select-none overflow-hidden rounded-2xl border border-white/5">
+    <aside className="flex flex-col h-full w-full bg-canvas text-white select-none overflow-hidden rounded-xl border border-border/70 shadow-2xl no-drag">
       {/* Top Header */}
-      <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.08] shrink-0 bg-[#111722]">
-        <div className="flex items-center gap-2">
-          <Sliders className="w-4 h-4 text-primary" />
-          <h3 className="font-semibold text-white tracking-wide text-sm">Felo Audio Studio</h3>
+      <div className="flex h-16 items-center justify-between px-5 border-b border-border/60 shrink-0 bg-canvas">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <Sliders className="w-5 h-5 text-primary shrink-0" />
+          <h2 className="font-bold text-white text-base truncate">Felo Audio Studio</h2>
         </div>
 
-        {isModal && onClose && (
+        {onClose && (
           <button
             type="button"
             onClick={() => {
               playUiTouchSound()
               onClose()
             }}
-            className="text-zinc-400 hover:text-white p-1 rounded-full hover:bg-white/10 text-sm font-semibold transition-colors cursor-pointer"
-            title="Close"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-hover hover:text-white cursor-pointer active:scale-95"
+            title="Close audio studio"
           >
-            ✕
+            <X className="h-4 w-4" />
           </button>
         )}
       </div>
 
       {/* 4 Authentic MUSIXQUARE Subtabs: General, Audio, Connect, Help */}
-      <div className="flex items-center border-b border-white/[0.08] px-3 text-xs font-medium shrink-0 bg-[#0f141f]">
+      <div className="flex items-center border-b border-border/60 px-3 text-xs font-medium shrink-0 bg-canvas">
         {(
           [
             { id: 'general', label: 'General', icon: Activity },
@@ -293,9 +294,9 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
             </div>
 
             {/* Master DSP Gain Staging */}
-            <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-3">
+            <div className="p-4 rounded-xl bg-surface-elevated border border-border/60 space-y-3">
               <div className="flex justify-between items-center">
-                <div className="flex items-center gap-1.5 font-semibold text-white">
+                <div className="flex items-center gap-1.5 font-semibold text-text">
                   <Volume2 className="w-4 h-4 text-primary" />
                   <span>Master DSP Gain</span>
                 </div>
@@ -316,10 +317,10 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
             </div>
 
             {/* Interface Sound Effects Configuration */}
-            <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-3">
+            <div className="p-4 rounded-xl bg-surface-elevated border border-border/60 space-y-3">
               <div className="space-y-0.5">
-                <span className="font-semibold text-white text-sm">Interface Sound Effects</span>
-                <p className="text-zinc-400 text-xs">
+                <span className="font-semibold text-text text-sm">Interface Sound Effects</span>
+                <p className="text-text-muted text-xs">
                   Tactile pitchless micro-transient audio feedback on clicks, toggles, and switches.
                 </p>
               </div>
@@ -329,8 +330,8 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
                   onClick={() => handleToggleUiSounds(true)}
                   className={`py-2 px-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer text-center ${
                     uiSoundsActive
-                      ? 'bg-primary/20 border-primary/60 text-primary ring-1 ring-primary/30 shadow-sm font-semibold'
-                      : 'bg-[#181f2c] border-transparent text-zinc-400 hover:text-white hover:bg-[#20293a]'
+                      ? 'bg-primary text-primary-foreground font-bold border-transparent shadow-sm'
+                      : 'bg-surface border-border/60 text-text-muted hover:text-white hover:bg-hover'
                   }`}
                 >
                   On
@@ -340,8 +341,8 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
                   onClick={() => handleToggleUiSounds(false)}
                   className={`py-2 px-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer text-center ${
                     !uiSoundsActive
-                      ? 'bg-primary/20 border-primary/60 text-primary ring-1 ring-primary/30 shadow-sm font-semibold'
-                      : 'bg-[#181f2c] border-transparent text-zinc-400 hover:text-white hover:bg-[#20293a]'
+                      ? 'bg-primary text-primary-foreground font-bold border-transparent shadow-sm'
+                      : 'bg-surface border-border/60 text-text-muted hover:text-white hover:bg-hover'
                   }`}
                 >
                   Off
@@ -350,34 +351,37 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
             </div>
 
             {/* Room Settings Sync Configuration (MUSIXQUARE Parity) */}
-            <div className="p-4 rounded-xl bg-white/5 border border-white/5">
+            <div className="p-4 rounded-xl bg-surface-elevated border border-border/60">
               <SettingsSyncSection />
             </div>
 
             {/* Hardware DSP Telemetry */}
-            <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-3">
+            <div className="p-4 rounded-xl bg-surface-elevated border border-border/60 space-y-3">
               <div className="flex justify-between items-center">
-                <span className="font-semibold text-white text-sm">DSP Hardware Telemetry</span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-primary/10 text-primary border border-primary/30 font-semibold">
+                <span className="font-semibold text-text text-sm">DSP Hardware Telemetry</span>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider bg-primary text-primary-foreground shadow-sm">
                   ACTIVE
                 </span>
               </div>
-              <div className="grid grid-cols-2 gap-2 text-zinc-400 text-[11px] font-mono">
-                <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
-                  <span className="text-zinc-500 block text-[10px]">Sample Rate</span>
-                  <span className="text-white font-semibold">{(sampleRate / 1000).toFixed(1)} kHz</span>
+              <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
+                <div className="p-2.5 rounded-lg bg-surface border border-border/60">
+                  <span className="text-text-muted block text-[10px]">Sample Rate</span>
+                  <span className="text-text font-semibold">{(sampleRate / 1000).toFixed(1)} kHz</span>
                 </div>
-                <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
-                  <span className="text-zinc-500 block text-[10px]">Bit Depth</span>
-                  <span className="text-white font-semibold">32-bit Float</span>
+                <div className="p-2.5 rounded-lg bg-surface border border-border/60">
+                  <span className="text-text-muted block text-[10px]">Bit Depth</span>
+                  <span className="text-text font-semibold">32-bit Float</span>
                 </div>
-                <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
-                  <span className="text-zinc-500 block text-[10px]">Speaker Channels</span>
-                  <span className="text-white font-semibold">Stereo 2.0</span>
+                <div className="p-2.5 rounded-lg bg-surface border border-border/60">
+                  <span className="text-text-muted block text-[10px]">Speaker Channels</span>
+                  <span className="text-text font-semibold">Stereo 2.0</span>
                 </div>
-                <div className="p-2.5 rounded-lg bg-black/40 border border-white/5">
-                  <span className="text-zinc-500 block text-[10px]">Clock Status</span>
-                  <span className="text-primary font-semibold">Healthy (180ms Probe)</span>
+                <div className="p-2.5 rounded-lg bg-surface border border-border/60">
+                  <span className="text-text-muted block text-[10px]">Clock Status</span>
+                  <div className="flex items-center gap-1.5 text-text font-semibold">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                    <span>Healthy (180ms Probe)</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -529,10 +533,10 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
                       playUiTouchSound()
                       setShowReverbAdvanced(!showReverbAdvanced)
                     }}
-                    className={`text-[11px] px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                    className={`text-[11px] px-2.5 py-0.5 rounded-lg border font-semibold transition-all cursor-pointer ${
                       showReverbAdvanced
-                        ? 'bg-primary/20 border-primary/40 text-primary'
-                        : 'border-white/10 text-zinc-400 hover:text-white'
+                        ? 'bg-primary text-primary-foreground border-transparent shadow-sm'
+                        : 'bg-surface-elevated border-border/60 text-text-muted hover:text-white hover:bg-hover'
                     }`}
                   >
                     {showReverbAdvanced ? 'Hide Fine-Tune' : 'Fine-Tune'}
@@ -556,8 +560,8 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
                       }}
                       className={`py-2 px-2.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer text-center ${
                         isActive
-                          ? 'bg-primary/20 border-primary/60 text-primary ring-1 ring-primary/30 shadow-sm font-semibold'
-                          : 'bg-[#181f2c] border-transparent text-zinc-400 hover:text-white hover:bg-[#20293a]'
+                          ? 'bg-primary text-primary-foreground font-bold border-transparent shadow-sm'
+                          : 'bg-surface-elevated border-border/60 text-text-muted hover:text-white hover:bg-hover'
                       }`}
                     >
                       {label}
@@ -568,7 +572,7 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
 
               {/* Advanced Reverb Controls */}
               {(showReverbAdvanced || reverbPreset === 'advanced') && reverbPreset !== 'off' && (
-                <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-3.5 text-xs animate-in fade-in duration-200">
+                <div className="p-4 rounded-xl bg-surface-elevated border border-border/60 space-y-3.5 text-xs animate-in fade-in duration-200">
                   <div className="space-y-1">
                     <div className="flex justify-between text-zinc-400">
                       <span>Mix</span>
@@ -672,7 +676,7 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
                     playUiTouchSound()
                     resetEq()
                   }}
-                  className="p-1.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors cursor-pointer"
+                  className="p-1.5 rounded-lg border border-border/60 bg-surface-elevated hover:bg-hover text-text-muted hover:text-white transition-colors cursor-pointer"
                   title="Reset EQ to flat response"
                 >
                   <RotateCcw className="w-4 h-4" />
@@ -694,8 +698,8 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
                       }}
                       className={`py-2 px-2.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer text-center ${
                         isActive
-                          ? 'bg-primary/20 border-primary/60 text-primary ring-1 ring-primary/30 shadow-sm font-semibold'
-                          : 'bg-[#181f2c] border-transparent text-zinc-400 hover:text-white hover:bg-[#20293a]'
+                          ? 'bg-primary text-primary-foreground font-bold border-transparent shadow-sm'
+                          : 'bg-surface-elevated border-border/60 text-text-muted hover:text-white hover:bg-hover'
                       }`}
                     >
                       {label}
@@ -705,7 +709,7 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
               </div>
 
               {/* 5-Band Slider Array */}
-              <div className="p-4 rounded-xl bg-white/5 border border-white/5 pt-5 pb-3">
+              <div className="p-4 rounded-xl bg-surface-elevated border border-border/60 pt-5 pb-3">
                 <div className="grid grid-cols-5 gap-2 text-center">
                   {[
                     { label: '60Hz', sub: 'Sub' },
@@ -899,7 +903,7 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
                     className="w-48 h-48 rounded-lg shadow-lg border border-primary/20"
                   />
                 ) : (
-                  <div className="w-48 h-48 rounded-lg bg-black/40 flex items-center justify-center text-zinc-500">
+                  <div className="w-48 h-48 rounded-lg bg-surface border border-border/60 flex items-center justify-center text-text-muted">
                     <QrCode className="w-8 h-8 animate-pulse text-primary" />
                   </div>
                 )}
@@ -909,7 +913,7 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
               </div>
 
               {/* Shareable URL */}
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-black/40 border border-white/5 text-[11px]">
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface border border-border/60 text-[11px]">
                 <span className="truncate text-zinc-400 font-mono pr-2">{inviteUrl}</span>
                 <button
                   type="button"
@@ -948,7 +952,7 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
                 {members.map((member) => (
                   <div
                     key={member.user_id}
-                    className="p-3 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between"
+                    className="p-3 rounded-xl bg-surface-elevated border border-border/60 flex items-center justify-between"
                   >
                     <div className="flex items-center gap-2.5">
                       <Speaker className="w-4 h-4 text-zinc-400" />
@@ -957,7 +961,7 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
                         <p className="text-[11px] text-zinc-400">
                           Room: <span className="text-zinc-300">{member.role.toUpperCase()}</span>
                           {' • '}
-                          Channel: <span className="text-primary font-mono font-medium">{(member.speaker_role || 'center').toUpperCase()}{member.speaker_role === 'subwoofer' ? ` (${member.sub_cutoff ?? 120}Hz)` : ''}</span>
+                          Channel: <span className="text-white font-mono font-medium">{(member.speaker_role || 'center').toUpperCase()}{member.speaker_role === 'subwoofer' ? ` (${member.sub_cutoff ?? 120}Hz)` : ''}</span>
                         </p>
                       </div>
                     </div>
@@ -972,7 +976,7 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
                             member.sub_cutoff ?? 120
                           )
                         }}
-                        className="bg-black/40 border border-white/10 rounded px-2 py-1 text-[11px] text-primary font-mono focus:outline-none cursor-pointer hover:border-primary/40 transition-colors"
+                        className="bg-surface border border-border/60 rounded px-2 py-1 text-[11px] text-text font-mono focus:outline-none cursor-pointer hover:border-border transition-colors"
                       >
                         <option value="center" className="bg-[#181f2c] text-white">Center / Stereo</option>
                         <option value="left" className="bg-[#181f2c] text-white">Left Channel</option>
@@ -988,7 +992,7 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
                 {members.length === 0 && discoveredDevices.map((dev) => (
                   <div
                     key={dev.id}
-                    className="p-3 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between"
+                    className="p-3 rounded-xl bg-surface-elevated border border-border/60 flex items-center justify-between"
                   >
                     <div className="flex items-center gap-2.5">
                       {dev.device_type === 'mobile' || dev.device_category === 'app_mobile' || dev.device_category === 'web_mobile' ? (
@@ -1012,32 +1016,32 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
         {/* ─── 4. HELP TAB: Acoustic Setup & Placement Instructions ─── */}
         {activeSubtab === 'help' && (
           <div className="space-y-5 text-xs text-zinc-300">
-            <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-2">
+            <div className="p-4 rounded-xl bg-surface-elevated border border-border/60 space-y-2">
               <h4 className="text-sm font-semibold text-white flex items-center gap-1.5">
                 <Speaker className="w-4 h-4 text-primary" />
                 Acoustic Speaker Placement Guidelines
               </h4>
-              <p className="text-zinc-400 text-xs">
+              <p className="text-text-muted text-xs">
                 To achieve true spatial surround reproduction using multiple devices, follow these optimal room placements:
               </p>
 
               <div className="space-y-3 pt-2">
-                <div className="p-3 rounded-lg bg-black/40 border border-white/5 space-y-1">
-                  <span className="font-bold text-primary block text-xs">1. Left & Right Speakers</span>
+                <div className="p-3 rounded-lg bg-surface border border-border/60 space-y-1">
+                  <span className="font-bold text-white block text-xs">1. Left & Right Speakers</span>
                   <p className="text-[11px] text-zinc-300">
                     Place Left and Right speakers at ear level, angled inward at roughly 30° toward your listening position, forming an equilateral triangle.
                   </p>
                 </div>
 
-                <div className="p-3 rounded-lg bg-black/40 border border-white/5 space-y-1">
-                  <span className="font-bold text-primary block text-xs">2. Center Speaker</span>
+                <div className="p-3 rounded-lg bg-surface border border-border/60 space-y-1">
+                  <span className="font-bold text-white block text-xs">2. Center Speaker</span>
                   <p className="text-[11px] text-zinc-300">
                     Position directly centered in front of the listening spot. The Center speaker anchors dialog, lead vocals, and mono imaging.
                   </p>
                 </div>
 
-                <div className="p-3 rounded-lg bg-black/40 border border-white/5 space-y-1">
-                  <span className="font-bold text-primary block text-xs">3. Subwoofer Placement</span>
+                <div className="p-3 rounded-lg bg-surface border border-border/60 space-y-1">
+                  <span className="font-bold text-white block text-xs">3. Subwoofer Placement</span>
                   <p className="text-[11px] text-zinc-300">
                     Place near a corner or along the front wall to maximize boundary loading and acoustic coupling for deep, resonant low frequencies. Adjust the low-pass cutoff slider between 60 Hz and 120 Hz to seamlessly cross over with your satellite speakers.
                   </p>
@@ -1046,29 +1050,29 @@ export default function AudioSettingsPanel({ onClose, isModal = false }: AudioSe
             </div>
 
             {/* Clock Synchronization and Latency info */}
-            <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-2">
+            <div className="p-4 rounded-xl bg-surface-elevated border border-border/60 space-y-2">
               <h4 className="text-sm font-semibold text-white flex items-center gap-1.5">
                 <ShieldCheck className="w-4 h-4 text-primary" />
                 Clock Synchronization & Watchdog
               </h4>
-              <p className="text-zinc-400 text-[11px]">
+              <p className="text-text-muted text-[11px]">
                 MUSIXQUARE and Felo monitor Web Audio clocks with periodic 180ms probes. If mobile WebKit freezes the audio context in the background, the engine triggers seamless touch-recovery without audio distortion or desync.
               </p>
             </div>
 
             {/* Room Sync Info */}
-            <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-2">
+            <div className="p-4 rounded-xl bg-surface-elevated border border-border/60 space-y-2">
               <h4 className="text-sm font-semibold text-white flex items-center gap-1.5">
                 <Info className="w-4 h-4 text-primary" />
                 Settings Sync Behavior
               </h4>
-              <p className="text-zinc-400 text-[11px]">
+              <p className="text-text-muted text-[11px]">
                 When <strong>Settings Synchronization</strong> is enabled, EQ adjustments, Reverb presets, and Virtual effects broadcast instantly to all connected devices in your room. Speaker roles remain strictly local so each physical speaker stays tuned to its location.
               </p>
             </div>
           </div>
         )}
       </div>
-    </div>
+    </aside>
   )
 }

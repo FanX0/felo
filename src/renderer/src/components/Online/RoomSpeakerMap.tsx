@@ -5,13 +5,13 @@ import {
   ChevronRight,
   CircleDot,
   Music,
-  Crown,
-  Laptop
+  Crown
 } from 'lucide-react'
 import { useListeningStore } from '../../hooks/useListeningStore'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { useThemeStore } from '../../hooks/useThemeStore'
 import type { SpeakerRole, RoomMember } from '../../online/types'
+import Avatar from '../Common/Avatar'
 
 interface RoomSpeakerMapProps {
   className?: string
@@ -189,21 +189,15 @@ function renderMemberPill(
       }`}
     >
       <div className="flex items-center gap-2 truncate min-w-0">
-        {member.avatar_url ? (
-          <img
-            src={member.avatar_url}
-            alt=""
-            className="w-5 h-5 rounded-full object-cover shrink-0"
-          />
-        ) : (
-          <div className="w-5 h-5 rounded-full bg-white/10 flex items-center justify-center shrink-0">
-            {isMemberHost ? (
-              <Crown className="w-3 h-3 text-amber-400" />
-            ) : (
-              <Laptop className="w-3 h-3 text-zinc-400" />
-            )}
-          </div>
-        )}
+        <Avatar
+          src={member.avatar_url}
+          fallbackText={member.display_name || member.user_id}
+          size="2xs"
+          className="shrink-0"
+          showInitials={true}
+          maxInitials={1}
+        />
+        {isMemberHost && <Crown className="w-3 h-3 text-amber-400 shrink-0" />}
         <span className="truncate font-medium text-[11px]">
           {member.display_name || member.user_id.slice(0, 6)}
           {isSelf && <span className="ml-1 text-[10px] text-primary">(You)</span>}

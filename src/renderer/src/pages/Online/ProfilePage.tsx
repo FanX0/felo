@@ -1,10 +1,13 @@
-import { FormEvent, type ReactElement, useEffect, useMemo, useState } from 'react'
+import { FormEvent, type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Award,
+  Camera,
   Check,
+  ClipboardPaste,
   Clock,
   Clock3,
   Compass,
+  Link2,
   ListMusic,
   Loader2,
   LogOut,
@@ -16,6 +19,8 @@ import {
   Settings,
   Sparkles,
   Sun,
+  Trash2,
+  Upload,
   UserCheck,
   UserMinus,
   UserPlus,
@@ -25,11 +30,13 @@ import {
 } from 'lucide-react'
 import { NavLink, useNavigate, useParams } from 'react-router-dom'
 import OnlineGate from '../../components/Online/OnlineGate'
+import Avatar from '../../components/Common/Avatar'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 import { useListeningStore } from '../../hooks/useListeningStore'
 import { getSupabase } from '../../lib/supabase'
 import { toMediaUrl } from '../../lib/media'
+import { validateAvatarFile, uploadAvatarImage, extractImageFromClipboard } from '../../lib/avatar'
 import type {
   FriendRequest,
   ListeningRoom,
@@ -38,14 +45,16 @@ import type {
   UserListeningStats
 } from '../../online/types'
 import { findMatchingLibrarySong } from '../../lib/songMatching'
-import { PersonalizationService, type UserTasteMetrics } from '../../services/PersonalizationService'
+import {
+  PersonalizationService,
+  type UserTasteMetrics
+} from '../../services/PersonalizationService'
 import type { Song } from '../Library/Library'
 import {
   PLAYED_SONGS_STORAGE_KEY,
   PLAY_STATS_STORAGE_KEY,
   RECENTLY_PLAYED_STORAGE_KEY
 } from '../../hooks/usePlayerStore'
-
 
 interface LocalPlayStats {
   playCount: number
@@ -133,25 +142,21 @@ function readListeningHistory(): ListeningHistoryData {
 
 function ProfileAvatar({
   profile,
-  large = false
+  large = false,
+  className
 }: {
   profile: OnlineProfile
   large?: boolean
+  className?: string
 }): ReactElement {
   return (
-    <div
-      className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/10 bg-surface-elevated font-black text-text-muted shadow-2xl ${large ? 'h-40 w-40 text-5xl sm:h-48 sm:w-48' : 'h-11 w-11 text-base'}`}
-    >
-      {profile.avatar_url ? (
-        <img
-          src={profile.avatar_url}
-          alt=""
-          className="absolute inset-0 h-full w-full object-cover"
-        />
-      ) : (
-        <span aria-hidden="true">{profile.display_name.slice(0, 1).toUpperCase()}</span>
-      )}
-    </div>
+    <Avatar
+      src={profile.avatar_url}
+      fallbackText={profile.display_name || profile.username}
+      size={large ? '2xl' : 'md'}
+      className={className}
+      alt={profile.display_name}
+    />
   )
 }
 
@@ -192,25 +197,205 @@ function ProfileEditor({
   initialProfile: OnlineProfile
   onClose: () => void
 }): ReactElement {
-  const { updateProfile, signOut } = useOnlineStore()
+  const { user, updateProfile, signOut } = useOnlineStore()
   const [username, setUsername] = useState(initialProfile.username)
   const [displayName, setDisplayName] = useState(initialProfile.display_name)
   const [bio, setBio] = useState(initialProfile.bio)
   const [avatarUrl, setAvatarUrl] = useState(initialProfile.avatar_url || '')
+  const [previewFile, setPreviewFile] = useState<File | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
+  const [showUrlInput, setShowUrlInput] = useState(false)
   const [isHistoryPublic, setIsHistoryPublic] = useState(initialProfile.is_history_public !== false)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl && previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(previewUrl)
+      }
+    }
+  }, [previewUrl])
+
+  const handleSelectFile = (file: File): void => {
+    setUploadError(null)
+    const validation = validateAvatarFile(file)
+    if (!validation.valid) {
+      setUploadError(validation.error || 'Invalid image file.')
+      return
+    }
+
+    if (previewUrl && previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(previewUrl)
+    }
+
+    const objectUrl = URL.createObjectURL(file)
+    setPreviewFile(file)
+    setPreviewUrl(objectUrl)
+    setAvatarUrl('')
+  }
+
+  const handlePasteEvent = useCallback(
+    (event: ClipboardEvent): void => {
+      const target = event.target as HTMLElement | null
+      const isTextInput =
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') &&
+        (target as HTMLInputElement).type !== 'checkbox' &&
+        (target as HTMLInputElement).type !== 'file'
+
+      const clipboardData = event.clipboardData
+      if (!clipboardData) return
+
+      // 1. Check for image files in clipboard
+      const imageFile = extractImageFromClipboard(clipboardData)
+      if (imageFile) {
+        event.preventDefault()
+        handleSelectFile(imageFile)
+        return
+      }
+
+      // 2. If no image file, but user pasted an image URL or data URL and is NOT focusing a text input:
+      if (!isTextInput) {
+        const text = clipboardData.getData('text')?.trim()
+        if (
+          text &&
+          (text.startsWith('http://') ||
+            text.startsWith('https://') ||
+            text.startsWith('data:image/'))
+        ) {
+          event.preventDefault()
+          setUploadError(null)
+          setAvatarUrl(text)
+          setShowUrlInput(true)
+          if (previewFile) setPreviewFile(null)
+          if (previewUrl && previewUrl.startsWith('blob:')) {
+            URL.revokeObjectURL(previewUrl)
+            setPreviewUrl(null)
+          }
+        }
+      }
+    },
+    [previewFile, previewUrl]
+  )
+
+  useEffect(() => {
+    const onWindowPaste = (e: ClipboardEvent): void => {
+      handlePasteEvent(e)
+    }
+    window.addEventListener('paste', onWindowPaste)
+    return () => {
+      window.removeEventListener('paste', onWindowPaste)
+    }
+  }, [handlePasteEvent])
+
+  const handlePasteFromClipboard = async (): Promise<void> => {
+    setUploadError(null)
+    try {
+      if (navigator.clipboard?.read) {
+        try {
+          const items = await navigator.clipboard.read()
+          for (const item of items) {
+            const imageType = item.types.find((t) => t.startsWith('image/'))
+            if (imageType) {
+              const blob = await item.getType(imageType)
+              const ext =
+                blob.type === 'image/jpeg'
+                  ? 'jpg'
+                  : blob.type === 'image/webp'
+                    ? 'webp'
+                    : blob.type === 'image/gif'
+                      ? 'gif'
+                      : 'png'
+              const file = new File([blob], `pasted-image-${Date.now()}.${ext}`, {
+                type: blob.type
+              })
+              handleSelectFile(file)
+              return
+            }
+          }
+        } catch {
+          // If reading clipboard items fails or permission denied, continue to text fallback
+        }
+      }
+
+      if (navigator.clipboard?.readText) {
+        const text = (await navigator.clipboard.readText()).trim()
+        if (
+          text &&
+          (text.startsWith('http://') ||
+            text.startsWith('https://') ||
+            text.startsWith('data:image/'))
+        ) {
+          setAvatarUrl(text)
+          setShowUrlInput(true)
+          if (previewFile) setPreviewFile(null)
+          if (previewUrl && previewUrl.startsWith('blob:')) {
+            URL.revokeObjectURL(previewUrl)
+            setPreviewUrl(null)
+          }
+          return
+        }
+      }
+
+      setUploadError('No image found in clipboard. Copy an image or screenshot first, or press Ctrl+V.')
+    } catch {
+      setUploadError('Unable to access clipboard. Please press Ctrl+V to paste.')
+    }
+  }
+
+  const handleFileInputChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
+    const file = event.target.files?.[0]
+    if (file) {
+      handleSelectFile(file)
+    }
+    event.target.value = ''
+  }
+
+  const handleRemoveAvatar = (): void => {
+    if (previewUrl && previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(previewUrl)
+    }
+    setPreviewFile(null)
+    setPreviewUrl(null)
+    setAvatarUrl('')
+    setUploadError(null)
+  }
+
+  const handleDrop = (event: React.DragEvent): void => {
+    event.preventDefault()
+    setIsDragging(false)
+    const file = event.dataTransfer.files?.[0]
+    if (file) {
+      handleSelectFile(file)
+    }
+  }
 
   const save = async (event: FormEvent): Promise<void> => {
     event.preventDefault()
     setBusy(true)
     setMessage('')
+    setUploadError(null)
+
     try {
+      let finalAvatarUrl: string | null = avatarUrl ? avatarUrl.trim() : null
+
+      if (previewFile) {
+        if (!user) {
+          throw new Error('You must be signed in to upload a profile picture.')
+        }
+        const uploadedUrl = await uploadAvatarImage(previewFile, user.id)
+        finalAvatarUrl = uploadedUrl
+      }
+
       await updateProfile({
         username,
         display_name: displayName,
         bio,
-        avatar_url: avatarUrl || null,
+        avatar_url: finalAvatarUrl,
         is_history_public: isHistoryPublic
       })
       onClose()
@@ -221,6 +406,8 @@ function ProfileEditor({
     }
   }
 
+  const currentAvatarSrc = previewUrl || avatarUrl || null
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-5 no-drag"
@@ -230,9 +417,9 @@ function ProfileEditor({
     >
       <form
         onSubmit={save}
-        className="w-full max-w-xl rounded-lg border border-border bg-surface p-6 shadow-2xl"
+        className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-2xl"
       >
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between pb-3 border-b border-border/60">
           <h2 id="edit-profile-title" className="text-xl font-black text-text">
             Edit profile
           </h2>
@@ -240,11 +427,133 @@ function ProfileEditor({
             type="button"
             onClick={onClose}
             title="Close"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-text-muted hover:bg-hover hover:text-text"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-text-muted hover:bg-hover hover:text-text transition-colors cursor-pointer"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
+
+        {/* Avatar Upload Dropzone & Controls */}
+        <div className="mt-5 flex flex-col items-center justify-center text-center">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            onChange={handleFileInputChange}
+            className="hidden"
+          />
+
+          <div
+            tabIndex={0}
+            role="button"
+            aria-label="Upload profile image"
+            onClick={() => fileInputRef.current?.click()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                fileInputRef.current?.click()
+              }
+            }}
+            onDragOver={(e) => {
+              e.preventDefault()
+              setIsDragging(true)
+            }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={handleDrop}
+            className={`group relative h-28 w-28 cursor-pointer overflow-hidden rounded-full border-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-white/60 ${
+              isDragging
+                ? 'border-white bg-white/10 scale-105'
+                : 'border-border hover:border-white/40'
+            }`}
+          >
+            <Avatar
+              src={currentAvatarSrc}
+              fallbackText={displayName || username}
+              size="custom"
+              className="h-full w-full"
+            />
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity text-white text-xs font-bold gap-1">
+              <Camera className="h-6 w-6" />
+              <span>Change</span>
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-center gap-2 flex-wrap justify-center">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-3.5 py-1.5 text-xs font-bold text-text hover:bg-hover hover:border-white/30 transition-colors cursor-pointer"
+            >
+              <Upload className="h-3.5 w-3.5 text-text-muted" />
+              <span>Upload photo</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handlePasteFromClipboard()}
+              title="Paste image from clipboard (Ctrl+V)"
+              className="flex items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-3.5 py-1.5 text-xs font-bold text-text hover:bg-hover hover:border-white/30 transition-colors cursor-pointer"
+            >
+              <ClipboardPaste className="h-3.5 w-3.5 text-text-muted" />
+              <span>Paste image</span>
+            </button>
+
+            {currentAvatarSrc && (
+              <button
+                type="button"
+                onClick={handleRemoveAvatar}
+                className="flex items-center gap-1.5 rounded-full border border-border/60 bg-transparent px-3 py-1.5 text-xs font-bold text-text-muted hover:text-danger hover:border-danger/40 transition-colors cursor-pointer"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Remove</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setShowUrlInput((prev) => !prev)}
+              className="flex items-center gap-1.5 rounded-full border border-border/40 bg-transparent px-3 py-1.5 text-xs font-medium text-text-muted hover:text-text transition-colors cursor-pointer"
+            >
+              <Link2 className="h-3.5 w-3.5" />
+              <span>{showUrlInput ? 'Hide URL' : 'Image URL'}</span>
+            </button>
+          </div>
+
+          <p className="mt-2 text-[11px] text-text-muted">
+            PNG, JPG, WebP or GIF up to 5 MB. Drag & drop or paste image (Ctrl+V).
+          </p>
+
+          {uploadError && (
+            <div className="mt-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-1.5 text-xs text-danger">
+              {uploadError}
+            </div>
+          )}
+        </div>
+
+        {/* Collapsible Image URL input */}
+        {showUrlInput && (
+          <div className="mt-4 rounded-xl border border-border/80 bg-surface-elevated/40 p-3">
+            <label className="text-xs font-bold text-text block">
+              Image URL
+              <input
+                type="url"
+                placeholder="https://example.com/avatar.png"
+                value={avatarUrl}
+                onChange={(event) => {
+                  setAvatarUrl(event.target.value)
+                  if (previewFile) setPreviewFile(null)
+                  if (previewUrl && previewUrl.startsWith('blob:')) {
+                    URL.revokeObjectURL(previewUrl)
+                    setPreviewUrl(null)
+                  }
+                }}
+                className="mt-1.5 h-10 w-full rounded-md border border-border bg-canvas px-3 text-xs font-normal outline-none focus:border-white/30"
+              />
+            </label>
+            <p className="mt-1 text-[11px] text-text-muted">Direct web link to an image file.</p>
+          </div>
+        )}
+
         <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <label className="text-sm font-bold text-text">
             Display name
@@ -266,15 +575,6 @@ function ProfileEditor({
             />
           </label>
           <label className="text-sm font-bold text-text sm:col-span-2">
-            Avatar URL
-            <input
-              type="url"
-              value={avatarUrl}
-              onChange={(event) => setAvatarUrl(event.target.value)}
-              className="mt-2 h-11 w-full rounded-md border border-border bg-canvas px-3 font-normal outline-none focus:border-white/30"
-            />
-          </label>
-          <label className="text-sm font-bold text-text sm:col-span-2">
             Bio
             <textarea
               rows={3}
@@ -287,7 +587,9 @@ function ProfileEditor({
           <div className="sm:col-span-2 flex items-center justify-between rounded-lg border border-border/60 bg-surface-elevated/40 p-3 mt-1">
             <div>
               <p className="text-sm font-bold text-text">Public Listening History</p>
-              <p className="text-xs text-text-muted">Allow friends and other listeners to see your top songs and recently played tracks</p>
+              <p className="text-xs text-text-muted">
+                Allow friends and other listeners to see your top songs and recently played tracks
+              </p>
             </div>
             <input
               type="checkbox"
@@ -302,7 +604,7 @@ function ProfileEditor({
           <button
             type="button"
             onClick={() => void signOut()}
-            className="flex items-center gap-2 text-sm font-bold text-text-muted hover:text-danger"
+            className="flex items-center gap-2 text-sm font-bold text-text-muted hover:text-danger cursor-pointer transition-colors"
           >
             <LogOut className="h-4 w-4" /> Sign out
           </button>
@@ -310,13 +612,13 @@ function ProfileEditor({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-full border border-border px-5 py-2.5 text-sm font-black text-text hover:bg-hover"
+              className="rounded-full border border-border px-5 py-2.5 text-sm font-black text-text hover:bg-hover transition-colors cursor-pointer"
             >
               Cancel
             </button>
             <button
               disabled={busy}
-              className="flex items-center gap-2 rounded-full border border-border bg-surface-elevated px-5 py-2.5 text-sm font-black text-text disabled:opacity-50 hover:bg-hover"
+              className="flex items-center gap-2 rounded-full border border-border bg-surface-elevated px-5 py-2.5 text-sm font-black text-text disabled:opacity-50 hover:bg-hover hover:border-white/30 transition-colors cursor-pointer"
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{' '}
               Save
@@ -388,10 +690,9 @@ function FullListeningHistoryModal({
   // Load artworks progressively for currently visible items
   useEffect(() => {
     let cancelled = false
-    const songsToFetch = (activeTab === 'mostPlayed' ? historyData.allMostPlayed : historyData.allRecent).slice(
-      0,
-      page * PAGE_SIZE
-    )
+    const songsToFetch = (
+      activeTab === 'mostPlayed' ? historyData.allMostPlayed : historyData.allRecent
+    ).slice(0, page * PAGE_SIZE)
     void fetchArtworkBatch(songsToFetch, artworks, (newArtworks) => {
       if (!cancelled) {
         setArtworks((prev) => ({ ...prev, ...newArtworks }))
@@ -631,7 +932,9 @@ function FullListeningHistoryModal({
                           {song.lastPlayedAt && activeTab === 'recent' && (
                             <span className="text-[11px] text-text-muted hidden sm:inline">
                               {new Date(
-                                song.lastPlayedAt < 10_000_000_000 ? song.lastPlayedAt * 1000 : song.lastPlayedAt
+                                song.lastPlayedAt < 10_000_000_000
+                                  ? song.lastPlayedAt * 1000
+                                  : song.lastPlayedAt
                               ).toLocaleDateString()}
                             </span>
                           )}
@@ -689,7 +992,9 @@ function ProfileWorkspace(): ReactElement {
   const [followingCount, setFollowingCount] = useState(0)
   const [mostPlayed, setMostPlayed] = useState<ProfileSong[]>([])
   const [recentSongs, setRecentSongs] = useState<ProfileSong[]>([])
-  const [mostPlayedArtists, setMostPlayedArtists] = useState<Array<{ artist: string; playCount: number }>>([])
+  const [mostPlayedArtists, setMostPlayedArtists] = useState<
+    Array<{ artist: string; playCount: number }>
+  >([])
   const [artworkBySongId, setArtworkBySongId] = useState<Record<string, string>>({})
   const [friendRoom, setFriendRoom] = useState<ListeningRoom | null>(null)
   const [tasteMetrics, setTasteMetrics] = useState<UserTasteMetrics | null>(null)
@@ -699,7 +1004,9 @@ function ProfileWorkspace(): ReactElement {
   const [error, setError] = useState('')
   const [isEditing, setIsEditing] = useState(false)
   const [showHistoryModal, setShowHistoryModal] = useState(false)
-  const [historyModalInitialTab, setHistoryModalInitialTab] = useState<'recent' | 'mostPlayed' | 'artists'>('recent')
+  const [historyModalInitialTab, setHistoryModalInitialTab] = useState<
+    'recent' | 'mostPlayed' | 'artists'
+  >('recent')
   const isOwnProfile = Boolean(viewedProfile && user && viewedProfile.id === user.id)
 
   const loadFriendRoom = async (profileId: string): Promise<ListeningRoom | null> => {
@@ -736,7 +1043,6 @@ function ProfileWorkspace(): ReactElement {
 
     void requestPlaySong(song as Song)
   }
-
 
   const loadProfile = async (): Promise<void> => {
     if (!user || !ownProfile) return
@@ -778,7 +1084,9 @@ function ProfileWorkspace(): ReactElement {
       setRelationship(nextProfile.id === user.id ? null : pair || null)
       const accepted = relationships.filter((request) => request.status === 'accepted')
       setFollowerCount(accepted.filter((request) => request.addressee_id === nextProfile.id).length)
-      setFollowingCount(accepted.filter((request) => request.requester_id === nextProfile.id).length)
+      setFollowingCount(
+        accepted.filter((request) => request.requester_id === nextProfile.id).length
+      )
       if (nextProfile.id === user.id) {
         const history = readListeningHistory()
         setRecentSongs(history.recent)
@@ -840,7 +1148,9 @@ function ProfileWorkspace(): ReactElement {
 
           // Calculate friend's taste metrics
           const friendTopArtists = (stats?.top_artists || []).map((a: any) => a.artist)
-          const friendTimestamps = events.map((ev) => new Date(ev.played_at).getTime()).filter(Boolean)
+          const friendTimestamps = events
+            .map((ev) => new Date(ev.played_at).getTime())
+            .filter(Boolean)
           const friendMetrics = PersonalizationService.calculateTasteMetrics([], {
             totalPlays: stats?.total_plays || events.length,
             playTimestamps: friendTimestamps,
@@ -1054,14 +1364,31 @@ function ProfileWorkspace(): ReactElement {
     <div className="h-full flex-1 overflow-y-auto bg-canvas">
       <header className="flex min-h-[240px] sm:min-h-[300px] items-end bg-gradient-to-b from-surface-elevated/80 to-canvas px-4 sm:px-10 pb-6 sm:pb-7 pt-6 sm:pt-12">
         <div className="flex min-w-0 flex-col items-center gap-4 sm:gap-6 sm:flex-row sm:items-end w-full sm:w-auto">
-          <ProfileAvatar profile={viewedProfile} large />
+          {isOwnProfile ? (
+            <button
+              type="button"
+              onClick={() => setIsEditing(true)}
+              title="Change profile picture"
+              className="group relative rounded-full focus:outline-none focus:ring-2 focus:ring-white/40 cursor-pointer"
+            >
+              <ProfileAvatar profile={viewedProfile} large />
+              <div className="absolute inset-0 flex flex-col items-center justify-center rounded-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity text-white text-xs font-bold gap-1">
+                <Camera className="h-6 w-6 sm:h-8 sm:w-8" />
+                <span className="hidden sm:inline text-xs font-bold">Change</span>
+              </div>
+            </button>
+          ) : (
+            <ProfileAvatar profile={viewedProfile} large />
+          )}
           <div className="min-w-0 pb-2 text-center sm:text-left">
             <p className="text-xs sm:text-sm font-black text-white">Profile</p>
             <h1 className="mt-1 max-w-full break-words text-2xl sm:text-4xl md:text-6xl lg:text-7xl font-black text-white leading-tight tracking-tight">
               {viewedProfile.display_name}
             </h1>
             {viewedProfile.bio && (
-              <p className="mt-2 sm:mt-3 max-w-2xl text-xs sm:text-sm text-white/75">{viewedProfile.bio}</p>
+              <p className="mt-2 sm:mt-3 max-w-2xl text-xs sm:text-sm text-white/75">
+                {viewedProfile.bio}
+              </p>
             )}
             <p className="mt-3 sm:mt-4 text-xs sm:text-sm font-bold text-white/80">
               @{viewedProfile.username} <span className="mx-1 text-white/40">•</span>{' '}
@@ -1100,7 +1427,7 @@ function ProfileWorkspace(): ReactElement {
                   }
                 }}
                 title="Sign out of your account"
-                className="flex h-10 items-center gap-2 rounded-full border border-danger/40 bg-danger/10 px-4 text-xs sm:text-sm font-black text-danger hover:bg-danger/20 transition-colors cursor-pointer"
+                className="flex h-10 items-center gap-2 rounded-full bg-danger hover:bg-danger/90 px-4 text-xs sm:text-sm font-bold text-white transition-all shadow-sm cursor-pointer"
               >
                 <LogOut className="h-4 w-4" />
                 <span>Log out</span>
@@ -1193,8 +1520,8 @@ function ProfileWorkspace(): ReactElement {
         {error && (
           <p className="mt-4 rounded-md bg-danger/10 px-4 py-3 text-sm text-danger">{error}</p>
         )}
-        {viewedProfile && (
-          isOwnProfile || viewedProfile.is_history_public !== false ? (
+        {viewedProfile &&
+          (isOwnProfile || viewedProfile.is_history_public !== false ? (
             <>
               {/* Taste Profile & Mini-Wrapped Banner */}
               {tasteMetrics && tasteMetrics.totalPlays > 0 && (
@@ -1220,13 +1547,18 @@ function ProfileWorkspace(): ReactElement {
                     {/* 1. Time Listened */}
                     <div className="flex flex-col justify-between rounded-xl border border-border/60 bg-gradient-to-br from-surface to-surface-elevated/60 p-4 transition-all hover:border-border">
                       <div className="flex items-center justify-between text-text-muted">
-                        <span className="text-xs font-bold uppercase tracking-wider">Listening Time</span>
+                        <span className="text-xs font-bold uppercase tracking-wider">
+                          Listening Time
+                        </span>
                         <Clock className="h-4 w-4 text-emerald-400" />
                       </div>
                       <div className="mt-4">
-                        <div className="text-2xl font-black text-text">{tasteMetrics.formattedTime}</div>
+                        <div className="text-2xl font-black text-text">
+                          {tasteMetrics.formattedTime}
+                        </div>
                         <p className="mt-1 text-xs text-text-muted">
-                          {tasteMetrics.totalPlays} total {tasteMetrics.totalPlays === 1 ? 'play' : 'plays'} recorded
+                          {tasteMetrics.totalPlays} total{' '}
+                          {tasteMetrics.totalPlays === 1 ? 'play' : 'plays'} recorded
                         </p>
                       </div>
                     </div>
@@ -1234,7 +1566,9 @@ function ProfileWorkspace(): ReactElement {
                     {/* 2. Sonic Chronotype */}
                     <div className="flex flex-col justify-between rounded-xl border border-border/60 bg-gradient-to-br from-surface to-surface-elevated/60 p-4 transition-all hover:border-border">
                       <div className="flex items-center justify-between text-text-muted">
-                        <span className="text-xs font-bold uppercase tracking-wider">Sonic Chronotype</span>
+                        <span className="text-xs font-bold uppercase tracking-wider">
+                          Sonic Chronotype
+                        </span>
                         {tasteMetrics.chronotype.icon === 'night' ? (
                           <Moon className="h-4 w-4 text-indigo-400" />
                         ) : tasteMetrics.chronotype.icon === 'morning' ? (
@@ -1246,7 +1580,9 @@ function ProfileWorkspace(): ReactElement {
                         )}
                       </div>
                       <div className="mt-4">
-                        <div className="text-lg font-black text-text">{tasteMetrics.chronotype.label}</div>
+                        <div className="text-lg font-black text-text">
+                          {tasteMetrics.chronotype.label}
+                        </div>
                         <p className="mt-1 text-xs text-text-muted line-clamp-2">
                           {tasteMetrics.chronotype.description}
                         </p>
@@ -1256,7 +1592,9 @@ function ProfileWorkspace(): ReactElement {
                     {/* 3. Top Genres */}
                     <div className="flex flex-col justify-between rounded-xl border border-border/60 bg-gradient-to-br from-surface to-surface-elevated/60 p-4 transition-all hover:border-border">
                       <div className="flex items-center justify-between text-text-muted">
-                        <span className="text-xs font-bold uppercase tracking-wider">Top Genres</span>
+                        <span className="text-xs font-bold uppercase tracking-wider">
+                          Top Genres
+                        </span>
                         <Music className="h-4 w-4 text-pink-400" />
                       </div>
                       <div className="mt-4">
@@ -1283,7 +1621,9 @@ function ProfileWorkspace(): ReactElement {
                     {/* 4. Top Artist / Identity */}
                     <div className="flex flex-col justify-between rounded-xl border border-border/60 bg-gradient-to-br from-surface to-surface-elevated/60 p-4 transition-all hover:border-border">
                       <div className="flex items-center justify-between text-text-muted">
-                        <span className="text-xs font-bold uppercase tracking-wider">Top Artist</span>
+                        <span className="text-xs font-bold uppercase tracking-wider">
+                          Top Artist
+                        </span>
                         <Award className="h-4 w-4 text-amber-400" />
                       </div>
                       <div className="mt-4">
@@ -1346,7 +1686,9 @@ function ProfileWorkspace(): ReactElement {
                           <span className="block truncate text-sm font-black text-text">
                             {song.title}
                           </span>
-                          <span className="block truncate text-xs text-text-muted">{song.artist}</span>
+                          <span className="block truncate text-xs text-text-muted">
+                            {song.artist}
+                          </span>
                         </span>
                         <span className="text-xs font-bold text-text-muted">
                           {song.playCount || 0} plays
@@ -1406,7 +1748,9 @@ function ProfileWorkspace(): ReactElement {
                           <span className="text-xs text-text-muted">
                             {song.lastPlayedAt
                               ? new Date(
-                                  song.lastPlayedAt < 10_000_000_000 ? song.lastPlayedAt * 1000 : song.lastPlayedAt
+                                  song.lastPlayedAt < 10_000_000_000
+                                    ? song.lastPlayedAt * 1000
+                                    : song.lastPlayedAt
                                 ).toLocaleDateString()
                               : ''}
                           </span>
@@ -1463,7 +1807,9 @@ function ProfileWorkspace(): ReactElement {
                       ))
                     ) : (
                       <p className="mt-4 text-sm text-text-muted">
-                        {isOwnProfile ? 'Your top artists will appear here.' : 'No top artists yet.'}
+                        {isOwnProfile
+                          ? 'Your top artists will appear here.'
+                          : 'No top artists yet.'}
                       </p>
                     )}
                   </div>
@@ -1475,11 +1821,11 @@ function ProfileWorkspace(): ReactElement {
               <Clock3 className="h-10 w-10 text-text-muted mx-auto mb-3 opacity-60" />
               <h3 className="text-base font-bold text-text">Private Listening History</h3>
               <p className="text-xs text-text-muted mt-1 leading-relaxed">
-                {viewedProfile.display_name} has chosen to keep their listening activity and top songs private.
+                {viewedProfile.display_name} has chosen to keep their listening activity and top
+                songs private.
               </p>
             </div>
-          )
-        )}
+          ))}
         <section className="mt-8">
           <div className="flex items-end justify-between">
             <div>
@@ -1512,9 +1858,7 @@ function ProfileWorkspace(): ReactElement {
           ) : (
             <div className="mt-5 flex min-h-40 flex-col items-center justify-center border-y border-border/60 text-center">
               <ListMusic className="h-8 w-8 text-text-muted" />
-              <p className="mt-3 text-sm font-bold text-text-muted">
-                No playlists are visible
-              </p>
+              <p className="mt-3 text-sm font-bold text-text-muted">No playlists are visible</p>
             </div>
           )}
         </section>

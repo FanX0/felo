@@ -6,6 +6,7 @@ import {
   RECENTLY_PLAYED_STORAGE_KEY
 } from '../lib/playbackConstants'
 import { normalizeForMatching, findMatchingLibrarySong } from '../lib/songMatching'
+import { toMediaUrl } from '../lib/media'
 
 export interface PersonalizedMix {
   id: string
@@ -35,8 +36,8 @@ export interface UserTasteMetrics {
   topArtist?: string
 }
 
-const MIX_CACHE_STORAGE_KEY = 'felo_personalized_mixes'
-const MIX_CACHE_TIMESTAMP_KEY = 'felo_personalized_mixes_ts'
+const MIX_CACHE_STORAGE_KEY = 'felo_personalized_mixes_v3'
+const MIX_CACHE_TIMESTAMP_KEY = 'felo_personalized_mixes_ts_v3'
 const MIX_CACHE_TTL = 4 * 60 * 60 * 1000 // 4 hours
 const TWENTY_ONE_DAYS_MS = 21 * 24 * 60 * 60 * 1000
 
@@ -49,8 +50,18 @@ const MIX_GRADIENTS = [
 ]
 
 /**
+ * Checks whether a song object points to a real physical file on local storage.
+ */
+export function isLocalLibrarySong(song?: { filePath?: string } | null): boolean {
+  if (!song?.filePath) return false
+  const path = String(song.filePath)
+  return !path.startsWith('virtual:') && !/^https?:/i.test(path)
+}
+
+/**
  * Reads user listening history from localStorage and SQLite to compute seed artists,
  * current rotation (On Repeat), and past favorites (Repeat Rewind).
+ * ONLY includes songs that already exist in the user's local library.
  */
 function extractUserTasteProfile(librarySongs: Song[] = []): {
   topArtists: string[]
@@ -61,6 +72,15 @@ function extractUserTasteProfile(librarySongs: Song[] = []): {
   playTimestamps: number[]
 } {
   try {
+    const validLocalSongs = librarySongs.filter(isLocalLibrarySong)
+    const localById = new Map<string, Song>()
+    const localByPath = new Map<string, Song>()
+
+    for (const s of validLocalSongs) {
+      if (s.id) localById.set(s.id, s)
+      if (s.filePath) localByPath.set(s.filePath, s)
+    }
+
     const stats = JSON.parse(localStorage.getItem(PLAY_STATS_STORAGE_KEY) || '{}') as Record<
       string,
       { playCount: number; lastPlayedAt: number }
@@ -76,9 +96,20 @@ function extractUserTasteProfile(librarySongs: Song[] = []): {
     recent.forEach((s) => {
       if (s?.id) knownMap[s.id] = s
     })
-    librarySongs.forEach((s) => {
+    validLocalSongs.forEach((s) => {
       if (s?.id && !knownMap[s.id]) knownMap[s.id] = s
     })
+
+    const resolveToLocalSong = (rawSong: Song | undefined, id: string): Song | undefined => {
+      if (id && localById.has(id)) return localById.get(id)
+      if (rawSong?.id && localById.has(rawSong.id)) return localById.get(rawSong.id)
+      if (rawSong?.filePath && localByPath.has(rawSong.filePath)) return localByPath.get(rawSong.filePath)
+      if (isLocalLibrarySong(rawSong)) return rawSong
+      if (rawSong?.title) {
+        return findMatchingLibrarySong(rawSong.title, rawSong.artist || '', validLocalSongs)
+      }
+      return undefined
+    }
 
     const artistScores = new Map<string, number>()
     const recentRotation: Array<{ song: Song; playCount: number; lastPlayedAt: number }> = []
@@ -87,37 +118,95 @@ function extractUserTasteProfile(librarySongs: Song[] = []): {
     let totalPlays = 0
     let totalDurationSeconds = 0
     const playTimestamps: number[] = []
+    const processedLocalIds = new Set<string>()
 
     Object.entries(stats).forEach(([id, st]) => {
-      const song = knownMap[id]
+      const rawSong = knownMap[id]
       const count = st.playCount || 0
-      if (song && count > 0) {
+      if (count <= 0) return
+
+      const lastPlayedMs = st.lastPlayedAt
+        ? st.lastPlayedAt < 10_000_000_000
+          ? st.lastPlayedAt * 1000
+          : st.lastPlayedAt
+        : 0
+      if (lastPlayedMs) playTimestamps.push(lastPlayedMs)
+      totalPlays += count
+      totalDurationSeconds += ((rawSong?.duration || 180) * count)
+
+      // Strict check: For "Made For You" rotation tracks, ONLY include if already on local!
+      const localSong = resolveToLocalSong(rawSong, id)
+      if (!localSong) return
+
+      processedLocalIds.add(localSong.id)
+
+      const artist = (localSong.artist || '').trim()
+      if (artist && !/unknown/i.test(artist)) {
+        artistScores.set(artist, (artistScores.get(artist) || 0) + count)
+      }
+
+      const isRecent = lastPlayedMs > 0 && now - lastPlayedMs <= TWENTY_ONE_DAYS_MS
+      if (isRecent) {
+        recentRotation.push({ song: localSong, playCount: count, lastPlayedAt: lastPlayedMs })
+      } else if (count >= 2) {
+        olderRotation.push({ song: localSong, playCount: count, lastPlayedAt: lastPlayedMs })
+      }
+    })
+
+    // Also incorporate local plays directly stored in SQLite songs
+    validLocalSongs.forEach((s) => {
+      if (processedLocalIds.has(s.id)) return
+      const count = s.playCount || 0
+      if (count > 0) {
         totalPlays += count
-        totalDurationSeconds += (song.duration || 180) * count
-        const lastPlayedMs = st.lastPlayedAt ? (st.lastPlayedAt < 10_000_000_000 ? st.lastPlayedAt * 1000 : st.lastPlayedAt) : 0
+        totalDurationSeconds += (s.duration || 180) * count
+        const lastPlayedMs = s.lastPlayedAt
+          ? s.lastPlayedAt < 10_000_000_000
+            ? s.lastPlayedAt * 1000
+            : s.lastPlayedAt
+          : 0
         if (lastPlayedMs) playTimestamps.push(lastPlayedMs)
 
-        const artist = (song.artist || '').trim()
+        const artist = (s.artist || '').trim()
         if (artist && !/unknown/i.test(artist)) {
           artistScores.set(artist, (artistScores.get(artist) || 0) + count)
         }
 
-        const isRecent = lastPlayedMs > 0 && (now - lastPlayedMs) <= TWENTY_ONE_DAYS_MS
+        const isRecent = lastPlayedMs > 0 && now - lastPlayedMs <= TWENTY_ONE_DAYS_MS
         if (isRecent) {
-          recentRotation.push({ song, playCount: count, lastPlayedAt: lastPlayedMs })
+          recentRotation.push({ song: s, playCount: count, lastPlayedAt: lastPlayedMs })
         } else if (count >= 2) {
-          olderRotation.push({ song, playCount: count, lastPlayedAt: lastPlayedMs })
+          olderRotation.push({ song: s, playCount: count, lastPlayedAt: lastPlayedMs })
         }
       }
     })
+
+    // Deduplicate rotation entries by song filePath/id
+    const dedupeRotation = (
+      rotation: Array<{ song: Song; playCount: number; lastPlayedAt: number }>
+    ) => {
+      const seen = new Set<string>()
+      const result: Array<{ song: Song; playCount: number; lastPlayedAt: number }> = []
+      const sorted = [...rotation].sort((a, b) => b.playCount - a.playCount)
+      for (const entry of sorted) {
+        const key =
+          entry.song.filePath ||
+          entry.song.id ||
+          `${normalizeForMatching(entry.song.title)}:::${normalizeForMatching(entry.song.artist)}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        result.push(entry)
+      }
+      return result
+    }
 
     let topArtists = [...artistScores.entries()]
       .sort((a, b) => b[1] - a[1])
       .map((e) => e[0])
 
-    if (topArtists.length < 3 && librarySongs.length > 0) {
+    if (topArtists.length < 3 && validLocalSongs.length > 0) {
       const libArtistCounts = new Map<string, number>()
-      librarySongs.forEach((s) => {
+      validLocalSongs.forEach((s) => {
         const a = (s.artist || '').trim()
         if (a && !/unknown/i.test(a)) {
           libArtistCounts.set(a, (libArtistCounts.get(a) || 0) + 1)
@@ -130,23 +219,36 @@ function extractUserTasteProfile(librarySongs: Song[] = []): {
       topArtists = Array.from(new Set([...topArtists, ...topLib])).slice(0, 5)
     }
 
-    const toHomeSong = (entry: { song: Song; playCount: number }, prefix: string): HomeSongItem => ({
-      id: `${prefix}-${entry.song.id}`,
-      title: entry.song.title,
-      artist: entry.song.artist,
-      album: entry.song.album || undefined,
-      duration: entry.song.duration || 0,
-      artworkUrl: entry.song.artworkPath || undefined,
-      quality: 'FLAC'
-    })
+    const toHomeSong = (entry: { song: Song; playCount: number }, _prefix?: string): HomeSongItem => {
+      const art = entry.song.artworkUrl || toMediaUrl(entry.song.artworkPath) || undefined
+      return {
+        ...entry.song,
+        id: entry.song.id,
+        title: entry.song.title,
+        artist: entry.song.artist,
+        artists: entry.song.artists,
+        album: entry.song.album || undefined,
+        duration: entry.song.duration || 0,
+        artworkUrl: art,
+        filePath: entry.song.filePath,
+        quality:
+          (entry.song.bitDepth && entry.song.bitDepth >= 24) ||
+          (entry.song.sampleRate && entry.song.sampleRate >= 88200) ||
+          entry.song.quality === 'Hi-Res'
+            ? 'Hi-Res'
+            : (entry.song.codec || '').toLowerCase().includes('flac') ||
+                entry.song.quality === 'FLAC' ||
+                entry.song.quality === 'HD FLAC'
+              ? 'FLAC'
+              : undefined
+      }
+    }
 
-    const onRepeatTracks = recentRotation
-      .sort((a, b) => b.playCount - a.playCount)
+    const onRepeatTracks = dedupeRotation(recentRotation)
       .slice(0, 25)
       .map((e) => toHomeSong(e, 'repeat'))
 
-    const repeatRewindTracks = olderRotation
-      .sort((a, b) => b.playCount - a.playCount)
+    const repeatRewindTracks = dedupeRotation(olderRotation)
       .slice(0, 25)
       .map((e) => toHomeSong(e, 'rewind'))
 
@@ -174,30 +276,59 @@ function extractUserTasteProfile(librarySongs: Song[] = []): {
 export class PersonalizationService {
   /**
    * Generates Spotify-style personalized mixes:
-   * - Daily Mix 1-3 (clustered by user's top played artists)
-   * - Discover Weekly (recommended fresh tracks in user's affinity circle)
-   * - On Repeat (user's most played tracks in current rotation)
-   * - Repeat Rewind (past favorites not heard recently)
+   * - Daily Mix 1-3 (clustered by user's top played artists from local library)
+   * - Forgotten Gems (rediscover unplayed or rare tracks in local collection)
+   * - On Repeat (user's most played tracks in current rotation on local drive)
+   * - Repeat Rewind (past local favorites not heard recently)
+   *
+   * STRICT REQUIREMENT: Only tracks that already exist on local storage are shown!
    */
   static async generatePersonalizedMixes(
     librarySongs: Song[] = [],
     forceRefresh = false
   ): Promise<PersonalizedMix[]> {
+    const validLocalSongs = librarySongs.filter(isLocalLibrarySong)
+    if (validLocalSongs.length === 0) {
+      return []
+    }
+
+    // Clean legacy cache keys with non-local tracks
+    try {
+      localStorage.removeItem('felo_personalized_mixes')
+      localStorage.removeItem('felo_personalized_mixes_ts')
+      localStorage.removeItem('felo_personalized_mixes_v2')
+    } catch {}
+
+    const localByPath = new Set(validLocalSongs.map((s) => s.filePath))
+
     if (!forceRefresh) {
       try {
         const cached = localStorage.getItem(MIX_CACHE_STORAGE_KEY)
         const ts = Number(localStorage.getItem(MIX_CACHE_TIMESTAMP_KEY) || '0')
         if (cached && Date.now() - ts < MIX_CACHE_TTL) {
           const parsed = JSON.parse(cached)
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            // Strictly validate that all tracks in cached mixes exist on local!
+            const validated = parsed
+              .map((mix: PersonalizedMix) => {
+                const tracks = (mix.tracks || []).filter((t: HomeSongItem) => {
+                  if (t.filePath && localByPath.has(t.filePath)) return true
+                  return Boolean(findMatchingLibrarySong(t.title, t.artist, validLocalSongs))
+                })
+                return { ...mix, tracks }
+              })
+              .filter((mix) => mix.tracks.length >= 3)
+
+            if (validated.length > 0) return validated
+          }
         }
       } catch {}
     }
 
-    const { topArtists, onRepeatTracks, repeatRewindTracks } = extractUserTasteProfile(librarySongs)
+    const { topArtists, onRepeatTracks, repeatRewindTracks } = extractUserTasteProfile(validLocalSongs)
     const mixes: PersonalizedMix[] = []
 
-    // 1. On Repeat Mix (Current rotation)
+    // 1. On Repeat Mix (Current rotation - strictly local songs)
     if (onRepeatTracks.length >= 3) {
       mixes.push({
         id: 'felo-on-repeat',
@@ -210,7 +341,7 @@ export class PersonalizationService {
       })
     }
 
-    // 2. Repeat Rewind (Past favorites from weeks/months ago)
+    // 2. Repeat Rewind (Past favorites from weeks/months ago - strictly local songs)
     if (repeatRewindTracks.length >= 3) {
       mixes.push({
         id: 'felo-repeat-rewind',
@@ -223,101 +354,131 @@ export class PersonalizationService {
       })
     }
 
-    // 3. Daily Mixes based on top artists
-    const discoveryCandidates: HomeSongItem[] = []
-    const playedTitles = new Set([
-      ...onRepeatTracks.map((t) => normalizeForMatching(t.title)),
-      ...repeatRewindTracks.map((t) => normalizeForMatching(t.title))
+    // 3. Daily Mixes based on top artists - strictly from local library
+    const playedFilePaths = new Set<string>([
+      ...onRepeatTracks.map((t) => t.filePath).filter(Boolean) as string[],
+      ...repeatRewindTracks.map((t) => t.filePath).filter(Boolean) as string[]
     ])
+
+    const toHomeSongItem = (s: Song): HomeSongItem => {
+      const art = s.artworkUrl || toMediaUrl(s.artworkPath) || undefined
+      return {
+        ...s,
+        id: s.id,
+        title: s.title,
+        artist: s.artist,
+        artists: s.artists,
+        album: s.album || undefined,
+        duration: s.duration || 0,
+        artworkUrl: art,
+        filePath: s.filePath,
+        quality:
+          (s.bitDepth && s.bitDepth >= 24) ||
+          (s.sampleRate && s.sampleRate >= 88200) ||
+          s.quality === 'Hi-Res'
+            ? 'Hi-Res'
+            : (s.codec || '').toLowerCase().includes('flac') ||
+                s.quality === 'FLAC' ||
+                s.quality === 'HD FLAC'
+              ? 'FLAC'
+              : undefined
+      }
+    }
 
     for (let i = 0; i < Math.min(topArtists.length, 3); i++) {
       const seedArtist = topArtists[i]
       try {
-        let rawTracks: any[] = []
+        const seedLower = seedArtist.toLowerCase()
+        const artistLocal = validLocalSongs.filter((s) => {
+          const a = (s.artist || '').toLowerCase()
+          return a.includes(seedLower) || seedLower.includes(a)
+        })
+
+        let rawRecommendations: any[] = []
         if (window.api?.fetchDeezerRecommendations) {
-          rawTracks = await window.api.fetchDeezerRecommendations(seedArtist)
+          try {
+            rawRecommendations = await window.api.fetchDeezerRecommendations(seedArtist)
+          } catch {}
         }
 
-        if (Array.isArray(rawTracks) && rawTracks.length > 0) {
-          const mixTracks: HomeSongItem[] = []
-          const seen = new Set<string>()
-
-          for (const item of rawTracks) {
+        const matchedRecommendations: Song[] = []
+        if (Array.isArray(rawRecommendations) && rawRecommendations.length > 0) {
+          for (const item of rawRecommendations) {
             const rawTitle = (item.title_short || item.title || '').trim()
             const rawArtist = (item.artist?.name || '').trim()
-            if (!rawTitle || !rawArtist) continue
-
-            const key = `${normalizeForMatching(rawTitle)}:::${normalizeForMatching(rawArtist)}`
-            if (seen.has(key)) continue
-            seen.add(key)
-
-            const artwork =
-              item.album?.cover_xl ||
-              item.album?.cover_big ||
-              item.album?.cover_medium ||
-              item.album?.cover ||
-              ''
-
-            const candidate: HomeSongItem = {
-              id: `rec-dz-${item.id}`,
-              title: rawTitle,
-              artist: rawArtist,
-              album: item.album?.title || '',
-              duration: Number(item.duration) || 180,
-              artworkUrl: artwork,
-              quality: 'Hi-Res',
-              previewUrl: item.preview || undefined
-            }
-
-            mixTracks.push(candidate)
-            if (!playedTitles.has(normalizeForMatching(rawTitle))) {
-              discoveryCandidates.push(candidate)
+            if (!rawTitle) continue
+            // Only add recommendation if user ALREADY has this track on local!
+            const localMatch = findMatchingLibrarySong(rawTitle, rawArtist, validLocalSongs)
+            if (localMatch && !artistLocal.some((a) => a.id === localMatch.id || a.filePath === localMatch.filePath)) {
+              matchedRecommendations.push(localMatch)
             }
           }
+        }
 
-          if (mixTracks.length >= 5) {
-            const localFavorites = librarySongs
-              .filter((s) => s.artist && s.artist.toLowerCase().includes(seedArtist.toLowerCase()))
-              .slice(0, 4)
-              .map((s) => ({
-                id: s.id,
-                title: s.title,
-                artist: s.artist,
-                album: s.album || '',
-                duration: s.duration || 0,
-                artworkUrl: s.artworkPath || undefined,
-                quality: 'FLAC' as const
-              }))
+        // Also find related local songs in same genre
+        const genres = new Set(artistLocal.map((s) => (s.genre || '').trim().toLowerCase()).filter(Boolean))
+        const genreRelated =
+          genres.size > 0
+            ? validLocalSongs.filter(
+                (s) =>
+                  s.genre &&
+                  genres.has(s.genre.trim().toLowerCase()) &&
+                  !artistLocal.some((a) => a.id === s.id) &&
+                  !matchedRecommendations.some((m) => m.id === s.id)
+              )
+            : []
 
-            const blended = [...localFavorites, ...mixTracks.slice(0, 15)]
+        // Assemble Daily Mix strictly from local library
+        const seenDaily = new Set<string>()
+        const dailyTracks: HomeSongItem[] = []
 
-            mixes.push({
-              id: `felo-daily-mix-${i + 1}`,
-              title: `Daily Mix ${i + 1}`,
-              subtitle: `${seedArtist} and similar artists`,
-              description: `A personalized blend of ${seedArtist} plus fresh discoveries`,
-              gradient: MIX_GRADIENTS[i % MIX_GRADIENTS.length],
-              category: 'daily_mix',
-              tracks: blended
-            })
-          }
+        const addTrack = (s: Song) => {
+          const key = s.filePath || s.id
+          if (!key || seenDaily.has(key)) return
+          seenDaily.add(key)
+          dailyTracks.push(toHomeSongItem(s))
+        }
+
+        // Add artist local favorites
+        artistLocal.forEach(addTrack)
+        // Add matched local recommendations
+        matchedRecommendations.forEach(addTrack)
+        // Add related local genre tracks (up to 5)
+        genreRelated.slice(0, 5).forEach(addTrack)
+
+        if (dailyTracks.length >= 3) {
+          mixes.push({
+            id: `felo-daily-mix-${i + 1}`,
+            title: `Daily Mix ${i + 1}`,
+            subtitle: `${seedArtist} and library favorites`,
+            description: `A personalized local blend of ${seedArtist} plus matching tracks from your collection`,
+            gradient: MIX_GRADIENTS[i % MIX_GRADIENTS.length],
+            category: 'daily_mix',
+            tracks: dailyTracks.slice(0, 25)
+          })
         }
       } catch (err) {
         console.warn(`Could not generate mix for ${seedArtist}:`, err)
       }
     }
 
-    // 4. Discover Weekly Mix
-    if (discoveryCandidates.length >= 6) {
-      const shuffled = [...discoveryCandidates].sort(() => Math.random() - 0.5)
+    // 4. Forgotten Gems (Local tracks in your library waiting to be rediscovered)
+    const gems = validLocalSongs.filter((s) => {
+      if (s.filePath && playedFilePaths.has(s.filePath)) return false
+      const count = s.playCount || 0
+      return count <= 1
+    })
+
+    if (gems.length >= 5) {
+      const shuffledGems = [...gems].sort(() => Math.random() - 0.5)
       mixes.push({
-        id: 'felo-discover-weekly',
-        title: 'Discover Weekly',
-        subtitle: 'Your weekly mixtape of fresh music',
-        description: 'New discoveries matched to your personal listening tastes',
-        gradient: 'from-purple-600 via-indigo-800 to-black',
+        id: 'felo-forgotten-gems',
+        title: 'Forgotten Gems',
+        subtitle: 'Rediscover your local library',
+        description: 'Great tracks in your offline collection waiting to be played again',
+        gradient: 'from-amber-600 via-rose-700 to-indigo-950',
         category: 'discover',
-        tracks: shuffled.slice(0, 20)
+        tracks: shuffledGems.slice(0, 25).map(toHomeSongItem)
       })
     }
 

@@ -72,6 +72,13 @@ declare global {
       scanLibrary: (folderPath: string) => Promise<number>
       scanFiles?: (files: FileList | File[], folderName?: string) => Promise<number>
       getSongs: () => Promise<any[]>
+      toggleFavorite: (
+        songId: string,
+        isFavorite?: boolean,
+        songData?: any
+      ) => Promise<{ id: string; isFavorite: boolean }>
+      getLikedSongs: () => Promise<any[]>
+      getLikedCount: () => Promise<number>
       readAudioFile?: (
         songIdOrPath: string,
         explicitPath?: string

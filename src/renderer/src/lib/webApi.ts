@@ -47,6 +47,27 @@ const WEB_LIBRARY_DB = 'felo-web-library'
 const WEB_LIBRARY_STORE = 'roots'
 const WEB_LIBRARY_FILES_STORE = 'files'
 const WEB_PLAYLISTS_KEY = 'felo-web-playlists'
+const WEB_FAVORITES_KEY = 'felo-web-favorites'
+
+function readBrowserFavorites(): Set<string> {
+  try {
+    const raw = localStorage.getItem(WEB_FAVORITES_KEY)
+    if (!raw) return new Set()
+    const parsed = JSON.parse(raw)
+    return new Set(Array.isArray(parsed) ? parsed : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function writeBrowserFavorites(favorites: Set<string>): void {
+  try {
+    localStorage.setItem(WEB_FAVORITES_KEY, JSON.stringify([...favorites]))
+  } catch (err) {
+    console.warn('Failed to persist browser favorites:', err)
+  }
+}
+
 const browserSongs = new Map<string, any>()
 interface BrowserPlaylistRecord {
   id: string
@@ -1850,7 +1871,52 @@ const webApi: Window['api'] = {
   },
   getSongs: async () => {
     await initializeBrowserLibrary()
-    return [...browserSongs.values()]
+    const favs = readBrowserFavorites()
+    return [...browserSongs.values()].map((song) => ({
+      ...song,
+      isFavorite: favs.has(song.id)
+    }))
+  },
+  toggleFavorite: async (songId: string, isFavorite?: boolean, songData?: any) => {
+    await initializeBrowserLibrary()
+    const favs = readBrowserFavorites()
+    const currentFav = favs.has(songId)
+    const nextFav = typeof isFavorite === 'boolean' ? isFavorite : !currentFav
+    if (nextFav) {
+      favs.add(songId)
+      if (songData && !browserSongs.has(songId)) {
+        browserSongs.set(songId, {
+          ...songData,
+          id: songId,
+          isFavorite: true,
+          dateAdded: Math.floor(Date.now() / 1000)
+        })
+      }
+    } else {
+      favs.delete(songId)
+    }
+    writeBrowserFavorites(favs)
+
+    const existingSong = browserSongs.get(songId)
+    if (existingSong) {
+      existingSong.isFavorite = nextFav
+    }
+
+    window.dispatchEvent(new CustomEvent('felo:library-updated'))
+    window.dispatchEvent(new CustomEvent('felo:favorites-updated', { detail: { songId, isFavorite: nextFav } }))
+    return { id: songId, isFavorite: nextFav }
+  },
+  getLikedSongs: async () => {
+    await initializeBrowserLibrary()
+    const favs = readBrowserFavorites()
+    return Array.from(browserSongs.values())
+      .filter((song) => favs.has(song.id))
+      .map((song) => ({ ...song, isFavorite: true }))
+      .sort((a, b) => (b.dateAdded || 0) - (a.dateAdded || 0))
+  },
+  getLikedCount: async () => {
+    const favs = readBrowserFavorites()
+    return favs.size
   },
   readAudioFile: async (songIdOrPath: string, explicitPath?: string) => {
     try {
@@ -2009,6 +2075,30 @@ const webApi: Window['api'] = {
   },
   getPlaylist: async (playlistId) => {
     await initializeBrowserLibrary()
+    if (playlistId === 'liked') {
+      const favs = readBrowserFavorites()
+      const likedSongs = Array.from(browserSongs.values())
+        .filter((song) => favs.has(song.id))
+        .map((song, idx) => ({
+          ...song,
+          isFavorite: true,
+          playlistDateAdded: (song.dateAdded || Math.floor(Date.now() / 1000)) * 1000,
+          playlistSortOrder: idx
+        }))
+        .sort((a, b) => (b.dateAdded || 0) - (a.dateAdded || 0))
+
+      return {
+        id: 'liked',
+        name: 'Liked Songs',
+        description: 'Your favorite tracks in one place',
+        artworkPath: null,
+        artworkUrl: null,
+        dateCreated: 0,
+        dateModified: Date.now(),
+        songCount: likedSongs.length,
+        songs: likedSongs
+      }
+    }
     return getBrowserPlaylist(playlistId)
   },
   createPlaylist: async (input) => {
@@ -2041,9 +2131,11 @@ const webApi: Window['api'] = {
   fetchSpotifyPlaylistTracks: async () => desktopOnly(),
   importSpotifyPlaylist: async () => desktopOnly(),
   deletePlaylist: async (playlistId) => {
+    if (playlistId === 'liked') return
     writeBrowserPlaylists(readBrowserPlaylists().filter((playlist) => playlist.id !== playlistId))
   },
   renamePlaylist: async (playlistId, name) => {
+    if (playlistId === 'liked') return webApi.getPlaylist('liked')
     const trimmedName = name.trim()
     if (!trimmedName) throw new Error('Playlist name is required')
     const playlists = readBrowserPlaylists()
@@ -2055,15 +2147,24 @@ const webApi: Window['api'] = {
   },
   addSongToPlaylist: async (playlistId, songId) => {
     await initializeBrowserLibrary()
+    if (playlistId === 'liked') {
+      await webApi.toggleFavorite(songId, true)
+      return webApi.getPlaylist('liked')
+    }
     if (!browserSongs.has(songId)) return getBrowserPlaylist(playlistId)
     return updateBrowserPlaylistSongs(playlistId, (songIds) =>
       songIds.includes(songId) ? songIds : [...songIds, songId]
     )
   },
-  removeSongFromPlaylist: async (playlistId, songId) =>
-    updateBrowserPlaylistSongs(playlistId, (songIds) =>
+  removeSongFromPlaylist: async (playlistId, songId) => {
+    if (playlistId === 'liked') {
+      await webApi.toggleFavorite(songId, false)
+      return webApi.getPlaylist('liked')
+    }
+    return updateBrowserPlaylistSongs(playlistId, (songIds) =>
       songIds.filter((candidateId) => candidateId !== songId)
-    ),
+    )
+  },
   fetchLyrics: fetchBrowserLyrics,
   translateLyrics: (lines, targetLanguage) =>
     transformBrowserLyrics(lines, 'translate', targetLanguage),

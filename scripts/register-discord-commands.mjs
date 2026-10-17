@@ -149,12 +149,16 @@ export const SLASH_COMMANDS = [
     ]
   },
   {
+    name: 'web',
+    description: 'Instant link to access Felo Web Player (felo.feloapp.workers.dev)'
+  },
+  {
     name: 'invite',
     description: 'Get room code and 1-click web player invite link for the connected room'
   },
   {
     name: 'download',
-    description: 'Get official download links for Felo Music Player'
+    description: 'Get download links for Android, iOS, PC Setup, and Web Player'
   },
   {
     name: 'help',

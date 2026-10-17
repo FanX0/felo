@@ -6,6 +6,7 @@ import { HighlightMatch } from '../../../components/Common/HighlightMatch'
 import ArtistLinks from '../../../components/Common/ArtistLinks'
 import { AnimatedPlayingWave } from './AnimatedPlayingWave'
 import { QualityPill } from './QualityPill'
+import SongAddButton from '../../../components/Common/SongAddButton'
 import { formatDuration, formatSize, formatRelativeDate } from '../utils'
 import type { Song, LibraryViewMode } from '../types'
 
@@ -50,7 +51,7 @@ export function LibrarySongRow({
     <div
       onClick={onClick}
       className={cn(
-        'absolute top-0 left-0 grid w-full grid-cols-[32px_minmax(0,1fr)_76px] items-center gap-2 rounded-lg px-2 text-[13px] group cursor-pointer transition-colors md:grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_160px] md:gap-3 md:px-3 xl:grid-cols-[40px_minmax(0,2.2fr)_minmax(0,1.25fr)_minmax(110px,0.8fr)_minmax(180px,1fr)] xl:gap-4 xl:px-4',
+        'absolute top-0 left-0 grid w-full grid-cols-[32px_minmax(0,1fr)_76px] items-center gap-2 rounded-lg px-2 text-[13px] group cursor-pointer transition-colors md:grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_160px] md:gap-3 md:px-3 xl:grid-cols-[40px_minmax(0,2.2fr)_minmax(0,1.25fr)_minmax(110px,0.8fr)_minmax(200px,1fr)] xl:gap-4 xl:px-4 2xl:grid-cols-[40px_minmax(0,2.2fr)_minmax(0,1.25fr)_minmax(120px,0.8fr)_minmax(270px,1fr)]',
         isSelected
           ? 'bg-white/10 border border-white/20 text-white'
           : isActive
@@ -156,13 +157,18 @@ export function LibrarySongRow({
 
       {/* Quality Badges + Duration + Menu Actions */}
       <div className="flex min-w-0 items-center justify-end gap-2 pr-1 text-text-muted xl:gap-3 xl:pr-2">
-        <div className="hidden xl:flex items-center">
+        <div className="hidden xl:flex items-center shrink-0 min-w-[84px] justify-start">
           <QualityPill song={song} />
         </div>
-        <span className="shrink-0 text-xs tabular-nums text-text-muted">
+        <SongAddButton
+          song={song}
+          size="sm"
+          className={cn(!song.isFavorite && 'hidden md:flex')}
+        />
+        <span className="shrink-0 text-xs tabular-nums text-text-muted min-w-[38px] text-right">
           {formatDuration(song.duration)}
         </span>
-        <span className="hidden shrink-0 text-[11px] font-mono text-text-muted/60 2xl:inline">
+        <span className="hidden shrink-0 text-[11px] font-mono text-text-muted/60 min-w-[58px] text-right 2xl:inline">
           {formatSize(song.size)}
         </span>
         <button

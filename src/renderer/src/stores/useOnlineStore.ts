@@ -6,6 +6,7 @@ import {
   getSupabase,
   isSupabaseConfigured
 } from '../lib/supabase'
+import { uploadAvatarImage, deleteAvatarImage } from '../lib/avatar'
 import type { OnlineProfile } from '../online/types'
 
 interface OnlineState {
@@ -29,19 +30,42 @@ interface OnlineState {
   ) => Promise<boolean>
   signOut: () => Promise<void>
   updateProfile: (
-    values: Partial<Pick<OnlineProfile, 'username' | 'display_name' | 'bio' | 'avatar_url' | 'is_history_public'>> &
+    values: Partial<
+      Pick<OnlineProfile, 'username' | 'display_name' | 'bio' | 'avatar_url' | 'is_history_public'>
+    > &
       Pick<OnlineProfile, 'username' | 'display_name'>
   ) => Promise<void>
+  uploadAvatar: (file: File) => Promise<string>
+  removeAvatar: () => Promise<void>
 }
 
-async function fetchProfile(userId: string): Promise<OnlineProfile | null> {
+async function fetchProfile(
+  userId: string,
+  currentUser?: User | null
+): Promise<OnlineProfile | null> {
   const { data, error } = await getSupabase()
     .from('profiles')
     .select('*')
     .eq('id', userId)
     .maybeSingle()
   if (error) throw error
-  return data as OnlineProfile | null
+  if (!data) return null
+  const profile = data as OnlineProfile
+
+  // Fallback to OAuth metadata avatar if profile avatar_url is missing
+  if (!profile.avatar_url && currentUser && currentUser.id === userId) {
+    const metaAvatar = (currentUser.user_metadata?.avatar_url ||
+      currentUser.user_metadata?.picture ||
+      null) as string | null
+    if (metaAvatar) {
+      profile.avatar_url = metaAvatar
+      void Promise.resolve(
+        getSupabase().from('profiles').update({ avatar_url: metaAvatar }).eq('id', userId)
+      ).catch((e) => console.warn('Deferred avatar backfill skipped:', e))
+    }
+  }
+
+  return profile
 }
 
 export const useOnlineStore = create<OnlineState>((set, get) => ({
@@ -62,7 +86,7 @@ export const useOnlineStore = create<OnlineState>((set, get) => ({
       set({ session: data.session, user, initialized: true })
       if (user) {
         try {
-          const profile = await fetchProfile(user.id)
+          const profile = await fetchProfile(user.id, user)
           set({ profile })
         } catch (error) {
           console.error('Failed to load profile', error)
@@ -77,10 +101,10 @@ export const useOnlineStore = create<OnlineState>((set, get) => ({
       set({ session, user, initialized: true, authError: null })
       if (user) {
         try {
-          let profile = await fetchProfile(user.id)
+          let profile = await fetchProfile(user.id, user)
           if (!profile) {
             await new Promise((resolve) => setTimeout(resolve, 500))
-            profile = await fetchProfile(user.id)
+            profile = await fetchProfile(user.id, user)
           }
           set({ profile })
         } catch (error) {
@@ -144,7 +168,7 @@ export const useOnlineStore = create<OnlineState>((set, get) => ({
   refreshProfile: async () => {
     const user = get().user
     if (!user) return
-    const profile = await fetchProfile(user.id)
+    const profile = await fetchProfile(user.id, user)
     set({ profile })
   },
 
@@ -224,5 +248,44 @@ export const useOnlineStore = create<OnlineState>((set, get) => ({
 
     if (error) throw error
     set({ profile: data as OnlineProfile })
+  },
+
+  uploadAvatar: async (file: File) => {
+    const user = get().user
+    const profile = get().profile
+    if (!user || !profile) throw new Error('Not authenticated')
+
+    const oldAvatar = profile.avatar_url
+    const publicUrl = await uploadAvatarImage(file, user.id)
+
+    await get().updateProfile({
+      username: profile.username,
+      display_name: profile.display_name,
+      avatar_url: publicUrl
+    })
+
+    if (oldAvatar && oldAvatar !== publicUrl) {
+      void deleteAvatarImage(oldAvatar, user.id)
+    }
+
+    return publicUrl
+  },
+
+  removeAvatar: async () => {
+    const user = get().user
+    const profile = get().profile
+    if (!user || !profile) throw new Error('Not authenticated')
+
+    const oldAvatar = profile.avatar_url
+
+    await get().updateProfile({
+      username: profile.username,
+      display_name: profile.display_name,
+      avatar_url: null
+    })
+
+    if (oldAvatar) {
+      void deleteAvatarImage(oldAvatar, user.id)
+    }
   }
 }))

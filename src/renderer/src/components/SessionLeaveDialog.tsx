@@ -49,7 +49,7 @@ export default function SessionLeaveDialog(): ReactElement | null {
           </button>
           <button
             onClick={() => void confirmLeaveAndPlay()}
-            className="px-4 py-1.5 rounded-xl text-xs font-semibold bg-red-500/20 hover:bg-red-500/30 text-red-300 hover:text-red-200 border border-red-500/30 transition-all flex items-center gap-1.5 cursor-pointer shadow-lg shadow-red-500/10"
+            className="px-4 py-1.5 rounded-xl text-xs font-bold bg-danger hover:bg-danger/90 text-white transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
           >
             <LogOut className="w-3.5 h-3.5" />
             <span>Leave & Play</span>

@@ -4,6 +4,7 @@ import { usePlayerStore } from '../../../hooks/usePlayerStore'
 import { useDownloadStore } from '../../../hooks/useDownloadStore'
 import { AppCapabilities } from '../../../lib/appConfig'
 import ArtistLinks from '../../../components/Common/ArtistLinks'
+import SongAddButton from '../../../components/Common/SongAddButton'
 import { HighlightMatch } from '../../../components/Common/HighlightMatch'
 import { Artwork } from './Artwork'
 import type { SearchItem } from '../types'
@@ -160,7 +161,21 @@ export function SongList({
               </div>
             )}
 
-            <div className="flex items-center gap-3 shrink-0">
+            <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+              <SongAddButton
+                song={
+                  localSong || {
+                    id: song.id,
+                    title: song.title,
+                    artist: song.artist,
+                    album: song.album || '',
+                    duration: 0,
+                    artworkUrl: song.thumbnail,
+                    isFavorite: song.localSong?.isFavorite
+                  }
+                }
+                size="sm"
+              />
               {song.duration && (
                 <span className="text-xs text-text-muted tabular-nums">{song.duration}</span>
               )}

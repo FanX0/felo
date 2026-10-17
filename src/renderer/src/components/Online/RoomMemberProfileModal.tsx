@@ -13,6 +13,7 @@ import { NavLink } from 'react-router-dom'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { getSupabase } from '../../lib/supabase'
 import type { FriendRequest, OnlineProfile } from '../../online/types'
+import Avatar from '../Common/Avatar'
 
 interface RoomMemberProfileModalProps {
   userId: string
@@ -231,16 +232,13 @@ export default function RoomMemberProfileModal({
         {/* Profile Card Body */}
         <div className="mt-5 flex flex-col items-center text-center">
           {/* Avatar */}
-          <div className="relative flex h-20 w-20 items-center justify-center rounded-full border-2 border-border bg-surface-elevated text-2xl font-black text-text shadow-lg">
-            {avatarUrl ? (
-              <img
-                src={avatarUrl}
-                alt=""
-                className="h-full w-full rounded-full object-cover"
-              />
-            ) : (
-              displayName.slice(0, 1).toUpperCase()
-            )}
+          <div className="relative">
+            <Avatar
+              src={avatarUrl}
+              fallbackText={displayName || username}
+              size="xl"
+              className="border-2 border-border shadow-lg"
+            />
             {relationship?.status === 'accepted' && (
               <span
                 className="absolute bottom-0 right-0 flex h-6 w-6 items-center justify-center rounded-full border-2 border-surface bg-white text-black"
@@ -253,9 +251,7 @@ export default function RoomMemberProfileModal({
 
           {/* Name & Username */}
           <h3 className="mt-3 text-lg font-black text-text">{displayName}</h3>
-          {username && (
-            <p className="text-xs font-semibold text-text-muted">@{username}</p>
-          )}
+          {username && <p className="text-xs font-semibold text-text-muted">@{username}</p>}
 
           {profile?.bio && (
             <p className="mt-2.5 text-xs text-text-muted max-w-xs line-clamp-3 italic">
@@ -325,7 +321,11 @@ export default function RoomMemberProfileModal({
                   disabled={busy}
                   className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-white text-xs font-black text-black transition-all hover:bg-white/90 disabled:opacity-50"
                 >
-                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4" />}
+                  {busy ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <UserCheck className="h-4 w-4" />
+                  )}
                   <span>Accept Friend Request</span>
                 </button>
               )
@@ -336,7 +336,11 @@ export default function RoomMemberProfileModal({
                 disabled={busy}
                 className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-white text-xs font-black text-black transition-all hover:bg-white/90 disabled:opacity-50 cursor-pointer"
               >
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                {busy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <UserPlus className="h-4 w-4" />
+                )}
                 <span>Add Friend</span>
               </button>
             )}
@@ -415,7 +419,7 @@ export default function RoomMemberProfileModal({
                       }
                     }}
                     disabled={busy}
-                    className="py-2 px-3 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-300 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                    className="py-2 px-3 rounded-xl bg-danger hover:bg-danger/90 text-white text-xs font-bold transition-all cursor-pointer shadow-sm disabled:opacity-50"
                     title="Remove member from listening room"
                   >
                     Kick Member

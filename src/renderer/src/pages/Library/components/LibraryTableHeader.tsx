@@ -10,7 +10,7 @@ interface LibraryTableHeaderProps {
 
 export function LibraryTableHeader({ sortKey, sortDirection, onSort }: LibraryTableHeaderProps) {
   return (
-    <div className="grid grid-cols-[32px_minmax(0,1fr)_76px] gap-2 border-b border-border/30 bg-surface px-2 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-text-muted sticky top-0 z-10 shrink-0 md:grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_160px] md:gap-3 md:px-3 xl:grid-cols-[40px_minmax(0,2.2fr)_minmax(0,1.25fr)_minmax(110px,0.8fr)_minmax(180px,1fr)] xl:gap-4 xl:px-4">
+    <div className="grid grid-cols-[32px_minmax(0,1fr)_76px] gap-2 border-b border-border/30 bg-surface px-2 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-text-muted sticky top-0 z-10 shrink-0 md:grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_160px] md:gap-3 md:px-3 xl:grid-cols-[40px_minmax(0,2.2fr)_minmax(0,1.25fr)_minmax(110px,0.8fr)_minmax(200px,1fr)] xl:gap-4 xl:px-4 2xl:grid-cols-[40px_minmax(0,2.2fr)_minmax(0,1.25fr)_minmax(120px,0.8fr)_minmax(270px,1fr)]">
       <button
         type="button"
         onClick={() => onSort('default')}

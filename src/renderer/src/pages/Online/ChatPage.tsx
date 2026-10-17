@@ -13,7 +13,6 @@ import {
 } from 'lucide-react'
 import { NavLink, useNavigate, useSearchParams } from 'react-router-dom'
 import OnlineGate from '../../components/Online/OnlineGate'
-import { useAppStore } from '../../hooks/useAppStore'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
@@ -24,6 +23,8 @@ import { getSupabase } from '../../lib/supabase'
 import type { ChatMessage, SharedSong } from '../../online/types'
 import type { Song } from '../Library/Library'
 import type { DownloadTarget } from '../../components/DownloadPanel/DownloadPanel'
+import { AppCapabilities } from '../../lib/appConfig'
+import Avatar from '../../components/Common/Avatar'
 
 function songPayload(song: Song): SharedSong {
   return {
@@ -73,14 +74,13 @@ interface ChatPageProps {
 
 function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
   const { user } = useOnlineStore()
-  const { requestPlayQueue } = usePlaybackArbitration()
+  const { requestPlayQueue, requestPlaySong } = usePlaybackArbitration()
   const { queue, currentSongIndex } = usePlayerStore(
     useShallow((s) => ({
       queue: s.queue,
       currentSongIndex: s.currentSongIndex
     }))
   )
-  const { setSearchQuery } = useAppStore()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -331,7 +331,7 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
     )
     if (match && songs) {
       void requestPlayQueue(songs, songs.indexOf(match))
-    } else if (onOpenDownloadPanel) {
+    } else if (onOpenDownloadPanel && AppCapabilities.downloads) {
       onOpenDownloadPanel({
         id: song.localId || `shared-${song.artist}-${song.title}`,
         title: song.title,
@@ -344,8 +344,17 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
         autoPlay: true
       })
     } else {
-      setSearchQuery(`${song.title} ${song.artist}`)
-      navigate('/search')
+      void requestPlaySong({
+        id: song.localId || `shared-${song.artist}-${song.title}`,
+        title: song.title,
+        artist: song.artist,
+        album: song.album || '',
+        duration: song.duration || 0,
+        artworkPath: song.artworkUrl,
+        filePath: song.audioUrl || `virtual:${song.title} - ${song.artist}`,
+        audioUrl: song.audioUrl,
+        isOnline: true
+      })
     }
   }
 
@@ -414,12 +423,12 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
                     }`}
                     title={hasRoom ? `${friend.display_name} has an active party room! Click to chat & join` : `Chat with ${friend.display_name}`}
                   >
-                    <div className="relative flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface text-xs font-black text-text shadow-sm">
-                      {friend.avatar_url ? (
-                        <img src={friend.avatar_url} alt="" className="h-full w-full rounded-full object-cover" />
-                      ) : (
-                        friend.display_name.slice(0, 1).toUpperCase()
-                      )}
+                    <div className="relative shrink-0">
+                      <Avatar
+                        src={friend.avatar_url}
+                        fallbackText={friend.display_name}
+                        size="md"
+                      />
                       {hasRoom && (
                         <span
                           className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full border-2 border-surface bg-emerald-500 shadow-sm"
@@ -477,17 +486,12 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
                   }`}
                 >
                   {/* Friend Avatar */}
-                  <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-sm font-black text-text overflow-hidden">
-                    {conv.otherMember.avatar_url ? (
-                      <img
-                        src={conv.otherMember.avatar_url}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      conv.otherMember.display_name.slice(0, 1).toUpperCase()
-                    )}
-                  </div>
+                  <Avatar
+                    src={conv.otherMember.avatar_url}
+                    fallbackText={conv.otherMember.display_name}
+                    size="md"
+                    className="shrink-0"
+                  />
 
                   {/* Conv Details */}
                   <div className="min-w-0 flex-1">
@@ -517,17 +521,12 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
             {/* Thread Header */}
             <header className="flex items-center justify-between border-b border-border/70 bg-surface/80 px-6 py-3.5 backdrop-blur-md">
               <div className="flex items-center gap-3">
-                <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-surface-elevated text-sm font-black text-text overflow-hidden">
-                  {activeConversation.otherMember.avatar_url ? (
-                    <img
-                      src={activeConversation.otherMember.avatar_url}
-                      alt=""
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    activeConversation.otherMember.display_name.slice(0, 1).toUpperCase()
-                  )}
-                </div>
+                <Avatar
+                  src={activeConversation.otherMember.avatar_url}
+                  fallbackText={activeConversation.otherMember.display_name}
+                  size="md"
+                  className="shrink-0"
+                />
                 <div>
                   <h2 className="text-sm font-black text-text">
                     {activeConversation.otherMember.display_name}
@@ -625,17 +624,14 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
                       className={`flex items-end gap-2 ${isMe ? 'justify-end' : 'justify-start'}`}
                     >
                       {!isMe && (
-                        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-surface-elevated text-[11px] font-bold text-text overflow-hidden">
-                          {activeConversation.otherMember.avatar_url ? (
-                            <img
-                              src={activeConversation.otherMember.avatar_url}
-                              alt=""
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            activeConversation.otherMember.display_name.slice(0, 1).toUpperCase()
-                          )}
-                        </div>
+                        <Avatar
+                          src={activeConversation.otherMember.avatar_url}
+                          fallbackText={activeConversation.otherMember.display_name}
+                          size="custom"
+                          className="h-7 w-7 border border-border text-[10px] shrink-0"
+                          showInitials={true}
+                          maxInitials={1}
+                        />
                       )}
 
                       <div
@@ -778,13 +774,14 @@ function ChatWorkspace({ onOpenDownloadPanel }: ChatPageProps): ReactElement {
                     onClick={() => void selectOrStartConversation(friend.id)}
                     className="flex items-center gap-2 rounded-full border border-border bg-surface-elevated px-4 py-2 text-xs font-bold text-text hover:border-border hover:bg-hover hover:text-text transition-all shadow-sm"
                   >
-                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-surface text-[10px] font-black overflow-hidden">
-                      {friend.avatar_url ? (
-                        <img src={friend.avatar_url} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        friend.display_name.slice(0, 1).toUpperCase()
-                      )}
-                    </div>
+                    <Avatar
+                      src={friend.avatar_url}
+                      fallbackText={friend.display_name}
+                      size="xs"
+                      className="shrink-0"
+                      showInitials={true}
+                      maxInitials={1}
+                    />
                     <span>Chat with {friend.display_name}</span>
                   </button>
                 ))}

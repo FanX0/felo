@@ -32,6 +32,10 @@ export interface Song {
   isLocalToDevice?: boolean
   localId?: string
   url?: string
+  isFavorite?: boolean | number
+  quality?: string
+  playCount?: number
+  lastPlayedAt?: number
 }
 
 export type LibrarySortKey = 'title' | 'dateAdded' | 'artist' | 'album' | 'duration' | 'default'

@@ -237,10 +237,12 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     window.addEventListener('felo:download-failed', handleDownloadFailed)
     window.addEventListener('fanxmusic:download-failed', handleDownloadFailed)
     window.addEventListener('fanxmusic:library-updated', handleUpdate)
+    window.addEventListener('felo:favorites-updated', handleUpdate)
 
     return () => {
       window.removeEventListener('felo:library-updated', handleUpdate)
       window.removeEventListener('fanxmusic:library-updated', handleUpdate)
+      window.removeEventListener('felo:favorites-updated', handleUpdate)
       window.removeEventListener('felo:download-failed', handleDownloadFailed)
       window.removeEventListener('fanxmusic:download-failed', handleDownloadFailed)
       cleanup?.()
@@ -418,12 +420,26 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   }
 
   const removeSong = async (songId: string) => {
+    if (id === 'liked') {
+      if (window.api?.toggleFavorite) {
+        await window.api.toggleFavorite(songId, false)
+        window.dispatchEvent(
+          new CustomEvent('felo:favorites-updated', {
+            detail: { songId, isFavorite: false }
+          })
+        )
+        window.dispatchEvent(new CustomEvent('felo:library-updated'))
+      }
+      void loadPlaylist()
+      return
+    }
     if (!window.api?.removeSongFromPlaylist) return
     const updated = await window.api.removeSongFromPlaylist(id, songId)
     setPlaylist(updated)
   }
 
   const renamePlaylist = async (nextName: string) => {
+    if (id === 'liked') return
     if (!window.api?.renamePlaylist || !playlist) return
     setPlaylistActionError('')
     try {
@@ -436,6 +452,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   }
 
   const deletePlaylist = async () => {
+    if (id === 'liked') return
     if (!window.api?.deletePlaylist || !playlist) return
     if (!window.confirm(`Remove "${playlist.name}"? Songs will remain in your library.`)) return
     try {

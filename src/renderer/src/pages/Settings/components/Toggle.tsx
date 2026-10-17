@@ -1,13 +1,29 @@
 
-export function Toggle({ enabled, onChange }: { enabled: boolean; onChange: (v: boolean) => void }) {
+export function Toggle({
+  enabled,
+  disabled = false,
+  onChange
+}: {
+  enabled: boolean
+  disabled?: boolean
+  onChange: (v: boolean) => void
+}) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={enabled}
-      onClick={() => onChange(!enabled)}
-      className={`w-11 h-6 rounded-full transition-colors relative shrink-0 cursor-pointer ${
-        enabled ? 'bg-primary shadow-sm' : 'bg-[#2a2a2e]'
+      aria-disabled={disabled}
+      disabled={disabled}
+      onClick={() => {
+        if (!disabled) onChange(!enabled)
+      }}
+      className={`w-11 h-6 rounded-full transition-colors relative shrink-0 ${
+        disabled
+          ? 'opacity-40 cursor-not-allowed bg-zinc-700'
+          : enabled
+            ? 'bg-primary shadow-sm cursor-pointer'
+            : 'bg-[#2a2a2e] cursor-pointer'
       }`}
     >
       <div

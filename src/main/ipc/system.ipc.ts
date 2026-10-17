@@ -169,20 +169,22 @@ export function registerSystemIpc(): void {
 
   // System: Reveal file or open directory in explorer (path containment verified)
   ipcMain.handle('system:revealFile', (_, targetPath: string) => {
-    if (targetPath && typeof targetPath === 'string' && fs.existsSync(targetPath)) {
-      const resolved = resolve(targetPath)
-      if (isPathAllowedForMedia(resolved)) {
+    if (targetPath && typeof targetPath === 'string') {
+      const cleanPath = targetPath.trim().replace(/^["']|["']$/g, '')
+      if (cleanPath && fs.existsSync(cleanPath)) {
+        const resolved = resolve(cleanPath)
         try {
-          if (fs.statSync(resolved).isDirectory()) {
+          const stat = fs.statSync(resolved)
+          if (stat.isDirectory()) {
             shell.openPath(resolved)
-          } else {
+          } else if (isPathAllowedForMedia(resolved)) {
             shell.showItemInFolder(resolved)
+          } else {
+            console.warn('[Security] Blocked system:revealFile for path outside media/library:', resolved)
           }
-        } catch {
-          // Do not execute shell.openPath on files
+        } catch (err) {
+          console.error('[System] Failed to reveal file or folder:', err)
         }
-      } else {
-        console.warn('[Security] Blocked system:revealFile for path outside media/library:', resolved)
       }
     }
   })

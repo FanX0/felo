@@ -8,6 +8,7 @@ import {
   Disc3,
   Download,
   FileText,
+  FolderOpen,
   Globe2,
   Laptop2,
   ListPlus,
@@ -28,6 +29,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
 import type { DownloadTarget } from '../../components/DownloadPanel/DownloadPanel'
 import ArtistLinks from '../../components/Common/ArtistLinks'
+import VerifiedBadge from '../../components/Common/VerifiedBadge'
 import SongCreditsModal from '../../components/Common/SongCreditsModal'
 import { PersonalizationService } from '../../services/PersonalizationService'
 import { parseArtists } from '../../lib/artistParser'
@@ -804,7 +806,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
                   : {
                       song,
                       x: Math.min(rect.right - 220, window.innerWidth - 232),
-                      y: Math.min(rect.bottom + 8, window.innerHeight - 260),
+                      y: Math.max(12, Math.min(rect.bottom + 8, window.innerHeight - 300)),
                       flyoutArtist: false
                     }
               )
@@ -840,7 +842,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
         <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.18)_0%,rgba(0,0,0,0.48)_42%,rgba(18,18,18,0.88)_82%,#121212_100%)]" />
         <div className="relative z-10 flex flex-col gap-1.5 sm:gap-2">
           <div className="flex items-center gap-2 text-xs sm:text-[14px] font-bold text-white drop-shadow">
-            <CheckCircle2 className="h-4 w-4 sm:h-5 sm:w-5 rounded-full fill-[#3d91f4] text-white" />
+            <VerifiedBadge className="h-4 w-4 sm:h-5 sm:w-5" />
             <span>Verified Artist</span>
           </div>
           <h1 className="max-w-full truncate text-[clamp(2.5rem,7vw,7.5rem)] font-black leading-tight sm:leading-none tracking-tight text-white drop-shadow-[0_6px_20px_rgba(0,0,0,0.7)]">
@@ -1071,7 +1073,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
             {isRemoteConnected && (
               <>
                 <button
-                  className="flex w-full items-center gap-3 px-4 py-2.5 text-[14px] font-semibold text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-[14px] font-semibold text-text hover:bg-white/10 transition-colors"
                   onClick={() => {
                     const targetId = activeMenu.song.localSong?.id || activeMenu.song.id
                     void remoteClient.play(targetId)
@@ -1221,6 +1223,41 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
                 <FileText className="h-4 w-4" /> Show credits
               </button>
             )}
+
+            {/* Open file location */}
+            {(() => {
+              const targetFilePath =
+                activeMenu.song.localSong?.filePath ||
+                songs.find((s) => s.id === activeMenu.song.id)?.filePath ||
+                songs.find(
+                  (s) =>
+                    normalizeTrackTitle(s.title || '') === normalizeTrackTitle(activeMenu.song.title || '') &&
+                    artistNameMatches(s.artist || '', activeMenu.song.artist || '')
+                )?.filePath
+              const hasLocalFile = Boolean(
+                targetFilePath &&
+                  !targetFilePath.startsWith('virtual:') &&
+                  !targetFilePath.startsWith('http://') &&
+                  !targetFilePath.startsWith('https://')
+              )
+              if (!hasLocalFile || !targetFilePath) return null
+              return (
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-[14px] text-white hover:bg-white/10 transition-colors cursor-pointer"
+                  onClick={async () => {
+                    try {
+                      await window.api?.revealInExplorer?.(targetFilePath)
+                    } catch (err) {
+                      console.error('Failed to open file location:', err)
+                    }
+                    setActiveMenu(null)
+                  }}
+                >
+                  <FolderOpen className="h-4 w-4" /> Open file location
+                </button>
+              )
+            })()}
 
             {/* Download */}
             {AppCapabilities.downloads && (

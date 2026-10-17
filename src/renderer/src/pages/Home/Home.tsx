@@ -133,6 +133,22 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
         return
       }
 
+      if (!AppCapabilities.downloads) {
+        requestPlaySong({
+          id: song.id || `web-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          title: song.title,
+          artist: song.artist,
+          album: song.album || '',
+          duration: song.duration || 0,
+          artworkPath: song.artworkUrl,
+          filePath: song.previewUrl || `virtual:${song.id}`,
+          audioUrl: song.previewUrl,
+          previewUrl: song.previewUrl,
+          isOnline: true
+        } as Song)
+        return
+      }
+
       onOpenDownloadPanel?.({
         id: song.id,
         title: song.title,
@@ -192,9 +208,17 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
   // Play personalized mix
   const handlePlayMix = useCallback(
     (mix: PersonalizedMix, startIndex = 0) => {
-      const queueSongs: Song[] = mix.tracks.map((track) => {
+      const validTracks = mix.tracks.filter((track) => {
         const match = findMatchingLibrarySong(track.title, track.artist, librarySongs)
-        if (match?.filePath) return match
+        return Boolean(
+          (match?.filePath && !match.filePath.startsWith('virtual:')) ||
+          (track.filePath && !track.filePath.startsWith('virtual:') && !/^https?:/i.test(track.filePath))
+        )
+      })
+
+      const queueSongs: Song[] = validTracks.map((track) => {
+        const match = findMatchingLibrarySong(track.title, track.artist, librarySongs)
+        if (match?.filePath && !match.filePath.startsWith('virtual:')) return match
         return {
           id: track.id,
           title: track.title,
@@ -202,16 +226,16 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
           album: track.album || '',
           duration: track.duration,
           artworkPath: track.artworkUrl,
-          filePath: `virtual:${track.id}`,
-          size: 0,
-          bitrate: 0,
-          sampleRate: 0,
-          dateAdded: Date.now()
+          filePath: track.filePath!,
+          size: track.size || 0,
+          bitrate: track.bitrate || 0,
+          sampleRate: track.sampleRate || 0,
+          dateAdded: track.dateAdded || Date.now()
         } as Song
       })
 
       if (queueSongs.length > 0) {
-        requestPlayQueue(queueSongs, startIndex, {
+        requestPlayQueue(queueSongs, Math.min(startIndex, queueSongs.length - 1), {
           type: 'playlist',
           id: mix.id,
           title: mix.title,
@@ -219,7 +243,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
         })
       }
     },
-    [librarySongs, setQueue]
+    [librarySongs, setQueue, requestPlayQueue]
   )
 
   // Navigate to album
@@ -252,7 +276,11 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                 onPlayMix={handlePlayMix}
                 onPlaySong={handlePlaySong}
                 onDownloadSong={handleDownloadSong}
+                onChooseSourceOrReplace={handleChooseSourceOrReplace}
                 libraryIndex={libraryIndex}
+                librarySongs={librarySongs}
+                likedSongIds={likedSongIds}
+                onToggleLike={toggleLike}
                 isLoadingMixes={isLoadingMixes}
                 onRefreshMixes={() => void loadPersonalizedMixes(true)}
               />
@@ -267,11 +295,11 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
 
                 {/* Prompt to Add Local Songs if library is empty */}
                 {librarySongs.length === 0 && (
-                  <div className="relative overflow-hidden rounded-2xl border border-emerald-500/25 bg-gradient-to-r from-emerald-950/40 via-surface-elevated to-surface p-5 sm:p-6 shadow-xl">
+                  <div className="relative overflow-hidden rounded-2xl border border-border bg-surface p-5 sm:p-6 shadow-xl">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
-                          <FolderOpen className="h-5 w-5 text-emerald-400" />
+                          <FolderOpen className="h-5 w-5 text-white" />
                           <h3 className="font-bold text-white text-base tracking-tight">
                             Add Local Music to Your Library
                           </h3>
@@ -284,7 +312,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                         <button
                           type="button"
                           onClick={handleAddFolder}
-                          className="flex h-10 items-center gap-2 rounded-full bg-emerald-500 hover:bg-emerald-400 px-5 text-xs font-bold text-black transition-all hover:scale-[1.02] shadow-md cursor-pointer"
+                          className="flex h-10 items-center gap-2 rounded-full bg-white hover:bg-white/90 px-5 text-xs font-bold text-black transition-all hover:scale-[1.02] shadow-md cursor-pointer"
                         >
                           <Plus className="h-4 w-4 stroke-[3]" />
                           <span>Add Music Folder</span>
@@ -294,7 +322,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                           onClick={handleAddFiles}
                           className="flex h-10 items-center gap-2 rounded-full border border-white/20 bg-surface-elevated px-4 text-xs font-semibold text-white hover:bg-hover transition-all cursor-pointer"
                         >
-                          <FolderOpen className="h-3.5 w-3.5 text-emerald-400" />
+                          <FolderOpen className="h-3.5 w-3.5 text-white" />
                           <span>Select Audio Files</span>
                         </button>
                         <button
@@ -338,7 +366,11 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                   onPlayMix={handlePlayMix}
                   onPlaySong={handlePlaySong}
                   onDownloadSong={handleDownloadSong}
+                  onChooseSourceOrReplace={handleChooseSourceOrReplace}
                   libraryIndex={libraryIndex}
+                  librarySongs={librarySongs}
+                  likedSongIds={likedSongIds}
+                  onToggleLike={toggleLike}
                   isLoadingMixes={isLoadingMixes}
                   onRefreshMixes={() => void loadPersonalizedMixes(true)}
                 />
@@ -365,7 +397,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                 ) : (
                   !AppCapabilities.onlineDiscovery && (
                     <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-8 text-center text-sm text-zinc-400">
-                      <FolderOpen className="mx-auto h-8 w-8 text-emerald-400 mb-2 opacity-80" />
+                      <FolderOpen className="mx-auto h-8 w-8 text-white mb-2 opacity-80" />
                       <p className="font-bold text-white text-base">No local songs in your library yet</p>
                       <p className="mt-1 text-xs text-zinc-400 max-w-md mx-auto mb-4">
                         Add a music folder or audio files from your device storage to start listening.
@@ -374,7 +406,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                         <button
                           type="button"
                           onClick={handleAddFolder}
-                          className="flex h-9 items-center gap-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 px-4 text-xs font-bold text-black transition-all shadow-md cursor-pointer"
+                          className="flex h-9 items-center gap-1.5 rounded-full bg-white hover:bg-white/90 px-4 text-xs font-bold text-black transition-all shadow-md cursor-pointer"
                         >
                           <Plus className="h-4 w-4 stroke-[3]" />
                           <span>Add Music Folder</span>
@@ -384,7 +416,7 @@ export default function Home({ onOpenDownloadPanel }: HomeProps) {
                           onClick={handleAddFiles}
                           className="flex h-9 items-center gap-1.5 rounded-full border border-white/20 bg-surface-elevated px-4 text-xs font-medium text-white hover:bg-hover transition-all cursor-pointer"
                         >
-                          <FolderOpen className="h-3.5 w-3.5 text-emerald-400" />
+                          <FolderOpen className="h-3.5 w-3.5 text-white" />
                           <span>Select Audio Files</span>
                         </button>
                       </div>

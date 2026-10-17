@@ -274,10 +274,8 @@ export default function SelectMediaModal({
               className="group w-full flex items-center justify-between gap-4 rounded-2xl border border-white/[0.08] bg-[#141519] hover:bg-[#1a1c22] hover:border-white/20 p-4 text-left transition-all duration-200 cursor-pointer shadow-sm active:scale-[0.99]"
             >
               <div className="flex items-center gap-3.5 min-w-0">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-red-500/10 border border-red-500/25 text-red-500 group-hover:bg-red-500/20 transition-all shadow-inner">
-                  <svg className="h-5 w-5 fill-current" viewBox="0 0 24 24">
-                    <path d="M21.582 6.186a2.206 2.206 0 0 0-1.553-1.554C18.36 4.17 12 4.17 12 4.17s-6.36 0-8.029.462a2.206 2.206 0 0 0-1.553 1.554C1.956 7.854 1.956 12 1.956 12s0 4.146.462 5.814a2.206 2.206 0 0 0 1.553 1.554c1.669.462 8.029.462 8.029.462s6.36 0 8.029-.462a2.206 2.206 0 0 0 1.553-1.554c.462-1.668.462-5.814.462-5.814s0-4.146-.462-5.814ZM9.75 15.02V8.98L15.5 12l-5.75 3.02Z" />
-                  </svg>
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] border border-white/[0.08] text-white/90 group-hover:bg-primary/20 group-hover:border-primary/40 group-hover:text-primary transition-all shadow-inner">
+                  <Play className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">
                   <span className="text-sm font-bold text-white group-hover:text-white transition-colors block">
@@ -307,7 +305,7 @@ export default function SelectMediaModal({
                     <span className="text-sm font-bold text-white group-hover:text-white transition-colors">
                       System Audio
                     </span>
-                    <span className="rounded-md bg-amber-400 text-black px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider">
+                    <span className="rounded-md bg-surface-elevated border border-border/60 px-1.5 py-0.5 text-[9px] font-bold text-text-muted uppercase tracking-wider">
                       BETA
                     </span>
                   </div>
@@ -338,7 +336,7 @@ export default function SelectMediaModal({
                   placeholder="https://www.youtube.com/watch?v=... or Video ID"
                   disabled={isSubmitting}
                   autoFocus
-                  className="w-full rounded-2xl border border-white/20 bg-black/60 pl-4 pr-24 py-3 text-sm text-white placeholder-text-muted/60 focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500 transition-all font-mono text-xs"
+                  className="w-full rounded-2xl border border-white/20 bg-black/60 pl-4 pr-24 py-3 text-sm text-white placeholder-text-muted/60 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition-all font-mono text-xs"
                 />
                 <button
                   type="button"
@@ -376,10 +374,8 @@ export default function SelectMediaModal({
                   }}
                 />
                 <div className="flex-1 min-w-0">
-                  <span className="inline-flex items-center gap-1 rounded-md bg-red-500/20 border border-red-500/30 px-1.5 py-0.5 text-[9px] font-bold text-red-400 uppercase tracking-wider mb-1">
-                    <svg className="h-2.5 w-2.5 fill-current" viewBox="0 0 24 24">
-                      <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
-                    </svg>
+                  <span className="inline-flex items-center gap-1 rounded-md bg-primary/20 border border-primary/30 px-1.5 py-0.5 text-[9px] font-bold text-primary uppercase tracking-wider mb-1">
+                    <Play className="h-2.5 w-2.5 fill-current" />
                     Ready to Stream
                   </span>
                   <h4 className="text-xs font-bold text-white line-clamp-1" title={previewData.title}>
@@ -406,7 +402,7 @@ export default function SelectMediaModal({
               <button
                 type="submit"
                 disabled={isSubmitting || !youtubeInput.trim() || isPreviewLoading}
-                className="flex items-center gap-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold px-5 py-2 text-xs transition-all shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
+                className="flex items-center gap-2 rounded-xl bg-primary hover:bg-primary-hover text-primary-foreground font-bold px-5 py-2 text-xs transition-all shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
               >
                 {isSubmitting ? (
                   <>

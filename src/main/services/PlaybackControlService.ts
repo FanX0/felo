@@ -455,6 +455,17 @@ export class PlaybackControlService {
             .all() as any[]) || []
         return reply(200, searchAlbums(albums, query, limit))
       }
+      if (
+        method === 'GET' &&
+        (url.pathname === '/v1/room/status' || url.pathname === '/v1/player/room-status')
+      ) {
+        const result = await this.sendCommand({ type: 'room-status' })
+        return reply(result?.error ? 409 : 200, result)
+      }
+      if (method === 'GET' && url.pathname === '/v1/room/friends') {
+        const result = await this.sendCommand({ type: 'room-status' })
+        return reply(result?.error ? 409 : 200, { ok: true, friends: result?.friends || [] })
+      }
       if (method === 'POST' && url.pathname === '/v1/library/download') {
         const chunks: Buffer[] = []
         let bytes = 0
@@ -489,7 +500,10 @@ export class PlaybackControlService {
           })
         }
       }
-      if (method === 'POST' && url.pathname.startsWith('/v1/player/')) {
+      if (
+        method === 'POST' &&
+        (url.pathname.startsWith('/v1/player/') || url.pathname.startsWith('/v1/room/'))
+      ) {
         const chunks: Buffer[] = []
         let bytes = 0
         for await (const chunk of request) {
@@ -734,6 +748,61 @@ export class PlaybackControlService {
               if (body.repeat !== undefined && !['off', 'all', 'one'].includes(body.repeat))
                 throw new Error('INVALID_REPEAT')
               command = { type: 'mode', shuffle: body.shuffle, repeat: body.repeat }
+            } else if (
+              url.pathname === '/v1/player/create-room' ||
+              url.pathname === '/v1/room/create'
+            ) {
+              command = {
+                type: 'create-room',
+                name: typeof body.name === 'string' ? body.name.trim().slice(0, 60) : undefined,
+                forceNew: Boolean(body.force_new || body.forceNew),
+                preferredCode:
+                  typeof body.code === 'string'
+                    ? body.code.trim().toUpperCase().slice(0, 10)
+                    : undefined
+              }
+            } else if (
+              url.pathname === '/v1/player/join-room' ||
+              url.pathname === '/v1/room/join'
+            ) {
+              const code = typeof body.code === 'string' ? body.code.trim().toUpperCase() : ''
+              const roomId =
+                typeof body.room_id === 'string'
+                  ? body.room_id.trim()
+                  : typeof body.roomId === 'string'
+                    ? body.roomId.trim()
+                    : ''
+              if (!code && !roomId) throw new Error('ROOM_CODE_REQUIRED')
+              command = { type: 'join-room', code, roomId }
+            } else if (
+              url.pathname === '/v1/player/join-friend' ||
+              url.pathname === '/v1/room/join-friend' ||
+              url.pathname === '/v1/room/connect-friend'
+            ) {
+              const friendName =
+                typeof body.friend_name === 'string'
+                  ? body.friend_name.trim()
+                  : typeof body.friend === 'string'
+                    ? body.friend.trim()
+                    : ''
+              const friendId =
+                typeof body.friend_id === 'string'
+                  ? body.friend_id.trim()
+                  : typeof body.friendId === 'string'
+                    ? body.friendId.trim()
+                    : ''
+              if (!friendName && !friendId) throw new Error('FRIEND_IDENTIFIER_REQUIRED')
+              command = { type: 'join-friend', friendName, friendId }
+            } else if (
+              url.pathname === '/v1/player/leave-room' ||
+              url.pathname === '/v1/room/leave'
+            ) {
+              command = { type: 'leave-room' }
+            } else if (
+              url.pathname === '/v1/player/room-status' ||
+              url.pathname === '/v1/room/status'
+            ) {
+              command = { type: 'room-status' }
             } else throw new Error('UNKNOWN_COMMAND')
             return this.sendCommand(command, deadline)
           },

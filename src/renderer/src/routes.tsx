@@ -14,6 +14,7 @@ import AccountPage from './pages/Online/AccountPage'
 import ProfilePage from './pages/Online/ProfilePage'
 import ChatPage from './pages/Online/ChatPage'
 import ListenTogetherPage from './pages/Online/ListenTogetherPage'
+import DownloadPage from './pages/Download/DownloadPage'
 
 export interface AppRoutesProps {
   onOpenDownloadPanel: (target: DownloadTarget) => void
@@ -30,6 +31,8 @@ export function AppRoutes({ onOpenDownloadPanel }: AppRoutesProps) {
       <Route path="/artist/:name" element={<ArtistPage onOpenDownloadPanel={onOpenDownloadPanel} />} />
       <Route path="/album/:artist/:title" element={<AlbumPage onOpenDownloadPanel={onOpenDownloadPanel} />} />
       <Route path="/lyrics" element={<LyricsPage />} />
+      <Route path="/download" element={<DownloadPage />} />
+      <Route path="/downloads" element={<DownloadPage />} />
       <Route path="/settings" element={<Settings />} />
       <Route path="/account" element={<AccountPage />} />
       <Route path="/profile" element={<ProfilePage />} />

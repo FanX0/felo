@@ -2,6 +2,7 @@ import { Download, Loader2, MoreVertical, Play } from 'lucide-react'
 import { toMediaUrl } from '../../../lib/media'
 import { ArtworkImage } from '../../Home/components/ArtworkImage'
 import ArtistLinks from '../../../components/Common/ArtistLinks'
+import SongAddButton from '../../../components/Common/SongAddButton'
 import { AppCapabilities } from '../../../lib/appConfig'
 import type { Song } from '../../Library/Library'
 import { formatBytes, formatDuration, formatRelativeDate, qualityLabel } from '../utils'
@@ -158,6 +159,7 @@ export function PlaylistTrackRow({
             <Download className="h-4 w-4" />
           </button>
         )}
+        <SongAddButton song={song} size="sm" />
         <button
           type="button"
           onClick={(event) => {

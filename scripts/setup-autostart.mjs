@@ -32,9 +32,8 @@ const vbsFile = path.join(startupFolder, 'FeloDiscordBot.vbs')
 
 function stopBot() {
   try {
-    // Kill running universal-discord-bot node processes
-    const cmd = `Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Where-Object { $_.CommandLine -like "*universal-discord-bot*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`
-    execSync(`powershell.exe -NoProfile -Command "${cmd}"`, { stdio: 'ignore' })
+    const psScript = "Get-CimInstance Win32_Process -Filter \\\"Name = 'node.exe'\\\" | Where-Object { $_.CommandLine -like '*universal-discord-bot*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
+    execSync(`powershell.exe -NoProfile -Command "${psScript}"`, { stdio: 'ignore' })
   } catch (_) {}
 }
 

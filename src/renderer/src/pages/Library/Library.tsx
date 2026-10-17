@@ -53,12 +53,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
   const user = useOnlineStore((s) => s.user)
   const isElectronApp = typeof window !== 'undefined' && Boolean((window as any).electron)
   const isMobile = useIsMobile()
-  const [librarySource, setLibrarySource] = useState<string>(() => {
-    if (typeof window !== 'undefined' && !Boolean((window as any).electron)) {
-      return 'pc'
-    }
-    return 'local'
-  })
+  const [librarySource, setLibrarySource] = useState<string>('local')
   const librarySourceRef = useRef(librarySource)
   librarySourceRef.current = librarySource
   const [isSelectingFolder, setIsSelectingFolder] = useState(false)
@@ -753,7 +748,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
   }, [filteredSongs, lastSelectedIndex, selectedSongIds, virtualizer, togglePlay])
 
   return (
-    <div className="h-full flex-1 flex flex-col pt-4 sm:pt-8 px-3 sm:px-6 pb-2 select-none relative">
+    <div className="h-full flex-1 flex flex-col pt-4 sm:pt-8 px-3 sm:px-6 pb-2 select-none relative overflow-x-hidden min-w-0">
       <LibraryToolbar
         librarySource={librarySource}
         selectedRemoteDevice={selectedRemoteDevice}

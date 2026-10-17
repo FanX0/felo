@@ -120,9 +120,7 @@ To enable social rooms, friend activity, and realtime listening sessions:
 
 ```bash
 # Windows Installer (.exe setup)
-npm run build:win:public   # Clean open-source release (Felo-Setup.exe)
-npm run build:win:private  # Full multi-provider release (Felo-Private-Setup.exe)
-npm run build:win:all      # Build both installers sequentially
+npm run build:win
 
 # macOS (.dmg & .zip)
 npm run build:mac
@@ -183,15 +181,45 @@ npm run test:e2e
 
 ---
 
-## ⚖️ Legal & Disclaimer
+## ⚖️ Legal, Copyright & Compliance Disclaimer
 
-- **Personal Use**: Felo is an independent, local-first personal audio player and library manager designed exclusively for organizing and playing legally acquired media collections.
-- **No Hosting**: Felo does not host, store, cache, distribute, or stream copyrighted audio files.
-- **Public Open Metadata**: All track metadata, artist bios, and lyrics are retrieved from open and public community databases (such as MusicBrainz and LRCLIB) under fair use and their respective open developer terms.
-- **Affiliation**: Felo is not affiliated with, endorsed by, or sponsored by any streaming service or external music platform.
+> [!IMPORTANT]
+> **Please read this disclaimer carefully before using, building, or contributing to Felo.**
+
+### 1. Primary Purpose: Personal Local-First Media Player
+**Felo** is an independent, local-first software application engineered exclusively for organizing, cataloging, and playing legally acquired personal audio collections (such as FLAC, ALAC, WAV, AAC, and MP3 files stored locally on your device). It is provided strictly as a multimedia player, playback workstation, and personal remote-control tool.
+
+### 2. No Content Hosting or Media Distribution
+- Felo **does not** host, store, mirror, cache, stream, or distribute any copyrighted sound recordings, musical works, or media files.
+- The software operates entirely client-side on the user's local hardware. All audio playback occurs strictly from media files located on the user's local disk or authorized personal storage.
+
+### 3. DMCA & Anti-Circumvention (Section 1201) Compliance
+- This open-source repository contains **zero DRM circumvention mechanisms**, **zero unauthorized stream-decrypting utilities**, and **zero proprietary encryption keys**.
+- The software relies exclusively on standard open-source audio codecs, public operating system multimedia frameworks, and documented community APIs.
+- The project maintainers do not endorse, develop, or distribute unauthorized tools designed to bypass technological protection measures (TPMs) of commercial streaming platforms.
+
+### 4. Third-Party Trademarks & Nominative Fair Use
+- **Spotify, Apple Music, Deezer, Qobuz, YouTube, Discord, LRCLIB, MusicBrainz**, and other third-party brand names, product titles, and logos referenced within this documentation, user interface, or code are the registered trademarks of their respective owners.
+- Any reference to these third-party names or integration formats is made solely for **nominative identification and technical interoperability** purposes (e.g., describing support for open playlist metadata imports or external display status).
+- Felo is an independent project and is **not** endorsed by, sponsored by, partnered with, or affiliated with Spotify AB, Apple Inc., Deezer S.A., Xandrie S.A. (Qobuz), Google LLC, or Discord Inc.
+
+### 5. Metadata and Community APIs
+- Open public metadata (album covers, artist discographies, release dates) and synchronized lyrics are queried on demand from community-maintained, open databases (such as [MusicBrainz](https://musicbrainz.org) and [LRCLIB](https://lrclib.net)) in compliance with their respective open developer guidelines and fair use standards.
+
+### 6. User Responsibility & Acceptable Use
+- Users of Felo are solely and entirely responsible for ensuring that their personal media library and use of this software comply with all applicable local, national, and international copyright laws and licensing terms in their respective jurisdictions.
+- The developers, maintainers, and contributors of Felo assume **no liability** for any unauthorized, unlawful, or infringing actions conducted by individual users of this software.
+
+### 7. Limitation of Liability
+This software is provided under the terms of the MIT License:
+> **THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.**
+
+### 8. DMCA / Rights Holder Inquiries
+If you are a copyright or trademark holder and believe that any documentation or material in this repository inadvertently violates your rights, please open an issue on the GitHub repository or contact the project maintainer directly. Inquiries will be reviewed and addressed cooperatively and promptly.
 
 ---
 
 ## 📄 License
 
 This project is licensed under the [MIT License](LICENSE).
+

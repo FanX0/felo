@@ -15,14 +15,40 @@ const SHELL_ASSETS = [
   '/robots.txt'
 ]
 
-// ─── INSTALL EVENT: PRE-CACHE APP SHELL ────────────────────────────────
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches
-      .open(SHELL_CACHE)
-      .then(async (cache) => {
-        try {
-          await cache.addAll(SHELL_ASSETS)
+// ─── LOCALHOST / DEVELOPMENT BYPASS ───────────────────────────────────────
+// In local development or testing on localhost/127.0.0.1, immediately self-destruct
+// to ensure Vite HMR and new code changes are never masked by service worker caches.
+const isLocalhostWorker =
+  self.location.hostname === 'localhost' ||
+  self.location.hostname === '127.0.0.1' ||
+  self.location.hostname.endsWith('.local')
+
+if (isLocalhostWorker) {
+  self.addEventListener('install', () => {
+    self.skipWaiting()
+  })
+  self.addEventListener('activate', (event) => {
+    event.waitUntil(
+      caches
+        .keys()
+        .then((cacheNames) => Promise.all(cacheNames.map((name) => caches.delete(name))))
+        .then(() => self.registration.unregister())
+        .then(() => self.clients.claim())
+        .then(() => self.clients.matchAll())
+        .then((clients) => {
+          clients.forEach((client) => client.navigate(client.url))
+        })
+    )
+  })
+} else {
+  // ─── INSTALL EVENT: PRE-CACHE APP SHELL ────────────────────────────────
+  self.addEventListener('install', (event) => {
+    event.waitUntil(
+      caches
+        .open(SHELL_CACHE)
+        .then(async (cache) => {
+          try {
+            await cache.addAll(SHELL_ASSETS)
         } catch (err) {
           console.warn('[SW] Partial pre-cache failure (assets will be cached on first request):', err)
         }
@@ -233,6 +259,7 @@ self.addEventListener('message', (event) => {
     )
   }
 })
+}
 
 // ─── UTILITY HELPERS ──────────────────────────────────────────────────
 function fetchWithTimeout(request, timeoutMs) {

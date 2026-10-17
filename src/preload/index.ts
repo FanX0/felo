@@ -94,6 +94,14 @@ const api = {
     return () => ipcRenderer.removeListener('library:scan-progress', handler)
   },
   getSongs: (): Promise<any[]> => ipcRenderer.invoke('library:getSongs'),
+  toggleFavorite: (
+    songId: string,
+    isFavorite?: boolean,
+    songData?: any
+  ): Promise<{ id: string; isFavorite: boolean }> =>
+    ipcRenderer.invoke('library:toggleFavorite', songId, isFavorite, songData),
+  getLikedSongs: (): Promise<any[]> => ipcRenderer.invoke('library:getLikedSongs'),
+  getLikedCount: (): Promise<number> => ipcRenderer.invoke('library:getLikedCount'),
   readAudioFile: (
     songIdOrPath: string,
     explicitPath?: string

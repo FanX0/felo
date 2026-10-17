@@ -260,7 +260,7 @@ export function LibrarySection({ roots, loadRoots }: LibrarySectionProps) {
             <button
               type="button"
               onClick={() => cancelScan()}
-              className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 text-xs font-semibold transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-danger hover:bg-danger/90 text-white text-xs font-bold transition-all shadow-sm"
             >
               <X className="h-3 w-3" /> Stop
             </button>

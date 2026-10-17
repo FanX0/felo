@@ -1007,15 +1007,20 @@ export class RemoteControlService {
       }
 
       // 7. Direct APK Download (for Android sideloading)
-      if (method === 'GET' && (pathname === '/felo-remote.apk' || pathname === '/download/apk')) {
-        const apkPath = path.resolve(app.getAppPath(), 'android/app/build/outputs/apk/debug/app-debug.apk')
-        if (fs.existsSync(apkPath)) {
+      if (method === 'GET' && (pathname === '/felo-remote.apk' || pathname === '/download/apk' || pathname === '/felo.apk')) {
+        const candidatePaths = [
+          path.resolve(app.getAppPath(), 'dist/Felo.apk'),
+          path.resolve(app.getAppPath(), 'android/app/build/outputs/apk/debug/Felo.apk'),
+          path.resolve(app.getAppPath(), 'android/app/build/outputs/apk/debug/app-debug.apk')
+        ]
+        const apkPath = candidatePaths.find((p) => fs.existsSync(p))
+        if (apkPath) {
           const stat = fs.statSync(apkPath)
           res.writeHead(200, {
             ...corsHeaders,
             'Content-Type': 'application/vnd.android.package-archive',
             'Content-Length': stat.size,
-            'Content-Disposition': 'attachment; filename="FeloRemote.apk"',
+            'Content-Disposition': 'attachment; filename="Felo.apk"',
             'Cache-Control': 'no-cache'
           })
           fs.createReadStream(apkPath).pipe(res)

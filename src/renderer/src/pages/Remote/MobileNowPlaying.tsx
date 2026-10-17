@@ -14,6 +14,7 @@ import {
   Smartphone,
   Search,
   Radio,
+  MonitorSpeaker,
   Sliders,
   SlidersHorizontal,
   Download,
@@ -27,6 +28,7 @@ import {
 } from 'lucide-react'
 import EmeraldVisualizer from '../../components/Audio/EmeraldVisualizer'
 import PingPongMarquee from '../../components/Common/PingPongMarquee'
+import SongAddButton from '../../components/Common/SongAddButton'
 import {
   remoteClient,
   type RemotePlayerState
@@ -430,7 +432,7 @@ export default function MobileNowPlaying({
             className="w-10 h-10 rounded-full flex items-center justify-center text-zinc-300 hover:text-white active:bg-white/10 transition cursor-pointer"
             title="Device Output Switcher"
           >
-            <Radio className={`w-5 h-5 ${isConnected ? 'text-white' : 'text-zinc-400'}`} />
+            <MonitorSpeaker className={`w-5 h-5 ${isConnected ? 'text-white' : 'text-zinc-400'}`} />
           </button>
         </div>
       </header>
@@ -483,7 +485,16 @@ export default function MobileNowPlaying({
           </p>
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
+          {song?.id && (
+            <SongAddButton
+              song={song}
+              size="lg"
+              alwaysVisible={true}
+              className="mr-0.5"
+            />
+          )}
+
           {/* Synced Lyrics Toggle Button */}
           {song?.id && (
             <button

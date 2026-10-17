@@ -11,6 +11,7 @@ import {
   MessageSquare
 } from 'lucide-react'
 import type { RoomMemberInfo } from '../types'
+import Avatar from '../../../components/Common/Avatar'
 
 interface FriendItem {
   id: string
@@ -165,17 +166,12 @@ export default function InviteFriendsModal({
                           className="flex items-center justify-between gap-3 p-2.5 rounded-xl border border-border/60 bg-surface-elevated hover:bg-hover/60 transition-colors"
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <div className="relative h-8 w-8 shrink-0 rounded-full border border-border bg-surface overflow-hidden text-xs font-black flex items-center justify-center text-text">
-                              {friend.avatar_url ? (
-                                <img
-                                  src={friend.avatar_url}
-                                  alt=""
-                                  className="h-full w-full object-cover"
-                                />
-                              ) : (
-                                friend.display_name.slice(0, 1).toUpperCase()
-                              )}
-                            </div>
+                            <Avatar
+                              src={friend.avatar_url}
+                              fallbackText={friend.display_name || friend.username}
+                              size="sm"
+                              className="shrink-0"
+                            />
                             <div className="min-w-0">
                               <p className="text-xs font-bold text-text truncate">
                                 {friend.display_name}

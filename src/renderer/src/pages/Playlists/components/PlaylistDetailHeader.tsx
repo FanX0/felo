@@ -2,6 +2,7 @@ import { useState } from 'react'
 import {
   Download,
   Globe,
+  Heart,
   Loader2,
   MoreVertical,
   Music2,
@@ -89,6 +90,10 @@ export function PlaylistDetailHeader({
         <div className="flex h-40 w-40 sm:h-[232px] sm:w-[232px] shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[#222] shadow-[0_4px_60px_rgba(0,0,0,0.5)]">
           {artworkUrl ? (
             <img src={artworkUrl} alt="" className="h-full w-full object-cover" />
+          ) : playlist.id === 'liked' ? (
+            <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#450af5] to-[#8e8ee5] shadow-inner">
+              <Heart className="h-20 w-20 sm:h-24 sm:w-24 fill-white text-white drop-shadow-md" />
+            </div>
           ) : (
             <Music2 className="h-16 w-16 sm:h-20 sm:w-20 fill-[#5a5a5a] text-[#5a5a5a]" />
           )}
@@ -202,62 +207,66 @@ export function PlaylistDetailHeader({
           <Plus className="h-10 w-10" />
         </button>
 
-        <button
-          type="button"
-          onClick={onPublish}
-          disabled={isPublishing || (configured && !initialized)}
-          title={hasUser ? 'Publish playlist to your profile' : 'Sign in to publish to profile'}
-          className="flex h-10 items-center gap-2 rounded-full border border-white/20 px-4 text-sm font-bold text-[#d8d8d8] transition-colors hover:border-white/50 hover:text-white disabled:opacity-50 cursor-pointer"
-        >
-          {isPublishing ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Globe className="h-4 w-4" />
-          )}
-          <span>{hasUser ? 'Publish to profile' : 'Sign in to publish'}</span>
-        </button>
-
-        <div className="relative">
+        {playlist.id !== 'liked' && (
           <button
             type="button"
-            title="Playlist options"
-            onClick={() => {
-              setIsActionsOpen((open) => !open)
-              setPlaylistActionError('')
-            }}
-            className="flex h-10 w-10 items-center justify-center rounded-full text-[#b3b3b3] transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+            onClick={onPublish}
+            disabled={isPublishing || (configured && !initialized)}
+            title={hasUser ? 'Publish playlist to your profile' : 'Sign in to publish to profile'}
+            className="flex h-10 items-center gap-2 rounded-full border border-white/20 px-4 text-sm font-bold text-[#d8d8d8] transition-colors hover:border-white/50 hover:text-white disabled:opacity-50 cursor-pointer"
           >
-            <MoreVertical className="h-5 w-5" />
+            {isPublishing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Globe className="h-4 w-4" />
+            )}
+            <span>{hasUser ? 'Publish to profile' : 'Sign in to publish'}</span>
           </button>
-          {isActionsOpen && (
-            <div className="pointer-events-auto absolute right-0 top-12 z-50 w-52 rounded-lg border border-white/10 bg-[#282828] p-1.5 shadow-2xl">
-              <button
-                type="button"
-                onClick={() => {
-                  setRenameValue(playlist.name)
-                  setIsRenameOpen(true)
-                  setIsActionsOpen(false)
-                  setPlaylistActionError('')
-                }}
-                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-semibold text-white hover:bg-white/10 cursor-pointer"
-              >
-                <Pencil className="h-4 w-4" />
-                <span>Rename playlist</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsActionsOpen(false)
-                  void onDelete()
-                }}
-                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-semibold text-red-400 hover:bg-white/10 cursor-pointer"
-              >
-                <Trash2 className="h-4 w-4" />
-                <span>Remove playlist</span>
-              </button>
-            </div>
-          )}
-        </div>
+        )}
+
+        {playlist.id !== 'liked' && (
+          <div className="relative">
+            <button
+              type="button"
+              title="Playlist options"
+              onClick={() => {
+                setIsActionsOpen((open) => !open)
+                setPlaylistActionError('')
+              }}
+              className="flex h-10 w-10 items-center justify-center rounded-full text-[#b3b3b3] transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+            >
+              <MoreVertical className="h-5 w-5" />
+            </button>
+            {isActionsOpen && (
+              <div className="pointer-events-auto absolute right-0 top-12 z-50 w-52 rounded-lg border border-white/10 bg-[#282828] p-1.5 shadow-2xl">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRenameValue(playlist.name)
+                    setIsRenameOpen(true)
+                    setIsActionsOpen(false)
+                    setPlaylistActionError('')
+                  }}
+                  className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-semibold text-white hover:bg-white/10 cursor-pointer"
+                >
+                  <Pencil className="h-4 w-4" />
+                  <span>Rename playlist</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsActionsOpen(false)
+                    void onDelete()
+                  }}
+                  className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-semibold text-red-400 hover:bg-white/10 cursor-pointer"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span>Remove playlist</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {publishMessage && <span className="text-sm text-text-muted">{publishMessage}</span>}
         {playlistActionError && <span className="text-sm text-red-300">{playlistActionError}</span>}

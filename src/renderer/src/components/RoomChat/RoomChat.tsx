@@ -5,6 +5,7 @@ import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { useListeningStore } from '../../hooks/useListeningStore'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { downloadTrackInBackground } from '../../lib/backgroundDownloader'
+import Avatar from '../Common/Avatar'
 
 interface RoomChatProps {
   roomId: string
@@ -185,9 +186,13 @@ export default function RoomChat({
 
       if (cmd === 'download') {
         try {
+          const downloadUrl =
+            typeof window !== 'undefined'
+              ? `${window.location.origin}/#/download`
+              : 'https://felo.feloapp.workers.dev/#/download'
           await sendMessage(
             roomId,
-            `**Download Felo Music Player:** https://bit.ly/47iv3PK`
+            `📲 **Download Felo (Android, iOS & PC):** ${downloadUrl}`
           )
         } catch (err: any) {
           setSendError(err?.message || 'Failed to send message')
@@ -282,18 +287,17 @@ export default function RoomChat({
                         avatarUrl: msg.sender_avatar_url || null
                       })
                     }
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-surface-elevated text-[11px] font-bold text-text overflow-hidden hover:scale-105 transition-transform cursor-pointer"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full hover:scale-105 transition-transform cursor-pointer"
                     title={`View profile of ${msg.sender_display_name || 'User'}`}
                   >
-                    {msg.sender_avatar_url ? (
-                      <img
-                        src={msg.sender_avatar_url}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      (msg.sender_display_name || 'U').slice(0, 1).toUpperCase()
-                    )}
+                    <Avatar
+                      src={msg.sender_avatar_url}
+                      fallbackText={msg.sender_display_name || 'User'}
+                      size="custom"
+                      className="h-7 w-7 border border-border text-[10px]"
+                      showInitials={true}
+                      maxInitials={1}
+                    />
                   </button>
                 )}
 

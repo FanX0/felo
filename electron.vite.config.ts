@@ -4,7 +4,10 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 const defineMode = process.env.FELO_MODE
-  ? { 'process.env.FELO_MODE': JSON.stringify(process.env.FELO_MODE) }
+  ? {
+      'process.env.FELO_MODE': JSON.stringify(process.env.FELO_MODE),
+      'import.meta.env.VITE_APP_MODE': JSON.stringify(process.env.FELO_MODE)
+    }
   : {}
 
 export default defineConfig({

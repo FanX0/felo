@@ -110,6 +110,26 @@ export class PlaylistService {
   }
 
   static getPlaylist(playlistId: string) {
+    if (playlistId === 'liked') {
+      const likedSongs = getDb()
+        .prepare(
+          "SELECT *, dateAdded AS playlistDateAdded, rowid AS playlistSortOrder FROM songs WHERE isFavorite = 1 ORDER BY dateAdded DESC, rowid DESC"
+        )
+        .all() as any[]
+      LibraryService.attachSongArtists(likedSongs)
+      return {
+        id: 'liked',
+        name: 'Liked Songs',
+        description: 'Your favorite tracks in one place',
+        artworkPath: null,
+        artworkUrl: null,
+        dateCreated: 0,
+        dateModified: Date.now(),
+        songCount: likedSongs.length,
+        songs: likedSongs
+      }
+    }
+
     const playlist = getDb()
       .prepare(
         `
@@ -280,10 +300,12 @@ export class PlaylistService {
   }
 
   static deletePlaylist(playlistId: string) {
+    if (playlistId === 'liked') return
     getDb().prepare('DELETE FROM playlists WHERE id = ?').run(playlistId)
   }
 
   static renamePlaylist(playlistId: string, name: string) {
+    if (playlistId === 'liked') return this.getPlaylist('liked')
     const trimmedName = name.trim()
     if (!trimmedName) throw new Error('Playlist name is required')
     const db = getDb()
@@ -295,6 +317,11 @@ export class PlaylistService {
   }
 
   static addSong(playlistId: string, songId: string) {
+    if (playlistId === 'liked') {
+      getDb().prepare('UPDATE songs SET isFavorite = 1 WHERE id = ?').run(songId)
+      return this.getPlaylist('liked')
+    }
+
     const db = getDb()
     const exists = db
       .prepare('SELECT 1 FROM playlist_items WHERE playlistId = ? AND songId = ?')
@@ -324,6 +351,11 @@ export class PlaylistService {
   }
 
   static removeSong(playlistId: string, songId: string) {
+    if (playlistId === 'liked') {
+      getDb().prepare('UPDATE songs SET isFavorite = 0 WHERE id = ?').run(songId)
+      return this.getPlaylist('liked')
+    }
+
     const db = getDb()
     const removeSong = db.transaction(() => {
       db.prepare('DELETE FROM playlist_items WHERE playlistId = ? AND songId = ?').run(

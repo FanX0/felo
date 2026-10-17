@@ -118,4 +118,29 @@ describe('Main Process: playbackControlCore', () => {
       expect(arResult.selection).toBe('unique_match')
     })
   })
+
+  describe('MCP Room & Listen Together tools', () => {
+    it('defines all room management tools in felo-control tool registry', async () => {
+      const { TOOLS } = await import('../../../resources/hermes/felo-control.mjs')
+      const toolNames = TOOLS.map((t: any) => t.name)
+
+      expect(toolNames).toContain('felo_create_room')
+      expect(toolNames).toContain('felo_join_room')
+      expect(toolNames).toContain('felo_join_friend')
+      expect(toolNames).toContain('felo_leave_room')
+      expect(toolNames).toContain('felo_room_status')
+
+      const createTool = TOOLS.find((t: any) => t.name === 'felo_create_room')
+      expect(createTool?.inputSchema?.properties?.name).toBeDefined()
+      expect(createTool?.inputSchema?.properties?.is_private).toBeDefined()
+      expect(createTool?.inputSchema?.properties?.force_new).toBeDefined()
+
+      const joinRoomTool = TOOLS.find((t: any) => t.name === 'felo_join_room')
+      expect(joinRoomTool?.inputSchema?.required).toContain('code')
+
+      const joinFriendTool = TOOLS.find((t: any) => t.name === 'felo_join_friend')
+      expect(joinFriendTool?.inputSchema?.properties?.friend_name).toBeDefined()
+    })
+  })
 })
+

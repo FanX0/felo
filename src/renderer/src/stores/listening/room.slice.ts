@@ -38,7 +38,9 @@ export const createRoomSlice: StateCreator<
   members: [],
   pendingLeaveAndPlay: null,
   discordPriorityEnabled: readInitialDiscordPriority(),
+  liveFriendRooms: {},
 
+  setLiveFriendRooms: (liveFriendRooms) => set({ liveFriendRooms }),
   setHostRoom: (hostRoom) => set({ hostRoom }),
   setJoinedRoom: (joinedRoom) => set({ joinedRoom }),
   setMemberCount: (memberCount) => set({ memberCount }),

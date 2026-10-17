@@ -3,6 +3,7 @@ import { RefreshCw, Headphones, Radio } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import type { LiveFriendSession } from '../types'
 import { formatTime } from '../utils'
+import Avatar from '../../../components/Common/Avatar'
 
 interface FriendSessionsSectionProps {
   liveFriends: LiveFriendSession[]
@@ -54,16 +55,12 @@ export default function FriendSessionsSection({
                     to={`/profile/${encodeURIComponent(profile.username)}`}
                     className="flex items-center gap-3 min-w-0"
                   >
-                    <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-sm font-bold text-text">
-                      {profile.avatar_url ? (
-                        <img
-                          src={profile.avatar_url}
-                          alt=""
-                          className="h-full w-full rounded-full object-cover"
-                        />
-                      ) : (
-                        profile.display_name.slice(0, 1).toUpperCase()
-                      )}
+                    <div className="relative shrink-0">
+                      <Avatar
+                        src={profile.avatar_url}
+                        fallbackText={profile.display_name || profile.username}
+                        size="md"
+                      />
                       <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-surface bg-primary" />
                     </div>
                     <div className="min-w-0">

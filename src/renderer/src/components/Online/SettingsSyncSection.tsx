@@ -64,13 +64,13 @@ export const SettingsSyncSection: React.FC<SettingsSyncSectionProps> = ({
         <div className="flex items-center gap-3 min-w-0">
           <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition-colors ${
             settingsSync
-              ? 'bg-primary/20 border-primary/40 text-primary'
-              : 'bg-white/5 border-white/10 text-zinc-400'
+              ? 'bg-primary text-primary-foreground border-transparent shadow-sm'
+              : 'bg-surface-elevated border-border/60 text-text-muted'
           }`}>
             {settingsSync ? (
-              <SettingsSyncOnIcon className="w-5 h-5 text-primary" />
+              <SettingsSyncOnIcon className="w-5 h-5 text-primary-foreground" />
             ) : (
-              <SettingsSyncOffIcon className="w-5 h-5 text-zinc-400" />
+              <SettingsSyncOffIcon className="w-5 h-5 text-text-muted" />
             )}
           </div>
           <div className="min-w-0">
@@ -81,7 +81,7 @@ export const SettingsSyncSection: React.FC<SettingsSyncSectionProps> = ({
               <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold border transition-colors ${
                 settingsSync
                   ? 'bg-primary/15 border-primary/30 text-primary'
-                  : 'bg-white/5 border-white/10 text-zinc-400'
+                  : 'bg-surface-elevated border-border/60 text-text-muted'
               }`}>
                 {settingsSync ? 'ON' : 'OFF'}
               </span>
@@ -104,7 +104,7 @@ export const SettingsSyncSection: React.FC<SettingsSyncSectionProps> = ({
             className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer active:scale-95 ${
               settingsSync
                 ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                : 'text-text-muted hover:text-text hover:bg-white/5'
             }`}
             aria-pressed={settingsSync}
           >
@@ -115,8 +115,8 @@ export const SettingsSyncSection: React.FC<SettingsSyncSectionProps> = ({
             onClick={() => handleToggle(false)}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer active:scale-95 ${
               !settingsSync
-                ? 'bg-white/15 text-white shadow-sm font-semibold'
-                : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'text-text-muted hover:text-text hover:bg-white/5'
             }`}
             aria-pressed={!settingsSync}
           >
@@ -167,16 +167,16 @@ export const SettingsSyncSection: React.FC<SettingsSyncSectionProps> = ({
           onClick={() => handleToggle(false)}
           className={`flex flex-col items-center justify-center gap-2.5 p-4 sm:p-5 rounded-2xl border transition-all cursor-pointer active:scale-95 ${
             !settingsSync
-              ? 'bg-surface-elevated border-white/20 text-white shadow-md font-semibold'
+              ? 'bg-primary border-primary text-primary-foreground shadow-md font-semibold'
               : 'bg-surface border border-border/60 text-text-muted hover:text-white hover:bg-surface-elevated'
           }`}
           aria-pressed={!settingsSync}
           title="Disable Settings Sync (keep volume and audio effects local)"
         >
           <SettingsSyncOffIcon
-            className={`w-6 h-6 transition-colors ${!settingsSync ? 'text-white' : 'text-text-muted'}`}
+            className={`w-6 h-6 transition-colors ${!settingsSync ? 'text-primary-foreground' : 'text-text-muted'}`}
           />
-          <span className={`text-xs font-semibold ${!settingsSync ? 'text-white' : 'text-text-muted'}`}>Off</span>
+          <span className={`text-xs font-semibold ${!settingsSync ? 'text-primary-foreground' : 'text-text-muted'}`}>Off</span>
         </button>
       </div>
     </div>

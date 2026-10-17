@@ -435,7 +435,7 @@ export class DiscordBotService {
             {
               name: 'Custom Status',
               type: 4,
-              state: 'Listen Together | Use /help'
+              state: 'felo.feloapp.workers.dev | /help'
             }
           ],
           status: 'online',
@@ -458,6 +458,7 @@ export class DiscordBotService {
       }
       console.log(`[Discord Bot] Logged in as ${this.botUser.username} (${this.botUser.id})`)
       void this.registerSlashCommands()
+      void this.updateApplicationBio()
       return
     }
 
@@ -526,6 +527,13 @@ export class DiscordBotService {
         case 'download':
         case 'getapp':
           await this.cmdDownload(channelId)
+          break
+        case 'web':
+        case 'webapp':
+        case 'online':
+        case 'site':
+        case 'link':
+          await this.cmdWeb(channelId)
           break
         case 'help':
         case 'commands':
@@ -719,12 +727,16 @@ export class DiscordBotService {
         ]
       },
       {
+        name: 'web',
+        description: 'Instant link to access Felo Web Player (felo.feloapp.workers.dev)'
+      },
+      {
         name: 'invite',
         description: 'Get room code and 1-click web player invite link for the connected room'
       },
       {
         name: 'download',
-        description: 'Get official download links for Felo Music Player'
+        description: 'Get download links for Android, iOS, PC Setup, and Web Player'
       },
       {
         name: 'help',
@@ -762,6 +774,43 @@ export class DiscordBotService {
         success: false,
         message: `Network error registering commands: ${err?.message || err}`
       }
+    }
+  }
+
+  private async updateApplicationBio(): Promise<void> {
+    try {
+      const res = await fetch(`${DISCORD_API}/applications/@me`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bot ${this.token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+      if (!res.ok) return
+      const app = await res.json()
+      const currentDesc = app.description || ''
+      if (!currentDesc.includes('felo.feloapp.workers.dev')) {
+        const newDesc =
+          'Official Felo Music Bot • Synchronized Listen Together!\n' +
+          '🌐 Web Player: https://felo.feloapp.workers.dev\n' +
+          '• Link channel: /connect <code>\n' +
+          '• Queue songs: /play <query>\n' +
+          '• Visual queue: /queue & /nowplaying\n' +
+          '• Friends join: /invite (1-click Web Player)\n' +
+          'Lossless synchronized audio with zero setup needed. Type /help in your server to get started!'
+
+        await fetch(`${DISCORD_API}/applications/@me`, {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bot ${this.token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ description: newDesc })
+        })
+        console.log('[Discord Bot] Updated bot application description with Web Player link!')
+      }
+    } catch {
+      // Non-fatal, ignore
     }
   }
 
@@ -874,6 +923,11 @@ export class DiscordBotService {
 
   private async handleMessageComponent(interaction: any): Promise<void> {
     const customId = interaction.data?.custom_id || ''
+
+    if (customId === 'cmd_download' || customId === 'download_app' || customId === 'queue_download') {
+      await this.handleSlashDownload(interaction)
+      return
+    }
 
     if (customId === 'disc_cancel') {
       await this.respondInteraction(interaction.id, interaction.token, {
@@ -1170,6 +1224,11 @@ export class DiscordBotService {
       case 'download':
         await this.handleSlashDownload(interaction)
         break
+      case 'web':
+      case 'webapp':
+      case 'online':
+        await this.handleSlashWeb(interaction)
+        break
       case 'help':
         await this.handleSlashHelp(interaction)
         break
@@ -1262,9 +1321,18 @@ export class DiscordBotService {
                 {
                   type: 2,
                   style: 5,
-                  label: 'Download Felo App',
+                  label: 'Open Web Player',
+                  emoji: { name: '🌐' },
+                  url: roomCode
+                    ? `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+                    : 'https://felo.feloapp.workers.dev'
+                },
+                {
+                  type: 2,
+                  style: 5,
+                  label: 'Download Apps (Android/iOS/PC)',
                   emoji: { name: '📥' },
-                  url: 'https://bit.ly/47iv3PK'
+                  url: 'https://felo.feloapp.workers.dev/#/download'
                 }
               ]
             }
@@ -1481,9 +1549,9 @@ export class DiscordBotService {
               {
                 type: 2,
                 style: 5,
-                label: 'Download Felo',
+                label: 'Download Apps (Android/iOS/PC)',
                 emoji: { name: '📥' },
-                url: 'https://bit.ly/47iv3PK'
+                url: 'https://felo.feloapp.workers.dev/#/download'
               }
             ]
           }
@@ -1679,20 +1747,20 @@ export class DiscordBotService {
       }
     ]
 
-    if (roomCode) {
-      components.push({
-        type: 1,
-        components: [
-          {
-            type: 2,
-            style: 5,
-            label: 'Open Web Player',
-            emoji: { name: '🌐' },
-            url: `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
-          }
-        ]
-      })
-    }
+    components.push({
+      type: 1,
+      components: [
+        {
+          type: 2,
+          style: 5,
+          label: 'Open Web Player',
+          emoji: { name: '🌐' },
+          url: roomCode
+            ? `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+            : 'https://felo.feloapp.workers.dev'
+        }
+      ]
+    })
 
     await this.respondInteraction(interaction.id, interaction.token, {
       type: 4,
@@ -1874,10 +1942,13 @@ export class DiscordBotService {
       data: {
         embeds: [
           {
-            title: '⚡ Download Felo Music Player',
+            title: '⚡ Download & Web Access — Felo Music',
             description:
               `Experience crystal-clear lossless music streaming, local library management, and real-time Listen Together sessions with your friends!\n\n` +
-              `🔗 **Direct Download Link:** https://bit.ly/47iv3PK\n\n` +
+              `📲 **Download Page (Android, iOS & PC):**\nhttps://felo.feloapp.workers.dev/#/download\n\n` +
+              `💻 **Desktop App Setup (.exe):**\nhttps://github.com/FanX0/felo/releases/latest/download/Felo-Setup.exe\n\n` +
+              `🤖 **Android APK Direct:**\nhttps://github.com/FanX0/felo/releases/latest/download/Felo.apk\n\n` +
+              `🌐 **Instant Web Player (Zero Install):**\nhttps://felo.feloapp.workers.dev\n\n` +
               `✨ **Key Features:**\n` +
               `• 🎧 **Lossless Audio Quality** (Hi-Res FLAC / 320kbps MP3)\n` +
               `• 🌐 **Listen Together** (Real-time P2P sync across friends)\n` +
@@ -1885,7 +1956,7 @@ export class DiscordBotService {
               `• 📥 **Offline Download & Smart Audio Tagging**`,
             color: 0x10b981,
             footer: {
-              text: 'Felo Desktop Music • Available for Windows, macOS & Linux'
+              text: 'Felo Music • Available on Web, Android, iOS & Desktop (Windows, macOS, Linux)'
             }
           }
         ],
@@ -1896,9 +1967,83 @@ export class DiscordBotService {
               {
                 type: 2,
                 style: 5,
-                label: 'Download Felo App',
+                label: 'Download Apps (Android/iOS/PC)',
+                emoji: { name: '📲' },
+                url: 'https://felo.feloapp.workers.dev/#/download'
+              },
+              {
+                type: 2,
+                style: 5,
+                label: 'Download PC Setup (.exe)',
+                emoji: { name: '💻' },
+                url: 'https://github.com/FanX0/felo/releases/latest/download/Felo-Setup.exe'
+              },
+              {
+                type: 2,
+                style: 5,
+                label: 'Download Android APK',
+                emoji: { name: '🤖' },
+                url: 'https://github.com/FanX0/felo/releases/latest/download/Felo.apk'
+              },
+              {
+                type: 2,
+                style: 5,
+                label: 'Open Web Player',
+                emoji: { name: '🌐' },
+                url: 'https://felo.feloapp.workers.dev'
+              }
+            ]
+          }
+        ]
+      }
+    })
+  }
+
+  private async handleSlashWeb(interaction: any): Promise<void> {
+    const roomCode = this.playerState.listeningRoomCode
+    const webUrl = roomCode
+      ? `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+      : 'https://felo.feloapp.workers.dev'
+
+    await this.respondInteraction(interaction.id, interaction.token, {
+      type: 4,
+      data: {
+        embeds: [
+          {
+            title: '🌐 Felo Web Player — Instant Access',
+            description:
+              `Access **Felo** directly in your browser with zero installation needed!\n\n` +
+              `🔗 **Web App Link:** https://felo.feloapp.workers.dev\n\n` +
+              (roomCode
+                ? `🎧 **Active Session:** Room \`${roomCode}\`\nClick **Open Web Player** below to sync playback live with this host!\n\n`
+                : `💡 *Tip: Start or join a Listen Together room online to sync audio in real-time with friends!*\n\n`) +
+              `✨ **Browser Features:**\n` +
+              `• 🎧 Real-time group music listening with friends\n` +
+              `• 📱 Fully responsive on mobile, desktop, and Chromebook\n` +
+              `• 🚀 Zero setup required — simply open and enjoy`,
+            color: 0x10b981,
+            footer: {
+              text: 'Felo Web Music • felo.feloapp.workers.dev'
+            }
+          }
+        ],
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 2,
+                style: 5,
+                label: 'Open Web Player',
+                emoji: { name: '🌐' },
+                url: webUrl
+              },
+              {
+                type: 2,
+                style: 5,
+                label: 'Download Apps (Android/iOS/PC)',
                 emoji: { name: '📥' },
-                url: 'https://bit.ly/47iv3PK'
+                url: 'https://felo.feloapp.workers.dev/#/download'
               }
             ]
           }
@@ -2030,8 +2175,13 @@ export class DiscordBotService {
             color: 0x6366f1,
             fields: [
               {
+                name: '/web',
+                value: 'Instant link to access Felo Web Player:\n🌐 https://felo.feloapp.workers.dev',
+                inline: false
+              },
+              {
                 name: '/download',
-                value: 'Sends the official Felo app download link (Windows / macOS / Linux).\n🔗 https://bit.ly/47iv3PK',
+                value: 'Official Felo app download page (Android APK, iOS, PC Setup) & Web Player:\n🔗 https://felo.feloapp.workers.dev/#/download',
                 inline: false
               },
               {
@@ -2051,6 +2201,7 @@ export class DiscordBotService {
             color: 0xf59e0b,
             description:
               `• **Autocomplete works in /play** — just start typing the song name to see matching library tracks.\n` +
+              `• **🌐 Web Player:** https://felo.feloapp.workers.dev (zero installation needed).\n` +
               `• **Prefix commands** like \`${p}play <song>\`, \`${p}skip\`, \`${p}np\`, \`${p}queue\` work without slash syntax.\n` +
               `• **Inviting friends** — they open Felo → Listen Together → enter the room code. No bot needed on their side.\n` +
               `• **Audio quality** — Felo streams lossless FLAC/Hi-Res audio locally. Listeners sync in real-time without re-encoding.\n` +
@@ -2058,6 +2209,29 @@ export class DiscordBotService {
             footer: {
               text: 'Felo Desktop Music • Lossless Local Audio • Zero Voice Channel Lag'
             }
+          }
+        ],
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 2,
+                style: 5,
+                label: 'Open Web Player',
+                emoji: { name: '🌐' },
+                url: roomCode
+                  ? `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+                  : 'https://felo.feloapp.workers.dev'
+              },
+              {
+                type: 2,
+                style: 5,
+                label: 'Download Apps (Android/iOS/PC)',
+                emoji: { name: '📥' },
+                url: 'https://felo.feloapp.workers.dev/#/download'
+              }
+            ]
           }
         ]
       }
@@ -2119,9 +2293,18 @@ export class DiscordBotService {
               {
                 type: 2,
                 style: 5,
-                label: 'Download Felo App',
-                emoji: { name: '📥' },
-                url: 'https://bit.ly/47iv3PK'
+                label: 'Open Web Player',
+                emoji: { name: '🌐' },
+                url: roomCode
+                  ? `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+                  : 'https://felo.feloapp.workers.dev'
+              },
+              {
+                type: 2,
+                style: 5,
+                label: 'Download Apps (Android/iOS/PC)',
+                emoji: { name: '📲' },
+                url: 'https://felo.feloapp.workers.dev/#/download'
               }
             ]
           }
@@ -2258,6 +2441,22 @@ export class DiscordBotService {
             text: `Felo Music Player • ${this.playerState.listeningRoomMembers || 1} Listener(s)`
           }
         }
+      ],
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 2,
+              style: 5,
+              label: 'Open Web Player',
+              emoji: { name: '🌐' },
+              url: roomCode
+                ? `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+                : 'https://felo.feloapp.workers.dev'
+            }
+          ]
+        }
       ]
     })
   }
@@ -2390,15 +2589,103 @@ export class DiscordBotService {
     await this.sendChannelMessage(channelId, {
       embeds: [
         {
-          title: '⚡ Download Felo Music Player',
+          title: '⚡ Download & Web Access — Felo Music',
           description:
-            `Download Felo for desktop to enjoy lossless music and real-time Listen Together rooms!\n\n` +
-            `🔗 **Direct Download Link:** https://bit.ly/47iv3PK\n\n` +
+            `Enjoy crystal-clear lossless music streaming and real-time Listen Together rooms with friends!\n\n` +
+            `📲 **Download Page (Android, iOS & PC):**\nhttps://felo.feloapp.workers.dev/#/download\n\n` +
+            `💻 **Desktop App Setup (.exe):**\nhttps://github.com/FanX0/felo/releases/latest/download/Felo-Setup.exe\n\n` +
+            `🤖 **Android APK Direct:**\nhttps://github.com/FanX0/felo/releases/latest/download/Felo.apk\n\n` +
+            `🌐 **Instant Web Player (Zero Install):**\nhttps://felo.feloapp.workers.dev\n\n` +
             `• 🎧 **Lossless & Hi-Res Audio** (FLAC, ALAC, MP3 320kbps)\n` +
             `• 🌐 **Real-Time Group Listening**\n` +
             `• 🤖 **Discord Bot Music Control**`,
           color: 0x10b981,
-          footer: { text: 'Felo Desktop Player • Available for Windows, macOS & Linux' }
+          footer: { text: 'Felo Music • Available on Web, Android, iOS & Desktop' }
+        }
+      ],
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 2,
+              style: 5,
+              label: 'Download Apps (Android/iOS/PC)',
+              emoji: { name: '📲' },
+              url: 'https://felo.feloapp.workers.dev/#/download'
+            },
+            {
+              type: 2,
+              style: 5,
+              label: 'Download PC Setup (.exe)',
+              emoji: { name: '💻' },
+              url: 'https://github.com/FanX0/felo/releases/latest/download/Felo-Setup.exe'
+            },
+            {
+              type: 2,
+              style: 5,
+              label: 'Download Android APK',
+              emoji: { name: '🤖' },
+              url: 'https://github.com/FanX0/felo/releases/latest/download/Felo.apk'
+            },
+            {
+              type: 2,
+              style: 5,
+              label: 'Open Web Player',
+              emoji: { name: '🌐' },
+              url: 'https://felo.feloapp.workers.dev'
+            }
+          ]
+        }
+      ]
+    })
+  }
+
+  private async cmdWeb(channelId: string): Promise<void> {
+    const roomCode = this.playerState.listeningRoomCode
+    const webUrl = roomCode
+      ? `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+      : 'https://felo.feloapp.workers.dev'
+
+    await this.sendChannelMessage(channelId, {
+      embeds: [
+        {
+          title: '🌐 Felo Web Player — Instant Access',
+          description:
+            `Experience **Felo** directly in your browser with zero installation needed!\n\n` +
+            `🔗 **Web App Link:** https://felo.feloapp.workers.dev\n\n` +
+            (roomCode
+              ? `🎧 **Active Session:** Room \`${roomCode}\`\nClick **Open Web Player** below to sync playback live with this host!\n\n`
+              : `💡 *Tip: Start or join a Listen Together room online to sync audio in real-time with friends!*\n\n`) +
+            `✨ **Browser Features:**\n` +
+            `• 🎧 Real-time group music listening with friends\n` +
+            `• 📱 Fully responsive on mobile, desktop, and Chromebook\n` +
+            `• 🚀 Zero setup required — simply open and enjoy`,
+          color: 0x10b981,
+          footer: {
+            text: 'Felo Web Music • felo.feloapp.workers.dev'
+          }
+        }
+      ],
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 2,
+              style: 5,
+              label: 'Open Web Player',
+              emoji: { name: '🌐' },
+              url: webUrl
+            },
+            {
+              type: 2,
+              style: 5,
+              label: 'Download Apps (Android/iOS/PC)',
+              emoji: { name: '📲' },
+              url: 'https://felo.feloapp.workers.dev/#/download'
+            }
+          ]
         }
       ]
     })
@@ -2491,13 +2778,38 @@ export class DiscordBotService {
           color: 0xf59e0b,
           description:
             `• **Slash commands** (\`/play\`, \`/search\`) give you autocomplete — try them!\n` +
+            `• **🌐 Web Player:** https://felo.feloapp.workers.dev (zero installation needed).\n` +
             `• **Inviting friends** — they open Felo → Listen Together → enter the room code.\n` +
             `• **Audio quality** — Felo streams lossless FLAC/Hi-Res locally. Sync is real-time, no re-encoding.\n` +
-            `• **\`${p}download\`** — Get the Felo app: https://bit.ly/47iv3PK\n` +
+            `• **\`${p}web\`** — Direct link to Felo Web Player\n` +
+            `• **\`${p}download\`** — Get Apps (Android, iOS, PC Setup) or Web Player\n` +
             `• **Provider not connecting?** — configure credentials in Felo → Settings → Streaming Accounts.`,
           footer: {
             text: 'Felo Desktop Music • Lossless Local Audio • Zero Voice Channel Lag'
           }
+        }
+      ],
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 2,
+              style: 5,
+              label: 'Open Web Player',
+              emoji: { name: '🌐' },
+              url: roomCode
+                ? `https://felo.feloapp.workers.dev/#/online/listen?code=${roomCode}`
+                : 'https://felo.feloapp.workers.dev'
+            },
+            {
+              type: 2,
+              style: 5,
+              label: 'Download Apps (Android/iOS/PC)',
+              emoji: { name: '📥' },
+              url: 'https://felo.feloapp.workers.dev/#/download'
+            }
+          ]
         }
       ]
     })

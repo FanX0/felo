@@ -9,11 +9,10 @@ import {
   Repeat1,
   Shuffle,
   Infinity as InfinityIcon,
-  PlusCircle,
   Mic2,
   ListVideo,
-  Maximize2,
   Radio,
+  MonitorSpeaker,
   LogOut,
   ListMusic,
   Loader2,
@@ -47,12 +46,14 @@ import { ArtworkImage } from '../../pages/Home/components/ArtworkImage'
 import type { DownloadTarget } from '../DownloadPanel/DownloadPanel'
 import { AppCapabilities } from '../../lib/appConfig'
 import PingPongMarquee from '../Common/PingPongMarquee'
+import SongAddButton from '../Common/SongAddButton'
 import { fmtTime, UNAVAILABLE_TIME_TEXT } from '../../lib/songUtils'
 
 interface FooterProps {
   onOpenDownloadPanel?: (target?: DownloadTarget) => void
   isQueueOpen?: boolean
   onToggleQueue?: () => void
+  onToggleAudioStudio?: () => void
 }
 
 interface ProgressBarProps {
@@ -63,7 +64,7 @@ interface ProgressBarProps {
   disabledTitle?: string
 }
 
-function ProgressBar({ duration, seek, currentTime: propCurrentTime, disabled, disabledTitle }: ProgressBarProps) {
+export function ProgressBar({ duration, seek, currentTime: propCurrentTime, disabled, disabledTitle }: ProgressBarProps) {
   const storeCurrentTime = usePlayerStore((state) => state.currentTime)
   const currentTime = propCurrentTime !== undefined ? propCurrentTime : storeCurrentTime
   const [isSeeking, setIsSeeking] = useState(false)
@@ -108,7 +109,7 @@ function ProgressBar({ duration, seek, currentTime: propCurrentTime, disabled, d
       const startTime = updateSeekPreview(event.clientX)
       if (startTime === null) return
 
-      event.currentTarget.setPointerCapture(event.pointerId)
+      event.currentTarget.setPointerCapture?.(event.pointerId)
       setIsSeeking(true)
       setHoverTime(null)
     },
@@ -142,8 +143,8 @@ function ProgressBar({ duration, seek, currentTime: propCurrentTime, disabled, d
         seek(finalTime)
       }
 
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId)
+      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+        event.currentTarget.releasePointerCapture?.(event.pointerId)
       }
       setIsSeeking(false)
     },
@@ -151,8 +152,8 @@ function ProgressBar({ duration, seek, currentTime: propCurrentTime, disabled, d
   )
 
   const handleProgressPointerCancel = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId)
     }
     setIsSeeking(false)
     setHoverTime(null)
@@ -182,14 +183,14 @@ function ProgressBar({ duration, seek, currentTime: propCurrentTime, disabled, d
         onPointerCancel={disabled ? undefined : handleProgressPointerCancel}
         onPointerLeave={handlePointerLeave}
         title={disabledTitle}
-        className={`flex-1 h-1.5 bg-border rounded-full relative no-drag flex items-center transition-all touch-none ${
+        className={`flex-1 h-1.5 bg-border rounded-full relative no-drag flex items-center transition-[height] duration-150 touch-none ${
           disabled ? 'cursor-not-allowed opacity-85' : 'cursor-pointer hover:h-2 group'
         }`}
       >
         {/* Hover Timestamp Preview Tooltip */}
         {!disabled && hoverTime !== null && hoverX !== null && (
           <div
-            className="absolute -top-7 -translate-x-1/2 px-2 py-0.5 rounded-md bg-black/95 border border-emerald-500/40 text-[10px] font-mono text-emerald-400 shadow-xl shadow-black/80 pointer-events-none transition-opacity animate-in fade-in duration-150 z-30 font-semibold"
+            className="absolute -top-7 -translate-x-1/2 px-2 py-0.5 rounded-md bg-surface-elevated border border-border/60 text-[10px] font-mono text-text font-bold shadow-md pointer-events-none transition-opacity animate-in fade-in duration-150 z-30"
             style={{ left: `${hoverX}px` }}
           >
             {formatTime(hoverTime)}
@@ -198,14 +199,14 @@ function ProgressBar({ duration, seek, currentTime: propCurrentTime, disabled, d
 
         <div
           className={`absolute left-0 h-full rounded-full transition-colors ${
-            disabled ? 'bg-text-muted' : isSeeking ? 'bg-emerald-500' : 'bg-text group-hover:bg-emerald-500'
+            disabled ? 'bg-text-muted' : isSeeking ? 'bg-primary' : 'bg-text group-hover:bg-primary'
           }`}
           style={{ width: `${progressPercent}%` }}
         />
         {!disabled && (
           <div
-            className={`absolute h-3 w-3 bg-white rounded-full transition-all shadow-md -ml-1.5 border border-emerald-500/50 ${
-              isSeeking ? 'opacity-100 scale-110 shadow-[0_0_8px_rgba(16,185,129,0.8)]' : 'opacity-0 group-hover:opacity-100 group-hover:shadow-[0_0_6px_rgba(16,185,129,0.7)]'
+            className={`absolute top-1/2 -mt-1.5 -ml-1.5 h-3 w-3 bg-white rounded-full shadow-md pointer-events-none transition-[opacity,transform] duration-150 ${
+              isSeeking ? 'opacity-100 scale-110' : 'opacity-0 group-hover:opacity-100'
             }`}
             style={{ left: `${progressPercent}%` }}
           />
@@ -216,7 +217,12 @@ function ProgressBar({ duration, seek, currentTime: propCurrentTime, disabled, d
   )
 }
 
-export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue }: FooterProps) {
+export default function Footer({
+  onOpenDownloadPanel,
+  isQueueOpen,
+  onToggleQueue,
+  onToggleAudioStudio
+}: FooterProps) {
   const currentSong = usePlayerStore((state) => state.queue[state.currentSongIndex])
   const isPlaying = usePlayerStore((state) => state.isPlaying)
   const isBuffering = usePlayerStore((state) => state.isBuffering)
@@ -299,6 +305,7 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
   const virtualBass = useDspStore((s) => s.virtualBass)
   const virtualTreble = useDspStore((s) => s.virtualTreble)
   const virtualSurround = useDspStore((s) => s.virtualSurround)
+  const isAudioModalOpen = useDspStore((s) => s.isAudioModalOpen)
   const setIsAudioModalOpen = useDspStore((s) => s.setIsAudioModalOpen)
   const location = useLocation()
   const [isRemoteModalOpen, setIsRemoteModalOpen] = useState(false)
@@ -405,10 +412,17 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
     }
 
     try {
-      const songs = await window.api?.getSongs?.()
+      let songs = await window.api?.getSongs?.()
+      if (!songs || songs.length === 0) {
+        songs = useConnectedDeviceStore.getState().pcLibrarySongs
+      }
       if (songs?.length) {
         const sorted = [...songs].sort((a, b) => (b.dateAdded || 0) - (a.dateAdded || 0))
-        requestPlayQueue(sorted, 0)
+        requestPlayQueue(sorted, 0, {
+          type: 'library',
+          title: 'Your Library',
+          route: '/library'
+        })
       } else if (queueLength > 0) {
         togglePlay()
       }
@@ -527,9 +541,9 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
             <button
               type="button"
               onClick={() => setIsRemoteModalOpen(true)}
-              className="flex items-center gap-1.5 mb-0.5 text-[11px] font-bold text-emerald-400 hover:text-emerald-300 transition text-left cursor-pointer no-drag group"
+              className="flex items-center gap-1.5 mb-0.5 text-[11px] font-bold text-primary hover:opacity-80 transition text-left cursor-pointer no-drag group"
             >
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
               {activeRemote.activeDeviceType === 'mobile' ? (
                 <Smartphone className="w-3 h-3 shrink-0" />
               ) : (
@@ -546,10 +560,9 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
                     if (playbackContext.route) navigate(playbackContext.route)
                   }}
                   title={`Playing from ${playbackContext.type}: ${playbackContext.title}`}
-                  className="text-[10px] uppercase font-bold tracking-wider text-text-muted hover:text-white truncate text-left cursor-pointer no-drag flex items-center gap-1 transition-colors"
+                  className="text-[11px] font-medium text-text-muted hover:text-text hover:underline truncate text-left cursor-pointer no-drag transition-colors"
                 >
-                  <span className="text-primary-amber font-black">•</span>
-                  <span className="truncate">{playbackContext.type}: {playbackContext.title}</span>
+                  <span className="truncate">{playbackContext.title}</span>
                 </button>
               )}
               {AppCapabilities.downloads && prefetchingTransfer && (
@@ -606,11 +619,14 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
           )}
         </div>
 
-        {/* Add to Liked */}
+        {/* Add to Liked / Playlist */}
         {displaySong && (
-          <button className="text-text-muted hover:text-text transition-colors no-drag shrink-0 p-1">
-            <PlusCircle className="w-4 h-4" />
-          </button>
+          <SongAddButton
+            song={displaySong}
+            size="md"
+            alwaysVisible={true}
+            className="no-drag ml-1 text-text-muted hover:text-white"
+          />
         )}
 
         {/* Listen Together Status Badge */}
@@ -679,7 +695,7 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
               type="button"
               onClick={() => void leaveJoinedRoom()}
               title="Leave listen together session"
-              className="flex items-center gap-0.5 rounded-full bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white px-2 py-0.5 text-[10px] font-bold transition-all ml-1 cursor-pointer"
+              className="flex items-center gap-1 rounded-full bg-danger hover:bg-danger/90 text-white px-2 py-0.5 text-[10px] font-bold transition-all ml-1 cursor-pointer shadow-xs"
             >
               <LogOut className="h-2.5 w-2.5" />
               <span>Leave</span>
@@ -890,11 +906,11 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
             onPointerMove={handleVolumePointerMove}
           >
             <div
-              className="absolute left-0 h-full bg-text group-hover:bg-emerald-500 rounded-full transition-colors"
+              className="absolute left-0 h-full bg-text group-hover:bg-primary rounded-full transition-colors"
               style={{ width: `${volume * 100}%` }}
             />
             <div
-              className="absolute h-2.5 w-2.5 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-[0_0_6px_rgba(16,185,129,0.7)] -ml-1 border border-emerald-500/40"
+              className="absolute h-2.5 w-2.5 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-md -ml-1"
               style={{ left: `${volume * 100}%` }}
             />
           </div>
@@ -904,17 +920,14 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
         <button
           type="button"
           title={`Acoustic Settings & Spatial DSP (${speakerRole.charAt(0).toUpperCase() + speakerRole.slice(1)} Speaker)`}
-          onClick={() => setIsAudioModalOpen(true)}
-          className={`hover:text-text transition-colors p-1 relative ${
-            speakerRole !== 'center' || reverbEnabled || virtualBass || virtualTreble || virtualSurround
-              ? 'text-emerald-400'
+          onClick={onToggleAudioStudio ? onToggleAudioStudio : () => setIsAudioModalOpen(!isAudioModalOpen)}
+          className={`hover:text-text transition-colors p-1 ${
+            isAudioModalOpen || speakerRole !== 'center' || reverbEnabled || virtualBass || virtualTreble || virtualSurround
+              ? 'text-primary-amber'
               : ''
           }`}
         >
           <Sliders className="w-4 h-4" />
-          {(speakerRole !== 'center' || reverbEnabled || virtualBass || virtualTreble || virtualSurround) && (
-            <span className="absolute top-0 right-0 w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.8)]" />
-          )}
         </button>
 
         {/* Device Output Switcher / Remote Control */}
@@ -923,9 +936,9 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
             type="button"
             title={`Listening on ${unified.activeDeviceName} (Click to switch)`}
             onClick={() => setIsRemoteModalOpen(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/25 transition cursor-pointer text-xs font-semibold shrink-0"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-elevated border border-border/60 text-text hover:bg-hover transition cursor-pointer text-xs font-semibold shrink-0"
           >
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <span className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
             {unified.activeDeviceCategory === 'app_pc' ? (
               <Laptop2 className="w-3.5 h-3.5" />
             ) : unified.activeDeviceCategory === 'web_pc' ? (
@@ -943,16 +956,12 @@ export default function Footer({ onOpenDownloadPanel, isQueueOpen, onToggleQueue
               connectedPhones > 0 ? 'text-white' : ''
             }`}
           >
-            <Radio className="w-4 h-4" />
+            <MonitorSpeaker className="w-4 h-4" />
             {connectedPhones > 0 && (
               <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
             )}
           </button>
         )}
-
-        <button title="Full Screen" className="hover:text-text transition-colors ml-1 p-1">
-          <Maximize2 className="w-4 h-4" />
-        </button>
       </div>
 
       <RemoteControlModal

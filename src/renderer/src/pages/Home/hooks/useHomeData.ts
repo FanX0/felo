@@ -285,6 +285,10 @@ export function useHomeData() {
   // Load personalized mixes and taste metrics
   const loadPersonalizedMixes = useCallback(
     async (force = false) => {
+      if (!librarySongs || librarySongs.length === 0) {
+        setPersonalizedMixes([])
+        return
+      }
       setIsLoadingMixes(true)
       try {
         const mixes = await PersonalizationService.generatePersonalizedMixes(librarySongs, force)
