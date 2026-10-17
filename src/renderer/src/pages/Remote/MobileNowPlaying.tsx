@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Play,
   Pause,
@@ -121,6 +121,29 @@ export default function MobileNowPlaying({
     return fmtTime(seconds, duration > 0 ? '0:00' : UNAVAILABLE_TIME_TEXT)
   }
 
+  // Time display mode: 'remaining' (-M:SS) or 'duration' (M:SS) - industry standard toggle on touch
+  const [timeDisplayMode, setTimeDisplayMode] = useState<'remaining' | 'duration'>(() => {
+    try {
+      const saved = localStorage.getItem('felo_mobile_time_mode')
+      return saved === 'duration' ? 'duration' : 'remaining'
+    } catch {
+      return 'remaining'
+    }
+  })
+
+  const toggleTimeDisplayMode = () => {
+    triggerHaptic(8)
+    setTimeDisplayMode((prev) => {
+      const next = prev === 'remaining' ? 'duration' : 'remaining'
+      try {
+        localStorage.setItem('felo_mobile_time_mode', next)
+      } catch {
+        // ignore
+      }
+      return next
+    })
+  }
+
   const formatRemainingTime = (current: number, total: number) => {
     if (!total || total <= 0) return UNAVAILABLE_TIME_TEXT
     const remaining = Math.max(0, total - current)
@@ -129,11 +152,6 @@ export default function MobileNowPlaying({
 
   const currentDisplayTime = isScrubbing ? scrubPreview : localPos
   const progressPercent = duration > 0 ? Math.min(100, (currentDisplayTime / duration) * 100) : 0
-
-  const handleScrubChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = Number(e.target.value)
-    setScrubPreview(val)
-  }
 
   const user = useOnlineStore((s) => s.user)
   const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
@@ -148,43 +166,120 @@ export default function MobileNowPlaying({
   const isHost = myRole === 'host' || Boolean(activeRoom && activeRoom.host_id === user?.id)
   const setIsAudioModalOpen = useDspStore((s) => s.setIsAudioModalOpen)
 
-  const handleScrubStart = () => {
-    if (isPlayerLocked) return
-    triggerHaptic(8)
-    setIsScrubbing(true)
-    setScrubPreview(localPos)
-  }
+  const progressBarRef = useRef<HTMLDivElement>(null)
 
-  const handleScrubEnd = () => {
-    if (isPlayerLocked) {
+  const getSeekTimeFromClientX = useCallback(
+    (clientX: number) => {
+      const rect = progressBarRef.current?.getBoundingClientRect()
+      if (!rect || duration <= 0) return null
+      const fraction = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
+      return fraction * duration
+    },
+    [duration]
+  )
+
+  const commitSeek = useCallback(
+    (targetTime: number) => {
+      if (isPlayerLocked) return
+      const safeTime = Math.max(0, Math.min(duration, targetTime))
+      setLocalPos(safeTime)
+      if (remoteClient.getIsConnected()) {
+        void remoteClient.seek(safeTime)
+        return
+      }
+      if (isCloudRemote && activeRemote && user?.id) {
+        void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'seek', { seconds: safeTime })
+        return
+      }
+      if (joinedRoom && joinedRoom.code && myRole === 'co_host') {
+        const senderName = user?.user_metadata?.full_name || user?.email || 'Co-host'
+        void getSupabase()
+          .from('listening_room_commands')
+          .insert({
+            room_code: joinedRoom.code,
+            command: 'seek',
+            sender_name: senderName,
+            source: 'mobile',
+            payload: { seconds: safeTime }
+          })
+        return
+      }
+      usePlayerStore.getState().seek(safeTime)
+    },
+    [duration, isPlayerLocked, isCloudRemote, activeRemote, user?.id, joinedRoom, myRole]
+  )
+
+  const handleScrubPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!song || duration <= 0 || isPlayerLocked) return
+      e.preventDefault()
+      const time = getSeekTimeFromClientX(e.clientX)
+      if (time === null) return
+
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId)
+      } catch {
+        // ignore
+      }
+
+      triggerHaptic(8)
+      setIsScrubbing(true)
+      setScrubPreview(time)
+    },
+    [song, duration, isPlayerLocked, getSeekTimeFromClientX]
+  )
+
+  const handleScrubPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!isScrubbing || duration <= 0) return
+      e.preventDefault()
+      const time = getSeekTimeFromClientX(e.clientX)
+      if (time !== null) {
+        setScrubPreview(time)
+      }
+    },
+    [isScrubbing, duration, getSeekTimeFromClientX]
+  )
+
+  const handleScrubPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!isScrubbing) return
+      e.preventDefault()
+
+      try {
+        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+          e.currentTarget.releasePointerCapture(e.pointerId)
+        }
+      } catch {
+        // ignore
+      }
+
+      const finalTime = getSeekTimeFromClientX(e.clientX) ?? scrubPreview
+      triggerHaptic(14)
       setIsScrubbing(false)
-      return
-    }
-    triggerHaptic(14)
-    setIsScrubbing(false)
-    setLocalPos(scrubPreview)
-    if (remoteClient.getIsConnected()) {
-      void remoteClient.seek(scrubPreview)
-      return
-    }
-    if (isCloudRemote && activeRemote && user?.id) {
-      void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'seek', { seconds: scrubPreview })
-      return
-    }
-    if (joinedRoom && joinedRoom.code && myRole === 'co_host') {
-      const senderName = user?.user_metadata?.full_name || user?.email || 'Co-host'
-      void getSupabase()
-        .from('listening_room_commands')
-        .insert({
-          room_code: joinedRoom.code,
-          command: 'seek',
-          sender_name: senderName,
-          source: 'mobile',
-          payload: { seconds: scrubPreview }
-        })
-      return
-    }
-    usePlayerStore.getState().seek(scrubPreview)
+      commitSeek(finalTime)
+    },
+    [isScrubbing, getSeekTimeFromClientX, scrubPreview, commitSeek]
+  )
+
+  const handleScrubPointerCancel = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      try {
+        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+          e.currentTarget.releasePointerCapture(e.pointerId)
+        }
+      } catch {
+        // ignore
+      }
+      setIsScrubbing(false)
+    },
+    []
+  )
+
+  const handleRangeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = Number(e.target.value)
+    setScrubPreview(val)
+    commitSeek(val)
   }
 
   const handleTogglePlay = () => {
@@ -702,29 +797,114 @@ export default function MobileNowPlaying({
         </div>
       )}
 
-      {/* Progress Bar / Scrubber */}
-      <div className="relative z-10 pt-2 pb-2">
-        <div className="relative flex items-center">
+      {/* Progress Bar / Scrubber - Industry Standard Touch Seeking */}
+      <div className="relative z-10 pt-1 pb-2">
+        <div
+          ref={progressBarRef}
+          onPointerDown={handleScrubPointerDown}
+          onPointerMove={handleScrubPointerMove}
+          onPointerUp={handleScrubPointerUp}
+          onPointerCancel={handleScrubPointerCancel}
+          role="slider"
+          aria-label="Seek track"
+          aria-valuemin={0}
+          aria-valuemax={duration || 100}
+          aria-valuenow={Math.round(currentDisplayTime)}
+          aria-valuetext={formatTime(currentDisplayTime)}
+          tabIndex={isPlayerLocked || !song || duration <= 0 ? -1 : 0}
+          onKeyDown={(e) => {
+            if (isPlayerLocked || !song || duration <= 0) return
+            if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+              e.preventDefault()
+              const next = Math.min(duration, currentDisplayTime + 5)
+              commitSeek(next)
+            } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+              e.preventDefault()
+              const prev = Math.max(0, currentDisplayTime - 5)
+              commitSeek(prev)
+            }
+          }}
+          className={`relative flex items-center py-3.5 select-none touch-none group -my-2 ${
+            !song || duration <= 0 || isPlayerLocked
+              ? 'opacity-40 cursor-not-allowed'
+              : 'cursor-pointer'
+          }`}
+        >
+          {/* Floating Seek Time Bubble above finger during touch scrub (Apple Music / YouTube Music style) */}
+          {isScrubbing && duration > 0 && (
+            <div
+              data-testid="seek-tooltip"
+              className="absolute -top-7 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-zinc-900/95 border border-white/20 text-[10px] font-mono text-white font-bold shadow-xl pointer-events-none transition-all duration-75 z-30"
+              style={{ left: `${progressPercent}%` }}
+            >
+              {formatTime(scrubPreview)}
+            </div>
+          )}
+
+          {/* Background Track */}
+          <div
+            className={`w-full bg-zinc-800/90 rounded-full relative overflow-hidden transition-[height] duration-150 ${
+              isScrubbing ? 'h-2' : 'h-1.5 group-hover:h-2'
+            }`}
+          >
+            {/* Progress Fill */}
+            <div
+              className="h-full bg-white transition-colors rounded-full"
+              style={{ width: `${progressPercent}%` }}
+            />
+          </div>
+
+          {/* Draggable Thumb Knob */}
+          {duration > 0 && (
+            <div
+              className={`absolute top-1/2 -translate-y-1/2 -translate-x-1/2 pointer-events-none rounded-full bg-white shadow-lg shadow-black/60 transition-[transform,opacity,width,height] duration-150 ${
+                isScrubbing
+                  ? 'w-4 h-4 scale-110 opacity-100 ring-4 ring-white/25'
+                  : 'w-3 h-3 opacity-90 group-hover:opacity-100 group-hover:scale-110'
+              }`}
+              style={{ left: `${progressPercent}%` }}
+            />
+          )}
+
+          {/* Screen reader accessible hidden input */}
           <input
             type="range"
             min={0}
             max={duration || 100}
             step={0.5}
             value={currentDisplayTime}
-            onChange={handleScrubChange}
-            onPointerDown={handleScrubStart}
-            onPointerUp={handleScrubEnd}
+            onChange={handleRangeChange}
             disabled={!song || duration <= 0 || isPlayerLocked}
-            className="w-full h-1.5 bg-zinc-700/80 rounded-lg appearance-none cursor-pointer accent-white hover:accent-white transition touch-none disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{
-              background: `linear-gradient(to right, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.85) ${progressPercent}%, rgba(255,255,255,0.2) ${progressPercent}%, rgba(255,255,255,0.2) 100%)`
-            }}
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden="true"
           />
         </div>
 
-        <div className="flex justify-between items-center text-[11px] font-mono text-zinc-400 mt-1.5 px-0.5">
-          <span>{formatTime(currentDisplayTime)}</span>
-          <span>{formatRemainingTime(currentDisplayTime, duration)}</span>
+        {/* Time display: left is elapsed time; right is touch-switchable remaining / duration */}
+        <div className="flex justify-between items-center text-[11px] font-mono text-zinc-400 mt-0.5 px-0.5 select-none">
+          <span className="tabular-nums py-1.5 min-w-[36px] text-left">
+            {formatTime(currentDisplayTime)}
+          </span>
+          <button
+            type="button"
+            onClick={toggleTimeDisplayMode}
+            className="tabular-nums py-1.5 px-2 -mr-2 rounded-md text-right text-zinc-400 hover:text-white active:opacity-60 transition cursor-pointer touch-manipulation min-w-[48px] min-h-[32px] flex items-center justify-end"
+            title={
+              timeDisplayMode === 'remaining'
+                ? 'Remaining time (-M:SS). Tap to show total duration'
+                : 'Total duration (M:SS). Tap to show remaining time'
+            }
+            aria-label={
+              timeDisplayMode === 'remaining'
+                ? `Remaining time: ${formatRemainingTime(currentDisplayTime, duration)}. Tap to switch to total duration.`
+                : `Total duration: ${formatTime(duration)}. Tap to switch to remaining time.`
+            }
+          >
+            {timeDisplayMode === 'remaining'
+              ? formatRemainingTime(currentDisplayTime, duration)
+              : formatTime(duration)}
+          </button>
         </div>
       </div>
 

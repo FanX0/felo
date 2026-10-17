@@ -232,8 +232,11 @@ function playSessionSound(frequency: number): void {
   }).catch(() => undefined)
 }
 
+/**
+ * Participant join sound is disabled per user request. Maintained as a no-op for backward compatibility.
+ */
 export function playParticipantJoinSound(): void {
-  playSessionSound(ANNOUNCEMENT_HIGH_FREQUENCY_HZ)
+  // Join sound permanently disabled per user request
 }
 
 export function playParticipantLeaveSound(): void {

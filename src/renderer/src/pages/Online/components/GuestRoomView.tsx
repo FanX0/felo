@@ -7,8 +7,6 @@ import {
   Volume2,
   VolumeX,
   Wifi,
-  AlertTriangle,
-  Download,
   Music2,
   Headphones,
   Crown,
@@ -23,11 +21,11 @@ import {
   Minimize2
 } from 'lucide-react'
 import type { Song } from '../../../types'
+import { cn } from '../../../lib/utils'
 import type { ListeningRoom } from '../../../online/types'
 import type { RoomMemberInfo } from '../types'
 import { formatBytes, formatTime, getSongKey } from '../utils'
 import { isYouTubeSong } from '../../../lib/youtubeService'
-import { AppCapabilities } from '../../../lib/appConfig'
 import { getSupabase } from '../../../lib/supabase'
 import { usePlayerStore } from '../../../hooks/usePlayerStore'
 import { useListeningStore } from '../../../hooks/useListeningStore'
@@ -40,8 +38,8 @@ interface GuestRoomViewProps {
   joinedRoom: ListeningRoom
   hostName: string
   activeSubstitute?: any
-  autoDownloadMissing: boolean
-  setAutoDownloadMissing: (v: boolean) => void
+  autoDownloadMissing?: boolean
+  setAutoDownloadMissing?: (v: boolean) => void
   setIsManualSyncModalOpen: (v: boolean) => void
   manualSyncOffsetMs: number
   handleLeaveSession: () => void
@@ -61,7 +59,7 @@ interface GuestRoomViewProps {
   syncStatus: string
   missingSong: any
   openReplaceModal: () => void
-  handleDownloadMissingSong: () => void
+  handleDownloadMissingSong?: () => void
   leaveJoinedRoom: () => Promise<void>
   handleResetSubstitute: () => void
   isPlaying: boolean
@@ -73,7 +71,7 @@ interface GuestRoomViewProps {
   setMessage: (msg: string) => void
   listenerQueueTab: 'all' | 'priority' | 'local'
   setListenerQueueTab: (tab: 'all' | 'priority' | 'local') => void
-  transfers: any[]
+  transfers?: any[]
   onOpenDownloadPanel?: (target: any) => void
   showReplaceModal: boolean
   setShowReplaceModal: (v: boolean) => void
@@ -87,8 +85,6 @@ export default function GuestRoomView({
   joinedRoom,
   hostName,
   activeSubstitute,
-  autoDownloadMissing,
-  setAutoDownloadMissing,
   setIsManualSyncModalOpen,
   manualSyncOffsetMs,
   handleLeaveSession,
@@ -108,7 +104,6 @@ export default function GuestRoomView({
   syncStatus,
   missingSong,
   openReplaceModal,
-  handleDownloadMissingSong,
   leaveJoinedRoom,
   handleResetSubstitute,
   isPlaying,
@@ -120,8 +115,6 @@ export default function GuestRoomView({
   setMessage,
   listenerQueueTab,
   setListenerQueueTab,
-  transfers,
-  onOpenDownloadPanel,
   showReplaceModal,
   setShowReplaceModal,
   replaceSearchQuery,
@@ -209,25 +202,6 @@ export default function GuestRoomView({
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-          {/* Ephemeral Stream vs Save toggle */}
-          <button
-            type="button"
-            onClick={() => setAutoDownloadMissing(!autoDownloadMissing)}
-            title={
-              autoDownloadMissing
-                ? 'Auto-Download: ON (Saving full tracks to local library)'
-                : 'Stream Mode (Default): Pure in-memory streaming like public app (No files saved)'
-            }
-            className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all border cursor-pointer ${
-              autoDownloadMissing
-                ? 'border-primary/50 bg-primary/20 text-primary hover:bg-primary/30 shadow-xs'
-                : 'border-border bg-surface text-text hover:bg-surface-elevated'
-            }`}
-          >
-            <Radio className="h-3.5 w-3.5" />
-            <span>{autoDownloadMissing ? 'Auto-Download: ON' : 'Stream Mode (No Save)'}</span>
-          </button>
-
           {/* Manual Sync (ms) Latency Calibration - Active for Join User */}
           <button
             type="button"
@@ -252,29 +226,9 @@ export default function GuestRoomView({
         </div>
       </header>
 
-      {/* Compliance & Fidelity Notice */}
-      <div className="mt-4 p-3 rounded-xl border border-border bg-surface-elevated flex items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-2.5">
-          <span className="p-1.5 rounded-lg bg-surface border border-border text-primary shrink-0">
-            <Radio className="w-4 h-4" />
-          </span>
-          <div>
-            <span className="font-bold text-text flex items-center gap-2 flex-wrap">
-              <span>Lossless Ephemeral Audio Sync</span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-surface border border-border text-text-muted font-mono">
-                100% Studio Lossless • In-RAM
-              </span>
-            </span>
-            <p className="text-[11px] text-text-muted mt-0.5">
-              Audio streams in synchronized lossless quality for this session only. No permanent files are saved to your drive.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Settings Sync */}
-      <div className="mt-4 p-4 sm:p-5 rounded-2xl border border-border bg-surface-elevated shadow-xs">
-        <SettingsSyncSection />
+      {/* Settings Sync (Compact Bar) */}
+      <div className="mt-4">
+        <SettingsSyncSection variant="compact" />
       </div>
 
       {/* Autoplay Blocked Alert Banner */}
@@ -430,24 +384,17 @@ export default function GuestRoomView({
         </div>
       )}
 
-      {/* Buffering Lossless Master Alert Banner */}
+      {/* Buffering Audio Stream Banner */}
       {syncStatus === 'buffering' && (
-        <div className="mt-6 rounded-xl border border-border bg-surface-elevated p-4 animate-fade-in shadow-sm">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface text-primary border border-border">
-                <Loader2 className="h-5 w-5 animate-spin" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <p className="text-sm font-bold text-text">
-                    Buffering Audio: "{displaySong?.title || joinedRoom.song?.title || 'Current Track'}"
-                  </p>
-                  <span className="rounded-full bg-surface border border-border px-2 py-0.5 text-[10px] font-mono font-bold text-text-muted">
-                    {activeJit?.percent ?? 0}%
-                  </span>
-                </div>
-                <p className="text-xs text-text-muted mt-0.5">
+        <div className="mt-4 rounded-xl border border-border bg-surface-elevated p-3.5 animate-fade-in shadow-xs">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-text truncate">
+                  Buffering Stream: "{displaySong?.title || joinedRoom.song?.title || 'Current Track'}"
+                </p>
+                <p className="text-[11px] text-text-muted truncate mt-0.5">
                   {activeJit?.totalBytes
                     ? `Receiving bit-perfect audio stream (${formatBytes(activeJit.receivedBytes)} / ${formatBytes(activeJit.totalBytes)}) in ephemeral RAM buffer.`
                     : (activeJit?.statusText || 'Receiving audio chunks from host directly into RAM...')}
@@ -455,16 +402,14 @@ export default function GuestRoomView({
               </div>
             </div>
 
-            {activeJit?.totalBytes ? (
-              <div className="text-right shrink-0">
-                <span className="text-xs font-mono font-bold text-primary">
-                  {formatBytes(activeJit.receivedBytes)} / {formatBytes(activeJit.totalBytes)}
-                </span>
-              </div>
-            ) : null}
+            <div className="text-right shrink-0">
+              <span className="text-xs font-mono font-bold text-primary">
+                {activeJit?.percent ?? 0}%
+              </span>
+            </div>
           </div>
 
-          <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-surface border border-border">
+          <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-surface border border-border">
             <div
               className="h-full rounded-full bg-primary transition-all duration-150 ease-out"
               style={{ width: `${Math.max(2, activeJit?.percent ?? 0)}%` }}
@@ -473,7 +418,7 @@ export default function GuestRoomView({
         </div>
       )}
 
-      {/* Missing Song Alert Banner */}
+      {/* Stream Connecting / Negotiating Banner */}
       {syncStatus === 'missing_song' && missingSong && !activeSubstitute && !isReceivingDeviceStream && !joinedRoom.song?.isDeviceStream && (() => {
         const isStreamAvailable = Boolean(
           joinedRoom.is_device_stream ||
@@ -481,101 +426,18 @@ export default function GuestRoomView({
           joinedRoom.song?.streamType === 'device_audio'
         )
 
-        if (!AppCapabilities.downloads) {
-          if (isStreamAvailable) {
-            return (
-              <div className="mt-6 flex items-center justify-between rounded-xl border border-border bg-surface-elevated p-4 animate-fade-in shadow-sm">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface text-primary border border-border">
-                    <Radio className="h-5 w-5 animate-pulse" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-text">
-                      "{missingSong.title}" • Live Stream Available
-                    </p>
-                    <p className="text-xs text-text-muted mt-0.5">
-                      Streamed live from host in studio quality (Bit-Perfect Lossless / 510 kbps Opus • Ephemeral in RAM).
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => void connectToDeviceStream(joinedRoom)}
-                    className="flex items-center gap-1.5 rounded-full bg-primary hover:bg-primary-hover text-primary-foreground font-bold px-3.5 py-2 text-xs transition-all shadow-xs active:scale-95 cursor-pointer"
-                  >
-                    <Radio className="h-3.5 w-3.5" />
-                    <span>Tune In Live</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={openReplaceModal}
-                    className="flex items-center gap-1.5 rounded-full border border-border bg-surface hover:bg-surface-elevated px-3.5 py-2 text-xs font-bold text-text transition-all cursor-pointer"
-                  >
-                    <SlidersHorizontal className="h-3.5 w-3.5" />
-                    <span>Use Local File</span>
-                  </button>
-                </div>
-              </div>
-            )
-          }
-
-          return (
-            <div className="mt-6 flex items-center justify-between rounded-xl border border-border bg-surface-elevated p-4 animate-fade-in shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface text-text-muted border border-border">
-                  <Radio className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-text">
-                    "{missingSong.title}" is on the host's device
-                  </p>
-                  <p className="text-xs text-text-muted mt-0.5">
-                    Waiting for host audio stream. You can also pick a local file to match playback.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={openReplaceModal}
-                  className="flex items-center gap-1.5 rounded-full border border-border bg-surface hover:bg-surface-elevated px-3.5 py-2 text-xs font-bold text-text transition-all cursor-pointer"
-                >
-                  <SlidersHorizontal className="h-3.5 w-3.5" />
-                  <span>Use Local File</span>
-                </button>
-              </div>
-            </div>
-          )
-        }
-
-        const activeMissingDownload = transfers.find((t) => {
-          const matchTitle = t.title.toLowerCase() === missingSong.title.toLowerCase()
-          return matchTitle && (t.status === 'downloading' || t.status === 'queued')
-        })
-
         return (
-          <div className="mt-6 flex items-center justify-between rounded-xl border border-border bg-surface-elevated p-4 animate-fade-in shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface text-text border border-border">
-                {activeMissingDownload ? (
-                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                ) : (
-                  <AlertTriangle className="h-5 w-5 text-text-muted" />
-                )}
+          <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-border bg-surface-elevated p-3.5 animate-fade-in shadow-xs">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface text-primary border border-border">
+                <Radio className="h-4 w-4 animate-pulse" />
               </div>
-              <div>
-                <p className="text-sm font-bold text-text">
-                  "{missingSong.title}" is missing locally
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-text truncate">
+                  Connecting to host audio stream...
                 </p>
-                <p className="text-xs text-text-muted mt-0.5">
-                  {activeMissingDownload
-                    ? `Downloading from ${activeMissingDownload.sourceName || activeMissingDownload.source} (${activeMissingDownload.progress}%)... Will play automatically.`
-                    : autoDownloadMissing
-                      ? 'Acquiring track in the background... It will start playing automatically once ready.'
-                      : 'Stream live from host, download for offline access, or choose a local substitute.'}
+                <p className="text-[11px] text-text-muted truncate mt-0.5">
+                  Waiting for "{missingSong.title}" to buffer from host. You can also pick a local substitute.
                 </p>
               </div>
             </div>
@@ -585,37 +447,20 @@ export default function GuestRoomView({
                 <button
                   type="button"
                   onClick={() => void connectToDeviceStream(joinedRoom)}
-                  className="flex items-center gap-1.5 rounded-full bg-primary hover:bg-primary-hover text-primary-foreground font-bold px-3.5 py-2 text-xs transition-all shadow-xs active:scale-95 cursor-pointer"
+                  className="flex items-center gap-1.5 rounded-full bg-primary hover:bg-primary-hover text-primary-foreground font-bold px-3.5 py-1.5 text-xs transition-all shadow-xs active:scale-95 cursor-pointer"
                 >
-                  <Radio className="h-3.5 w-3.5" />
+                  <Radio className="h-3 w-3" />
                   <span>Stream Live</span>
                 </button>
               )}
-
               <button
                 type="button"
                 onClick={openReplaceModal}
-                className="flex items-center gap-1.5 rounded-full border border-border bg-surface hover:bg-surface-elevated px-3.5 py-2 text-xs font-bold text-text transition-all cursor-pointer"
+                className="flex items-center gap-1.5 rounded-full border border-border bg-surface hover:bg-surface-elevated px-3 py-1.5 text-xs font-bold text-text transition-all cursor-pointer shadow-xs"
               >
-                <SlidersHorizontal className="h-3.5 w-3.5" />
-                <span>Replace</span>
+                <SlidersHorizontal className="h-3 w-3 text-primary" />
+                <span>Use Local File</span>
               </button>
-
-              {activeMissingDownload ? (
-                <div className="flex items-center gap-1.5 rounded-full bg-surface border border-border px-4 py-2 text-xs font-bold text-text">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                  <span>{activeMissingDownload.progress}%</span>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleDownloadMissingSong}
-                  className="flex items-center gap-1.5 rounded-full bg-primary hover:bg-primary-hover px-4 py-2 text-xs font-bold text-primary-foreground transition-all cursor-pointer shadow-xs"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  <span>Download</span>
-                </button>
-              )}
             </div>
           </div>
         )
@@ -707,7 +552,20 @@ export default function GuestRoomView({
               {displaySong?.artist || hostName}
             </p>
 
-            <div className="mt-3 flex items-center justify-center gap-2">
+            <div className="mt-3 flex items-center justify-center gap-2 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 text-[10px] px-2.5 py-1 rounded-full bg-surface border border-border text-text-muted font-mono font-medium shadow-xs">
+                <Radio className="h-3 w-3 text-primary animate-pulse" />
+                <span>
+                  {isLosslessMasterActive
+                    ? '100% Studio Lossless • In-RAM'
+                    : isReceivingDeviceStream
+                      ? '510 kbps Studio Opus'
+                      : isYouTubeSong(displaySong)
+                        ? 'YouTube Live Sync'
+                        : 'Lossless Ephemeral Stream'}
+                </span>
+              </span>
+
               <button
                 type="button"
                 onClick={openReplaceModal}
@@ -737,16 +595,14 @@ export default function GuestRoomView({
             </div>
             <div className="mt-2 flex items-center justify-between text-xs font-bold text-text-muted">
               <span>{formatTime(effectiveTime)}</span>
-              <span className="flex items-center gap-1.5 text-[11px] text-text">
-                <Radio className="h-3 w-3 text-primary" />
-                {activeJit && activeJit.percent < 100 ? (
-                  <span className="text-primary font-mono">
+              {activeJit && activeJit.percent < 100 && (
+                <span className="flex items-center gap-1.5 text-[11px] text-primary font-mono">
+                  <Radio className="h-3 w-3 text-primary animate-pulse" />
+                  <span>
                     Buffering {activeJit.percent}%{activeJit.totalBytes ? ` (${formatBytes(activeJit.receivedBytes)} / ${formatBytes(activeJit.totalBytes)})` : ''}
                   </span>
-                ) : (
-                  <span>Live Sync</span>
-                )}
-              </span>
+                </span>
+              )}
               <span>{formatTime(songDuration)}</span>
             </div>
           </div>
@@ -865,7 +721,10 @@ export default function GuestRoomView({
                     {isYouTubeSong(currentSong) && (
                       <div
                         id="youtube-stage-dock"
-                        className="w-full aspect-video rounded-2xl bg-black/90 border border-border overflow-hidden mb-3 relative shadow-md flex items-center justify-center transition-all"
+                        className={cn(
+                          "w-full aspect-video rounded-2xl bg-black/90 border border-border mb-3 relative shadow-md flex items-center justify-center transition-all",
+                          isYouTubeFullscreen ? "overflow-visible" : "overflow-hidden"
+                        )}
                       >
                         {isYouTubeFullscreen ? (
                           <div className="flex flex-col items-center gap-2.5 text-text-muted text-xs p-6 text-center animate-fade-in">
@@ -893,26 +752,6 @@ export default function GuestRoomView({
                             <Radio className="h-6 w-6 text-primary animate-pulse" />
                             <span className="font-bold text-sm text-text">Synchronizing Live YouTube Stream...</span>
                             <span className="text-[11px] text-text-muted">Audio and video stream in unison across all room listeners.</span>
-                            <div className="flex items-center gap-2 mt-2">
-                              <button
-                                type="button"
-                                onClick={() => window.dispatchEvent(new CustomEvent('felo:enter-fullscreen-youtube'))}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold transition-all cursor-pointer shadow-sm active:scale-95"
-                                title="Expand into Full-Screen Modal"
-                              >
-                                <Maximize2 className="h-3.5 w-3.5" />
-                                <span>Full Screen Modal</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => window.dispatchEvent(new CustomEvent('felo:dock-youtube-stage'))}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all cursor-pointer border border-white/10 shadow-sm active:scale-95"
-                                title="Dock player back into this stage"
-                              >
-                                <Radio className="h-3.5 w-3.5 text-primary" />
-                                <span>Dock Stage</span>
-                              </button>
-                            </div>
                           </div>
                         )}
                       </div>
@@ -1198,32 +1037,6 @@ export default function GuestRoomView({
                   </button>
                 ))
               )}
-            </div>
-
-            {/* Provider alternative search */}
-            <div className="pt-3 border-t border-border mt-3 flex items-center justify-between gap-3">
-              <span className="text-[11px] text-text-muted">Need a different version?</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowReplaceModal(false)
-                  if (joinedRoom.song) {
-                    onOpenDownloadPanel?.({
-                      id: '',
-                      title: joinedRoom.song.title,
-                      artist: joinedRoom.song.artist,
-                      album: joinedRoom.song.album || '',
-                      duration: joinedRoom.song.duration || 0,
-                      artworkPath: joinedRoom.song.artworkUrl,
-                      isOnline: true
-                    })
-                  }
-                }}
-                className="inline-flex items-center gap-1.5 rounded-full bg-primary hover:bg-primary-hover text-primary-foreground px-3.5 py-1.5 text-xs font-bold transition-all shadow-xs cursor-pointer"
-              >
-                <Download className="h-3.5 w-3.5" />
-                <span>Search All Providers</span>
-              </button>
             </div>
           </div>
         </div>

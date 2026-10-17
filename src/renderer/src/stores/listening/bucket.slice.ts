@@ -11,7 +11,9 @@ import {
   setLastHostPulse,
   setIsSessionSyncing,
   setNeedsInitialSync,
-  setLastSyncedSongId
+  setLastSyncedSongId,
+  getPreJoinPlayerSnapshot,
+  savePreJoinPlayerSnapshot
 } from './helpers'
 import {
   ensureTrackInAudioBucket,
@@ -28,7 +30,7 @@ import {
 } from '../../lib/jitAudioPipeline'
 import { fetchYouTubeMetadata } from '../../lib/youtubeService'
 import { roomClockSync } from '../../lib/roomClockSync'
-import { setAudioPlaybackRate } from '../../lib/audioBridge'
+import { setAudioPlaybackRate, registerAudioTimeProvider } from '../../lib/audioBridge'
 
 export const createAudioBucketSlice: StateCreator<
   ListeningStoreState,
@@ -437,15 +439,31 @@ export const createAudioBucketSlice: StateCreator<
     setIsSessionSyncing(false)
     setNeedsInitialSync(true)
     roomClockSync.reset()
+
+    // 1. Unconditionally disconnect WebRTC device stream and sweep physical audio elements
     get().disconnectFromDeviceStream()
-    setAudioPlaybackRate(1.0)
-    setLastSyncedSongId(null)
-    const currentBlob = get().losslessStreamBlobUrl
-    if (currentBlob) {
+    if (typeof document !== 'undefined') {
       try {
-        URL.revokeObjectURL(currentBlob)
+        const streamElements = document.querySelectorAll('audio[data-felo-system-audio="webrtc-stream-player"]')
+        streamElements.forEach((el) => {
+          try {
+            (el as HTMLAudioElement).pause()
+            ;(el as HTMLAudioElement).srcObject = null
+            el.remove()
+          } catch {}
+        })
       } catch {}
     }
+
+    // 2. Unconditionally stop and tear down YouTube stream playback
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('felo:stop-youtube'))
+      } catch {}
+    }
+    registerAudioTimeProvider(null)
+
+    // 3. Clear room state so playbackGuard immediately unlocks local player actions
     set({
       joinedRoom: null,
       syncStatus: 'idle',
@@ -461,5 +479,29 @@ export const createAudioBucketSlice: StateCreator<
       members: [],
       pendingLeaveAndPlay: null
     })
+
+    // 4. Queue isolation: restore pre-join local player snapshot or purge room session tracks
+    const snapshot = getPreJoinPlayerSnapshot()
+    savePreJoinPlayerSnapshot(null)
+    const player = usePlayerStore.getState()
+    if (snapshot && snapshot.queue && snapshot.queue.length > 0) {
+      player.setQueue(snapshot.queue, snapshot.currentSongIndex)
+      if (snapshot.currentTime > 0) {
+        player.seek(snapshot.currentTime)
+        player.setCurrentTime(snapshot.currentTime)
+      }
+      player.setIsPlaying(false)
+    } else {
+      player.clearQueue()
+    }
+
+    setAudioPlaybackRate(1.0)
+    setLastSyncedSongId(null)
+    const currentBlob = get().losslessStreamBlobUrl
+    if (currentBlob) {
+      try {
+        URL.revokeObjectURL(currentBlob)
+      } catch {}
+    }
   }
 })

@@ -94,4 +94,28 @@ describe('ProgressBar Component', () => {
     fireEvent.pointerUp(track, { clientX: 50, pointerId: 1 })
     expect(seekMock).not.toHaveBeenCalled()
   })
+
+  it('toggles between total duration and remaining time on click', () => {
+    localStorage.removeItem('felo_mobile_time_mode')
+    const { getByRole, getByText, queryByText } = render(
+      <ProgressBar duration={100} currentTime={40} seek={vi.fn()} />
+    )
+
+    // Initially displays total duration "1:40"
+    const timeToggleBtn = getByRole('button', { name: /Total duration/i })
+    expect(timeToggleBtn).toBeInTheDocument()
+    expect(getByText('1:40')).toBeInTheDocument()
+
+    // Click to switch to remaining time "-1:00" (100 - 40 = 60s)
+    fireEvent.click(timeToggleBtn)
+    expect(getByText('-1:00')).toBeInTheDocument()
+    expect(queryByText('1:40')).not.toBeInTheDocument()
+    expect(localStorage.getItem('felo_mobile_time_mode')).toBe('remaining')
+
+    // Click again to switch back to total duration "1:40"
+    fireEvent.click(timeToggleBtn)
+    expect(getByText('1:40')).toBeInTheDocument()
+    expect(queryByText('-1:00')).not.toBeInTheDocument()
+    expect(localStorage.getItem('felo_mobile_time_mode')).toBe('duration')
+  })
 })

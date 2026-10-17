@@ -1031,9 +1031,9 @@ export const createRoomPlaybackSlice: StateCreator<
       if (getAudioPlaybackRate() !== 1.0) {
         setAudioPlaybackRate(1.0)
       }
-      // If host switched time while paused, align guest position smoothly while paused
+      // If host is paused, align guest position accurately (drift > 0.05s) so video frame & lyrics match host exactly
       const drift = Math.abs(currentGuestTime - targetTime)
-      if (drift > 0.4) {
+      if (drift > 0.05) {
         setIsSessionSyncing(true)
         playerState.seek(targetTime)
         playerState.setCurrentTime(targetTime)
@@ -1041,6 +1041,26 @@ export const createRoomPlaybackSlice: StateCreator<
           setIsSessionSyncing(false)
         }, 500)
       }
+      if (room.song) {
+        room.song.hostPosition = hostPos
+        room.song.hostTimestamp = hostTimestamp
+      }
+      set((state) => ({
+        joinedRoom: state.joinedRoom
+          ? {
+              ...state.joinedRoom,
+              position_seconds: Math.round(targetTime),
+              is_playing: false,
+              song: state.joinedRoom.song
+                ? {
+                    ...state.joinedRoom.song,
+                    hostPosition: hostPos,
+                    hostTimestamp: hostTimestamp
+                  }
+                : null
+            }
+          : null
+      }))
     }
   },
 
@@ -1186,9 +1206,9 @@ export const createRoomPlaybackSlice: StateCreator<
       if (getAudioPlaybackRate() !== 1.0) {
         setAudioPlaybackRate(1.0)
       }
-      // If host switched time while paused, align guest position immediately
+      // If host is paused, snap guest position accurately (drift > 0.05s) so listener's frame & lyrics match host exactly
       const drift = Math.abs(currentGuestTime - targetTime)
-      if (drift > 0.4) {
+      if (drift > 0.05) {
         setIsSessionSyncing(true)
         playerState.seek(targetTime)
         playerState.setCurrentTime(targetTime)
@@ -1254,19 +1274,148 @@ export const createRoomPlaybackSlice: StateCreator<
       }
       case 'soft_align': {
         // MUSIXQUARE pitch-preserving micro rate adjustment:
-        // Smoothly catch up without any audio dropout, clicks or seek jumps
-        if (typeof result.recommendedRate === 'number' && Math.abs(result.recommendedRate - 1.0) > 0.005) {
+        // Smoothly catch up without any audio dropout, clicks or seek jumps (HTML5 local audio only)
+        if (!isYouTube && typeof result.recommendedRate === 'number' && Math.abs(result.recommendedRate - 1.0) > 0.005) {
           setAudioPlaybackRate(result.recommendedRate)
         }
         break
       }
       case 'in_sync': {
-        if (getAudioPlaybackRate() !== 1.0) {
+        if (!isYouTube && getAudioPlaybackRate() !== 1.0) {
           setAudioPlaybackRate(1.0)
         }
         break
       }
     }
+  },
+
+  handleHostExplicitSeek: (payload: { position: number; hostTimestamp: number; trackId?: string }): void => {
+    const user = useOnlineStore.getState().user
+    const joined = get().joinedRoom
+    if (!joined || joined.host_id === user?.id) return
+
+    // Always register host presence unconditionally
+    set({ lastHostUpdate: Date.now() })
+
+    if (joined.song?.isDeviceStream || joined.is_device_stream || get().isReceivingDeviceStream) {
+      if (joined.song) {
+        joined.song.hostPosition = payload.position
+        joined.song.hostTimestamp = payload.hostTimestamp
+      }
+      usePlayerStore.getState().setCurrentTime(payload.position)
+      return
+    }
+
+    const playerState = usePlayerStore.getState()
+    const currentSong = playerState.queue[playerState.currentSongIndex]
+    if (
+      payload.trackId &&
+      currentSong &&
+      payload.trackId !== currentSong.id &&
+      payload.trackId !== (currentSong as any).localId &&
+      payload.trackId !== joined.song?.localId &&
+      payload.trackId !== (joined.song as any)?.id
+    ) {
+      return
+    }
+
+    const duration = joined.song?.duration || playerState.duration || 0
+    const manualOffsetSec = (get().manualSyncOffsetMs || 0) / 1000
+    const targetTime = roomClockSync.calculateTargetTime(
+      payload.position,
+      payload.hostTimestamp,
+      playerState.isPlaying,
+      manualOffsetSec,
+      duration
+    )
+
+    setIsSessionSyncing(true)
+    roomClockSync.notifyManualOffsetChanged()
+    playerState.seek(targetTime)
+    playerState.setCurrentTime(targetTime)
+
+    if (joined.song) {
+      joined.song.hostPosition = payload.position
+      joined.song.hostTimestamp = payload.hostTimestamp
+    }
+    set((state) => ({
+      joinedRoom: state.joinedRoom
+        ? {
+            ...state.joinedRoom,
+            position_seconds: Math.round(targetTime),
+            song: state.joinedRoom.song
+              ? {
+                  ...state.joinedRoom.song,
+                  hostPosition: payload.position,
+                  hostTimestamp: payload.hostTimestamp
+                }
+              : null
+          }
+        : null
+    }))
+
+    setTimeout(() => {
+      setIsSessionSyncing(false)
+    }, 800)
+  },
+
+  handleHostExplicitPlayPause: (payload: { isPlaying: boolean; position?: number; hostTimestamp: number; trackId?: string }): void => {
+    const user = useOnlineStore.getState().user
+    const joined = get().joinedRoom
+    if (!joined || joined.host_id === user?.id) return
+
+    // Always register host presence unconditionally
+    set({ lastHostUpdate: Date.now() })
+
+    if (joined.song?.isDeviceStream || joined.is_device_stream || get().isReceivingDeviceStream) {
+      return
+    }
+
+    const playerState = usePlayerStore.getState()
+    if (playerState.isPlaying !== payload.isPlaying) {
+      playerState.setIsPlaying(payload.isPlaying)
+    }
+
+    if (!payload.isPlaying) {
+      // Host paused: reset rate and align guest frame cleanly to paused position
+      if (getAudioPlaybackRate() !== 1.0) {
+        setAudioPlaybackRate(1.0)
+      }
+      if (typeof payload.position === 'number') {
+        const activeTime = getActiveAudioTime()
+        const currentGuestTime = activeTime > 0 ? activeTime : playerState.currentTime || 0
+        const drift = Math.abs(currentGuestTime - payload.position)
+        if (drift > 0.05) {
+          setIsSessionSyncing(true)
+          playerState.seek(payload.position)
+          playerState.setCurrentTime(payload.position)
+          setTimeout(() => {
+            setIsSessionSyncing(false)
+          }, 500)
+        }
+      }
+    }
+
+    if (joined.song && typeof payload.position === 'number') {
+      joined.song.hostPosition = payload.position
+      joined.song.hostTimestamp = payload.hostTimestamp
+    }
+    set((state) => ({
+      joinedRoom: state.joinedRoom
+        ? {
+            ...state.joinedRoom,
+            is_playing: payload.isPlaying,
+            position_seconds: typeof payload.position === 'number' ? Math.round(payload.position) : state.joinedRoom.position_seconds,
+            song: state.joinedRoom.song
+              ? {
+                  ...state.joinedRoom.song,
+                  hostPosition: typeof payload.position === 'number' ? payload.position : state.joinedRoom.song.hostPosition,
+                  hostTimestamp: payload.hostTimestamp
+                }
+              : null
+          }
+        : null
+    }))
   },
 
   checkHostHealth: async (): Promise<void> => {

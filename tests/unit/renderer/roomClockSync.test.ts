@@ -44,11 +44,11 @@ describe('Renderer Core: roomClockSync', () => {
     expect(result.drift).toBeCloseTo(0.02, 2)
   })
 
-  it('triggers hard_seek when drift exceeds 2.0s', () => {
+  it('triggers hard_seek when drift exceeds 15.0s catastrophic threshold', () => {
     vi.spyOn(Date, 'now').mockReturnValue(2000)
 
-    // drift = 13.0 - 10.0 = 3.0s (> 2.0s)
-    const result = roomClockSync.evaluateDrift(13.0, 10.0, true)
+    // drift = 26.0 - 10.0 = 16.0s (> 15.0s)
+    const result = roomClockSync.evaluateDrift(26.0, 10.0, true)
     expect(result.action).toBe('hard_seek')
   })
 

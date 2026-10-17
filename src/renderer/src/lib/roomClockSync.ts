@@ -50,15 +50,21 @@ interface ClockSample {
   timestamp: number
 }
 
-// ─── MUSIXQUARE Core Constants (Direct Parity) ────────────────────────────────
+// ─── Industry Standard Sync & Drift Control Constants ─────────────────────────
 const MAX_SAMPLES = 60
 const SAMPLE_AGE_LIMIT_MS = 120_000 // 2 minutes (MUSIXQUARE shared-clock.ts AGE_LIMIT)
 const MAX_RTT_SAMPLE_MS = 1500 // Discard latency spikes > 1.5s
-const FILE_HARD_RESYNC_DRIFT_SEC = 2.0 // MUSIXQUARE FILE_HARD_RESYNC_DRIFT_SEC = 2
-const FILE_SOFT_RESYNC_DRIFT_SEC = 0.05 // MUSIXQUARE FILE_SOFT_RESYNC_DRIFT_SEC = 0.05 (50ms)
-const FILE_SOFT_RESYNC_REQUIRED_SAMPLES = 3 // MUSIXQUARE FILE_SOFT_RESYNC_REQUIRED_SAMPLES = 3
-const FILE_SOFT_RESYNC_COOLDOWN_MS = 10_000 // MUSIXQUARE FILE_SOFT_RESYNC_COOLDOWN_MS = 10,000 (10s)
-const HARD_SEEK_COOLDOWN_MS = 2500 // 2.5s cooldown between hard seeks
+/**
+ * Hard desync threshold for steady-state playback.
+ * Industry standard (Spotify Jam, Watch2Gether, Syncplay):
+ * Continuous steady playback should NEVER hard seek for normal network jitter or minor drift.
+ * Hard seeks are reserved for explicit host actions or catastrophic desync (> 15s).
+ */
+export const FILE_HARD_RESYNC_DRIFT_SEC = 15.0
+export const FILE_SOFT_RESYNC_DRIFT_SEC = 0.05 // 50ms deadband for acoustic unison
+export const FILE_SOFT_RESYNC_REQUIRED_SAMPLES = 3 // 3 consecutive samples in same direction
+export const FILE_SOFT_RESYNC_COOLDOWN_MS = 10_000 // 10s cooldown for rate adjustment
+export const HARD_SEEK_COOLDOWN_MS = 5000 // 5.0s cooldown between emergency hard seeks
 
 /** Calibrated output advance for Windows local-file playback (matching MUSIXQUARE transport.ts). */
 export const WINDOWS_LOCAL_FILE_OUTPUT_ADVANCE_SEC = 0.02

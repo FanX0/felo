@@ -36,7 +36,23 @@ export function getActiveAudioMediaStream(): MediaStream | null {
   }
 }
 
+let customTimeProvider: (() => number | null) | null = null
+
+export function registerAudioTimeProvider(provider: (() => number | null) | null): void {
+  customTimeProvider = provider
+}
+
 export function getActiveAudioTime(): number {
+  if (customTimeProvider) {
+    try {
+      const time = customTimeProvider()
+      if (typeof time === 'number' && Number.isFinite(time)) {
+        return time
+      }
+    } catch {
+      // Fall through to activeAudioElement
+    }
+  }
   if (!activeAudioElement) return 0
   return activeAudioElement.currentTime || 0
 }

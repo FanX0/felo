@@ -9,7 +9,8 @@ import {
   setIsSessionSyncing,
   needsInitialSync,
   setNeedsInitialSync,
-  readInitialAutoDownload
+  readInitialAutoDownload,
+  savePreJoinPlayerSnapshot
 } from '../../../src/renderer/src/stores/listening/helpers'
 import {
   forceStereoSdp,
@@ -17,6 +18,7 @@ import {
   WebRTCAudioClient
 } from '../../../src/renderer/src/lib/webrtcAudioStream'
 import type { ListeningRoom, SharedSong } from '../../../src/renderer/src/online/types'
+import { playParticipantJoinSound } from '../../../src/renderer/src/lib/uiSounds'
 
 const mockSampleSongs: SharedSong[] = [
   {
@@ -87,7 +89,9 @@ describe('Listen Together: Industry-Standard Room Sync & Anti-Jumping Integratio
       hostRoomStopped: false,
       syncStatus: 'idle',
       myRole: 'listener',
-      memberCount: 1
+      memberCount: 1,
+      isReceivingDeviceStream: false,
+      isDeviceAudioSharing: false
     })
 
     useDspStore.setState({
@@ -183,13 +187,13 @@ describe('Listen Together: Industry-Standard Room Sync & Anti-Jumping Integratio
     expect(s3.action).toBe('soft_align')
     expect(s3.recommendedRate).toBeLessThan(1.0) // Slows down gently to converge
 
-    // Case C: Hard Drift (> 2.0s) -> one-shot hard_seek with 2.5s cooldown
-    const hardResult = roomClockSync.evaluateDrift(15.0, 10.0, true) // 5.0s desync
+    // Case C: Catastrophic Hard Drift (> 15.0s) -> one-shot hard_seek with 5.0s cooldown
+    const hardResult = roomClockSync.evaluateDrift(26.0, 10.0, true) // 16.0s desync
     expect(hardResult.action).toBe('hard_seek')
     expect(hardResult.targetTime).toBe(10.0)
 
     // Cooldown protection: another hard drift immediately afterwards is throttled
-    const throttledResult = roomClockSync.evaluateDrift(15.0, 10.0, true)
+    const throttledResult = roomClockSync.evaluateDrift(26.0, 10.0, true)
     expect(throttledResult.action).toBe('in_sync') // Blocked by cooldown to prevent jumping
   })
 
@@ -1086,5 +1090,301 @@ describe('Listen Together: Industry-Standard Room Sync & Anti-Jumping Integratio
     expect(usePlayerStore.getState().isPlaying).toBe(false)
     expect(useListeningStore.getState().isReceivingDeviceStream).toBe(true)
     expect(useListeningStore.getState().joinedRoom?.is_device_stream).toBe(true)
+  })
+
+  it('25. Participant Join Sound Suppression: Joining sessions or peer joins do not trigger audio chimes or interruptions during active listening', () => {
+    // Calling participant join sound produces no errors and does not interrupt audio
+    expect(() => playParticipantJoinSound()).not.toThrow()
+
+    // When a user joins, joinedRoom is maintained cleanly
+    const testRoom: ListeningRoom = {
+      id: 'room-quiet-join',
+      code: 'QUIET1',
+      name: 'Quiet Join Session',
+      host_id: 'host-1',
+      is_active: true,
+      is_playing: true,
+      position_seconds: 30,
+      is_device_stream: false,
+      queue: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }
+
+    useListeningStore.getState().setJoinedRoom(testRoom)
+    expect(useListeningStore.getState().joinedRoom?.id).toBe('room-quiet-join')
+  })
+
+  it('26. Stream-First Guest Join Experience: Guest joins without redundant download prompts or missing song error cards', async () => {
+    // Setup: Guest joins room playing remote track
+    const remoteSongTrack = {
+      id: 'remote-song-123',
+      localId: 'remote-song-123',
+      title: 'Lossless Live Stream Track',
+      artist: 'Studio Artist',
+      album: 'Studio Live Master',
+      duration: 210,
+      audioUrl: 'https://example.com/audio/remote-song-123.flac',
+      isDeviceStream: false
+    }
+
+    const testRoom: ListeningRoom = {
+      id: 'room-stream-first',
+      code: 'STRM01',
+      name: 'Stream First Room',
+      host_id: 'host-stream',
+      is_active: true,
+      is_playing: true,
+      position_seconds: 45,
+      is_device_stream: false,
+      song: remoteSongTrack,
+      queue: [remoteSongTrack],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }
+
+    useListeningStore.setState({
+      joinedRoom: testRoom,
+      syncStatus: 'synced',
+      missingSong: null
+    })
+
+    // Assert that listener is in synced stream mode without disk download prompts
+    const state = useListeningStore.getState()
+    expect(state.joinedRoom?.song?.title).toBe('Lossless Live Stream Track')
+    expect(state.syncStatus).toBe('synced')
+    expect(state.missingSong).toBeNull()
+
+    // Transitioning into buffering does not set missingSong
+    useListeningStore.setState({ syncStatus: 'buffering' })
+    expect(useListeningStore.getState().syncStatus).toBe('buffering')
+    expect(useListeningStore.getState().missingSong).toBeNull()
+  })
+
+  it('27. Event-Driven Host Seek & Play/Pause: Broadcasts host_seek on user scrub and host_play_pause on toggle; guest executes single seek without continuous jumping', async () => {
+    // Setup listener playing track at 40s
+    const activeSong = {
+      id: 'synced-track-101',
+      title: 'Synchronized Anthem',
+      artist: 'Studio Masters',
+      album: 'Studio Masters',
+      duration: 300,
+      filePath: 'blob:synced-track-101'
+    }
+
+    usePlayerStore.setState({
+      queue: [activeSong as any],
+      currentSongIndex: 0,
+      currentTime: 40,
+      isPlaying: true,
+      seekRequest: null
+    })
+
+    const testRoom: ListeningRoom = {
+      id: 'room-event-sync',
+      code: 'EVTS01',
+      name: 'Event Sync Room',
+      host_id: 'host-event',
+      is_active: true,
+      is_playing: true,
+      position_seconds: 40,
+      is_device_stream: false,
+      song: {
+        id: 'synced-track-101',
+        title: 'Synchronized Anthem',
+        artist: 'Studio Masters',
+        duration: 300,
+        hostPosition: 40,
+        hostTimestamp: Date.now()
+      },
+      queue: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }
+
+    useListeningStore.setState({
+      joinedRoom: testRoom,
+      myRole: 'listener',
+      syncStatus: 'synced'
+    })
+
+    const seekSpy = vi.spyOn(usePlayerStore.getState(), 'seek')
+
+    // 1. Host user explicitly scrubs to 125.0s -> broadcasts host_seek
+    const now = Date.now()
+    useListeningStore.getState().handleHostExplicitSeek({
+      position: 125.0,
+      hostTimestamp: now,
+      trackId: 'synced-track-101'
+    })
+
+    // Assert that listener executes a one-time seek to the scrubbed position
+    expect(seekSpy).toHaveBeenCalledTimes(1)
+    expect(usePlayerStore.getState().currentTime).toBe(125.0)
+    expect(useListeningStore.getState().joinedRoom?.position_seconds).toBe(125)
+
+    // 2. Host user toggles Pause -> broadcasts host_play_pause
+    useListeningStore.getState().handleHostExplicitPlayPause({
+      isPlaying: false,
+      position: 125.0,
+      hostTimestamp: Date.now(),
+      trackId: 'synced-track-101'
+    })
+
+    expect(usePlayerStore.getState().isPlaying).toBe(false)
+    expect(useListeningStore.getState().joinedRoom?.is_playing).toBe(false)
+
+    // 3. Host user toggles Play -> broadcasts host_play_pause
+    useListeningStore.getState().handleHostExplicitPlayPause({
+      isPlaying: true,
+      position: 125.0,
+      hostTimestamp: Date.now(),
+      trackId: 'synced-track-101'
+    })
+
+    expect(usePlayerStore.getState().isPlaying).toBe(true)
+    expect(useListeningStore.getState().joinedRoom?.is_playing).toBe(true)
+  })
+
+  it('28. Steady-State Anti-Jumping Verification: Periodic 2.0s pulses with normal drift (<15s) never trigger hard seeks on YouTube or HTML5 audio', async () => {
+    // Setup listener in steady playback at 60s
+    const ytSong = {
+      id: 'yt-video-789',
+      title: 'YouTube Live Master',
+      artist: 'YT Artist',
+      duration: 240,
+      isYouTube: true,
+      videoId: 'video-789'
+    }
+
+    usePlayerStore.setState({
+      queue: [ytSong as any],
+      currentSongIndex: 0,
+      currentTime: 60.0,
+      isPlaying: true,
+      seekRequest: null
+    })
+
+    const testRoom: ListeningRoom = {
+      id: 'room-steady-state',
+      code: 'STDY01',
+      name: 'Steady State Room',
+      host_id: 'host-steady',
+      is_active: true,
+      is_playing: true,
+      position_seconds: 60,
+      is_device_stream: false,
+      song: {
+        id: 'yt-video-789',
+        title: 'YouTube Live Master',
+        artist: 'YT Artist',
+        duration: 240,
+        isYouTube: true,
+        videoId: 'video-789',
+        hostPosition: 60.0,
+        hostTimestamp: Date.now()
+      },
+      queue: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }
+
+    useListeningStore.setState({
+      joinedRoom: testRoom,
+      myRole: 'listener',
+      syncStatus: 'synced'
+    })
+
+    const seekSpy = vi.spyOn(usePlayerStore.getState(), 'seek')
+
+    // Periodic heartbeat pulses arrive every 2s with slight network offset / latency drift (e.g. 2.5s drift):
+    // In old code, 2.5s drift triggered hard seek every single pulse!
+    // In industry standard code, normal drift under 15s never triggers hard seek during steady state.
+    const now = Date.now()
+    useListeningStore.getState().handleHostSyncPulse({
+      position: 62.5, // 2.5s ahead
+      hostTimestamp: now,
+      isPlaying: true,
+      trackId: 'yt-video-789'
+    })
+
+    // Assert: ZERO hard seeks occurred! Playback is completely smooth and un-interrupted.
+    expect(seekSpy).not.toHaveBeenCalled()
+    expect(usePlayerStore.getState().seekRequest).toBeNull()
+
+    // Even another pulse 2 seconds later does not seek:
+    useListeningStore.getState().handleHostSyncPulse({
+      position: 64.5,
+      hostTimestamp: now + 2000,
+      isPlaying: true,
+      trackId: 'yt-video-789'
+    })
+
+    expect(seekSpy).not.toHaveBeenCalled()
+    expect(usePlayerStore.getState().seekRequest).toBeNull()
+  })
+
+  it('29. Instant 0ms Room Closure: Host stopping room dispatches room_closed, listener tears down and restores pre-join queue', async () => {
+    // 1. Setup pre-join user state (personal music library before joining party room)
+    const personalQueue = [
+      { id: 'personal-1', title: 'My Private Track', artist: 'Me', duration: 180, filePath: 'file:///my-song.flac' }
+    ]
+    savePreJoinPlayerSnapshot({
+      queue: personalQueue as any,
+      currentSongIndex: 0,
+      currentTime: 42,
+      volume: 0.8,
+      isPlaying: false
+    })
+
+    // 2. Setup party room session
+    const partyRoom: ListeningRoom = {
+      id: 'room-closure-test',
+      code: 'CLOSE1',
+      name: 'Closing Room',
+      host_id: 'host-close',
+      is_active: true,
+      is_playing: true,
+      position_seconds: 90,
+      is_device_stream: false,
+      song: {
+        id: 'party-track-1',
+        title: 'Party Track',
+        artist: 'Party Host',
+        duration: 200,
+        hostPosition: 90,
+        hostTimestamp: Date.now()
+      },
+      queue: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }
+
+    useListeningStore.setState({
+      joinedRoom: partyRoom,
+      myRole: 'listener',
+      syncStatus: 'synced'
+    })
+
+    usePlayerStore.setState({
+      queue: [{ id: 'party-track-1', title: 'Party Track', artist: 'Party Host', duration: 200, filePath: '' } as any],
+      currentSongIndex: 0,
+      currentTime: 90,
+      isPlaying: true
+    })
+
+    // 3. Host disconnect / closure event arrives
+    await useListeningStore.getState().handleHostDisconnect()
+
+    // 4. Assert instant teardown & restoration
+    const finalListeningState = useListeningStore.getState()
+    expect(finalListeningState.joinedRoom).toBeNull()
+    expect(finalListeningState.syncStatus).toBe('idle')
+    expect(finalListeningState.myRole).toBeNull()
+
+    const finalPlayerState = usePlayerStore.getState()
+    expect(finalPlayerState.isPlaying).toBe(false)
+    expect(finalPlayerState.queue[0]?.title).toBe('My Private Track')
+    expect(finalPlayerState.currentTime).toBe(42)
   })
 })

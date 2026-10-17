@@ -18,15 +18,18 @@ import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { useListeningStore } from '../../hooks/useListeningStore'
 import { useNotificationStore } from '../../stores/useNotificationStore'
 import { getSupabase } from '../../lib/supabase'
-import type { FriendRequest, ListeningRoom, OnlineProfile } from '../../online/types'
+import type { FriendRequest, ListeningRoom } from '../../online/types'
+import {
+  type FriendProfile,
+  searchProfiles,
+  sanitizeSearchQuery
+} from '../../lib/profileSearch'
 import CommonAvatar from '../Common/Avatar'
 import DeleteFriendModal from '../Common/DeleteFriendModal'
 
 interface FriendActivityPanelProps {
   onClose: () => void
 }
-
-type FriendProfile = Pick<OnlineProfile, 'id' | 'username' | 'display_name' | 'avatar_url'>
 
 function formatTime(seconds: number): string {
   const safeSeconds = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0
@@ -140,7 +143,7 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
       ...new Set(
         rows.map((row) => (row.requester_id === user.id ? row.addressee_id : row.requester_id))
       )
-    ]
+    ].filter((id): id is string => Boolean(id) && id !== user.id)
     const profileMap: Record<string, FriendProfile> = {}
     if (profileIds.length > 0) {
       try {
@@ -231,55 +234,40 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
   }, [configured, user?.id])
 
   useEffect(() => {
-    const cleanQuery = query.trim().replace(/[%_]/g, '')
+    const cleanQuery = sanitizeSearchQuery(query)
     if (!user || cleanQuery.length < 2) {
-      const resetTimer = window.setTimeout(() => {
-        setSearchResults([])
-        setIsSearching(false)
-      }, 0)
-      return () => window.clearTimeout(resetTimer)
+      setSearchResults([])
+      setIsSearching(false)
+      return
     }
 
-    let cancelled = false
-    const timer = window.setTimeout(async () => {
-      setIsSearching(true)
-      setError('')
-      const supabase = getSupabase()
-      const pattern = `%${cleanQuery}%`
-      const [usernameResult, displayNameResult] = await Promise.all([
-        supabase
-          .from('profiles')
-          .select('id, username, display_name, avatar_url')
-          .neq('id', user.id)
-          .ilike('username', pattern)
-          .limit(8),
-        supabase
-          .from('profiles')
-          .select('id, username, display_name, avatar_url')
-          .neq('id', user.id)
-          .ilike('display_name', pattern)
-          .limit(8)
-      ])
+    const abortController = new AbortController()
+    setIsSearching(true)
+    setError('')
 
-      if (cancelled) return
-      const searchError = usernameResult.error || displayNameResult.error
-      if (searchError) {
-        setError(searchError.message)
-        setSearchResults([])
-      } else {
-        const matches = [...(usernameResult.data || []), ...(displayNameResult.data || [])]
-        setSearchResults(
-          [...new Map(matches.map((profile) => [profile.id, profile])).values()].slice(
-            0,
-            8
-          ) as FriendProfile[]
-        )
+    const timer = window.setTimeout(async () => {
+      try {
+        const results = await searchProfiles({
+          query: cleanQuery,
+          currentUserId: user.id,
+          limit: 8,
+          signal: abortController.signal
+        })
+        if (!abortController.signal.aborted) {
+          setSearchResults(results)
+          setIsSearching(false)
+        }
+      } catch (cause: unknown) {
+        if (!abortController.signal.aborted) {
+          setError(cause instanceof Error ? cause.message : 'Could not find friends.')
+          setSearchResults([])
+          setIsSearching(false)
+        }
       }
-      setIsSearching(false)
-    }, 300)
+    }, 250)
 
     return () => {
-      cancelled = true
+      abortController.abort()
       window.clearTimeout(timer)
     }
   }, [query, user?.id])
@@ -598,12 +586,24 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
                   aria-label="Find friends"
                   className="h-10 w-full rounded-full border border-border bg-surface pl-9 pr-10 text-sm text-text outline-none transition-colors placeholder:text-text-muted focus:border-primary"
                 />
-                {isSearching && (
+                {isSearching ? (
                   <LoaderCircle className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-text-muted" />
-                )}
+                ) : query.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuery('')
+                      setSearchResults([])
+                    }}
+                    aria-label="Clear search"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-text-muted hover:text-text cursor-pointer transition-colors"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                ) : null}
               </div>
 
-              {query.trim().length >= 2 && !isSearching && (
+              {sanitizeSearchQuery(query).length >= 2 && !isSearching && (
                 <div className="mt-3 space-y-1">
                   {searchResults.map((person) => {
                     const relationship = requestByProfile.get(person.id)

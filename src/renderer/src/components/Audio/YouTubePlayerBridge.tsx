@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo, type ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { useListeningStore } from '../../hooks/useListeningStore'
 import {
@@ -13,6 +14,7 @@ import {
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { roomClockSync } from '../../lib/roomClockSync'
+import { registerAudioTimeProvider } from '../../lib/audioBridge'
 import {
   extractYouTubeVideoId,
   isYouTubeSong
@@ -83,14 +85,70 @@ export default function YouTubePlayerBridge(): ReactElement | null {
   const [isFallbackIframe, setIsFallbackIframe] = useState(false)
   const [playerError, setPlayerError] = useState<string | null>(null)
 
-  // Fullscreen keyboard & custom event handlers
+  // Track In-Page Stage Dock element (#youtube-stage-dock) on ListenTogetherPage
+  const [dockEl, setDockEl] = useState<HTMLElement | null>(() => {
+    if (typeof document === 'undefined') return null
+    return document.getElementById('youtube-stage-dock')
+  })
+
+  useEffect(() => {
+    const updateDock = () => {
+      const el = document.getElementById('youtube-stage-dock')
+      setDockEl((prev) => (prev !== el ? el : prev))
+    }
+
+    updateDock()
+    const observer = new MutationObserver(updateDock)
+    observer.observe(document.body, { childList: true, subtree: true })
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [])
+
+  const isDockedInStage = Boolean(dockEl && !isUserFloating)
+  const portalTarget = isDockedInStage ? dockEl : typeof document !== 'undefined' ? document.body : null
+
+  // Native Fullscreen API integration for whole-screen desktop presentation
+  const enterFullscreen = useCallback(() => {
+    setIsFullscreen(true)
+    try {
+      const root = containerRef.current || document.documentElement
+      if (!document.fullscreenElement && root.requestFullscreen) {
+        root.requestFullscreen().catch(() => {})
+      }
+    } catch {}
+  }, [])
+
+  const exitFullscreen = useCallback(() => {
+    setIsFullscreen(false)
+    try {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {})
+      }
+    } catch {}
+  }, [])
+
+  // Sync with native HTML5 fullscreen changes (Esc key, YouTube native player fullscreen button)
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isNative = Boolean(document.fullscreenElement)
+      setIsFullscreen(isNative)
+    }
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+    }
+  }, [])
+
+  // Fullscreen keyboard fallback & body overflow lock
   useEffect(() => {
     if (!isFullscreen) return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopPropagation()
-        setIsFullscreen(false)
+        exitFullscreen()
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -100,18 +158,18 @@ export default function YouTubePlayerBridge(): ReactElement | null {
       window.removeEventListener('keydown', handleKeyDown)
       document.body.style.overflow = prevOverflow
     }
-  }, [isFullscreen])
+  }, [isFullscreen, exitFullscreen])
 
   useEffect(() => {
-    const handleExit = () => setIsFullscreen(false)
-    const handleEnter = () => setIsFullscreen(true)
+    const handleExit = () => exitFullscreen()
+    const handleEnter = () => enterFullscreen()
     window.addEventListener('felo:exit-fullscreen-youtube', handleExit)
     window.addEventListener('felo:enter-fullscreen-youtube', handleEnter)
     return () => {
       window.removeEventListener('felo:exit-fullscreen-youtube', handleExit)
       window.removeEventListener('felo:enter-fullscreen-youtube', handleEnter)
     }
-  }, [])
+  }, [enterFullscreen, exitFullscreen])
 
   useEffect(() => {
     window.dispatchEvent(
@@ -124,14 +182,14 @@ export default function YouTubePlayerBridge(): ReactElement | null {
   // Allow stage placeholder to request re-docking
   useEffect(() => {
     const handleDock = () => {
-      setIsFullscreen(false)
+      exitFullscreen()
       setIsUserFloating(false)
     }
     window.addEventListener('felo:dock-youtube-stage', handleDock)
     return () => window.removeEventListener('felo:dock-youtube-stage', handleDock)
-  }, [])
+  }, [exitFullscreen])
 
-  // Allow native AudioEngine to enforce immediate YouTube silence on non-YouTube playback
+  // Allow native AudioEngine and Listen Together room exit to enforce immediate YouTube silence & teardown
   useEffect(() => {
     const handleStopYouTube = () => {
       try {
@@ -142,6 +200,7 @@ export default function YouTubePlayerBridge(): ReactElement | null {
       setIsFallbackIframe(false)
       activeVideoIdRef.current = null
       setActiveVideoId(null)
+      registerAudioTimeProvider(null)
     }
     window.addEventListener('felo:stop-youtube', handleStopYouTube)
     return () => window.removeEventListener('felo:stop-youtube', handleStopYouTube)
@@ -189,54 +248,6 @@ export default function YouTubePlayerBridge(): ReactElement | null {
       extractYouTubeVideoId(currentSong.filePath)
     )
   }, [isCurrentYouTube, currentSong])
-
-  // Track In-Page Stage Dock element (#youtube-stage-dock) on ListenTogetherPage
-  const [stageRect, setStageRect] = useState<{
-    top: number
-    left: number
-    width: number
-    height: number
-  } | null>(null)
-
-  const updateStageRect = useCallback(() => {
-    const el = document.getElementById('youtube-stage-dock')
-    if (el) {
-      const rect = el.getBoundingClientRect()
-      // Dock whenever the stage slot exists and is in the active viewport
-      if (rect.width > 50 && rect.height > 50 && rect.bottom > 0 && rect.top < window.innerHeight) {
-        setStageRect({
-          top: rect.top,
-          left: rect.left,
-          width: rect.width,
-          height: rect.height
-        })
-        return
-      }
-    }
-    setStageRect(null)
-  }, [])
-
-  useEffect(() => {
-    updateStageRect()
-    const handleScrollOrResize = () => updateStageRect()
-
-    window.addEventListener('scroll', handleScrollOrResize, { capture: true, passive: true })
-    window.addEventListener('resize', handleScrollOrResize, { passive: true })
-
-    const observer = new MutationObserver(() => updateStageRect())
-    observer.observe(document.body, { childList: true, subtree: true })
-
-    const pollTimer = window.setInterval(updateStageRect, 800)
-
-    return () => {
-      window.removeEventListener('scroll', handleScrollOrResize, { capture: true })
-      window.removeEventListener('resize', handleScrollOrResize)
-      observer.disconnect()
-      window.clearInterval(pollTimer)
-    }
-  }, [updateStageRect])
-
-  const isDockedInStage = Boolean(stageRect && !isUserFloating)
 
   // 1. Initialize YouTube Player Iframe API
   useEffect(() => {
@@ -341,7 +352,9 @@ export default function YouTubePlayerBridge(): ReactElement | null {
               } else {
                 try {
                   event.target.pauseVideo()
-                  event.target.mute()
+                  if (curState.currentTime > 0) {
+                    event.target.seekTo(curState.currentTime, true)
+                  }
                 } catch {}
               }
             },
@@ -350,6 +363,15 @@ export default function YouTubePlayerBridge(): ReactElement | null {
               // YT.PlayerState: -1=unstarted, 0=ended, 1=playing, 2=paused, 3=buffering, 5=cued
               if (event.data === 1) {
                 // Playing
+                const room = useListeningStore.getState().joinedRoom
+                const storeIsPlaying = usePlayerStore.getState().isPlaying
+                if (isListener && room && (!room.is_playing || !storeIsPlaying)) {
+                  // Host is paused! Immediately pause the video and do not dispatch playing state
+                  try {
+                    event.target.pauseVideo?.()
+                  } catch {}
+                  return
+                }
                 useListeningStore.getState().setIsAutoplayBlocked(false)
                 usePlayerStore.setState({ isBuffering: false, isPlaying: true, isAudioActive: true })
                 setPlayerError(null)
@@ -464,6 +486,7 @@ export default function YouTubePlayerBridge(): ReactElement | null {
             if (target > 0) startTime = target
           }
 
+          isSyncingRef.current = true
           if (isPlaying) {
             try {
               playerRef.current.loadVideoById({ videoId: currentVideoId, startSeconds: startTime })
@@ -477,6 +500,9 @@ export default function YouTubePlayerBridge(): ReactElement | null {
               playerRef.current.cueVideoById(currentVideoId, startTime)
             }
           }
+          setTimeout(() => {
+            isSyncingRef.current = false
+          }, 1500)
 
           // Reinforce feature policies on the iframe
           const iframe = containerRef.current?.querySelector('iframe')
@@ -524,15 +550,29 @@ export default function YouTubePlayerBridge(): ReactElement | null {
 
     try {
       const state = playerRef.current.getPlayerState?.()
-      if (isPlaying && state !== 1 && state !== 3) {
-        playerRef.current.playVideo?.()
-      } else if (!isPlaying && state === 1) {
-        playerRef.current.pauseVideo?.()
+      if (isPlaying) {
+        if (state !== 1 && state !== 3) {
+          playerRef.current.playVideo?.()
+        }
+      } else {
+        // Industry-standard pause: ensure paused regardless of buffering (3), cued (5), or playing (1)
+        if (state !== 2) {
+          playerRef.current.pauseVideo?.()
+        }
+        // Align listener's video frame cleanly to store currentTime on pause if drifted
+        const curTime = usePlayerStore.getState().currentTime || 0
+        if (isListener && curTime > 0) {
+          const playerTime = playerRef.current.getCurrentTime?.() || 0
+          if (Math.abs(playerTime - curTime) > 0.05) {
+            playerRef.current.seekTo?.(curTime, true)
+            playerRef.current.pauseVideo?.()
+          }
+        }
       }
     } catch (err) {
       console.warn('[YouTubePlayerBridge] Play/pause dispatch error:', err)
     }
-  }, [isPlaying, isPlayerReady, isCurrentYouTube, activeVideoId])
+  }, [isPlaying, isPlayerReady, isCurrentYouTube, activeVideoId, isListener])
 
   // 4. React to Volume Changes
   useEffect(() => {
@@ -554,6 +594,9 @@ export default function YouTubePlayerBridge(): ReactElement | null {
         isSyncingRef.current = true
         playerRef.current.seekTo?.(seekRequest, true)
         setCurrentTime(seekRequest)
+        if (!isPlaying) {
+          playerRef.current.pauseVideo?.()
+        }
         setTimeout(() => {
           isSyncingRef.current = false
         }, 1200)
@@ -562,7 +605,7 @@ export default function YouTubePlayerBridge(): ReactElement | null {
       }
       clearSeekRequest()
     }
-  }, [seekRequest, isPlayerReady, isCurrentYouTube, clearSeekRequest, setCurrentTime])
+  }, [seekRequest, isPlayerReady, isCurrentYouTube, clearSeekRequest, setCurrentTime, isPlaying])
 
   // 6. Polling ticker for elapsed position & duration updates
   useEffect(() => {
@@ -579,8 +622,8 @@ export default function YouTubePlayerBridge(): ReactElement | null {
         const dur = playerRef.current.getDuration?.()
         if (typeof time === 'number' && Number.isFinite(time)) {
           const curStoreTime = usePlayerStore.getState().currentTime || 0
-          // Reject transient 0.0s dips while song was already progressing
-          if (time === 0 && curStoreTime > 2) {
+          // Reject transient near-zero (< 1.0s) dips while song or room was already progressing (> 2.0s)
+          if (time < 1.0 && (curStoreTime > 2.0 || (joinedRoom && (joinedRoom.position_seconds || 0) > 2.0))) {
             return
           }
           setCurrentTime(time)
@@ -592,7 +635,28 @@ export default function YouTubePlayerBridge(): ReactElement | null {
     }, 250)
 
     return () => clearInterval(timer)
-  }, [isPlayerReady, isCurrentYouTube, isPlaying, setCurrentTime, setDuration])
+  }, [isPlayerReady, isCurrentYouTube, isPlaying, setCurrentTime, setDuration, joinedRoom])
+
+  // Register high-resolution audio time provider for room sync & presence bridges
+  useEffect(() => {
+    if (isCurrentYouTube && isPlayerReady) {
+      registerAudioTimeProvider(() => {
+        try {
+          if (playerRef.current?.getCurrentTime) {
+            const t = playerRef.current.getCurrentTime()
+            if (typeof t === 'number' && Number.isFinite(t)) return t
+          }
+        } catch {}
+        return null
+      })
+    } else {
+      registerAudioTimeProvider(null)
+    }
+
+    return () => {
+      registerAudioTimeProvider(null)
+    }
+  }, [isCurrentYouTube, isPlayerReady])
 
   // 7. Mindory Continuous Drift Sync Engine (Heartbeat for Listen Together)
   useEffect(() => {
@@ -713,8 +777,7 @@ export default function YouTubePlayerBridge(): ReactElement | null {
     if (isFullscreen) {
       return {
         position: 'fixed',
-        top: 0,
-        left: 0,
+        inset: 0,
         width: '100vw',
         height: '100dvh',
         zIndex: 9999,
@@ -727,15 +790,14 @@ export default function YouTubePlayerBridge(): ReactElement | null {
       }
     }
 
-    if (isDockedInStage && stageRect) {
+    if (isDockedInStage) {
       return {
-        position: 'fixed',
-        top: `${stageRect.top}px`,
-        left: `${stageRect.left}px`,
-        width: `${stageRect.width}px`,
-        height: `${stageRect.height}px`,
-        zIndex: 35,
-        borderRadius: '1.25rem',
+        position: 'absolute',
+        inset: 0,
+        width: '100%',
+        height: '100%',
+        zIndex: 10,
+        borderRadius: '1rem',
         overflow: 'hidden'
       }
     }
@@ -750,18 +812,22 @@ export default function YouTubePlayerBridge(): ReactElement | null {
       borderRadius: '1.25rem',
       overflow: 'hidden'
     }
-  }, [isVisible, isFullscreen, isDockedInStage, stageRect, isExpanded])
+  }, [isVisible, isFullscreen, isDockedInStage, isExpanded])
 
-  return (
+  if (!portalTarget) return null
+
+  return createPortal(
     <div
       aria-hidden={!isVisible}
       style={containerStyle}
       className={cn(
-        'transition-all duration-300 ease-out shadow-2xl bg-black select-none group/video',
+        'shadow-2xl bg-black select-none group/video',
         isVisible ? 'opacity-100 pointer-events-auto' : 'pointer-events-none opacity-0',
         isFullscreen
           ? 'border-none rounded-none'
-          : 'border border-white/15 backdrop-blur-md'
+          : isDockedInStage
+            ? 'border-none rounded-2xl'
+            : 'border border-white/15 backdrop-blur-md transition-all duration-200'
       )}
     >
       {/* 1. Top HUD / Toolbar */}
@@ -769,8 +835,8 @@ export default function YouTubePlayerBridge(): ReactElement | null {
         className={cn(
           'transition-all duration-200 select-none z-20 text-white',
           isFullscreen
-            ? 'h-12 sm:h-16 px-3 sm:px-6 bg-black/95 border-b border-white/10 backdrop-blur-md opacity-100 shadow-xl flex items-center justify-between shrink-0 pt-[env(safe-area-inset-top,0px)]'
-            : 'absolute top-0 left-0 right-0 flex items-center justify-end gap-2 p-2 bg-gradient-to-b from-black/80 via-black/40 to-transparent opacity-0 group-hover/video:opacity-100 transition-opacity duration-200'
+            ? 'h-12 sm:h-14 px-3 sm:px-6 bg-black/95 border-b border-white/10 backdrop-blur-md opacity-100 shadow-xl flex items-center justify-between shrink-0 pt-[env(safe-area-inset-top,0px)]'
+            : 'absolute top-0 left-0 right-0 flex items-center justify-end gap-2 p-2.5 bg-gradient-to-b from-black/80 via-black/40 to-transparent opacity-90 sm:opacity-0 sm:group-hover/video:opacity-100 transition-opacity duration-200 z-20 pointer-events-auto'
         )}
       >
         {/* Left Info: visible only in Fullscreen mode (or if listener needs to catch up) */}
@@ -860,14 +926,20 @@ export default function YouTubePlayerBridge(): ReactElement | null {
           {/* Dedicated FULL SCREEN Button */}
           <button
             type="button"
-            onClick={() => setIsFullscreen(!isFullscreen)}
+            onClick={() => {
+              if (isFullscreen) {
+                exitFullscreen()
+              } else {
+                enterFullscreen()
+              }
+            }}
             className={cn(
-              'flex items-center gap-1.5 rounded-xl transition-all cursor-pointer shadow-xs',
+              'flex items-center gap-1.5 rounded-xl transition-all cursor-pointer shadow-xs active:scale-95',
               isFullscreen
                 ? 'h-8 px-2.5 sm:px-3 bg-red-600/90 hover:bg-red-600 text-white text-xs font-bold'
                 : 'p-1.5 rounded-full bg-black/60 hover:bg-black/90 text-white/80 hover:text-white border border-white/10'
             )}
-            title={isFullscreen ? 'Exit full screen (Esc)' : 'Open Full Screen Modal'}
+            title={isFullscreen ? 'Exit full screen (Esc)' : 'Open Full Screen'}
           >
             {isFullscreen ? (
               <>
@@ -879,8 +951,8 @@ export default function YouTubePlayerBridge(): ReactElement | null {
             )}
           </button>
 
-          {/* Miniplayer / Dock Toggle (only in minimize mode) */}
-          {!isFullscreen && stageRect && (
+          {/* Miniplayer / Dock Toggle (only in docked mode) */}
+          {!isFullscreen && dockEl && (
             <button
               type="button"
               onClick={() => setIsUserFloating(!isUserFloating)}
@@ -910,16 +982,16 @@ export default function YouTubePlayerBridge(): ReactElement | null {
         className={cn(
           'relative w-full',
           isFullscreen
-            ? 'flex-1 min-h-0 flex items-center justify-center p-0 sm:p-4 bg-black overflow-hidden'
+            ? 'flex-1 min-h-0 flex items-center justify-center p-0 bg-black overflow-hidden'
             : 'h-full'
         )}
       >
         <div
           className={cn(
-            'relative flex items-center justify-center',
+            'relative flex items-center justify-center w-full h-full',
             isFullscreen
-              ? 'w-full h-full max-w-7xl aspect-video rounded-none sm:rounded-xl overflow-hidden shadow-2xl'
-              : 'w-full h-full'
+              ? 'rounded-none overflow-hidden shadow-2xl bg-black'
+              : 'rounded-none'
           )}
         >
           {/* Underlying YouTube Iframe Target or Direct Embed Fallback */}
@@ -977,6 +1049,7 @@ export default function YouTubePlayerBridge(): ReactElement | null {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    portalTarget
   )
 }

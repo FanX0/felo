@@ -37,7 +37,7 @@ import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 import { useListeningStore } from '../../hooks/useListeningStore'
 import { getSupabase } from '../../lib/supabase'
 import { toMediaUrl } from '../../lib/media'
-import { validateAvatarFile, uploadAvatarImage, extractImageFromClipboard } from '../../lib/avatar'
+import { validateAvatarFile, extractImageFromClipboard } from '../../lib/avatar'
 import type {
   FriendRequest,
   ListeningRoom,
@@ -198,7 +198,7 @@ function ProfileEditor({
   initialProfile: OnlineProfile
   onClose: () => void
 }): ReactElement {
-  const { user, updateProfile, signOut } = useOnlineStore()
+  const { user, updateProfile, uploadAvatar, removeAvatar, signOut } = useOnlineStore()
   const [username, setUsername] = useState(initialProfile.username)
   const [displayName, setDisplayName] = useState(initialProfile.display_name)
   const [bio, setBio] = useState(initialProfile.bio)
@@ -382,21 +382,30 @@ function ProfileEditor({
     setUploadError(null)
 
     try {
-      let finalAvatarUrl: string | null = avatarUrl ? avatarUrl.trim() : null
-
       if (previewFile) {
         if (!user) {
           throw new Error('You must be signed in to upload a profile picture.')
         }
-        const uploadedUrl = await uploadAvatarImage(previewFile, user.id)
-        finalAvatarUrl = uploadedUrl
+        // uploadAvatar applies instant 0ms optimistic update across all UI components,
+        // and persists to Supabase storage in the background.
+        void uploadAvatar(previewFile).catch((err) => {
+          console.error('[ProfileEditor] Background upload error:', err)
+        })
+      } else if (!avatarUrl && initialProfile.avatar_url && !previewUrl) {
+        void removeAvatar().catch((err) => {
+          console.error('[ProfileEditor] Background remove error:', err)
+        })
       }
+
+      const avatarToSet = previewFile
+        ? (previewUrl || null)
+        : (avatarUrl ? avatarUrl.trim() : null)
 
       await updateProfile({
         username,
         display_name: displayName,
         bio,
-        avatar_url: finalAvatarUrl,
+        avatar_url: avatarToSet,
         is_history_public: isHistoryPublic
       })
       onClose()
@@ -984,7 +993,7 @@ function FullListeningHistoryModal({
 function ProfileWorkspace(): ReactElement {
   const { username } = useParams<{ username?: string }>()
   const navigate = useNavigate()
-  const { user, profile: ownProfile, signOut } = useOnlineStore()
+  const { user, profile: ownProfile, uploadAvatar, signOut } = useOnlineStore()
   const { requestPlaySong } = usePlaybackArbitration()
   const [viewedProfile, setViewedProfile] = useState<OnlineProfile | null>(null)
   const [relationship, setRelationship] = useState<FriendRequest | null>(null)
@@ -1009,7 +1018,74 @@ function ProfileWorkspace(): ReactElement {
   const [historyModalInitialTab, setHistoryModalInitialTab] = useState<
     'recent' | 'mostPlayed' | 'artists'
   >('recent')
-  const isOwnProfile = Boolean(viewedProfile && user && viewedProfile.id === user.id)
+
+  const directAvatarInputRef = useRef<HTMLInputElement>(null)
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false)
+  const [isAvatarDragging, setIsAvatarDragging] = useState(false)
+  const [avatarToast, setAvatarToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+
+  const isViewingOwnProfile = Boolean(
+    (!username && user) ||
+      (ownProfile && username && ownProfile.username.toLowerCase() === username.toLowerCase()) ||
+      (viewedProfile && user && viewedProfile.id === user.id)
+  )
+
+  const activeProfile = isViewingOwnProfile ? (ownProfile || viewedProfile) : viewedProfile
+  const isOwnProfile = Boolean(activeProfile && user && activeProfile.id === user.id)
+
+  // Synchronize viewedProfile when viewing own profile and ownProfile changes
+  useEffect(() => {
+    if (isViewingOwnProfile && ownProfile) {
+      setViewedProfile(ownProfile)
+    }
+  }, [isViewingOwnProfile, ownProfile])
+
+  const handleDirectAvatarFile = async (file: File): Promise<void> => {
+    const validation = validateAvatarFile(file)
+    if (!validation.valid) {
+      setAvatarToast({ message: validation.error || 'Invalid image file.', type: 'error' })
+      setTimeout(() => setAvatarToast(null), 4000)
+      return
+    }
+
+    setIsUploadingAvatar(true)
+    try {
+      // uploadAvatar updates store profile optimistically in 0ms!
+      await uploadAvatar(file)
+      setAvatarToast({ message: 'Profile photo updated!', type: 'success' })
+      setTimeout(() => setAvatarToast(null), 3000)
+    } catch (err) {
+      console.error('Failed to update avatar:', err)
+      setAvatarToast({
+        message: err instanceof Error ? err.message : 'Failed to update profile photo.',
+        type: 'error'
+      })
+      setTimeout(() => setAvatarToast(null), 4000)
+    } finally {
+      setIsUploadingAvatar(false)
+    }
+  }
+
+  // Ctrl+V paste support directly on own profile
+  useEffect(() => {
+    if (!isOwnProfile || isEditing) return
+    const onWindowPaste = (e: ClipboardEvent): void => {
+      const target = e.target as HTMLElement | null
+      const isInput =
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      if (isInput) return
+
+      if (!e.clipboardData) return
+      const file = extractImageFromClipboard(e.clipboardData)
+      if (file) {
+        e.preventDefault()
+        void handleDirectAvatarFile(file)
+      }
+    }
+    window.addEventListener('paste', onWindowPaste)
+    return () => window.removeEventListener('paste', onWindowPaste)
+  }, [isOwnProfile, isEditing])
 
   const loadFriendRoom = async (profileId: string): Promise<ListeningRoom | null> => {
     const activeSince = new Date(Date.now() - 20_000).toISOString()
@@ -1046,9 +1122,9 @@ function ProfileWorkspace(): ReactElement {
     void requestPlaySong(song as Song)
   }
 
-  const loadProfile = async (): Promise<void> => {
+  const loadProfile = async (silent = false): Promise<void> => {
     if (!user || !ownProfile) return
-    setLoading(true)
+    if (!silent) setLoading(true)
     setError('')
     try {
       let nextProfile = ownProfile
@@ -1188,9 +1264,10 @@ function ProfileWorkspace(): ReactElement {
   }
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadProfile(), 0)
+    const isFirstLoad = !viewedProfile && !activeProfile
+    const timer = window.setTimeout(() => void loadProfile(!isFirstLoad), 0)
     return () => window.clearTimeout(timer)
-  }, [username, user?.id, ownProfile?.updated_at])
+  }, [username, user?.id, ownProfile?.updated_at, ownProfile?.avatar_url])
 
   useEffect(() => {
     if (!isOwnProfile) return
@@ -1361,7 +1438,15 @@ function ProfileWorkspace(): ReactElement {
         <Loader2 className="h-7 w-7 animate-spin text-text-muted" />
       </div>
     )
-  if (!viewedProfile) {
+  const currentProfile = activeProfile || viewedProfile
+
+  if (loading && !currentProfile)
+    return (
+      <div className="flex h-full flex-1 items-center justify-center">
+        <Loader2 className="h-7 w-7 animate-spin text-text-muted" />
+      </div>
+    )
+  if (!currentProfile) {
     return (
       <div className="flex h-full flex-1 flex-col items-center justify-center text-center">
         <UserRound className="h-12 w-12 text-text-muted" />
@@ -1381,33 +1466,94 @@ function ProfileWorkspace(): ReactElement {
       <header className="flex min-h-[240px] sm:min-h-[300px] items-end bg-gradient-to-b from-surface-elevated/80 to-canvas px-4 sm:px-10 pb-6 sm:pb-7 pt-6 sm:pt-12">
         <div className="flex min-w-0 flex-col items-center gap-4 sm:gap-6 sm:flex-row sm:items-end w-full sm:w-auto">
           {isOwnProfile ? (
-            <button
-              type="button"
-              onClick={() => setIsEditing(true)}
-              title="Change profile picture"
-              className="group relative rounded-full focus:outline-none focus:ring-2 focus:ring-white/40 cursor-pointer"
-            >
-              <ProfileAvatar profile={viewedProfile} large />
-              <div className="absolute inset-0 flex flex-col items-center justify-center rounded-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity text-white text-xs font-bold gap-1">
-                <Camera className="h-6 w-6 sm:h-8 sm:w-8" />
-                <span className="hidden sm:inline text-xs font-bold">Change</span>
-              </div>
-            </button>
+            <div className="relative">
+              <input
+                ref={directAvatarInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) {
+                    void handleDirectAvatarFile(file)
+                  }
+                  e.target.value = ''
+                }}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => directAvatarInputRef.current?.click()}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  setIsAvatarDragging(true)
+                }}
+                onDragLeave={() => setIsAvatarDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  setIsAvatarDragging(false)
+                  const file = e.dataTransfer.files?.[0]
+                  if (file) {
+                    void handleDirectAvatarFile(file)
+                  }
+                }}
+                title="Click or drag an image to change profile picture instantly"
+                className={`group relative rounded-full focus:outline-none focus:ring-2 focus:ring-white/40 cursor-pointer transition-all ${
+                  isAvatarDragging ? 'ring-4 ring-primary-amber scale-105 shadow-xl' : ''
+                }`}
+              >
+                <ProfileAvatar profile={currentProfile} large />
+                <div
+                  className={`absolute inset-0 flex flex-col items-center justify-center rounded-full bg-black/60 transition-opacity text-white text-xs font-bold gap-1 ${
+                    isUploadingAvatar || isAvatarDragging
+                      ? 'opacity-100'
+                      : 'opacity-0 group-hover:opacity-100'
+                  }`}
+                >
+                  {isUploadingAvatar ? (
+                    <>
+                      <Loader2 className="h-6 w-6 sm:h-8 sm:w-8 animate-spin text-white" />
+                      <span className="text-[11px] font-bold">Updating...</span>
+                    </>
+                  ) : isAvatarDragging ? (
+                    <>
+                      <Upload className="h-6 w-6 sm:h-8 sm:w-8 animate-bounce text-primary-amber" />
+                      <span className="text-[11px] font-bold text-primary-amber">Drop image</span>
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="h-6 w-6 sm:h-8 sm:w-8" />
+                      <span className="hidden sm:inline text-xs font-bold">Change</span>
+                    </>
+                  )}
+                </div>
+              </button>
+              {avatarToast && (
+                <div
+                  className={`absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full px-3 py-1 text-xs font-bold shadow-lg animate-in fade-in zoom-in-95 z-20 ${
+                    avatarToast.type === 'error'
+                      ? 'bg-danger text-white'
+                      : 'bg-emerald-600 text-white'
+                  }`}
+                >
+                  {avatarToast.message}
+                </div>
+              )}
+            </div>
           ) : (
-            <ProfileAvatar profile={viewedProfile} large />
+            <ProfileAvatar profile={currentProfile} large />
           )}
           <div className="min-w-0 pb-2 text-center sm:text-left">
             <p className="text-xs sm:text-sm font-black text-white">Profile</p>
             <h1 className="mt-1 max-w-full break-words text-2xl sm:text-4xl md:text-6xl lg:text-7xl font-black text-white leading-tight tracking-tight">
-              {viewedProfile.display_name}
+              {currentProfile.display_name}
             </h1>
-            {viewedProfile.bio && (
+            {currentProfile.bio && (
               <p className="mt-2 sm:mt-3 max-w-2xl text-xs sm:text-sm text-white/75">
-                {viewedProfile.bio}
+                {currentProfile.bio}
               </p>
             )}
             <p className="mt-3 sm:mt-4 text-xs sm:text-sm font-bold text-white/80">
-              @{viewedProfile.username} <span className="mx-1 text-white/40">•</span>{' '}
+              @{currentProfile.username} <span className="mx-1 text-white/40">•</span>{' '}
               {playlists.length} {playlists.length === 1 ? 'playlist' : 'playlists'}
               <span className="mx-1 text-white/40">•</span>
               {followerCount} {followerCount === 1 ? 'follower' : 'followers'}
@@ -1488,7 +1634,7 @@ function ProfileWorkspace(): ReactElement {
                 <>
                   <button
                     type="button"
-                    onClick={() => navigate(`/chat?friend=${encodeURIComponent(viewedProfile.id)}`)}
+                    onClick={() => navigate(`/chat?friend=${encodeURIComponent(currentProfile.id)}`)}
                     className="flex h-10 items-center gap-2 rounded-full border border-border bg-surface-elevated px-5 text-sm font-black text-text hover:bg-hover hover:border-white/40 transition-colors"
                   >
                     <MessageCircle className="h-4 w-4 text-text-muted" />
@@ -1500,7 +1646,7 @@ function ProfileWorkspace(): ReactElement {
                       type="button"
                       disabled={joining}
                       onClick={() => void listenTogether()}
-                      title={`Join ${viewedProfile.display_name}'s room directly without code`}
+                      title={`Join ${currentProfile.display_name}'s room directly without code`}
                       className="flex h-10 items-center gap-2 rounded-full bg-emerald-400 hover:bg-emerald-300 px-5 text-sm font-black text-black transition-all shadow-sm"
                     >
                       {joining ? (
@@ -1514,7 +1660,7 @@ function ProfileWorkspace(): ReactElement {
                     <button
                       type="button"
                       disabled
-                      title={`${viewedProfile.display_name} has not created a listening room yet`}
+                      title={`${currentProfile.display_name} has not created a listening room yet`}
                       className="flex h-10 items-center gap-2 rounded-full bg-surface-elevated px-5 text-sm font-bold text-text-muted cursor-not-allowed opacity-60"
                     >
                       <Radio className="h-4 w-4" />
@@ -1542,8 +1688,8 @@ function ProfileWorkspace(): ReactElement {
         {error && (
           <p className="mt-4 rounded-md bg-danger/10 px-4 py-3 text-sm text-danger">{error}</p>
         )}
-        {viewedProfile &&
-          (isOwnProfile || viewedProfile.is_history_public !== false ? (
+        {currentProfile &&
+          (isOwnProfile || currentProfile.is_history_public !== false ? (
             <>
               {/* Taste Profile & Mini-Wrapped Banner */}
               {tasteMetrics && tasteMetrics.totalPlays > 0 && (
@@ -1557,7 +1703,7 @@ function ProfileWorkspace(): ReactElement {
                       <p className="mt-1 text-sm text-text-muted">
                         {isOwnProfile
                           ? 'Your sonic personality and listening habits'
-                          : `${viewedProfile.display_name}'s sonic personality and listening habits`}
+                          : `${currentProfile.display_name}'s sonic personality and listening habits`}
                       </p>
                     </div>
                     <span className="rounded-full border border-border/80 bg-surface-elevated/70 px-3 py-1 text-xs font-black tracking-wide text-white/90">
@@ -1668,7 +1814,7 @@ function ProfileWorkspace(): ReactElement {
                     <p className="mt-1 text-sm text-text-muted">
                       {isOwnProfile
                         ? 'Your personal listening favourites'
-                        : `${viewedProfile.display_name}'s listening favourites`}
+                        : `${currentProfile.display_name}'s listening favourites`}
                     </p>
                   </div>
                   <div className="flex items-center gap-3">
@@ -1735,7 +1881,7 @@ function ProfileWorkspace(): ReactElement {
                       <p className="mt-1 text-sm text-text-muted">
                         {isOwnProfile
                           ? 'The latest songs in your rotation'
-                          : `Recent songs played by ${viewedProfile.display_name}`}
+                          : `Recent songs played by ${currentProfile.display_name}`}
                       </p>
                     </div>
                     {isOwnProfile && (
@@ -1792,7 +1938,7 @@ function ProfileWorkspace(): ReactElement {
                       <p className="mt-1 text-sm text-text-muted">
                         {isOwnProfile
                           ? 'Artists you play most'
-                          : `Artists ${viewedProfile.display_name} plays most`}
+                          : `Artists ${currentProfile.display_name} plays most`}
                       </p>
                     </div>
                     {isOwnProfile && (
@@ -1843,7 +1989,7 @@ function ProfileWorkspace(): ReactElement {
               <Clock3 className="h-10 w-10 text-text-muted mx-auto mb-3 opacity-60" />
               <h3 className="text-base font-bold text-text">Private Listening History</h3>
               <p className="text-xs text-text-muted mt-1 leading-relaxed">
-                {viewedProfile.display_name} has chosen to keep their listening activity and top
+                {currentProfile.display_name} has chosen to keep their listening activity and top
                 songs private.
               </p>
             </div>
@@ -1872,7 +2018,7 @@ function ProfileWorkspace(): ReactElement {
                   </div>
                   <p className="mt-3 truncate text-sm font-black text-text">{playlist.name}</p>
                   <p className="mt-1 truncate text-xs text-text-muted">
-                    {playlist.description || `By ${viewedProfile.display_name}`}
+                    {playlist.description || `By ${currentProfile.display_name}`}
                   </p>
                 </div>
               ))}
@@ -1887,8 +2033,8 @@ function ProfileWorkspace(): ReactElement {
       </main>
       {isEditing && isOwnProfile && (
         <ProfileEditor
-          key={viewedProfile.updated_at}
-          initialProfile={viewedProfile}
+          key={currentProfile.updated_at || currentProfile.id}
+          initialProfile={currentProfile}
           onClose={() => setIsEditing(false)}
         />
       )}

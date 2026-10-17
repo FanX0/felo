@@ -145,6 +145,30 @@ class MockWaveShaperNode extends MockAudioNode {
   }
 }
 
+class MockOscillatorNode extends MockAudioNode {
+  type: OscillatorType = 'sine'
+  frequency: MockAudioParam
+  detune: MockAudioParam
+
+  constructor(context: MockAudioContext) {
+    super(context, 0, 1)
+    this.frequency = new MockAudioParam(440)
+    this.detune = new MockAudioParam(0)
+  }
+
+  start = vi.fn()
+  stop = vi.fn()
+}
+
+class MockStereoPannerNode extends MockAudioNode {
+  pan: MockAudioParam
+
+  constructor(context: MockAudioContext) {
+    super(context, 1, 1)
+    this.pan = new MockAudioParam(0)
+  }
+}
+
 export class MockAudioBuffer {
   numberOfChannels: number
   length: number
@@ -186,6 +210,8 @@ export class MockAudioContext {
   }
 
   createGain = vi.fn(() => new MockGainNode(this))
+  createOscillator = vi.fn(() => new MockOscillatorNode(this))
+  createStereoPanner = vi.fn(() => new MockStereoPannerNode(this))
   createBiquadFilter = vi.fn(() => new MockBiquadFilterNode(this))
   createConvolver = vi.fn(() => new MockConvolverNode(this))
   createDynamicsCompressor = vi.fn(() => new MockDynamicsCompressorNode(this))

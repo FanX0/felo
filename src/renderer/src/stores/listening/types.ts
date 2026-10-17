@@ -68,6 +68,8 @@ export interface RoomPlaybackSlice {
   handleHostSongChange: (room: ListeningRoom) => Promise<void>
   handleHostPauseResume: (room: ListeningRoom) => void
   handleHostSyncPulse: (pulse: SyncPulsePayload) => void
+  handleHostExplicitSeek: (payload: { position: number; hostTimestamp: number; trackId?: string }) => void
+  handleHostExplicitPlayPause: (payload: { isPlaying: boolean; position?: number; hostTimestamp: number; trackId?: string }) => void
   handleHostDisconnect: () => Promise<void>
   preloadNextQueueTracks: (room: ListeningRoom) => Promise<void>
   refreshJoinedRoomState: () => Promise<void>

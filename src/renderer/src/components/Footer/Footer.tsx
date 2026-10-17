@@ -74,6 +74,27 @@ export function ProgressBar({ duration, seek, currentTime: propCurrentTime, disa
   const [hoverX, setHoverX] = useState<number | null>(null)
   const progressRef = useRef<HTMLDivElement>(null)
 
+  const [timeDisplayMode, setTimeDisplayMode] = useState<'duration' | 'remaining'>(() => {
+    try {
+      const saved = localStorage.getItem('felo_mobile_time_mode')
+      return saved === 'remaining' ? 'remaining' : 'duration'
+    } catch {
+      return 'duration'
+    }
+  })
+
+  const toggleTimeDisplayMode = () => {
+    setTimeDisplayMode((prev) => {
+      const next = prev === 'duration' ? 'remaining' : 'duration'
+      try {
+        localStorage.setItem('felo_mobile_time_mode', next)
+      } catch {
+        // ignore
+      }
+      return next
+    })
+  }
+
   const formatTime = (time: number) => {
     return fmtTime(time, duration > 0 ? '0:00' : UNAVAILABLE_TIME_TEXT)
   }
@@ -213,7 +234,25 @@ export function ProgressBar({ duration, seek, currentTime: propCurrentTime, disa
           />
         )}
       </div>
-      <span className="min-w-[36px] text-left tabular-nums">{fmtTime(duration, UNAVAILABLE_TIME_TEXT)}</span>
+      <button
+        type="button"
+        onClick={toggleTimeDisplayMode}
+        className="min-w-[36px] text-left tabular-nums text-text-muted hover:text-text active:opacity-60 transition-colors cursor-pointer select-none"
+        title={
+          timeDisplayMode === 'remaining'
+            ? 'Remaining time (-M:SS). Click to show total duration'
+            : 'Total duration (M:SS). Click to show remaining time'
+        }
+        aria-label={
+          timeDisplayMode === 'remaining'
+            ? `Remaining time: -${fmtTime(Math.max(0, duration - displayTime), '0:00')}. Click to show total duration.`
+            : `Total duration: ${fmtTime(duration, UNAVAILABLE_TIME_TEXT)}. Click to show remaining time.`
+        }
+      >
+        {timeDisplayMode === 'remaining' && duration > 0
+          ? `-${fmtTime(Math.max(0, duration - displayTime), '0:00')}`
+          : fmtTime(duration, UNAVAILABLE_TIME_TEXT)}
+      </button>
     </div>
   )
 }

@@ -98,9 +98,13 @@ export const useDirectChatStore = create<DirectChatState>((set, get) => ({
 
       if (error) throw error
 
-      const friendIds = (reqs || []).map((r) =>
-        r.requester_id === user.id ? r.addressee_id : r.requester_id
-      )
+      const friendIds = [
+        ...new Set(
+          (reqs || []).map((r) =>
+            r.requester_id === user.id ? r.addressee_id : r.requester_id
+          )
+        )
+      ].filter((id): id is string => Boolean(id) && id !== user.id)
 
       if (friendIds.length === 0) {
         set({ friends: [] })

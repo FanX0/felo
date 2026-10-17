@@ -1,5 +1,11 @@
 import { useEffect, useRef } from 'react'
-import { useListeningStore, isSessionSyncing, registerRoomDspSyncSender, toSharedSong } from '../hooks/useListeningStore'
+import {
+  useListeningStore,
+  isSessionSyncing,
+  registerRoomDspSyncSender,
+  registerRoomClosureSender,
+  toSharedSong
+} from '../hooks/useListeningStore'
 import { useOnlineStore } from '../hooks/useOnlineStore'
 import { usePlayerStore, setPlaybackGuard } from '../hooks/usePlayerStore'
 import { useDspStore, type DspRoomSnapshot } from '../hooks/useDspStore'
@@ -7,7 +13,7 @@ import { getSupabase } from '../lib/supabase'
 import { downloadTrackInBackground } from '../lib/backgroundDownloader'
 import { findMatchingLibrarySong } from '../lib/songMatching'
 import { registerLocalSlotPoolPath } from '../lib/jitAudioPipeline'
-import { playParticipantJoinSound, playParticipantLeaveSound } from '../lib/uiSounds'
+import { playParticipantLeaveSound } from '../lib/uiSounds'
 import { roomClockSync } from '../lib/roomClockSync'
 import { getActiveAudioTime, getAudioPlaybackRate } from '../lib/audioBridge'
 import { isYouTubeSong } from '../lib/youtubeService'
@@ -33,6 +39,18 @@ export function broadcastDspOverSyncChannel(snapshot: DspRoomSnapshot): void {
 }
 
 registerRoomDspSyncSender(broadcastDspOverSyncChannel)
+
+registerRoomClosureSender(() => {
+  if (_activeHostSyncChannel) {
+    void _activeHostSyncChannel.send({
+      type: 'broadcast',
+      event: 'room_closed',
+      payload: {
+        timestamp: Date.now()
+      }
+    })
+  }
+})
 
 /**
  * Broadcasts an authoritative track change to all connected listeners immediately.
@@ -309,9 +327,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
           filter: `room_id=eq.${roomId}`
         },
         (payload: any) => {
-          if (payload.eventType === 'INSERT') {
-            playParticipantJoinSound()
-          } else if (payload.eventType === 'DELETE') {
+          if (payload.eventType === 'DELETE') {
             playParticipantLeaveSound()
           }
           void useListeningStore.getState().refreshMemberCount(roomId)
@@ -437,8 +453,33 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
       }
 
       if (seekChanged && typeof state.seekRequest === 'number') {
+        const song = state.queue[state.currentSongIndex]
+        void syncChannel.send({
+          type: 'broadcast',
+          event: 'host_seek',
+          payload: {
+            position: state.seekRequest,
+            hostTimestamp: Date.now(),
+            trackId: song?.id
+          }
+        })
         sendPulse(state.seekRequest)
-      } else if (playChanged || songChanged) {
+      } else if (playChanged) {
+        const song = state.queue[state.currentSongIndex]
+        const currentAudioTime = getActiveAudioTime()
+        const livePos = currentAudioTime > 0 ? currentAudioTime : state.currentTime || 0
+        void syncChannel.send({
+          type: 'broadcast',
+          event: 'host_play_pause',
+          payload: {
+            isPlaying: state.isPlaying,
+            position: livePos,
+            hostTimestamp: Date.now(),
+            trackId: song?.id
+          }
+        })
+        sendPulse()
+      } else if (songChanged) {
         sendPulse()
       }
 
@@ -1227,6 +1268,19 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
         if (payload) {
           useListeningStore.getState().handleHostSyncPulse(payload)
         }
+      })
+      .on('broadcast', { event: 'host_seek' }, ({ payload }: { payload: any }) => {
+        if (payload && typeof payload.position === 'number') {
+          useListeningStore.getState().handleHostExplicitSeek(payload)
+        }
+      })
+      .on('broadcast', { event: 'host_play_pause' }, ({ payload }: { payload: any }) => {
+        if (payload && typeof payload.isPlaying === 'boolean') {
+          useListeningStore.getState().handleHostExplicitPlayPause(payload)
+        }
+      })
+      .on('broadcast', { event: 'room_closed' }, () => {
+        void useListeningStore.getState().handleHostDisconnect()
       })
       .on('broadcast', { event: 'track_change' }, ({ payload }: { payload: any }) => {
         if (payload?.song) {

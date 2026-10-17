@@ -31,9 +31,11 @@ interface OnlineState {
   signOut: () => Promise<void>
   updateProfile: (
     values: Partial<
-      Pick<OnlineProfile, 'username' | 'display_name' | 'bio' | 'avatar_url' | 'is_history_public'>
-    > &
-      Pick<OnlineProfile, 'username' | 'display_name'>
+      Pick<
+        OnlineProfile,
+        'username' | 'display_name' | 'bio' | 'avatar_url' | 'is_history_public' | 'updated_at'
+      >
+    >
   ) => Promise<void>
   uploadAvatar: (file: File) => Promise<string>
   removeAvatar: () => Promise<void>
@@ -237,17 +239,43 @@ export const useOnlineStore = create<OnlineState>((set, get) => ({
 
   updateProfile: async (values) => {
     const user = get().user
+    const currentProfile = get().profile
     if (!user) throw new Error('Not authenticated')
-    const supabase = getSupabase()
-    const { data, error } = await supabase
-      .from('profiles')
-      .update(values)
-      .eq('id', user.id)
-      .select()
-      .single()
 
-    if (error) throw error
-    set({ profile: data as OnlineProfile })
+    const previousProfile = currentProfile
+    const nextUpdatedAt = new Date().toISOString()
+
+    // 1. Instant optimistic local update
+    if (currentProfile) {
+      set({
+        profile: {
+          ...currentProfile,
+          ...values,
+          updated_at: nextUpdatedAt
+        }
+      })
+    }
+
+    try {
+      const supabase = getSupabase()
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({
+          ...values,
+          updated_at: nextUpdatedAt
+        })
+        .eq('id', user.id)
+        .select()
+        .single()
+
+      if (error) throw error
+      set({ profile: data as OnlineProfile })
+    } catch (err) {
+      if (previousProfile) {
+        set({ profile: previousProfile })
+      }
+      throw err
+    }
   },
 
   uploadAvatar: async (file: File) => {
@@ -256,19 +284,56 @@ export const useOnlineStore = create<OnlineState>((set, get) => ({
     if (!user || !profile) throw new Error('Not authenticated')
 
     const oldAvatar = profile.avatar_url
-    const publicUrl = await uploadAvatarImage(file, user.id)
+    const previewUrl = URL.createObjectURL(file)
+    const optimisticUpdatedAt = new Date().toISOString()
 
-    await get().updateProfile({
-      username: profile.username,
-      display_name: profile.display_name,
-      avatar_url: publicUrl
+    // 1. Instant optimistic update - 0ms response across the entire app
+    set({
+      profile: {
+        ...profile,
+        avatar_url: previewUrl,
+        updated_at: optimisticUpdatedAt
+      }
     })
 
-    if (oldAvatar && oldAvatar !== publicUrl) {
-      void deleteAvatarImage(oldAvatar, user.id)
-    }
+    try {
+      // 2. Upload file to Supabase storage in background
+      const publicUrl = await uploadAvatarImage(file, user.id)
 
-    return publicUrl
+      // 3. Persist new publicUrl in Supabase profiles
+      const { data, error } = await getSupabase()
+        .from('profiles')
+        .update({
+          avatar_url: publicUrl,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', user.id)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      set({ profile: data as OnlineProfile })
+
+      // Clean up local blob object URL
+      if (previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(previewUrl)
+      }
+
+      // Delete old avatar from storage if replaced
+      if (oldAvatar && oldAvatar !== publicUrl) {
+        void deleteAvatarImage(oldAvatar, user.id)
+      }
+
+      return publicUrl
+    } catch (err) {
+      // Revert optimistic update on error
+      if (previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(previewUrl)
+      }
+      set({ profile })
+      throw err
+    }
   },
 
   removeAvatar: async () => {
@@ -277,15 +342,37 @@ export const useOnlineStore = create<OnlineState>((set, get) => ({
     if (!user || !profile) throw new Error('Not authenticated')
 
     const oldAvatar = profile.avatar_url
+    const optimisticUpdatedAt = new Date().toISOString()
 
-    await get().updateProfile({
-      username: profile.username,
-      display_name: profile.display_name,
-      avatar_url: null
+    // 1. Instant optimistic remove
+    set({
+      profile: {
+        ...profile,
+        avatar_url: null,
+        updated_at: optimisticUpdatedAt
+      }
     })
 
-    if (oldAvatar) {
-      void deleteAvatarImage(oldAvatar, user.id)
+    try {
+      const { data, error } = await getSupabase()
+        .from('profiles')
+        .update({
+          avatar_url: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', user.id)
+        .select()
+        .single()
+
+      if (error) throw error
+      set({ profile: data as OnlineProfile })
+
+      if (oldAvatar) {
+        void deleteAvatarImage(oldAvatar, user.id)
+      }
+    } catch (err) {
+      set({ profile })
+      throw err
     }
   }
 }))

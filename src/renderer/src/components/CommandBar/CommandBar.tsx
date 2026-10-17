@@ -3,9 +3,12 @@ import { Search, ChevronLeft, ChevronRight, Bell } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import NotificationDropdown from '../Notifications/NotificationDropdown'
 import { useNotificationStore } from '../../stores/useNotificationStore'
+import { useOnlineStore } from '../../hooks/useOnlineStore'
+import Avatar from '../Common/Avatar'
 
 export default function CommandBar() {
   const navigate = useNavigate()
+  const { user, profile } = useOnlineStore()
   const [isNotificationOpen, setIsNotificationOpen] = useState(false)
   const notificationRef = useRef<HTMLDivElement>(null)
   const unreadNotificationCount = useNotificationStore(
@@ -73,9 +76,13 @@ export default function CommandBar() {
           />
         </div>
 
-        <div className="h-8 w-8 rounded-full bg-surface-elevated border border-border flex items-center justify-center text-text text-sm font-bold shadow-sm">
-          F
-        </div>
+        <Avatar
+          src={profile?.avatar_url}
+          fallbackText={profile?.display_name || user?.email}
+          metadataFallback={user?.user_metadata?.avatar_url || user?.user_metadata?.picture}
+          size="sm"
+          className="shrink-0"
+        />
       </div>
     </div>
   )

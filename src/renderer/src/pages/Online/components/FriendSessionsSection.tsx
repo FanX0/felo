@@ -13,6 +13,7 @@ interface FriendSessionsSectionProps {
   busy: boolean
   currentRoomId?: string | null
   isHost?: boolean
+  currentUserId?: string | null
 }
 
 export default function FriendSessionsSection({
@@ -22,16 +23,21 @@ export default function FriendSessionsSection({
   handleListenAlong,
   busy,
   currentRoomId,
-  isHost
+  isHost,
+  currentUserId
 }: FriendSessionsSectionProps): ReactElement {
+  const visibleFriends = liveFriends.filter(
+    ({ profile }) => !currentUserId || profile.id !== currentUserId
+  )
+
   return (
     <section className="mt-8">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-base font-bold text-text flex items-center gap-2">
           <span>Friends Listening Right Now</span>
-          {liveFriends.length > 0 && (
+          {visibleFriends.length > 0 && (
             <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-[10px] font-medium text-text-muted border border-border/60">
-              {liveFriends.length} Active
+              {visibleFriends.length} Active
             </span>
           )}
         </h2>
@@ -46,9 +52,9 @@ export default function FriendSessionsSection({
         </button>
       </div>
 
-      {liveFriends.length > 0 ? (
+      {visibleFriends.length > 0 ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {liveFriends.map(({ profile, room }) => {
+          {visibleFriends.map(({ profile, room }) => {
             const isCurrentRoom = Boolean(currentRoomId && currentRoomId === room.id)
 
             return (

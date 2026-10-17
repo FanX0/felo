@@ -44,6 +44,24 @@ export function setPreDeviceAudioState(state: { isPlaying: boolean; currentSongI
   _preDeviceAudioState = state
 }
 
+export interface PreJoinPlayerSnapshot {
+  queue: Song[]
+  currentSongIndex: number
+  currentTime: number
+  volume: number
+  isPlaying: boolean
+}
+
+export let _preJoinPlayerSnapshot: PreJoinPlayerSnapshot | null = null
+
+export function savePreJoinPlayerSnapshot(snapshot: PreJoinPlayerSnapshot | null): void {
+  _preJoinPlayerSnapshot = snapshot
+}
+
+export function getPreJoinPlayerSnapshot(): PreJoinPlayerSnapshot | null {
+  return _preJoinPlayerSnapshot
+}
+
 export function broadcastHostLosslessTrack(song?: Song | null): void {
   if (!_activeAudioHost || !song) return
   const localFile = song.id ? getLocalSlotPoolFile(song.id) : null
@@ -80,6 +98,11 @@ export function setLastHostPulse(pulse: SyncPulsePayload | null): void {
 export let _roomDspSyncSender: ((snapshot: any, volume?: number) => void) | null = null
 export function registerRoomDspSyncSender(fn: (snapshot: any, volume?: number) => void): void {
   _roomDspSyncSender = fn
+}
+
+export let _roomClosureSender: (() => void) | null = null
+export function registerRoomClosureSender(fn: () => void): void {
+  _roomClosureSender = fn
 }
 
 let _listeningStoreStateGetter: (() => any) | null = null

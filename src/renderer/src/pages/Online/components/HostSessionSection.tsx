@@ -27,6 +27,7 @@ import type { Song } from '../../../types'
 import type { ListeningRoom } from '../../../online/types'
 import type { RoomMemberInfo } from '../types'
 import { formatBytes, formatTime } from '../utils'
+import { cn } from '../../../lib/utils'
 import { isYouTubeSong } from '../../../lib/youtubeService'
 import SettingsSyncSection from '../../../components/Online/SettingsSyncSection'
 import Avatar from '../../../components/Common/Avatar'
@@ -532,7 +533,10 @@ export default function HostSessionSection({
               {isYouTubeSong(currentPlayingTrack) && (
                 <div
                   id="youtube-stage-dock"
-                  className="w-full aspect-video rounded-2xl bg-black/90 border border-white/15 overflow-hidden mb-3 relative shadow-2xl flex items-center justify-center transition-all"
+                  className={cn(
+                    "w-full aspect-video rounded-2xl bg-black/90 border border-white/15 mb-3 relative shadow-2xl flex items-center justify-center transition-all",
+                    isYouTubeFullscreen ? "overflow-visible" : "overflow-hidden"
+                  )}
                 >
                   {isYouTubeFullscreen ? (
                     <div className="flex flex-col items-center gap-2.5 text-text-muted text-xs p-6 text-center animate-fade-in">
@@ -560,26 +564,6 @@ export default function HostSessionSection({
                       <Radio className="h-6 w-6 text-primary animate-pulse" />
                       <span className="font-bold text-sm text-white/95">Synchronizing Live YouTube Stream...</span>
                       <span className="text-[11px] text-text-muted">Audio and video stream in unison across all room listeners.</span>
-                      <div className="flex items-center gap-2 mt-2">
-                        <button
-                          type="button"
-                          onClick={() => window.dispatchEvent(new CustomEvent('felo:enter-fullscreen-youtube'))}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold transition-all cursor-pointer shadow-sm active:scale-95"
-                          title="Expand into Full-Screen Modal"
-                        >
-                          <Maximize2 className="h-3.5 w-3.5" />
-                          <span>Full Screen Modal</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => window.dispatchEvent(new CustomEvent('felo:dock-youtube-stage'))}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all cursor-pointer border border-white/10 shadow-sm active:scale-95"
-                          title="Dock player back into this stage"
-                        >
-                          <Radio className="h-3.5 w-3.5 text-primary" />
-                          <span>Dock Stage</span>
-                        </button>
-                      </div>
                     </div>
                   )}
                 </div>

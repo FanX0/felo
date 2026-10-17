@@ -64,4 +64,20 @@ describe('Avatar Component', () => {
     expect(screen.queryByRole('img')).not.toBeInTheDocument()
     expect(screen.getByText('T')).toBeInTheDocument()
   })
+
+  it('resets failed state and renders new image when src is updated', () => {
+    const { rerender } = render(
+      <Avatar src="https://broken-link.example.com/404.jpg" fallbackText="User" />
+    )
+
+    const img = screen.getByRole('img')
+    fireEvent.error(img)
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+
+    // Update with new valid avatar URL
+    rerender(<Avatar src="https://valid-link.example.com/new.png" fallbackText="User" />)
+    const newImg = screen.getByRole('img')
+    expect(newImg).toBeInTheDocument()
+    expect(newImg).toHaveAttribute('src', 'https://valid-link.example.com/new.png')
+  })
 })

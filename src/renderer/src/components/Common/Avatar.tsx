@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from 'react'
+import { useState, useEffect, type ReactElement } from 'react'
 import { User } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { getInitials, resolveAvatarUrl } from '../../lib/avatar'
@@ -41,6 +41,10 @@ export default function Avatar({
   const resolvedUrl = resolveAvatarUrl(src, metadataFallback, cacheBust)
   const [failedUrl, setFailedUrl] = useState<string | null>(null)
   const hasError = failedUrl !== null && failedUrl === resolvedUrl
+
+  useEffect(() => {
+    setFailedUrl(null)
+  }, [src, metadataFallback])
 
   const rawInitials = showInitials && fallbackText ? getInitials(fallbackText, maxInitials) : null
   const initials = rawInitials && rawInitials !== '?' ? rawInitials : null

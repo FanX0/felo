@@ -199,6 +199,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (_playbackGuard && _playbackGuard(() => get().setQueue(newQueue, startPlayingIndex, context, options))) {
       return
     }
+    if (!newQueue || newQueue.length === 0) {
+      get().clearQueue()
+      return
+    }
     const { isShuffle, queue: currentQueue, currentSongIndex: currentIdx } = get()
     const preservePriority = options?.preservePriority !== false
     const pendingPriorities =

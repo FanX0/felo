@@ -8,7 +8,7 @@ import { useConnectedDeviceStore } from '../useConnectedDeviceStore'
 import { useDspStore } from '../useDspStore'
 import { ensureTrackInAudioBucket, pruneAudioBucket } from '../../lib/audioBucketService'
 import { getActiveAudioTime } from '../../lib/audioBridge'
-import { playParticipantJoinSound, playParticipantLeaveSound } from '../../lib/uiSounds'
+import { playParticipantLeaveSound } from '../../lib/uiSounds'
 import {
   _activeAudioHost,
   setActiveAudioHost,
@@ -18,7 +18,9 @@ import {
   setEnsureLock,
   makeCode,
   toSharedSong,
-  readInitialDiscordPriority
+  readInitialDiscordPriority,
+  savePreJoinPlayerSnapshot,
+  _roomClosureSender
 } from './helpers'
 
 export const createRoomSlice: StateCreator<
@@ -551,6 +553,23 @@ export const createRoomSlice: StateCreator<
       if (!targetRoom) throw new Error('This listening session is no longer active.')
 
       if (targetRoom.host_id !== user.id) {
+        if (!currentJoined) {
+          // If entering a room as a join user from standalone local playback:
+          // Snapshot the participant's local player state so we can cleanly restore it when they leave!
+          const localPlayer = usePlayerStore.getState()
+          if (localPlayer.queue && localPlayer.queue.length > 0) {
+            savePreJoinPlayerSnapshot({
+              queue: [...localPlayer.queue],
+              currentSongIndex: localPlayer.currentSongIndex,
+              currentTime: localPlayer.currentTime || 0,
+              volume: localPlayer.volume,
+              isPlaying: localPlayer.isPlaying
+            })
+          } else {
+            savePreJoinPlayerSnapshot(null)
+          }
+        }
+
         if (prevJoinedId && prevJoinedId !== targetRoom.id) {
           get().cleanupOnLeave()
           void supabase
@@ -622,7 +641,6 @@ export const createRoomSlice: StateCreator<
           lastHostUpdate: Date.now(),
           myRole: assignedRole
         })
-        playParticipantJoinSound()
         useConnectedDeviceStore.getState().setDevicePlaybackMode('local')
         useConnectedDeviceStore.getState().claimPlayback()
         usePlayerStore.getState().claimAudioOwnership()
@@ -713,6 +731,7 @@ export const createRoomSlice: StateCreator<
 
   deactivateHostRoom: async () => {
     const user = useOnlineStore.getState().user
+    _roomClosureSender?.()
     if (_activeAudioHost) {
       _activeAudioHost.stop()
       setActiveAudioHost(null)
@@ -745,6 +764,7 @@ export const createRoomSlice: StateCreator<
     const hostRoom = get().hostRoom
     const roomId = hostRoom?.id
 
+    _roomClosureSender?.()
     if (_activeAudioHost) {
       _activeAudioHost.stop()
       setActiveAudioHost(null)

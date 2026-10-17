@@ -575,7 +575,17 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
         return
       }
 
-      const friendIds = reqs.map((r) => (r.requester_id === user.id ? r.addressee_id : r.requester_id))
+      const friendIds = [
+        ...new Set(
+          reqs.map((r) => (r.requester_id === user.id ? r.addressee_id : r.requester_id))
+        )
+      ].filter((id): id is string => Boolean(id) && id !== user.id)
+
+      if (friendIds.length === 0) {
+        setLiveFriends([])
+        setAllFriends([])
+        return
+      }
 
       const [{ data: profileRows }, { data: hostRoomRows }, { data: memberRows }] = await Promise.all([
         supabase.from('profiles').select('id, username, display_name, avatar_url').in('id', friendIds),
@@ -644,6 +654,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       const activeList: LiveFriendSession[] = []
       const roomsDict: Record<string, ListeningRoom> = {}
       friendRoomsMap.forEach((room, friendId) => {
+        if (friendId === user.id) return
         roomsDict[friendId] = room
         activeList.push({
           profile: profilesMap.get(friendId) || {
@@ -682,6 +693,11 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'listening_room_members' },
+        () => void loadLiveFriends()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'friend_requests' },
         () => void loadLiveFriends()
       )
       .subscribe()
@@ -1303,6 +1319,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
         busy={busy}
         currentRoomId={hostRoom?.id || null}
         isHost={Boolean(hostRoom?.id)}
+        currentUserId={user?.id || null}
       />
 
       {/* Join with Code Modal */}
