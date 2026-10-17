@@ -312,3 +312,27 @@ export function isMobileDevice(
   const cat = typeof categoryOrDevice === 'string' ? categoryOrDevice : getDeviceCategory(categoryOrDevice as any)
   return cat === 'app_mobile' || cat === 'web_mobile' || cat === 'mobile' || cat === 'phone' || cat === 'tablet'
 }
+
+/**
+ * Strips raw IPs, technical delimiters, and redundant platform tags from device names
+ * for clean, professional user-facing display (Spotify Connect / Apple AirPlay style)
+ */
+export function getCleanDeviceName(name?: string | null, fallback = 'Device'): string {
+  if (!name || typeof name !== 'string') return fallback
+  let clean = name.trim()
+  if (!clean) return fallback
+
+  // 1. Remove IP address with optional port, bullets, or dashes (e.g. " • 192.168.1.12:4788")
+  clean = clean.replace(/\s*[•·-]\s*\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?\b/g, '')
+
+  // 2. Remove IP inside parentheses (e.g. "(192.168.1.12)" or "(192.168.1.12:4788)")
+  clean = clean.replace(/\(\s*\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?\b\s*\)/g, '')
+
+  // 3. Remove redundant OS tags inside parentheses (e.g. "Felo Desktop (Windows)" -> "Felo Desktop")
+  clean = clean.replace(/\(\s*(?:Windows|macOS|Linux|iOS|Android|iPadOS)\s*\)/gi, '')
+
+  // 4. Remove leftover empty parentheses or dangling separators
+  clean = clean.replace(/\(\s*\)/g, '').replace(/\s*[•·-]\s*$/, '').trim()
+
+  return clean || fallback
+}

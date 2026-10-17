@@ -1,4 +1,4 @@
-import { type ReactElement } from 'react'
+import { type ReactElement, useState, useEffect } from 'react'
 import {
   Radio,
   SlidersHorizontal,
@@ -14,9 +14,13 @@ import {
   Crown,
   ListMusic,
   SkipForward,
+  Play,
+  Star,
+  Trash2,
   X,
   Search,
-  Maximize2
+  Maximize2,
+  Minimize2
 } from 'lucide-react'
 import type { Song } from '../../../types'
 import type { ListeningRoom } from '../../../online/types'
@@ -26,6 +30,7 @@ import { isYouTubeSong } from '../../../lib/youtubeService'
 import { AppCapabilities } from '../../../lib/appConfig'
 import { getSupabase } from '../../../lib/supabase'
 import { usePlayerStore } from '../../../hooks/usePlayerStore'
+import { useListeningStore } from '../../../hooks/useListeningStore'
 import RoomChat from '../../../components/RoomChat/RoomChat'
 import SettingsSyncSection from '../../../components/Online/SettingsSyncSection'
 import Slider from '../../../components/Common/Slider'
@@ -136,6 +141,54 @@ export default function GuestRoomView({
     Object.values(jitStatus).find((j) => j.percent < 100) ||
     (activeTrackKey ? jitStatus[activeTrackKey] : null)
   const playerQueue = usePlayerStore((state) => state.queue)
+  const myRole = useListeningStore((state) => state.myRole)
+
+  const [isYouTubeFullscreen, setIsYouTubeFullscreen] = useState(false)
+
+  useEffect(() => {
+    const handleStatus = (e: Event) => {
+      const custom = e as CustomEvent<{ isFullscreen: boolean }>
+      if (custom.detail) {
+        setIsYouTubeFullscreen(Boolean(custom.detail.isFullscreen))
+      }
+    }
+    window.addEventListener('felo:youtube-fullscreen-status', handleStatus)
+    return () => window.removeEventListener('felo:youtube-fullscreen-status', handleStatus)
+  }, [])
+
+  // Auto-connect to live device audio broadcast if active in joined room and not yet connected
+  useEffect(() => {
+    const isDeviceStreamActive = Boolean(joinedRoom.is_device_stream || joinedRoom.song?.isDeviceStream)
+    if (isDeviceStreamActive && !isReceivingDeviceStream && (deviceAudioClientState === 'idle' || deviceAudioClientState === 'disconnected')) {
+      void connectToDeviceStream(joinedRoom)
+    }
+  }, [
+    joinedRoom.id,
+    joinedRoom.is_device_stream,
+    joinedRoom.song?.isDeviceStream,
+    isReceivingDeviceStream,
+    deviceAudioClientState,
+    connectToDeviceStream
+  ])
+
+  const handleCoHostCommand = async (command: string, songTitle: string) => {
+    if (!joinedRoom?.code) return
+    try {
+      const senderName = user?.user_metadata?.full_name || user?.email || 'Co-host'
+      const supabase = getSupabase()
+      await supabase.from('listening_room_commands').insert({
+        room_code: joinedRoom.code,
+        command,
+        sender_name: senderName,
+        source: 'web',
+        payload: { title: songTitle }
+      })
+      setMessage(`Co-host: ${command} request sent for "${songTitle}"`)
+      setTimeout(() => setMessage(''), 3000)
+    } catch (err: any) {
+      console.warn('[handleCoHostCommand] Error sending command:', err)
+    }
+  }
 
   return (
     <div className="mx-auto flex min-h-full flex-1 w-full max-w-4xl flex-col px-4 sm:px-6 md:px-8 py-5 sm:py-7 pb-36 sm:pb-32 md:pb-24 select-none">
@@ -814,19 +867,54 @@ export default function GuestRoomView({
                         id="youtube-stage-dock"
                         className="w-full aspect-video rounded-2xl bg-black/90 border border-border overflow-hidden mb-3 relative shadow-md flex items-center justify-center transition-all"
                       >
-                        <div className="flex flex-col items-center gap-2.5 text-text-muted text-xs p-6 text-center">
-                          <Radio className="h-6 w-6 text-primary animate-pulse" />
-                          <span className="font-bold text-sm text-text">Synchronizing Live YouTube Stream...</span>
-                          <span className="text-[11px] text-text-muted">Audio and video stream in unison across all room listeners.</span>
-                          <button
-                            type="button"
-                            onClick={() => window.dispatchEvent(new CustomEvent('felo:dock-youtube-stage'))}
-                            className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all cursor-pointer border border-white/10 shadow-sm active:scale-95"
-                          >
-                            <Maximize2 className="h-3.5 w-3.5 text-primary" />
-                            <span>Dock Video into Stage</span>
-                          </button>
-                        </div>
+                        {isYouTubeFullscreen ? (
+                          <div className="flex flex-col items-center gap-2.5 text-text-muted text-xs p-6 text-center animate-fade-in">
+                            <div className="h-10 w-10 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary mb-1">
+                              <Maximize2 className="h-5 w-5 animate-pulse" />
+                            </div>
+                            <span className="font-bold text-sm text-text">Playing in Full-Screen Modal</span>
+                            <span className="text-[11px] text-text-muted max-w-sm">
+                              The live YouTube stream is currently open in full-screen modal mode.
+                            </span>
+                            <div className="flex items-center gap-2 mt-2">
+                              <button
+                                type="button"
+                                onClick={() => window.dispatchEvent(new CustomEvent('felo:exit-fullscreen-youtube'))}
+                                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition-all cursor-pointer shadow-md active:scale-95"
+                                title="Exit full-screen modal (Esc)"
+                              >
+                                <Minimize2 className="h-3.5 w-3.5" />
+                                <span>Exit Fullscreen</span>
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-2.5 text-text-muted text-xs p-6 text-center">
+                            <Radio className="h-6 w-6 text-primary animate-pulse" />
+                            <span className="font-bold text-sm text-text">Synchronizing Live YouTube Stream...</span>
+                            <span className="text-[11px] text-text-muted">Audio and video stream in unison across all room listeners.</span>
+                            <div className="flex items-center gap-2 mt-2">
+                              <button
+                                type="button"
+                                onClick={() => window.dispatchEvent(new CustomEvent('felo:enter-fullscreen-youtube'))}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold transition-all cursor-pointer shadow-sm active:scale-95"
+                                title="Expand into Full-Screen Modal"
+                              >
+                                <Maximize2 className="h-3.5 w-3.5" />
+                                <span>Full Screen Modal</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => window.dispatchEvent(new CustomEvent('felo:dock-youtube-stage'))}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all cursor-pointer border border-white/10 shadow-sm active:scale-95"
+                                title="Dock player back into this stage"
+                              >
+                                <Radio className="h-3.5 w-3.5 text-primary" />
+                                <span>Dock Stage</span>
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                     <div className="rounded-xl border border-border bg-surface p-4 shadow-xs">
@@ -933,9 +1021,31 @@ export default function GuestRoomView({
                               </p>
                             </div>
                           </div>
-                          <span className="text-[10px] font-mono text-text-muted">
-                            {formatTime(song.duration || 0)}
-                          </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[10px] font-mono text-text-muted">
+                              {formatTime(song.duration || 0)}
+                            </span>
+                            {myRole === 'co_host' && (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleCoHostCommand('jump', song.title)}
+                                  className="p-1 rounded text-text-muted hover:text-text cursor-pointer"
+                                  title="Play Now (Co-host)"
+                                >
+                                  <Play className="h-3 w-3 fill-current" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleCoHostCommand('remove', song.title)}
+                                  className="p-1 rounded text-text-muted hover:text-danger cursor-pointer"
+                                  title="Remove from Queue (Co-host)"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -968,9 +1078,39 @@ export default function GuestRoomView({
                               <p className="text-[11px] text-text-muted truncate">{song.artist}</p>
                             </div>
                           </div>
-                          <span className="text-[10px] font-mono text-text-muted">
-                            {formatTime(song.duration || 0)}
-                          </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[10px] font-mono text-text-muted">
+                              {formatTime(song.duration || 0)}
+                            </span>
+                            {myRole === 'co_host' && (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleCoHostCommand('jump', song.title)}
+                                  className="p-1 rounded text-text-muted hover:text-text cursor-pointer"
+                                  title="Play Now (Co-host)"
+                                >
+                                  <Play className="h-3 w-3 fill-current" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleCoHostCommand('bump', song.title)}
+                                  className="p-1 rounded text-text-muted hover:text-primary cursor-pointer"
+                                  title="Make Priority / Play Next (Co-host)"
+                                >
+                                  <Star className="h-3 w-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleCoHostCommand('remove', song.title)}
+                                  className="p-1 rounded text-text-muted hover:text-danger cursor-pointer"
+                                  title="Remove from Queue (Co-host)"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       ))}
                     </div>

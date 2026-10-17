@@ -10,6 +10,7 @@ import { registerLocalSlotPoolPath } from '../lib/jitAudioPipeline'
 import { playParticipantJoinSound, playParticipantLeaveSound } from '../lib/uiSounds'
 import { roomClockSync } from '../lib/roomClockSync'
 import { getActiveAudioTime, getAudioPlaybackRate } from '../lib/audioBridge'
+import { isYouTubeSong } from '../lib/youtubeService'
 import type { Song } from '../pages/Library/Library'
 
 let _activeHostSyncChannel: any = null
@@ -110,7 +111,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
         return false
       }
       const { joinedRoom, myRole } = useListeningStore.getState()
-      if (joinedRoom && myRole === 'listener') {
+      if (joinedRoom && (myRole === 'listener' || myRole === 'co_host')) {
         useListeningStore.getState().setPendingLeaveAndPlay(proceed)
         return true
       }
@@ -188,6 +189,23 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
       window.removeEventListener('pagehide', handleExitCleanup)
     }
   }, [])
+
+  // Auto-sweep orphaned host rooms for this user from previous sessions or unexpected disconnects
+  useEffect(() => {
+    if (!user?.id || hostRoom) return
+    const sweepOrphaned = async () => {
+      try {
+        await getSupabase()
+          .from('listening_rooms')
+          .update({ is_active: false, is_playing: false, updated_at: new Date().toISOString() })
+          .eq('host_id', user.id)
+          .eq('is_active', true)
+      } catch {
+        // silent
+      }
+    }
+    void sweepOrphaned()
+  }, [user?.id, Boolean(hostRoom)])
 
   // 1. Immediate Broadcast on Playback State Change (Song Change, Queue/Playlist Change, or Play/Pause)
   useEffect(() => {
@@ -934,9 +952,9 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             next.song?.isDeviceStream || next.is_device_stream
           )
 
-          // Auto-Switch 1: Host started live device broadcast -> seamlessly switch to WebRTC
-          if (!prevIsDeviceStream && newIsDeviceStream) {
-            console.log('[AutoSwitch] Host started live broadcast, switching to WebRTC')
+          // Auto-Switch 1: Host live broadcast active -> ensure WebRTC stream connection
+          if ((!prevIsDeviceStream || !useListeningStore.getState().isReceivingDeviceStream) && newIsDeviceStream) {
+            console.log('[AutoSwitch] Host live broadcast active, ensuring WebRTC stream connection')
             usePlayerStore.getState().setIsPlaying(false)
             useListeningStore.getState().setJoinedRoom(next)
             void useListeningStore.getState().connectToDeviceStream(next)
@@ -944,7 +962,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
           }
 
           // Auto-Switch 2: Host stopped live device broadcast -> seamlessly resume track sync
-          if (prevIsDeviceStream && !newIsDeviceStream) {
+          if ((prevIsDeviceStream || useListeningStore.getState().isReceivingDeviceStream) && !newIsDeviceStream) {
             console.log('[AutoSwitch] Host stopped broadcast, resuming track sync')
             useListeningStore.getState().disconnectFromDeviceStream()
             useListeningStore.getState().setJoinedRoom(next)
@@ -952,8 +970,21 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             return
           }
 
+          const prevIsYouTube = Boolean(
+            currentRoom?.song?.isYouTube ||
+            currentRoom?.song?.videoId ||
+            (currentRoom?.song && isYouTubeSong(currentRoom.song))
+          )
+          const newIsYouTube = Boolean(
+            next.song?.isYouTube ||
+            next.song?.videoId ||
+            (next.song && isYouTubeSong(next.song))
+          )
+          const sourceTypeChanged = prevIsYouTube !== newIsYouTube
+
           const currentPlayingSong = usePlayerStore.getState().queue[usePlayerStore.getState().currentSongIndex]
           const isSongEffectivelyEqual = Boolean(
+            !sourceTypeChanged &&
             currentRoom?.song &&
             next.song &&
             next.song.title === currentRoom.song.title &&
@@ -961,6 +992,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             (next.song.localId ? next.song.localId === currentRoom.song.localId : true)
           )
           const isAlreadyPlayingThisSong = Boolean(
+            !sourceTypeChanged &&
             currentPlayingSong &&
             next.song &&
             currentPlayingSong.title === next.song.title &&
@@ -969,8 +1001,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
 
           const songChanged = Boolean(
             next.song &&
-            !isSongEffectivelyEqual &&
-            !isAlreadyPlayingThisSong
+            (!isSongEffectivelyEqual || !isAlreadyPlayingThisSong)
           )
 
           if (next.song && typeof next.song.hostPosition !== 'number') {
@@ -1086,8 +1117,8 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             latestRoom.song?.isDeviceStream || latestRoom.is_device_stream
           )
 
-          // Auto-Switch 1: Live broadcast start detected via poll
-          if (!prevIsDeviceStream && newIsDeviceStream) {
+          // Auto-Switch 1: Live broadcast detected via poll -> ensure WebRTC stream connection
+          if ((!prevIsDeviceStream || !useListeningStore.getState().isReceivingDeviceStream) && newIsDeviceStream) {
             usePlayerStore.getState().setIsPlaying(false)
             useListeningStore.getState().setJoinedRoom(latestRoom as any)
             void useListeningStore.getState().connectToDeviceStream(latestRoom as any)
@@ -1095,15 +1126,28 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
           }
 
           // Auto-Switch 2: Live broadcast stop detected via poll
-          if (prevIsDeviceStream && !newIsDeviceStream) {
+          if ((prevIsDeviceStream || useListeningStore.getState().isReceivingDeviceStream) && !newIsDeviceStream) {
             useListeningStore.getState().disconnectFromDeviceStream()
             useListeningStore.getState().setJoinedRoom(latestRoom as any)
             void useListeningStore.getState().handleHostSongChange(latestRoom as any)
             return
           }
 
+          const prevIsYouTube = Boolean(
+            currentRoom?.song?.isYouTube ||
+            currentRoom?.song?.videoId ||
+            (currentRoom?.song && isYouTubeSong(currentRoom.song))
+          )
+          const newIsYouTube = Boolean(
+            latestRoom.song?.isYouTube ||
+            latestRoom.song?.videoId ||
+            (latestRoom.song && isYouTubeSong(latestRoom.song))
+          )
+          const sourceTypeChanged = prevIsYouTube !== newIsYouTube
+
           const currentPlayingSong = usePlayerStore.getState().queue[usePlayerStore.getState().currentSongIndex]
           const isSongEffectivelyEqual = Boolean(
+            !sourceTypeChanged &&
             currentRoom?.song &&
             latestRoom.song &&
             latestRoom.song.title === currentRoom.song.title &&
@@ -1111,6 +1155,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             (latestRoom.song.localId ? latestRoom.song.localId === currentRoom.song.localId : true)
           )
           const isAlreadyPlayingThisSong = Boolean(
+            !sourceTypeChanged &&
             currentPlayingSong &&
             latestRoom.song &&
             currentPlayingSong.title === latestRoom.song.title &&
@@ -1119,8 +1164,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
 
           const songChanged = Boolean(
             latestRoom.song &&
-            !isSongEffectivelyEqual &&
-            !isAlreadyPlayingThisSong
+            (!isSongEffectivelyEqual || !isAlreadyPlayingThisSong)
           )
 
           useListeningStore.getState().setJoinedRoom(latestRoom as any)

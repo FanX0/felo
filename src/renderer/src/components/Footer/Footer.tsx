@@ -48,6 +48,7 @@ import { AppCapabilities } from '../../lib/appConfig'
 import PingPongMarquee from '../Common/PingPongMarquee'
 import SongAddButton from '../Common/SongAddButton'
 import { fmtTime, UNAVAILABLE_TIME_TEXT } from '../../lib/songUtils'
+import { getSupabase } from '../../lib/supabase'
 
 interface FooterProps {
   onOpenDownloadPanel?: (target?: DownloadTarget) => void
@@ -406,6 +407,20 @@ export default function Footer({
       return
     }
 
+    if (joinedRoom && joinedRoom.code && myRole === 'co_host') {
+      const senderName = user?.user_metadata?.full_name || user?.email || 'Co-host'
+      void getSupabase()
+        .from('listening_room_commands')
+        .insert({
+          room_code: joinedRoom.code,
+          command: isPlaying ? 'pause' : 'resume',
+          sender_name: senderName,
+          source: 'web',
+          payload: {}
+        })
+      return
+    }
+
     if (queueLength > 0 && currentSongIndex >= 0 && currentSongIndex < queueLength) {
       togglePlay()
       return
@@ -442,6 +457,21 @@ export default function Footer({
       }
       return
     }
+
+    if (joinedRoom && joinedRoom.code && myRole === 'co_host') {
+      const senderName = user?.user_metadata?.full_name || user?.email || 'Co-host'
+      void getSupabase()
+        .from('listening_room_commands')
+        .insert({
+          room_code: joinedRoom.code,
+          command: 'skip',
+          sender_name: senderName,
+          source: 'web',
+          payload: {}
+        })
+      return
+    }
+
     playNext(true)
   }
 
@@ -456,6 +486,21 @@ export default function Footer({
       }
       return
     }
+
+    if (joinedRoom && joinedRoom.code && myRole === 'co_host') {
+      const senderName = user?.user_metadata?.full_name || user?.email || 'Co-host'
+      void getSupabase()
+        .from('listening_room_commands')
+        .insert({
+          room_code: joinedRoom.code,
+          command: 'prev',
+          sender_name: senderName,
+          source: 'web',
+          payload: {}
+        })
+      return
+    }
+
     playPrevious()
   }
 
@@ -471,6 +516,21 @@ export default function Footer({
       }
       return
     }
+
+    if (joinedRoom && joinedRoom.code && myRole === 'co_host') {
+      const senderName = user?.user_metadata?.full_name || user?.email || 'Co-host'
+      void getSupabase()
+        .from('listening_room_commands')
+        .insert({
+          room_code: joinedRoom.code,
+          command: 'seek',
+          sender_name: senderName,
+          source: 'web',
+          payload: { seconds: time }
+        })
+      return
+    }
+
     seek(time)
   }
 

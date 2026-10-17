@@ -35,8 +35,9 @@ import {
 } from './remoteClient'
 import { usePlayerStore } from '../../hooks/usePlayerStore'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
-import { useListeningStore } from '../../hooks/useListeningStore'
+import { useListeningStore, useIsPlayerLocked } from '../../hooks/useListeningStore'
 import { useDspStore } from '../../hooks/useDspStore'
+import { getSupabase } from '../../lib/supabase'
 import {
   useConnectedDeviceStore,
   sendDeviceCommand
@@ -134,71 +135,147 @@ export default function MobileNowPlaying({
     setScrubPreview(val)
   }
 
-  const handleScrubStart = () => {
-    triggerHaptic(8)
-    setIsScrubbing(true)
-    setScrubPreview(localPos)
-  }
-
   const user = useOnlineStore((s) => s.user)
   const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
   const isCloudRemote = Boolean(activeRemote && activeRemote.song && user?.id)
   const isRemoteActive = Boolean(isConnected && state.song)
   const activeRoom = useListeningStore((s) => s.joinedRoom || s.hostRoom)
+  const joinedRoom = useListeningStore((s) => s.joinedRoom)
   const manualSyncOffsetMs = useListeningStore((s) => s.manualSyncOffsetMs)
   const setIsManualSyncModalOpen = useListeningStore((s) => s.setIsManualSyncModalOpen)
   const myRole = useListeningStore((s) => s.myRole)
+  const isPlayerLocked = useIsPlayerLocked()
   const isHost = myRole === 'host' || Boolean(activeRoom && activeRoom.host_id === user?.id)
   const setIsAudioModalOpen = useDspStore((s) => s.setIsAudioModalOpen)
 
+  const handleScrubStart = () => {
+    if (isPlayerLocked) return
+    triggerHaptic(8)
+    setIsScrubbing(true)
+    setScrubPreview(localPos)
+  }
+
   const handleScrubEnd = () => {
+    if (isPlayerLocked) {
+      setIsScrubbing(false)
+      return
+    }
     triggerHaptic(14)
     setIsScrubbing(false)
     setLocalPos(scrubPreview)
     if (remoteClient.getIsConnected()) {
       void remoteClient.seek(scrubPreview)
-    } else if (isCloudRemote && activeRemote && user?.id) {
-      void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'seek', { seconds: scrubPreview })
-    } else {
-      usePlayerStore.getState().seek(scrubPreview)
+      return
     }
+    if (isCloudRemote && activeRemote && user?.id) {
+      void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'seek', { seconds: scrubPreview })
+      return
+    }
+    if (joinedRoom && joinedRoom.code && myRole === 'co_host') {
+      const senderName = user?.user_metadata?.full_name || user?.email || 'Co-host'
+      void getSupabase()
+        .from('listening_room_commands')
+        .insert({
+          room_code: joinedRoom.code,
+          command: 'seek',
+          sender_name: senderName,
+          source: 'mobile',
+          payload: { seconds: scrubPreview }
+        })
+      return
+    }
+    usePlayerStore.getState().seek(scrubPreview)
   }
 
   const handleTogglePlay = () => {
     triggerHaptic(15)
     if (remoteClient.getIsConnected()) {
       void remoteClient.togglePlay()
-    } else if (isCloudRemote && activeRemote && user?.id) {
+      return
+    }
+    if (isCloudRemote && activeRemote && user?.id) {
       void sendDeviceCommand(
         user.id,
         activeRemote.activeDeviceId,
         activeRemote.isPlaying ? 'pause' : 'play'
       )
-    } else {
-      usePlayerStore.getState().togglePlay()
+      return
     }
+    if (isPlayerLocked) {
+      return
+    }
+    if (joinedRoom && joinedRoom.code && myRole === 'co_host') {
+      const senderName = user?.user_metadata?.full_name || user?.email || 'Co-host'
+      void getSupabase()
+        .from('listening_room_commands')
+        .insert({
+          room_code: joinedRoom.code,
+          command: isPlaying ? 'pause' : 'resume',
+          sender_name: senderName,
+          source: 'mobile',
+          payload: {}
+        })
+      return
+    }
+    usePlayerStore.getState().togglePlay()
   }
 
   const handleNext = () => {
     triggerHaptic(15)
     if (remoteClient.getIsConnected()) {
       void remoteClient.next()
-    } else if (isCloudRemote && activeRemote && user?.id) {
-      void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'next')
-    } else {
-      usePlayerStore.getState().playNext(true)
+      return
     }
+    if (isCloudRemote && activeRemote && user?.id) {
+      void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'next')
+      return
+    }
+    if (isPlayerLocked) {
+      return
+    }
+    if (joinedRoom && joinedRoom.code && myRole === 'co_host') {
+      const senderName = user?.user_metadata?.full_name || user?.email || 'Co-host'
+      void getSupabase()
+        .from('listening_room_commands')
+        .insert({
+          room_code: joinedRoom.code,
+          command: 'skip',
+          sender_name: senderName,
+          source: 'mobile',
+          payload: {}
+        })
+      return
+    }
+    usePlayerStore.getState().playNext(true)
   }
 
   const handlePrevious = () => {
     triggerHaptic(15)
     if (remoteClient.getIsConnected()) {
       void remoteClient.previous()
-    } else if (isCloudRemote && activeRemote && user?.id) {
-      void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'previous')
-    } else {
-      usePlayerStore.getState().playPrevious()
+      return
     }
+    if (isCloudRemote && activeRemote && user?.id) {
+      void sendDeviceCommand(user.id, activeRemote.activeDeviceId, 'previous')
+      return
+    }
+    if (isPlayerLocked) {
+      return
+    }
+    if (joinedRoom && joinedRoom.code && myRole === 'co_host') {
+      const senderName = user?.user_metadata?.full_name || user?.email || 'Co-host'
+      void getSupabase()
+        .from('listening_room_commands')
+        .insert({
+          room_code: joinedRoom.code,
+          command: 'prev',
+          sender_name: senderName,
+          source: 'mobile',
+          payload: {}
+        })
+      return
+    }
+    usePlayerStore.getState().playPrevious()
   }
 
   const handleToggleShuffle = () => {
@@ -637,8 +714,8 @@ export default function MobileNowPlaying({
             onChange={handleScrubChange}
             onPointerDown={handleScrubStart}
             onPointerUp={handleScrubEnd}
-            disabled={!song || duration <= 0}
-            className="w-full h-1.5 bg-zinc-700/80 rounded-lg appearance-none cursor-pointer accent-white hover:accent-white transition touch-none"
+            disabled={!song || duration <= 0 || isPlayerLocked}
+            className="w-full h-1.5 bg-zinc-700/80 rounded-lg appearance-none cursor-pointer accent-white hover:accent-white transition touch-none disabled:opacity-40 disabled:cursor-not-allowed"
             style={{
               background: `linear-gradient(to right, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.85) ${progressPercent}%, rgba(255,255,255,0.2) ${progressPercent}%, rgba(255,255,255,0.2) 100%)`
             }}
@@ -657,7 +734,8 @@ export default function MobileNowPlaying({
         <button
           type="button"
           onClick={handleToggleShuffle}
-          className={`relative p-2 transition active:scale-90 cursor-pointer ${
+          disabled={isPlayerLocked}
+          className={`relative p-2 transition active:scale-90 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${
             state.shuffle ? 'text-[rgba(255,255,255,0.85)]' : 'text-zinc-400 hover:text-white'
           }`}
           title="Shuffle"
@@ -672,7 +750,8 @@ export default function MobileNowPlaying({
         <button
           type="button"
           onClick={handlePrevious}
-          className="p-2 text-white hover:text-zinc-200 active:scale-90 transition cursor-pointer"
+          disabled={isPlayerLocked}
+          className="p-2 text-white hover:text-zinc-200 active:scale-90 transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
           title="Previous Track"
         >
           <SkipBack className="w-7 h-7 fill-current" />
@@ -682,8 +761,9 @@ export default function MobileNowPlaying({
         <button
           type="button"
           onClick={handleTogglePlay}
-          className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center shadow-xl shadow-white/10 hover:scale-105 active:scale-95 transition-transform cursor-pointer"
-          title={isPlaying ? 'Pause' : 'Play'}
+          disabled={isPlayerLocked}
+          className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center shadow-xl shadow-white/10 hover:scale-105 active:scale-95 transition-transform cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          title={isPlayerLocked ? 'Controlled by Host' : isPlaying ? 'Pause' : 'Play'}
         >
           {isPlaying ? (
             <Pause className="w-7 h-7 fill-current text-black" />
@@ -696,7 +776,8 @@ export default function MobileNowPlaying({
         <button
           type="button"
           onClick={handleNext}
-          className="p-2 text-white hover:text-zinc-200 active:scale-90 transition cursor-pointer"
+          disabled={isPlayerLocked}
+          className="p-2 text-white hover:text-zinc-200 active:scale-90 transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
           title="Next Track"
         >
           <SkipForward className="w-7 h-7 fill-current" />

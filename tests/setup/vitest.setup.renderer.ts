@@ -2,8 +2,10 @@ import '@testing-library/jest-dom/vitest'
 import { vi } from 'vitest'
 import { createMockElectronApi } from './mocks/electronIpc.mock'
 import { setupWebAudioGlobals } from './mocks/webAudio.mock'
+import { setupWebRTCGlobals } from './mocks/webrtc.mock'
 
 setupWebAudioGlobals()
+setupWebRTCGlobals()
 
 const mockApi = createMockElectronApi()
 

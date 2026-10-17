@@ -564,11 +564,37 @@ export default function AudioEngine() {
   useEffect(() => {
     const syncAudio = (state: ReturnType<typeof usePlayerStore.getState>) => {
       try {
+        const listeningState = useListeningStore.getState()
+        const isDeviceStreamActive = Boolean(
+          listeningState.isReceivingDeviceStream ||
+          listeningState.joinedRoom?.is_device_stream ||
+          listeningState.joinedRoom?.song?.isDeviceStream ||
+          listeningState.hostRoom?.is_device_stream ||
+          listeningState.hostRoom?.song?.isDeviceStream
+        )
+
         const song = state.queue[state.currentSongIndex]
         const playableUrl = song ? resolveSongAudioUrl(song) : null
         const isVirtual = !playableUrl
         const audio = getActiveAudio()
         if (!audio) return
+
+        if (isDeviceStreamActive) {
+          if (audio.src) {
+            audio.pause()
+            audio.removeAttribute('src')
+            audio.load()
+          }
+          const otherAudio = getInactiveAudio()
+          if (otherAudio && otherAudio.src) {
+            otherAudio.pause()
+            otherAudio.removeAttribute('src')
+            otherAudio.load()
+          }
+          audioDspEngine.stopBuffer()
+          window.dispatchEvent(new CustomEvent('felo:stop-youtube'))
+          return
+        }
 
         if (isVirtual) {
           currentSourceRef.current = null

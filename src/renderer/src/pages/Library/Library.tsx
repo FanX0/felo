@@ -32,6 +32,7 @@ import { LibrarySongRow } from './components/LibrarySongRow'
 import { LibraryContextMenu } from './components/LibraryContextMenu'
 import { LibraryBatchToolbar } from './components/LibraryBatchToolbar'
 import { LibraryEmptyState } from './components/LibraryEmptyState'
+import { getCleanDeviceName } from './utils'
 
 export type { Song, SongArtist }
 
@@ -122,7 +123,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
           seenIps.add(host)
           list.push({
             id: 'lan-desktop',
-            device_name: `Felo Desktop (${host})`,
+            device_name: 'Felo Desktop',
             device_type: 'desktop',
             local_ip: host
           })
@@ -545,7 +546,7 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
       librarySource === 'local'
         ? 'Your Library'
         : selectedRemoteDevice
-          ? `${selectedRemoteDevice.device_name} Library`
+          ? `${getCleanDeviceName(selectedRemoteDevice.device_name)} Library`
           : 'Remote Library'
     const playbackContext = usePlayerStore.getState().playbackContext
     const isSameLibraryContext =

@@ -4,11 +4,12 @@ import { useListeningStore } from '../../hooks/useListeningStore'
 import {
   Minimize2,
   Maximize2,
+  Maximize,
+  Minimize,
   Volume2,
   VolumeX,
   SkipForward,
-  RefreshCw,
-  Radio
+  RefreshCw
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { roomClockSync } from '../../lib/roomClockSync'
@@ -78,12 +79,54 @@ export default function YouTubePlayerBridge(): ReactElement | null {
   const [activeVideoId, setActiveVideoId] = useState<string | null>(null)
   const [isExpanded, setIsExpanded] = useState(false)
   const [isUserFloating, setIsUserFloating] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const [isFallbackIframe, setIsFallbackIframe] = useState(false)
   const [playerError, setPlayerError] = useState<string | null>(null)
 
+  // Fullscreen keyboard & custom event handlers
+  useEffect(() => {
+    if (!isFullscreen) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        setIsFullscreen(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [isFullscreen])
+
+  useEffect(() => {
+    const handleExit = () => setIsFullscreen(false)
+    const handleEnter = () => setIsFullscreen(true)
+    window.addEventListener('felo:exit-fullscreen-youtube', handleExit)
+    window.addEventListener('felo:enter-fullscreen-youtube', handleEnter)
+    return () => {
+      window.removeEventListener('felo:exit-fullscreen-youtube', handleExit)
+      window.removeEventListener('felo:enter-fullscreen-youtube', handleEnter)
+    }
+  }, [])
+
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent('felo:youtube-fullscreen-status', {
+        detail: { isFullscreen }
+      })
+    )
+  }, [isFullscreen])
+
   // Allow stage placeholder to request re-docking
   useEffect(() => {
-    const handleDock = () => setIsUserFloating(false)
+    const handleDock = () => {
+      setIsFullscreen(false)
+      setIsUserFloating(false)
+    }
     window.addEventListener('felo:dock-youtube-stage', handleDock)
     return () => window.removeEventListener('felo:dock-youtube-stage', handleDock)
   }, [])
@@ -109,9 +152,16 @@ export default function YouTubePlayerBridge(): ReactElement | null {
   const hostRoom = useListeningStore((s) => s.hostRoom)
   const myRole = useListeningStore((s) => s.myRole)
   const manualSyncOffsetMs = useListeningStore((s) => s.manualSyncOffsetMs)
-  const activeRoom = joinedRoom || hostRoom
   const isListener = Boolean(joinedRoom && myRole === 'listener')
   const isHost = Boolean(hostRoom && !joinedRoom)
+  const isReceivingDeviceStream = useListeningStore((s) => s.isReceivingDeviceStream)
+  const isDeviceStreamActive = Boolean(
+    isReceivingDeviceStream ||
+    joinedRoom?.is_device_stream ||
+    joinedRoom?.song?.isDeviceStream ||
+    hostRoom?.is_device_stream ||
+    hostRoom?.song?.isDeviceStream
+  )
 
   // Autoplay compliance: Listeners start muted so browser allows programmatic stream playback
   const [isMuted, setIsMuted] = useState<boolean>(() => isListener)
@@ -278,9 +328,19 @@ export default function YouTubePlayerBridge(): ReactElement | null {
                     event.target.seekTo(curState.currentTime, true)
                   } catch {}
                 }
+              } else if (isListener && curState.isPlaying && isYouTubeSong(curSong)) {
+                try {
+                  event.target.mute()
+                  setIsMuted(true)
+                  const target = curState.currentTime > 0 ? curState.currentTime : 0
+                  if (target > 0) {
+                    event.target.seekTo(target, true)
+                  }
+                  event.target.playVideo()
+                } catch {}
               } else {
                 try {
-                  event.target.stopVideo()
+                  event.target.pauseVideo()
                   event.target.mute()
                 } catch {}
               }
@@ -361,10 +421,22 @@ export default function YouTubePlayerBridge(): ReactElement | null {
   useEffect(() => {
     if (!isPlayerReady || !playerRef.current) return
 
+    if (isDeviceStreamActive) {
+      try {
+        playerRef.current.pauseVideo?.()
+        playerRef.current.stopVideo?.()
+        playerRef.current.mute?.()
+      } catch {}
+      setIsFallbackIframe(false)
+      activeVideoIdRef.current = null
+      setActiveVideoId(null)
+      return
+    }
+
     if (isCurrentYouTube && currentVideoId) {
       if (activeVideoIdRef.current !== currentVideoId) {
         try {
-          playerRef.current.stopVideo?.()
+          playerRef.current.pauseVideo?.()
         } catch {}
         activeVideoIdRef.current = currentVideoId
         setActiveVideoId(currentVideoId)
@@ -372,7 +444,26 @@ export default function YouTubePlayerBridge(): ReactElement | null {
         setPlayerError(null)
 
         try {
-          const startTime = usePlayerStore.getState().currentTime || 0
+          let startTime = usePlayerStore.getState().currentTime || 0
+          if (startTime <= 0 && joinedRoom) {
+            const hostPos =
+              typeof joinedRoom.song?.hostPosition === 'number'
+                ? joinedRoom.song.hostPosition
+                : joinedRoom.position_seconds || 0
+            const hostTimestamp =
+              typeof joinedRoom.song?.hostTimestamp === 'number'
+                ? joinedRoom.song.hostTimestamp
+                : new Date(joinedRoom.updated_at).getTime()
+            const target = roomClockSync.calculateTargetTime(
+              hostPos,
+              hostTimestamp,
+              joinedRoom.is_playing,
+              (manualSyncOffsetMs || 0) / 1000,
+              joinedRoom.song?.duration || 0
+            )
+            if (target > 0) startTime = target
+          }
+
           if (isPlaying) {
             try {
               playerRef.current.loadVideoById({ videoId: currentVideoId, startSeconds: startTime })
@@ -437,7 +528,6 @@ export default function YouTubePlayerBridge(): ReactElement | null {
         playerRef.current.playVideo?.()
       } else if (!isPlaying && state === 1) {
         playerRef.current.pauseVideo?.()
-        playerRef.current.stopVideo?.()
       }
     } catch (err) {
       console.warn('[YouTubePlayerBridge] Play/pause dispatch error:', err)
@@ -466,7 +556,7 @@ export default function YouTubePlayerBridge(): ReactElement | null {
         setCurrentTime(seekRequest)
         setTimeout(() => {
           isSyncingRef.current = false
-        }, 800)
+        }, 1200)
       } catch (err) {
         console.warn('[YouTubePlayerBridge] Seek error:', err)
       }
@@ -480,9 +570,19 @@ export default function YouTubePlayerBridge(): ReactElement | null {
 
     const timer = setInterval(() => {
       try {
+        if (isSyncingRef.current) return
+        const pState = playerRef.current.getPlayerState?.()
+        // Skip reading position if player is buffering (3) or unstarted (-1)
+        if (pState === 3 || pState === -1) return
+
         const time = playerRef.current.getCurrentTime?.()
         const dur = playerRef.current.getDuration?.()
         if (typeof time === 'number' && Number.isFinite(time)) {
+          const curStoreTime = usePlayerStore.getState().currentTime || 0
+          // Reject transient 0.0s dips while song was already progressing
+          if (time === 0 && curStoreTime > 2) {
+            return
+          }
           setCurrentTime(time)
         }
         if (typeof dur === 'number' && Number.isFinite(dur) && dur > 0) {
@@ -567,13 +667,38 @@ export default function YouTubePlayerBridge(): ReactElement | null {
       try {
         playerRef.current.unMute?.()
         playerRef.current.setVolume?.(Math.round(localVolume * 100))
+        if (joinedRoom && joinedRoom.is_playing) {
+          const hostPos =
+            typeof joinedRoom.song?.hostPosition === 'number'
+              ? joinedRoom.song.hostPosition
+              : joinedRoom.position_seconds || 0
+          const hostTimestamp =
+            typeof joinedRoom.song?.hostTimestamp === 'number'
+              ? joinedRoom.song.hostTimestamp
+              : new Date(joinedRoom.updated_at).getTime()
+          const targetTime = roomClockSync.calculateTargetTime(
+            hostPos,
+            hostTimestamp,
+            true,
+            (manualSyncOffsetMs || 0) / 1000,
+            joinedRoom.song?.duration || 0
+          )
+          if (targetTime > 0) {
+            isSyncingRef.current = true
+            playerRef.current.seekTo?.(targetTime, true)
+            setCurrentTime(targetTime)
+            setTimeout(() => {
+              isSyncingRef.current = false
+            }, 1200)
+          }
+        }
         playerRef.current.playVideo?.()
       } catch {}
     }
     useListeningStore.getState().setIsAutoplayBlocked(false)
   }
 
-  const isVisible = isCurrentYouTube && Boolean(currentVideoId)
+  const isVisible = isCurrentYouTube && Boolean(currentVideoId) && !isDeviceStreamActive
 
   // Floating vs Docked positioning styling
   const containerStyle = useMemo<React.CSSProperties>(() => {
@@ -582,6 +707,23 @@ export default function YouTubePlayerBridge(): ReactElement | null {
         display: 'none',
         pointerEvents: 'none',
         opacity: 0
+      }
+    }
+
+    if (isFullscreen) {
+      return {
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        width: '100vw',
+        height: '100dvh',
+        zIndex: 9999,
+        borderRadius: 0,
+        border: 'none',
+        overflow: 'hidden',
+        backgroundColor: '#000000',
+        display: 'flex',
+        flexDirection: 'column'
       }
     }
 
@@ -608,45 +750,45 @@ export default function YouTubePlayerBridge(): ReactElement | null {
       borderRadius: '1.25rem',
       overflow: 'hidden'
     }
-  }, [isVisible, isDockedInStage, stageRect, isExpanded])
+  }, [isVisible, isFullscreen, isDockedInStage, stageRect, isExpanded])
 
   return (
     <div
       aria-hidden={!isVisible}
       style={containerStyle}
       className={cn(
-        'transition-all duration-300 ease-out shadow-2xl border border-white/15 bg-black backdrop-blur-md select-none group/video',
-        isVisible ? 'opacity-100 pointer-events-auto' : 'pointer-events-none opacity-0'
+        'transition-all duration-300 ease-out shadow-2xl bg-black select-none group/video',
+        isVisible ? 'opacity-100 pointer-events-auto' : 'pointer-events-none opacity-0',
+        isFullscreen
+          ? 'border-none rounded-none'
+          : 'border border-white/15 backdrop-blur-md'
       )}
     >
-      {/* 1. Underlying YouTube Iframe Target or Direct Embed Fallback */}
-      {isFallbackIframe && currentVideoId ? (
-        <iframe
-          src={`https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=1&playsinline=1&modestbranding=1&rel=0`}
-          title="YouTube Video Stream"
-          className="absolute inset-0 w-full h-full border-0"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowFullScreen
-        />
-      ) : (
-        <div
-          ref={containerRef}
-          style={{ pointerEvents: isListener ? 'none' : 'auto' }}
-          className="relative w-full h-full [&>iframe]:w-full [&>iframe]:h-full [&>iframe]:absolute [&>iframe]:inset-0 [&>iframe]:border-0"
-        />
-      )}
+      {/* 1. Top HUD / Toolbar */}
+      <div
+        className={cn(
+          'transition-all duration-200 select-none z-20 text-white',
+          isFullscreen
+            ? 'h-12 sm:h-16 px-3 sm:px-6 bg-black/95 border-b border-white/10 backdrop-blur-md opacity-100 shadow-xl flex items-center justify-between shrink-0 pt-[env(safe-area-inset-top,0px)]'
+            : 'absolute top-0 left-0 right-0 flex items-center justify-end gap-2 p-2 bg-gradient-to-b from-black/80 via-black/40 to-transparent opacity-0 group-hover/video:opacity-100 transition-opacity duration-200'
+        )}
+      >
+        {/* Left Info: visible only in Fullscreen mode (or if listener needs to catch up) */}
+        <div className="flex items-center gap-2.5 min-w-0">
+          {currentSong && isFullscreen && (
+            <div className="flex items-center gap-2 min-w-0 truncate">
+              <span className="text-xs sm:text-sm font-bold text-white truncate max-w-[200px] sm:max-w-[480px]">
+                {currentSong.title}
+              </span>
+              <span className="text-xs text-white/60 truncate hidden sm:inline">
+                • {currentSong.artist}
+              </span>
+            </div>
+          )}
 
-      {/* 2. Top Live Broadcast HUD (Inspired by Mindory LiveVideoBlock) */}
-      <div className="absolute top-0 left-0 right-0 p-2.5 flex items-center justify-between gap-2 z-20 bg-gradient-to-b from-black/80 via-black/40 to-transparent transition-opacity duration-200">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-600/80 backdrop-blur-xs text-white text-[10px] font-black tracking-wider uppercase shadow-xs">
-            <Radio className="h-2.5 w-2.5 animate-pulse" />
-            <span>Live Sync</span>
-          </div>
-
-          {activeRoom && (
-            <span className="hidden sm:inline-block text-[10px] font-semibold text-white/80 bg-black/50 px-2 py-0.5 rounded-full border border-white/10 truncate max-w-[140px]">
-              {isHost ? 'Hosting' : `DJ: ${activeRoom.name || 'Host'}`}
+          {isFullscreen && (
+            <span className="hidden lg:inline-block text-xs text-white/40 font-medium ml-2">
+              Press <kbd className="px-1.5 py-0.5 text-[10px] bg-white/10 border border-white/20 rounded-md font-mono text-white/70">Esc</kbd> to exit full screen
             </span>
           )}
 
@@ -654,7 +796,7 @@ export default function YouTubePlayerBridge(): ReactElement | null {
             <button
               type="button"
               onClick={handleCatchUp}
-              className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/90 hover:bg-amber-400 text-black text-[10px] font-black transition-all cursor-pointer shadow-xs animate-bounce"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/90 hover:bg-amber-400 text-black text-[10px] font-black transition-all cursor-pointer shadow-xs animate-bounce"
               title={`Lag detected: ${desyncSeconds.toFixed(1)}s. Click to catch up to host.`}
             >
               <RefreshCw className="h-2.5 w-2.5 animate-spin" />
@@ -663,70 +805,94 @@ export default function YouTubePlayerBridge(): ReactElement | null {
           )}
         </div>
 
-        {/* Right HUD Controls */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          {/* Mute / Unmute & Volume */}
-          <div className="flex items-center gap-1 bg-black/60 backdrop-blur-xs border border-white/10 rounded-full px-2 py-0.5 shadow-xs">
-            <button
-              type="button"
-              onClick={() => {
-                if (isMuted) {
-                  handleUnmute()
-                } else {
-                  setIsMuted(true)
-                }
-              }}
-              className="p-1 text-white/80 hover:text-white transition-colors cursor-pointer"
-              title={isMuted ? 'Unmute sound' : 'Mute sound'}
-            >
-              {isMuted ? (
-                <VolumeX className="h-3.5 w-3.5 text-red-400" />
-              ) : (
-                <Volume2 className="h-3.5 w-3.5 text-emerald-400" />
-              )}
-            </button>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={isMuted ? 0 : localVolume}
-              onChange={(e) => {
-                const val = parseFloat(e.target.value)
-                setLocalVolume(val)
-                setIsMuted(val === 0)
-                usePlayerStore.getState().setVolume(val)
-              }}
-              className="w-12 h-1 bg-white/20 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-2 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
-            />
-          </div>
+        {/* Right Controls */}
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Mute / Unmute & Volume — Exclusively in Fullscreen mode */}
+          {isFullscreen && (
+            <div className="flex items-center gap-1.5 bg-black/70 backdrop-blur-md border border-white/10 rounded-full px-2 sm:px-2.5 py-1 shadow-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  if (isMuted) {
+                    handleUnmute()
+                  } else {
+                    setIsMuted(true)
+                  }
+                }}
+                className="p-1 text-white/80 hover:text-white transition-colors cursor-pointer"
+                title={isMuted ? 'Unmute sound' : 'Mute sound'}
+              >
+                {isMuted ? (
+                  <VolumeX className="h-3.5 w-3.5 text-red-400" />
+                ) : (
+                  <Volume2 className="h-3.5 w-3.5 text-emerald-400" />
+                )}
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={isMuted ? 0 : localVolume}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value)
+                  setLocalVolume(val)
+                  setIsMuted(val === 0)
+                  usePlayerStore.getState().setVolume(val)
+                }}
+                className="hidden sm:inline-block w-14 sm:w-20 h-1 bg-white/20 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
+              />
+            </div>
+          )}
 
-          {/* Host Skip Button */}
-          {isHost && (
+          {/* Host Skip Button — Exclusively in Fullscreen mode */}
+          {isFullscreen && isHost && (
             <button
               type="button"
               onClick={() => playNext(true)}
               className="p-1.5 rounded-full bg-black/60 hover:bg-black/90 text-white/80 hover:text-white border border-white/10 transition-all cursor-pointer shadow-xs"
               title="Skip to next track"
             >
-              <SkipForward className="h-3 w-3" />
+              <SkipForward className="h-3.5 w-3.5" />
             </button>
           )}
 
-          {/* Miniplayer / Dock Toggle */}
-          {stageRect && (
+          {/* Dedicated FULL SCREEN Button */}
+          <button
+            type="button"
+            onClick={() => setIsFullscreen(!isFullscreen)}
+            className={cn(
+              'flex items-center gap-1.5 rounded-xl transition-all cursor-pointer shadow-xs',
+              isFullscreen
+                ? 'h-8 px-2.5 sm:px-3 bg-red-600/90 hover:bg-red-600 text-white text-xs font-bold'
+                : 'p-1.5 rounded-full bg-black/60 hover:bg-black/90 text-white/80 hover:text-white border border-white/10'
+            )}
+            title={isFullscreen ? 'Exit full screen (Esc)' : 'Open Full Screen Modal'}
+          >
+            {isFullscreen ? (
+              <>
+                <Minimize2 className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Exit Fullscreen</span>
+              </>
+            ) : (
+              <Maximize2 className="h-3.5 w-3.5" />
+            )}
+          </button>
+
+          {/* Miniplayer / Dock Toggle (only in minimize mode) */}
+          {!isFullscreen && stageRect && (
             <button
               type="button"
               onClick={() => setIsUserFloating(!isUserFloating)}
               className="p-1.5 rounded-full bg-black/60 hover:bg-black/90 text-white/80 hover:text-white border border-white/10 transition-all cursor-pointer shadow-xs"
               title={isUserFloating ? 'Dock into stage' : 'Pop out into miniplayer'}
             >
-              {isUserFloating ? <Maximize2 className="h-3 w-3" /> : <Minimize2 className="h-3 w-3" />}
+              {isUserFloating ? <Maximize className="h-3.5 w-3.5" /> : <Minimize className="h-3.5 w-3.5" />}
             </button>
           )}
 
-          {/* Expand Toggle (when in floating miniplayer) */}
-          {!isDockedInStage && (
+          {/* Expand Toggle (only in floating miniplayer) */}
+          {!isFullscreen && !isDockedInStage && (
             <button
               type="button"
               onClick={() => setIsExpanded(!isExpanded)}
@@ -739,42 +905,78 @@ export default function YouTubePlayerBridge(): ReactElement | null {
         </div>
       </div>
 
-      {/* 3. Tap to Unmute Overlay Banner (for Autoplay-restricted guests) */}
-      {isMuted && isVisible && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 backdrop-blur-[2px] transition-all">
-          <button
-            type="button"
-            onClick={handleUnmute}
-            className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-white text-black font-black text-xs hover:bg-white/90 transition-all shadow-2xl active:scale-95 cursor-pointer border border-white/30 animate-pulse"
-          >
-            <Volume2 className="h-4 w-4 text-black fill-black" />
-            <span>Tap to Unmute Audio</span>
-          </button>
-        </div>
-      )}
+      {/* 2. Video Player Stage Container */}
+      <div
+        className={cn(
+          'relative w-full',
+          isFullscreen
+            ? 'flex-1 min-h-0 flex items-center justify-center p-0 sm:p-4 bg-black overflow-hidden'
+            : 'h-full'
+        )}
+      >
+        <div
+          className={cn(
+            'relative flex items-center justify-center',
+            isFullscreen
+              ? 'w-full h-full max-w-7xl aspect-video rounded-none sm:rounded-xl overflow-hidden shadow-2xl'
+              : 'w-full h-full'
+          )}
+        >
+          {/* Underlying YouTube Iframe Target or Direct Embed Fallback */}
+          {isFallbackIframe && currentVideoId ? (
+            <iframe
+              src={`https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=1&playsinline=1&modestbranding=1&rel=0`}
+              title="YouTube Video Stream"
+              className="w-full h-full border-0 absolute inset-0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+            />
+          ) : (
+            <div
+              ref={containerRef}
+              style={{ pointerEvents: joinedRoom ? 'none' : 'auto' }}
+              className="relative w-full h-full [&>iframe]:w-full [&>iframe]:h-full [&>iframe]:absolute [&>iframe]:inset-0 [&>iframe]:border-0"
+            />
+          )}
 
-      {/* 4. Playback Error Diagnostic Toast */}
-      {playerError && (
-        <div className="absolute bottom-3 left-3 right-3 z-30 p-2.5 rounded-xl bg-red-950/90 border border-red-500/40 text-red-200 text-xs flex items-center justify-between gap-2 shadow-lg backdrop-blur-md">
-          <span className="truncate">{playerError}</span>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              onClick={handleRetry}
-              className="text-[10px] font-bold text-black bg-white hover:bg-white/90 px-2 py-0.5 rounded-md cursor-pointer transition-colors"
-            >
-              Direct Embed
-            </button>
-            <button
-              type="button"
-              onClick={() => setPlayerError(null)}
-              className="text-[10px] font-bold text-white bg-red-800/80 hover:bg-red-700 px-2 py-0.5 rounded-md cursor-pointer shrink-0"
-            >
-              Dismiss
-            </button>
-          </div>
+          {/* Tap to Unmute Overlay */}
+          {isMuted && isVisible && (
+            <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 backdrop-blur-[2px] transition-all">
+              <button
+                type="button"
+                onClick={handleUnmute}
+                className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-white text-black font-black text-xs hover:bg-white/90 transition-all shadow-2xl active:scale-95 cursor-pointer border border-white/30 animate-pulse"
+              >
+                <Volume2 className="h-4 w-4 text-black fill-black" />
+                <span>Tap to Unmute Audio</span>
+              </button>
+            </div>
+          )}
+
+          {/* Playback Error Toast */}
+          {playerError && (
+            <div className="absolute bottom-3 left-3 right-3 z-30 p-2.5 rounded-xl bg-red-950/90 border border-red-500/40 text-red-200 text-xs flex items-center justify-between gap-2 shadow-lg backdrop-blur-md">
+              <span className="truncate">{playerError}</span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleRetry}
+                  className="text-[10px] font-bold text-black bg-white hover:bg-white/90 px-2 py-0.5 rounded-md cursor-pointer transition-colors"
+                >
+                  Direct Embed
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlayerError(null)}
+                  className="text-[10px] font-bold text-white bg-red-800/80 hover:bg-red-700 px-2 py-0.5 rounded-md cursor-pointer shrink-0"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   )
 }

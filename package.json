@@ -21,7 +21,7 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:player": "vitest run tests/unit/renderer/bufferingWatchdog.test.ts tests/integration/components/FooterPlayer.test.tsx tests/integration/bridges/PlaybackLifecycle.test.ts",
-    "test:listening": "vitest run tests/unit/renderer/roomClockSync.test.ts tests/integration/listening/ListenTogetherSync.test.ts",
+    "test:listening": "vitest run tests/unit/renderer/roomClockSync.test.ts tests/integration/listening/ListenTogetherSync.test.ts tests/integration/listening/DeviceSoundBroadcastWebRTC.test.ts tests/integration/listening/TriModeAudioPlaybackTransitions.test.ts",
     "test:ci": "npm run typecheck && vitest run --coverage",
     "test:e2e": "playwright test -c tests/e2e/playwright.config.ts",
     "start": "electron-vite preview",

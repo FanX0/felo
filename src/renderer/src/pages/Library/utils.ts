@@ -34,3 +34,5 @@ export function formatRelativeDate(timestamp?: number): string {
   if (days < 30) return `${days}d ago`
   return new Date(ms).toLocaleDateString()
 }
+
+export { getCleanDeviceName } from '../../lib/deviceInfo'

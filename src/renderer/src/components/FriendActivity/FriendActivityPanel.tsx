@@ -355,9 +355,16 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
           console.warn('Error loading member room activities:', memberError)
         }
 
+        const now = Date.now()
+        const ROOM_HEARTBEAT_TTL_MS = 30_000
+
         const latestByFriend: Record<string, ListeningRoom> = {}
         ;((hostData || []) as ListeningRoom[]).forEach((room) => {
-          if (!latestByFriend[room.host_id]) latestByFriend[room.host_id] = room
+          if (!room.updated_at) return
+          const updated = new Date(room.updated_at).getTime()
+          if (now - updated < ROOM_HEARTBEAT_TTL_MS) {
+            if (!latestByFriend[room.host_id]) latestByFriend[room.host_id] = room
+          }
         })
 
         // If friends are members in an active room, also load their rooms
@@ -377,7 +384,11 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
               .eq('is_active', true)
 
             if (attendedRooms) {
-              const roomMap = new Map((attendedRooms as ListeningRoom[]).map((r) => [r.id, r]))
+              const roomMap = new Map(
+                (attendedRooms as ListeningRoom[])
+                  .filter((r) => r.updated_at && now - new Date(r.updated_at).getTime() < ROOM_HEARTBEAT_TTL_MS)
+                  .map((r) => [r.id, r])
+              )
               unassignedMemberIds.forEach((m: any) => {
                 if (!latestByFriend[m.user_id]) {
                   const r = roomMap.get(m.room_id)
@@ -390,7 +401,7 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
           }
         }
 
-        setActivities((prev) => ({ ...prev, ...latestByFriend }))
+        setActivities(latestByFriend)
         setActivityClock(Date.now())
         useListeningStore.getState().setLiveFriendRooms(latestByFriend)
       } catch (cause) {
@@ -770,7 +781,8 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
                       if (!person) return null
                       const activity = activities[person.id] || liveFriendRooms[person.id]
                       const updatedAt = activity ? new Date(activity.updated_at).getTime() : 0
-                      const isRoomReady = Boolean(activity && activity.is_active)
+                      const isStale = updatedAt === 0 || (activityClock - updatedAt > 30_000)
+                      const isRoomReady = Boolean(activity && activity.is_active && !isStale)
                       const isHost = activity?.host_id === person.id
                       const song = isRoomReady && activity.song ? activity.song : null
                       const duration = song?.duration || 0

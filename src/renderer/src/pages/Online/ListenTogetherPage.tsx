@@ -604,9 +604,16 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       })
       setAllFriends(Array.from(profilesMap.values()))
 
+      const now = Date.now()
+      const ROOM_HEARTBEAT_TTL_MS = 30_000
+
       const friendRoomsMap = new Map<string, ListeningRoom>()
       ;((hostRoomRows || []) as ListeningRoom[]).forEach((r) => {
-        if (!friendRoomsMap.has(r.host_id)) friendRoomsMap.set(r.host_id, r)
+        if (!r.updated_at) return
+        const updated = new Date(r.updated_at).getTime()
+        if (now - updated < ROOM_HEARTBEAT_TTL_MS && !friendRoomsMap.has(r.host_id)) {
+          friendRoomsMap.set(r.host_id, r)
+        }
       })
 
       const unassignedMemberIds = (memberRows || []).filter((m: any) => !friendRoomsMap.has(m.user_id))
@@ -620,7 +627,11 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
           .eq('is_active', true)
 
         if (attendedRooms) {
-          const roomMap = new Map((attendedRooms as ListeningRoom[]).map((r) => [r.id, r]))
+          const roomMap = new Map(
+            (attendedRooms as ListeningRoom[])
+              .filter((r) => r.updated_at && now - new Date(r.updated_at).getTime() < ROOM_HEARTBEAT_TTL_MS)
+              .map((r) => [r.id, r])
+          )
           unassignedMemberIds.forEach((m: any) => {
             if (!friendRoomsMap.has(m.user_id)) {
               const r = roomMap.get(m.room_id)

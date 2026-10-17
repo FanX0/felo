@@ -1,4 +1,4 @@
-import { type ReactElement } from 'react'
+import { type ReactElement, useState, useEffect } from 'react'
 import {
   Radio,
   Check,
@@ -20,7 +20,8 @@ import {
   Star,
   Trash2,
   Music2,
-  Maximize2
+  Maximize2,
+  Minimize2
 } from 'lucide-react'
 import type { Song } from '../../../types'
 import type { ListeningRoom } from '../../../online/types'
@@ -111,6 +112,19 @@ export default function HostSessionSection({
   backgroundTracksList,
   setMessage
 }: HostSessionSectionProps): ReactElement {
+  const [isYouTubeFullscreen, setIsYouTubeFullscreen] = useState(false)
+
+  useEffect(() => {
+    const handleStatus = (e: Event) => {
+      const custom = e as CustomEvent<{ isFullscreen: boolean }>
+      if (custom.detail) {
+        setIsYouTubeFullscreen(Boolean(custom.detail.isFullscreen))
+      }
+    }
+    window.addEventListener('felo:youtube-fullscreen-status', handleStatus)
+    return () => window.removeEventListener('felo:youtube-fullscreen-status', handleStatus)
+  }, [])
+
   return (
     <>
       {/* Active Host Session Details & Live Member Roster */}
@@ -520,19 +534,54 @@ export default function HostSessionSection({
                   id="youtube-stage-dock"
                   className="w-full aspect-video rounded-2xl bg-black/90 border border-white/15 overflow-hidden mb-3 relative shadow-2xl flex items-center justify-center transition-all"
                 >
-                  <div className="flex flex-col items-center gap-2.5 text-text-muted text-xs p-6 text-center">
-                    <Radio className="h-6 w-6 text-primary animate-pulse" />
-                    <span className="font-bold text-sm text-white/95">Synchronizing Live YouTube Stream...</span>
-                    <span className="text-[11px] text-text-muted">Audio and video stream in unison across all room listeners.</span>
-                    <button
-                      type="button"
-                      onClick={() => window.dispatchEvent(new CustomEvent('felo:dock-youtube-stage'))}
-                      className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all cursor-pointer border border-white/10 shadow-sm active:scale-95"
-                    >
-                      <Maximize2 className="h-3.5 w-3.5 text-primary" />
-                      <span>Dock Video into Stage</span>
-                    </button>
-                  </div>
+                  {isYouTubeFullscreen ? (
+                    <div className="flex flex-col items-center gap-2.5 text-text-muted text-xs p-6 text-center animate-fade-in">
+                      <div className="h-10 w-10 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary mb-1">
+                        <Maximize2 className="h-5 w-5 animate-pulse" />
+                      </div>
+                      <span className="font-bold text-sm text-white">Playing in Full-Screen Modal</span>
+                      <span className="text-[11px] text-text-muted max-w-sm">
+                        The live YouTube stream is currently open in full-screen modal mode.
+                      </span>
+                      <div className="flex items-center gap-2 mt-2">
+                        <button
+                          type="button"
+                          onClick={() => window.dispatchEvent(new CustomEvent('felo:exit-fullscreen-youtube'))}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition-all cursor-pointer shadow-md active:scale-95"
+                          title="Exit full-screen modal (Esc)"
+                        >
+                          <Minimize2 className="h-3.5 w-3.5" />
+                          <span>Exit Fullscreen</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-2.5 text-text-muted text-xs p-6 text-center">
+                      <Radio className="h-6 w-6 text-primary animate-pulse" />
+                      <span className="font-bold text-sm text-white/95">Synchronizing Live YouTube Stream...</span>
+                      <span className="text-[11px] text-text-muted">Audio and video stream in unison across all room listeners.</span>
+                      <div className="flex items-center gap-2 mt-2">
+                        <button
+                          type="button"
+                          onClick={() => window.dispatchEvent(new CustomEvent('felo:enter-fullscreen-youtube'))}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold transition-all cursor-pointer shadow-sm active:scale-95"
+                          title="Expand into Full-Screen Modal"
+                        >
+                          <Maximize2 className="h-3.5 w-3.5" />
+                          <span>Full Screen Modal</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => window.dispatchEvent(new CustomEvent('felo:dock-youtube-stage'))}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all cursor-pointer border border-white/10 shadow-sm active:scale-95"
+                          title="Dock player back into this stage"
+                        >
+                          <Radio className="h-3.5 w-3.5 text-primary" />
+                          <span>Dock Stage</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               <div className="rounded-xl border border-border bg-surface-elevated/70 p-4 shadow-sm">

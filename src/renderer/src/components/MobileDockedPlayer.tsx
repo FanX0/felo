@@ -3,7 +3,8 @@ import { Play, Pause, SkipForward, Laptop2, Smartphone, MonitorSpeaker, Globe } 
 import { remoteClient, type RemotePlayerState } from '../pages/Remote/remoteClient'
 import { usePlayerStore } from '../hooks/usePlayerStore'
 import { useOnlineStore } from '../hooks/useOnlineStore'
-import { useListeningStore } from '../hooks/useListeningStore'
+import { useListeningStore, useIsPlayerLocked } from '../hooks/useListeningStore'
+import { getSupabase } from '../lib/supabase'
 import {
   useConnectedDeviceStore,
   sendDeviceCommand
@@ -27,6 +28,8 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
   const activeRemote = useConnectedDeviceStore((s) => s.activePlayback)
   const activeRoom = useListeningStore((s) => s.joinedRoom || s.hostRoom)
   const joinedRoom = useListeningStore((s) => s.joinedRoom)
+  const myRole = useListeningStore((s) => s.myRole)
+  const isPlayerLocked = useIsPlayerLocked()
   const myDeviceId = getCurrentDeviceId()
 
   const localQueue = usePlayerStore((s) => s.queue)
@@ -98,9 +101,28 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
           unified.isPlaying ? 'pause' : 'play'
         )
       }
-    } else {
-      usePlayerStore.getState().togglePlay()
+      return
     }
+
+    if (isPlayerLocked) {
+      return
+    }
+
+    if (joinedRoom && joinedRoom.code && myRole === 'co_host') {
+      const senderName = user?.user_metadata?.full_name || user?.email || 'Co-host'
+      void getSupabase()
+        .from('listening_room_commands')
+        .insert({
+          room_code: joinedRoom.code,
+          command: unified.isPlaying ? 'pause' : 'resume',
+          sender_name: senderName,
+          source: 'mobile',
+          payload: {}
+        })
+      return
+    }
+
+    usePlayerStore.getState().togglePlay()
   }
 
   const handleDeviceClick = (e: React.MouseEvent) => {
@@ -116,9 +138,28 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
       } else if (user?.id) {
         void sendDeviceCommand(user.id, unified.activeDeviceId, 'next')
       }
-    } else {
-      usePlayerStore.getState().playNext(true)
+      return
     }
+
+    if (isPlayerLocked) {
+      return
+    }
+
+    if (joinedRoom && joinedRoom.code && myRole === 'co_host') {
+      const senderName = user?.user_metadata?.full_name || user?.email || 'Co-host'
+      void getSupabase()
+        .from('listening_room_commands')
+        .insert({
+          room_code: joinedRoom.code,
+          command: 'skip',
+          sender_name: senderName,
+          source: 'mobile',
+          payload: {}
+        })
+      return
+    }
+
+    usePlayerStore.getState().playNext(true)
   }
 
   const handlePrevious = () => {
@@ -128,9 +169,28 @@ export default function MobileDockedPlayer({ onExpand, onOpenDevices }: MobileDo
       } else if (user?.id) {
         void sendDeviceCommand(user.id, unified.activeDeviceId, 'previous')
       }
-    } else {
-      usePlayerStore.getState().playPrevious()
+      return
     }
+
+    if (isPlayerLocked) {
+      return
+    }
+
+    if (joinedRoom && joinedRoom.code && myRole === 'co_host') {
+      const senderName = user?.user_metadata?.full_name || user?.email || 'Co-host'
+      void getSupabase()
+        .from('listening_room_commands')
+        .insert({
+          room_code: joinedRoom.code,
+          command: 'prev',
+          sender_name: senderName,
+          source: 'mobile',
+          payload: {}
+        })
+      return
+    }
+
+    usePlayerStore.getState().playPrevious()
   }
 
   const handleTouchStart = (e: React.TouchEvent) => {

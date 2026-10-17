@@ -16,12 +16,12 @@ import { remoteClient } from '../pages/Remote/remoteClient'
 import { getActiveAudioElement, getActiveAudioTime } from '../lib/audioBridge'
 import { useListeningStore, isSessionSyncing } from '../hooks/useListeningStore'
 
-function getDeviceName(info: DeviceInfo, isElectron: boolean, ip?: string): string {
+function getDeviceName(info: DeviceInfo, isElectron: boolean): string {
   if (info.customName) {
     return info.customName
   }
   if (isElectron) {
-    return `Felo Desktop (${info.os}${ip ? ` • ${ip}` : ''})`
+    return 'Felo Desktop'
   }
   return info.canonicalName
 }
@@ -184,7 +184,7 @@ export default function DevicePresenceBridge() {
             localIp = info.ip || null
             port = info.port || 4788
             token = info.token || null
-            deviceName = getDeviceName(deviceInfo, isElectron, info.ip)
+            deviceName = getDeviceName(deviceInfo, isElectron)
           }
         }
         // Desktop presence reflects that the desktop Felo application is active

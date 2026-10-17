@@ -205,6 +205,7 @@ export class MockAudioContext {
     return node
   })
   createMediaElementSource = vi.fn(() => new MockAudioNode(this, 0, 1))
+  createMediaStreamSource = vi.fn((_stream?: any) => new MockAudioNode(this, 0, 1))
   createMediaStreamDestination = vi.fn(() => {
     const node = new MockAudioNode(this, 1, 0) as any
     node.stream = { getAudioTracks: () => [] }

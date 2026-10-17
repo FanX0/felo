@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { cn } from '../../../lib/utils'
 import type { RemoteLibraryDevice } from '../types'
+import { getCleanDeviceName } from '../utils'
 
 interface LibraryEmptyStateProps {
   librarySource: string
@@ -42,6 +43,8 @@ export function LibraryEmptyState({
   onAddFiles,
   onBrowseRemote
 }: LibraryEmptyStateProps) {
+  const cleanDeviceName = getCleanDeviceName(selectedRemoteDevice?.device_name, 'Device')
+
   return (
     <div className="flex-1 flex flex-col items-center justify-center text-text-muted gap-4 p-6 text-center">
       {librarySource !== 'local' ? (
@@ -58,14 +61,19 @@ export function LibraryEmptyState({
           )}
           <p className="text-base font-bold text-white">
             {isDeviceSyncing
-              ? `Syncing ${selectedRemoteDevice?.device_name || 'Device'} Library...`
-              : `No Songs Loaded from ${selectedRemoteDevice?.device_name || 'Device'}`}
+              ? `Syncing ${cleanDeviceName} Library...`
+              : `No Songs Loaded from ${cleanDeviceName}`}
           </p>
           <p className="text-xs text-text-muted max-w-sm">
             {isDeviceSyncing
-              ? `Requesting track catalog from ${selectedRemoteDevice?.device_name || 'connected device'} over Realtime sync...`
-              : `Ensure Felo is open on ${selectedRemoteDevice?.device_name || 'the device'} with songs in its library.`}
+              ? `Requesting track catalog from ${cleanDeviceName} over Realtime sync...`
+              : `Ensure Felo is open on ${cleanDeviceName} with songs in its library.`}
           </p>
+          {selectedRemoteDevice?.local_ip && (
+            <p className="text-[11px] text-text-muted/60 font-mono -mt-2">
+              Wi-Fi Host: {selectedRemoteDevice.local_ip}
+            </p>
+          )}
           <div className="flex flex-wrap items-center justify-center gap-3 mt-1">
             <button
               type="button"
@@ -74,7 +82,7 @@ export function LibraryEmptyState({
               className="flex h-10 items-center gap-2 rounded-full bg-white hover:bg-white/90 px-5 text-xs font-bold text-black transition-all hover:scale-[1.02] shadow-md cursor-pointer disabled:opacity-50"
             >
               <RefreshCw className={cn('h-3.5 w-3.5', isDeviceSyncing && 'animate-spin')} />
-              <span>{isDeviceSyncing ? 'Syncing...' : `Sync from ${selectedRemoteDevice?.device_name || 'Device'}`}</span>
+              <span>{isDeviceSyncing ? 'Syncing...' : `Sync from ${cleanDeviceName}`}</span>
             </button>
             <button
               type="button"

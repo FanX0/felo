@@ -301,6 +301,11 @@ export const createRoomPlaybackSlice: StateCreator<
         return
       }
 
+      // If switching away from live device broadcast to any normal track (local or YouTube), tear down WebRTC client
+      if (get().isReceivingDeviceStream) {
+        get().disconnectFromDeviceStream()
+      }
+
       // Step 0.5: Check if host is playing a YouTube stream
       const isHostYouTube = Boolean(
         room.song?.isYouTube ||
@@ -309,9 +314,6 @@ export const createRoomPlaybackSlice: StateCreator<
         isYouTubeSong(room.song)
       )
       if (isHostYouTube) {
-        if (get().isReceivingDeviceStream) {
-          get().disconnectFromDeviceStream()
-        }
         const videoId =
           room.song?.videoId ||
           extractYouTubeVideoId(room.song?.audioUrl) ||
@@ -346,6 +348,20 @@ export const createRoomPlaybackSlice: StateCreator<
           }
         }
         usePlayerStore.getState().setQueue(sessionQueue, targetIndex)
+
+        const hostPos = typeof room.song?.hostPosition === 'number' ? room.song.hostPosition : room.position_seconds || 0
+        const hostTimestamp = typeof room.song?.hostTimestamp === 'number' ? room.song.hostTimestamp : new Date(room.updated_at).getTime()
+        const initialTargetTime = roomClockSync.calculateTargetTime(
+          hostPos,
+          hostTimestamp,
+          room.is_playing,
+          (get().manualSyncOffsetMs || 0) / 1000,
+          room.song?.duration || 0
+        )
+        if (initialTargetTime > 0) {
+          usePlayerStore.getState().setCurrentTime(initialTargetTime)
+          usePlayerStore.getState().seek(initialTargetTime)
+        }
 
         applyInitialPlaybackState(room, ytSong.id, room.song?.duration || 0)
         return

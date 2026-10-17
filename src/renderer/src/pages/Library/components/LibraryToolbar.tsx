@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { cn } from '../../../lib/utils'
 import { normalizeDeviceId } from '../../../hooks/useConnectedDeviceStore'
-import { sortLabels } from '../utils'
+import { sortLabels, getCleanDeviceName } from '../utils'
 import type {
   LibrarySortKey,
   SortDirection,
@@ -162,18 +162,33 @@ export function LibraryToolbar({
 
   // Dedicated Mobile Layout (< md screen or mobile user agent)
   if (isMobile) {
+    const cleanMobileRemoteName = selectedRemoteDevice
+      ? getCleanDeviceName(selectedRemoteDevice.device_name)
+      : ''
+    const mobileTitle =
+      librarySource === 'local'
+        ? 'My Library'
+        : selectedRemoteDevice
+          ? `${cleanMobileRemoteName} Library`
+          : 'Remote Library'
+    const fullMobileTitle =
+      librarySource === 'local'
+        ? 'My Library'
+        : selectedRemoteDevice
+          ? `${selectedRemoteDevice.device_name} Library`
+          : 'Remote Library'
+
     return (
       <>
         <div className="mb-4 shrink-0 space-y-2.5">
           {/* Row 1: Title + Count (left) & Primary Add Music Button (right) */}
           <div className="flex items-center justify-between gap-3 min-w-0">
             <div className="flex items-baseline gap-2 min-w-0">
-              <h1 className="text-xl sm:text-2xl font-black text-text tracking-tight truncate">
-                {librarySource === 'local'
-                  ? 'My Library'
-                  : selectedRemoteDevice
-                    ? `${selectedRemoteDevice.device_name} Library`
-                    : 'Remote Library'}
+              <h1
+                className="text-xl sm:text-2xl font-black text-text tracking-tight truncate"
+                title={fullMobileTitle}
+              >
+                {mobileTitle}
               </h1>
               <span className="text-xs font-semibold text-text-muted/80 tabular-nums shrink-0">
                 {songCount} {songCount === 1 ? 'song' : 'songs'}
@@ -188,7 +203,7 @@ export function LibraryToolbar({
               type="button"
               onClick={onAddFolder}
               disabled={isScanning || isSelectingFolder}
-              className="flex h-9 items-center gap-1.5 rounded-full bg-white px-3.5 text-xs font-bold text-black transition-all active:scale-95 hover:bg-white/90 shadow-sm disabled:cursor-not-allowed disabled:opacity-60 shrink-0 whitespace-nowrap cursor-pointer"
+              className="flex h-8.5 items-center gap-1.5 rounded-full bg-white px-3.5 text-xs font-semibold text-black transition-all active:scale-95 hover:bg-white/90 shadow-sm disabled:cursor-not-allowed disabled:opacity-60 shrink-0 whitespace-nowrap cursor-pointer"
             >
               {isScanning ? (
                 <>
@@ -206,7 +221,7 @@ export function LibraryToolbar({
                 </>
               ) : (
                 <>
-                  <Plus className="h-3.5 w-3.5 stroke-[3]" />
+                  <Plus className="h-3.5 w-3.5 stroke-[2.5]" />
                   <span>Add Music</span>
                 </>
               )}
@@ -215,18 +230,18 @@ export function LibraryToolbar({
 
           {/* Row 2: Device Switcher (hugs buttons when few, scrollable/draggable when wide) */}
           {hasRemoteDevice && (
-            <div className="flex items-center gap-1 p-1 rounded-xl bg-surface-elevated/90 border border-border/60 text-xs shadow-sm overflow-x-auto scrollbar-none w-fit max-w-full">
+            <div className="flex items-center gap-1 p-0.5 rounded-full bg-surface-elevated/90 border border-border/60 text-xs shadow-sm overflow-x-auto scrollbar-none w-fit max-w-full">
               <button
                 type="button"
                 onClick={() => onSetLibrarySource('local')}
                 className={cn(
-                  'px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 text-xs',
+                  'h-7.5 px-3 rounded-full font-semibold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 text-xs',
                   librarySource === 'local'
-                    ? 'bg-white/10 text-white shadow-sm'
+                    ? 'bg-white/15 text-white shadow-xs'
                     : 'text-text-muted hover:text-white'
                 )}
               >
-                <Smartphone className="w-3.5 h-3.5" />
+                <Smartphone className="w-3.5 h-3.5 shrink-0" />
                 <span>This Device</span>
               </button>
 
@@ -237,32 +252,36 @@ export function LibraryToolbar({
                 const isDevMobile =
                   dev.device_type === 'mobile' ||
                   /iphone|ipad|android|phone|mobile|ios/i.test(dev.device_name)
+                const cleanName = getCleanDeviceName(dev.device_name)
+                const tooltip = `${dev.device_name}${dev.local_ip && !dev.device_name.includes(dev.local_ip) ? ` (${dev.local_ip})` : ''}`
+
                 return (
                   <button
                     key={dev.id}
                     type="button"
                     onClick={() => onSetLibrarySource(dev.id)}
+                    title={tooltip}
                     className={cn(
-                      'px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 text-xs',
+                      'h-7.5 px-3 rounded-full font-semibold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 text-xs',
                       isSelected
-                        ? 'bg-white/10 text-white shadow-sm'
+                        ? 'bg-white/15 text-white shadow-xs'
                         : 'text-text-muted hover:text-white'
                     )}
                   >
                     {isDevMobile ? (
-                      <Smartphone className="w-3.5 h-3.5" />
+                      <Smartphone className="w-3.5 h-3.5 shrink-0" />
                     ) : (
-                      <Laptop2 className="w-3.5 h-3.5" />
+                      <Laptop2 className="w-3.5 h-3.5 shrink-0" />
                     )}
-                    <span>{dev.device_name}</span>
+                    <span className="truncate max-w-[120px]">{cleanName}</span>
                     {isSelected && (
                       <span
                         onClick={(e) => {
                           e.stopPropagation()
                           onRefreshRemote(dev)
                         }}
-                        title={`Refresh library from ${dev.device_name}`}
-                        className="ml-0.5 p-0.5 hover:text-white transition"
+                        title={`Refresh library from ${cleanName}`}
+                        className="ml-0.5 p-0.5 rounded-full hover:text-white transition"
                       >
                         <RefreshCw
                           className={cn(
@@ -446,112 +465,135 @@ export function LibraryToolbar({
   }
 
   // Desktop Layout
+  const cleanDesktopRemoteName = selectedRemoteDevice
+    ? getCleanDeviceName(selectedRemoteDevice.device_name)
+    : ''
+  const desktopTitle =
+    librarySource === 'local'
+      ? 'My Library'
+      : selectedRemoteDevice
+        ? `${cleanDesktopRemoteName} Library`
+        : 'Remote Library'
+  const fullDesktopTitle =
+    librarySource === 'local'
+      ? 'My Library'
+      : selectedRemoteDevice
+        ? `${selectedRemoteDevice.device_name} Library`
+        : 'Remote Library'
+
   return (
     <>
       <div className="mb-4 sm:mb-6 shrink-0">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-baseline gap-2.5 sm:gap-4 min-w-0 shrink-0">
-            <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-text tracking-tight truncate">
-              {librarySource === 'local'
-                ? 'My Library'
-                : selectedRemoteDevice
-                  ? `${selectedRemoteDevice.device_name} Library`
-                  : 'Remote Library'}
-            </h1>
-            <span className="text-xs sm:text-[13px] font-medium text-text-muted tabular-nums shrink-0">
-              {songCount} {songCount === 1 ? 'song' : 'songs'}
-              {searchQuery && totalSongCount !== songCount && (
-                <span className="opacity-75 hidden sm:inline"> (of {totalSongCount})</span>
-              )}
-            </span>
+        <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-4">
+          {/* Left: Heading, Song Count, and Multi-Device Source Switcher */}
+          <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-wrap">
+            <div className="flex items-baseline gap-2.5 sm:gap-3 min-w-0 shrink-0">
+              <h1
+                className="text-xl sm:text-2xl md:text-3xl font-black text-text tracking-tight truncate max-w-[240px] sm:max-w-xs md:max-w-md"
+                title={fullDesktopTitle}
+              >
+                {desktopTitle}
+              </h1>
+              <span className="text-xs sm:text-[13px] font-semibold text-text-muted/80 tabular-nums shrink-0">
+                {songCount} {songCount === 1 ? 'song' : 'songs'}
+                {searchQuery && totalSongCount !== songCount && (
+                  <span className="opacity-75 hidden sm:inline"> (of {totalSongCount})</span>
+                )}
+              </span>
+            </div>
+
+            {/* Dynamic Multi-Device Library Source Switcher */}
+            {hasRemoteDevice && (
+              <div className="flex items-center p-0.5 rounded-full bg-surface-elevated/90 border border-border/60 text-xs shadow-sm shrink-0 max-w-full overflow-x-auto scrollbar-none">
+                <button
+                  type="button"
+                  onClick={() => onSetLibrarySource('local')}
+                  className={cn(
+                    'h-8 px-3 rounded-full font-semibold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 text-xs',
+                    librarySource === 'local'
+                      ? 'bg-white/15 text-white shadow-xs'
+                      : 'text-text-muted hover:text-white hover:bg-white/5'
+                  )}
+                >
+                  {isElectronApp ? (
+                    <Laptop2 className="w-3.5 h-3.5 shrink-0" />
+                  ) : (
+                    <Smartphone className="w-3.5 h-3.5 shrink-0" />
+                  )}
+                  <span>This Device</span>
+                </button>
+
+                {remoteLibraryDevices.map((dev) => {
+                  const isSelected =
+                    librarySource === dev.id ||
+                    (librarySource === 'pc' && remoteLibraryDevices[0]?.id === dev.id)
+                  const isDevMobile =
+                    dev.device_type === 'mobile' ||
+                    /iphone|ipad|android|phone|mobile|ios/i.test(dev.device_name)
+                  const cleanName = getCleanDeviceName(dev.device_name)
+                  const tooltip = `${dev.device_name}${dev.local_ip && !dev.device_name.includes(dev.local_ip) ? ` (${dev.local_ip})` : ''}`
+
+                  return (
+                    <button
+                      key={dev.id}
+                      type="button"
+                      onClick={() => onSetLibrarySource(dev.id)}
+                      title={tooltip}
+                      className={cn(
+                        'h-8 px-3 rounded-full font-semibold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 text-xs',
+                        isSelected
+                          ? 'bg-white/15 text-white shadow-xs'
+                          : 'text-text-muted hover:text-white hover:bg-white/5'
+                      )}
+                    >
+                      {isDevMobile ? (
+                        <Smartphone className="w-3.5 h-3.5 shrink-0" />
+                      ) : (
+                        <Laptop2 className="w-3.5 h-3.5 shrink-0" />
+                      )}
+                      <span className="truncate max-w-[130px] sm:max-w-[160px]">{cleanName}</span>
+                      {isSelected && (
+                        <span
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onRefreshRemote(dev)
+                          }}
+                          title={`Refresh library from ${cleanName}`}
+                          className="ml-0.5 p-0.5 rounded-full hover:text-white hover:bg-white/10 transition"
+                        >
+                          <RefreshCw
+                            className={cn(
+                              'w-3 h-3',
+                              (isLoadingPcLibrary ||
+                                Boolean(isLoadingDeviceLibrary[normalizeDeviceId(dev.id)])) &&
+                                'animate-spin'
+                            )}
+                          />
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
-          {/* Dynamic Multi-Device Library Source Switcher */}
-          {hasRemoteDevice && (
-            <div className="flex items-center gap-1 p-1 rounded-xl bg-surface-elevated border border-border/60 text-xs shrink-0 shadow-sm max-w-sm lg:max-w-md xl:max-w-none overflow-x-auto scrollbar-none">
-              <button
-                type="button"
-                onClick={() => onSetLibrarySource('local')}
-                className={cn(
-                  'px-3 py-1 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0',
-                  librarySource === 'local'
-                    ? 'bg-white/10 text-white shadow-sm'
-                    : 'text-text-muted hover:text-white'
-                )}
-              >
-                {isElectronApp ? (
-                  <Laptop2 className="w-3.5 h-3.5" />
-                ) : (
-                  <Smartphone className="w-3.5 h-3.5" />
-                )}
-                <span>This Device</span>
-              </button>
-
-              {remoteLibraryDevices.map((dev) => {
-                const isSelected =
-                  librarySource === dev.id ||
-                  (librarySource === 'pc' && remoteLibraryDevices[0]?.id === dev.id)
-                const isDevMobile =
-                  dev.device_type === 'mobile' ||
-                  /iphone|ipad|android|phone|mobile|ios/i.test(dev.device_name)
-                return (
-                  <button
-                    key={dev.id}
-                    type="button"
-                    onClick={() => onSetLibrarySource(dev.id)}
-                    className={cn(
-                      'px-3 py-1 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0',
-                      isSelected
-                        ? 'bg-white/10 text-white shadow-sm'
-                        : 'text-text-muted hover:text-white'
-                    )}
-                  >
-                    {isDevMobile ? (
-                      <Smartphone className="w-3.5 h-3.5" />
-                    ) : (
-                      <Laptop2 className="w-3.5 h-3.5" />
-                    )}
-                    <span>{dev.device_name}</span>
-                    {isSelected && (
-                      <span
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onRefreshRemote(dev)
-                        }}
-                        title={`Refresh library from ${dev.device_name}`}
-                        className="ml-0.5 p-0.5 hover:text-white transition"
-                      >
-                        <RefreshCw
-                          className={cn(
-                            'w-3 h-3',
-                            (isLoadingPcLibrary ||
-                              Boolean(isLoadingDeviceLibrary[normalizeDeviceId(dev.id)])) &&
-                              'animate-spin'
-                          )}
-                        />
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-          )}
-
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          {/* Right: Actions (Search, Sort & View, Refresh, Add Folder) - Always pinned and accessible */}
+          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0 ml-auto">
             {/* Desktop Expanding In-Library Search Filter */}
             <div
               className={cn(
-                'flex h-11 origin-right items-center overflow-hidden rounded-full border border-border/60 bg-surface-elevated transition-all duration-300',
-                isSearchOpen ? 'w-64 px-3' : 'w-11'
+                'flex h-9 origin-right items-center overflow-hidden rounded-full border border-border/60 bg-surface-elevated transition-all duration-300 shadow-sm',
+                isSearchOpen ? 'w-56 sm:w-64 px-2.5' : 'w-9'
               )}
             >
               <button
                 type="button"
                 title="Search library"
                 onClick={() => onSetIsSearchOpen(true)}
-                className="flex h-11 w-11 shrink-0 items-center justify-center text-text-muted hover:text-white cursor-pointer"
+                className="flex h-9 w-9 shrink-0 items-center justify-center text-text-muted hover:text-white cursor-pointer"
               >
-                <Search className="h-4 w-4" />
+                <Search className="h-3.5 w-3.5" />
               </button>
               <input
                 ref={searchInputRef as React.RefObject<HTMLInputElement>}
@@ -570,7 +612,7 @@ export function LibraryToolbar({
                 placeholder="Filter library..."
                 aria-label="Filter library"
                 className={cn(
-                  'h-full min-w-0 flex-1 bg-transparent pr-1 text-sm text-white outline-none placeholder:text-text-muted',
+                  'h-full min-w-0 flex-1 bg-transparent pr-1 text-xs text-white outline-none placeholder:text-text-muted',
                   isSearchOpen ? 'opacity-100' : 'pointer-events-none opacity-0'
                 )}
               />
@@ -583,7 +625,7 @@ export function LibraryToolbar({
                   }}
                   className="p-1 text-text-muted hover:text-white transition-colors shrink-0 cursor-pointer"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <X className="w-3 h-3" />
                 </button>
               )}
             </div>
@@ -599,13 +641,13 @@ export function LibraryToolbar({
                   onSetIsViewMenuOpen((isOpen: boolean) => !isOpen)
                 }}
                 className={cn(
-                  'flex h-11 w-11 items-center justify-center rounded-full shadow-sm transition-colors border cursor-pointer',
+                  'flex h-9 w-9 items-center justify-center rounded-full shadow-sm transition-colors border cursor-pointer',
                   isViewMenuOpen
                     ? 'border-white/30 bg-white/20 text-white'
                     : 'border-border/60 bg-surface-elevated text-text-muted hover:bg-hover hover:text-white'
                 )}
               >
-                <List className="h-4 w-4" />
+                <List className="h-3.5 w-3.5" />
               </button>
               {isViewMenuOpen && (
                 <div
@@ -674,9 +716,9 @@ export function LibraryToolbar({
               title="Refresh library"
               onClick={onRefreshLibrary}
               disabled={isLoadingSongs}
-              className="flex h-11 w-11 items-center justify-center rounded-full border border-border/60 bg-surface-elevated text-text-muted transition-colors hover:bg-hover hover:text-white cursor-pointer"
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-border/60 bg-surface-elevated text-text-muted transition-colors hover:bg-hover hover:text-white cursor-pointer shadow-sm disabled:opacity-50"
             >
-              <RefreshCw className={cn('h-4 w-4', isLoadingSongs && 'animate-spin')} />
+              <RefreshCw className={cn('h-3.5 w-3.5', isLoadingSongs && 'animate-spin')} />
             </button>
 
             {/* Add Folder Button */}
@@ -684,11 +726,11 @@ export function LibraryToolbar({
               type="button"
               onClick={onAddFolder}
               disabled={isScanning || isSelectingFolder}
-              className="flex h-11 items-center gap-2.5 rounded-full bg-white px-5 text-sm font-bold text-black transition-all hover:scale-[1.02] hover:bg-white/90 shadow-sm disabled:cursor-not-allowed disabled:opacity-60 shrink-0 whitespace-nowrap cursor-pointer"
+              className="flex h-9 items-center gap-1.5 rounded-full bg-white px-3.5 text-xs font-semibold text-black transition-all active:scale-95 hover:bg-white/90 shadow-sm disabled:cursor-not-allowed disabled:opacity-60 shrink-0 whitespace-nowrap cursor-pointer"
             >
               {isScanning ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin text-primary-amber" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary-amber" />
                   <span className="tabular-nums">
                     {scanProgress?.percent !== undefined
                       ? `${scanProgress.percent}%`
@@ -697,12 +739,12 @@ export function LibraryToolbar({
                 </>
               ) : isSelectingFolder ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin text-black" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-black" />
                   <span>Selecting...</span>
                 </>
               ) : (
                 <>
-                  <Plus className="h-4 w-4 stroke-[3]" />
+                  <Plus className="h-3.5 w-3.5 stroke-[2.5]" />
                   <span>Add Folder</span>
                 </>
               )}
