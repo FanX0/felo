@@ -19,6 +19,7 @@ import { SettingRow } from '../components/SettingRow'
 import { SettingsSection } from '../components/SettingsSection'
 import DiscordIcon from '../../../components/Common/DiscordIcon'
 import musicPresencePreview from '../../../assets/music-presence-preview.png'
+import { FELO_DISCORD_BOT_INVITE_URL } from '../../../lib/supportConfig'
 import type { DiscordBinding, PresenceStatus } from '../types'
 
 export function DiscordSection() {
@@ -500,73 +501,8 @@ export function DiscordSection() {
         title="Official Discord Music Bot"
         description="Connect any Discord channel to your Felo session using the official bot. Server members can queue songs, vote to skip, and listen together in real-time."
       >
-        {/* Connection Status Banner */}
-        <div className="p-4 rounded-2xl bg-[#121316] border border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <span
-              className={`w-2 h-2 rounded-full shrink-0 ${
-                discordBinding
-                  ? 'bg-emerald-400'
-                  : hostRoom?.code
-                    ? 'bg-amber-400'
-                    : 'bg-zinc-500'
-              }`}
-            />
-            <div>
-              <div className="text-xs font-bold text-text flex items-center gap-2">
-                <span>
-                  {discordBinding
-                    ? 'Discord Server Connected'
-                    : hostRoom?.code
-                      ? 'Ready for Discord Connection'
-                      : 'Official Bot Idle'}
-                </span>
-                <span className="text-[10px] px-2.5 py-0.5 rounded-full border border-border/60 bg-surface-elevated text-text-muted font-mono font-medium">
-                  {discordBinding
-                    ? 'Linked via /connect'
-                    : hostRoom?.code
-                      ? 'Room Code Active'
-                      : 'No Code'}
-                </span>
-              </div>
-              <p className="text-[11px] text-text-muted mt-0.5">
-                {discordBinding
-                  ? `Linked by @${discordBinding.bound_by}. Songs requested with /play in Discord play directly on this player.`
-                  : hostRoom?.code
-                    ? `In your Discord server, type /connect ${hostRoom.code} to link this channel.`
-                    : 'Generate a room code below or start Listen Together to link your Discord server.'}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            {hostRoom?.code ? (
-              <button
-                type="button"
-                onClick={() => {
-                  void navigator.clipboard.writeText(`/connect ${hostRoom.code}`)
-                  setCopiedConnectCmd(true)
-                  setTimeout(() => setCopiedConnectCmd(false), 2000)
-                }}
-                className="px-3.5 py-1.5 rounded-full bg-[#18191d] border border-white/[0.1] hover:border-border text-text text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
-              >
-                {copiedConnectCmd ? <Check className="w-3.5 h-3.5 text-text" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedConnectCmd ? 'Copied /connect' : 'Copy /connect'}</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void ensureHostRoom(true)}
-                className="px-3.5 py-1.5 rounded-full bg-primary text-primary-foreground text-xs font-bold transition-all hover:bg-primary-hover cursor-pointer shadow-sm"
-              >
-                Generate Code
-              </button>
-            )}
-          </div>
-        </div>
-
         {discordBotError && (
-          <div className="mt-2 text-xs px-3 py-2 rounded-lg bg-danger/10 border border-danger/30 text-danger flex items-center justify-between">
+          <div className="mb-3 text-xs px-3 py-2 rounded-lg bg-danger/10 border border-danger/30 text-danger flex items-center justify-between">
             <span>{discordBotError}</span>
             <button
               type="button"
@@ -579,92 +515,169 @@ export function DiscordSection() {
         )}
 
         {discordMessage && (
-          <div className="mt-2 text-xs px-3 py-2 rounded-lg bg-success/10 border border-success/30 text-success">
+          <div className="mb-3 text-xs px-3 py-2 rounded-lg bg-success/10 border border-success/30 text-success">
             {discordMessage}
           </div>
         )}
 
-        {/* Official Discord Bot (1-Click) */}
-        <div className="mt-4 p-4 rounded-xl bg-surface-elevated/40 border border-border/60 space-y-3.5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-start gap-2.5">
-              <Bot className="w-5 h-5 text-text shrink-0 mt-0.5" />
-              <div>
-                <h4 className="text-xs font-bold text-text flex items-center gap-2">
-                  <span>Official Felo Discord Bot</span>
-                  <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-surface-elevated border border-border/60 text-text-muted font-mono font-bold">
+        {/* Official Discord Bot (Unified 1-Click Card) */}
+        <div className="p-4 sm:p-5 rounded-2xl bg-surface-elevated/40 border border-border/60 space-y-4 shadow-sm">
+          {/* Header & Status Indicator */}
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[#5865F2]/10 border border-[#5865F2]/20 flex items-center justify-center shrink-0">
+                <Bot className="w-5 h-5 text-[#5865F2]" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-sm font-bold text-text">Official Felo Discord Bot</h4>
+                  <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-surface border border-border text-text-muted font-mono font-bold">
                     1 Official Bot Access
                   </span>
-                </h4>
-                <p className="text-[11px] text-text-muted mt-0.5">
-                  Zero token setup. All users simply link to the official bot using <code className="text-text font-mono font-semibold">/connect</code> in Discord.
-                </p>
-                <div className="flex items-center gap-2 pt-1.5 flex-wrap">
-                  <a
-                    href="https://discord.gg/K4We3eBqQ"
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(e) => {
-                      if (window.api?.openExternal) {
-                        e.preventDefault()
-                        void window.api.openExternal('https://discord.gg/K4We3eBqQ')
-                      }
-                    }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-surface-elevated border border-border/60 text-xs font-bold text-text hover:bg-hover transition-colors shadow-sm cursor-pointer"
+                  <span
+                    className={`text-[10px] px-2.5 py-0.5 rounded-full font-mono font-semibold flex items-center gap-1.5 ${
+                      discordBinding
+                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                        : hostRoom?.code
+                          ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                          : 'bg-surface border border-border text-text-muted'
+                    }`}
                   >
-                    <DiscordIcon className="w-3.5 h-3.5 text-text-muted" />
-                    <span>Join Discord Community</span>
-                    <ExternalLink className="w-3.5 h-3.5 text-text-muted" />
-                  </a>
-                  <a
-                    href="https://felo.feloapp.workers.dev"
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(e) => {
-                      if (window.api?.openExternal) {
-                        e.preventDefault()
-                        void window.api.openExternal('https://felo.feloapp.workers.dev')
-                      }
-                    }}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-surface-elevated border border-border/60 text-xs font-medium text-text hover:bg-hover transition-colors cursor-pointer"
-                  >
-                    <span>Web Player: felo.feloapp.workers.dev</span>
-                    <ExternalLink className="w-3 h-3 text-text-muted" />
-                  </a>
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        discordBinding
+                          ? 'bg-emerald-400 animate-pulse'
+                          : hostRoom?.code
+                            ? 'bg-amber-400'
+                            : 'bg-zinc-500'
+                      }`}
+                    />
+                    <span>
+                      {discordBinding
+                        ? 'Discord Server Connected'
+                        : hostRoom?.code
+                          ? 'Ready to Connect'
+                          : 'Bot Idle'}
+                    </span>
+                  </span>
                 </div>
+                <p className="text-xs text-text-muted leading-relaxed">
+                  Zero token setup. Simply add the official bot to your Discord server and connect any channel using{' '}
+                  <code className="text-text font-mono font-semibold">/connect</code>.
+                </p>
               </div>
             </div>
           </div>
 
-          {/* Room Code Display */}
-          <div className="p-3 rounded-lg bg-surface border border-border/60 flex items-center justify-between gap-3">
+          {/* Connected Server Notification */}
+          {discordBinding && (
+            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2 text-emerald-400 font-medium">
+                <Check className="w-4 h-4 shrink-0" />
+                <span>
+                  Channel linked by <strong className="font-bold text-emerald-300">@{discordBinding.bound_by}</strong>. Music requested via <code className="font-mono text-emerald-200">/play</code> in Discord will play here.
+                </span>
+              </div>
+              <span className="text-[10px] text-emerald-400/80 font-mono shrink-0">
+                Type /disconnect in Discord to unlink
+              </span>
+            </div>
+          )}
+
+          {/* Quick Action Links Row */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <a
+              href={FELO_DISCORD_BOT_INVITE_URL}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => {
+                if (window.api?.openExternal) {
+                  e.preventDefault()
+                  void window.api.openExternal(FELO_DISCORD_BOT_INVITE_URL)
+                }
+              }}
+              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-[#5865F2] hover:bg-[#4752C4] text-white text-xs font-bold transition-all shadow-sm shadow-[#5865F2]/25 cursor-pointer active:scale-95"
+            >
+              <DiscordIcon className="w-3.5 h-3.5 fill-white text-white" />
+              <span>Add Bot to Discord Server</span>
+              <ExternalLink className="w-3.5 h-3.5 opacity-80" />
+            </a>
+            <a
+              href="https://discord.gg/K4We3eBqQ"
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => {
+                if (window.api?.openExternal) {
+                  e.preventDefault()
+                  void window.api.openExternal('https://discord.gg/K4We3eBqQ')
+                }
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface border border-border/80 text-xs font-semibold text-text hover:bg-hover transition-colors cursor-pointer"
+            >
+              <DiscordIcon className="w-3.5 h-3.5 text-text-muted" />
+              <span>Join Discord Community</span>
+              <ExternalLink className="w-3 h-3 text-text-muted" />
+            </a>
+            <a
+              href="https://felo.feloapp.workers.dev"
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => {
+                if (window.api?.openExternal) {
+                  e.preventDefault()
+                  void window.api.openExternal('https://felo.feloapp.workers.dev')
+                }
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface border border-border/80 text-xs font-medium text-text-muted hover:text-text hover:bg-hover transition-colors cursor-pointer"
+            >
+              <span>Web Player: felo.feloapp.workers.dev</span>
+              <ExternalLink className="w-3 h-3 text-text-muted" />
+            </a>
+          </div>
+
+          {/* Room Code Display & 1-Click Copy */}
+          <div className="p-3.5 rounded-xl bg-surface border border-border/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <span className="text-[10px] text-text-muted uppercase tracking-wider font-semibold block">
                 Your Discord Connect Code
               </span>
-              <span className="text-base font-mono font-bold tracking-widest text-text">
+              <span className="text-lg font-mono font-bold tracking-widest text-text">
                 {hostRoom?.code || 'NO ACTIVE CODE'}
               </span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               {hostRoom?.code ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(hostRoom.code)
-                    setCopiedRoomCode(true)
-                    setTimeout(() => setCopiedRoomCode(false), 2000)
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-text text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  {copiedRoomCode ? <Check className="w-3.5 h-3.5 text-text" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedRoomCode ? 'Copied!' : 'Copy Code'}</span>
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(`/connect ${hostRoom.code}`)
+                      setCopiedConnectCmd(true)
+                      setTimeout(() => setCopiedConnectCmd(false), 2000)
+                    }}
+                    className="px-3.5 py-1.5 rounded-lg bg-[#5865F2]/15 border border-[#5865F2]/30 hover:bg-[#5865F2]/25 text-white text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                  >
+                    {copiedConnectCmd ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedConnectCmd ? 'Copied /connect' : 'Copy /connect'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(hostRoom.code)
+                      setCopiedRoomCode(true)
+                      setTimeout(() => setCopiedRoomCode(false), 2000)
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-surface-elevated hover:bg-hover border border-border text-text text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    {copiedRoomCode ? <Check className="w-3.5 h-3.5 text-text" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedRoomCode ? 'Copied Code' : 'Copy Code'}</span>
+                  </button>
+                </>
               ) : (
                 <button
                   type="button"
                   onClick={() => void ensureHostRoom(true)}
-                  className="px-3.5 py-1.5 rounded-full bg-primary text-primary-foreground text-xs font-bold transition-all hover:bg-primary/90 cursor-pointer"
+                  className="px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-bold transition-all hover:bg-primary-hover cursor-pointer shadow-sm active:scale-95"
                 >
                   Generate Code
                 </button>
@@ -672,13 +685,29 @@ export function DiscordSection() {
             </div>
           </div>
 
-          <div className="text-[11px] text-text-muted space-y-1.5 pt-1">
-            <p className="font-semibold text-text">How to connect in Discord:</p>
-            <ol className="list-decimal list-inside space-y-1 text-[11px] text-text-muted">
-              <li>In your Discord server channel, type: <code className="text-text font-mono font-bold">/connect {hostRoom?.code || '<code>'}</code></li>
-              <li>Type <code className="text-text font-mono font-bold">/play &lt;song name&gt;</code> — Felo automatically searches, queues, and plays the music in real-time!</li>
-              <li>Everyone in the channel can request songs, vote to skip, or view the 3-tier queue with <code className="text-text font-mono font-bold">/queue</code>!</li>
-            </ol>
+          {/* Clean 3-Step Setup Guide */}
+          <div className="text-xs text-text-muted space-y-2 pt-1 border-t border-border/30">
+            <p className="font-semibold text-text text-[11px] uppercase tracking-wider">How to connect in 3 easy steps:</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+              <div className="p-2.5 rounded-lg bg-surface/50 border border-border/30 space-y-1">
+                <span className="text-[10px] font-bold text-[#5865F2] uppercase tracking-wider block">Step 1 • Invite</span>
+                <p className="text-[11px] text-text-muted">
+                  Click <strong className="text-text">Add Bot to Discord</strong> above to invite Felo to your server (one-time).
+                </p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-surface/50 border border-border/30 space-y-1">
+                <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">Step 2 • Code</span>
+                <p className="text-[11px] text-text-muted">
+                  Click <strong className="text-text">Generate Code</strong> above to create your 6-character room session code.
+                </p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-surface/50 border border-border/30 space-y-1">
+                <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">Step 3 • Link</span>
+                <p className="text-[11px] text-text-muted">
+                  In your Discord channel, type <code className="text-text font-mono font-bold">/connect {hostRoom?.code || '<code>'}</code> to start playing!
+                </p>
+              </div>
+            </div>
           </div>
         </div>
 

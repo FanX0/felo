@@ -435,7 +435,7 @@ export class DiscordBotService {
             {
               name: 'Custom Status',
               type: 4,
-              state: 'felo.feloapp.workers.dev | /help'
+              state: process.env.DISCORD_BOT_ACTIVITY || 'Listen Together | Use /help'
             }
           ],
           status: 'online',
@@ -789,16 +789,16 @@ export class DiscordBotService {
       if (!res.ok) return
       const app = await res.json()
       const currentDesc = app.description || ''
-      if (!currentDesc.includes('felo.feloapp.workers.dev')) {
-        const newDesc =
-          'Official Felo Music Bot • Synchronized Listen Together!\n' +
-          '🌐 Web Player: https://felo.feloapp.workers.dev\n' +
-          '• Link channel: /connect <code>\n' +
-          '• Queue songs: /play <query>\n' +
-          '• Visual queue: /queue & /nowplaying\n' +
-          '• Friends join: /invite (1-click Web Player)\n' +
-          'Lossless synchronized audio with zero setup needed. Type /help in your server to get started!'
+      const newDesc =
+        'Official Felo Music Bot • Synchronized Listen Together!\n' +
+        'https://felo.feloapp.workers.dev\n' +
+        '• Link channel: /connect <code>\n' +
+        '• Queue songs: /play <query>\n' +
+        '• Visual queue: /queue & /nowplaying\n' +
+        '• Friends join: /invite (1-click Web Player)\n' +
+        'Lossless synchronized audio with zero setup needed. Type /help in your server to get started!'
 
+      if (currentDesc !== newDesc) {
         await fetch(`${DISCORD_API}/applications/@me`, {
           method: 'PATCH',
           headers: {
@@ -807,7 +807,7 @@ export class DiscordBotService {
           },
           body: JSON.stringify({ description: newDesc })
         })
-        console.log('[Discord Bot] Updated bot application description with Web Player link!')
+        console.log('[Discord Bot] Updated bot application description!')
       }
     } catch {
       // Non-fatal, ignore

@@ -9,7 +9,9 @@ import {
   buildTrakteerUrl,
   buildGithubRepoUrl,
   buildSolscanUrl,
-  buildDiscordInviteUrl
+  buildDiscordInviteUrl,
+  FELO_DISCORD_BOT_INVITE_URL,
+  buildDiscordBotInviteUrl
 } from '../../../src/renderer/src/lib/supportConfig'
 
 describe('supportConfig URL builders', () => {
@@ -34,5 +36,12 @@ describe('supportConfig URL builders', () => {
     expect(buildTrakteerUrl()).toBe('https://trakteer.id/feloapp/tip')
     expect(buildGithubRepoUrl()).toBe('https://github.com/FanX0/felo')
     expect(buildSolscanUrl()).toBe('https://solscan.io')
+  })
+
+  it('builds discord bot invite url correctly', () => {
+    expect(FELO_DISCORD_BOT_INVITE_URL).toContain('client_id=1559904111883714691')
+    expect(FELO_DISCORD_BOT_INVITE_URL).toContain('scope=bot%20applications.commands')
+    expect(buildDiscordBotInviteUrl()).toBe(FELO_DISCORD_BOT_INVITE_URL)
+    expect(buildDiscordBotInviteUrl('123456')).toContain('client_id=123456')
   })
 })

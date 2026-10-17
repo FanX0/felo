@@ -22,6 +22,8 @@ export const FELO_ANDROID_APK_URL = 'https://github.com/FanX0/felo/releases/late
 export const FELO_IOS_IPA_URL = 'https://github.com/FanX0/felo/releases/latest/download/Felo.ipa'
 export const FELO_TESTFLIGHT_URL = ''
 export const FELO_PLAYSTORE_URL = ''
+export const FELO_DISCORD_BOT_INVITE_URL =
+  'https://discord.com/oauth2/authorize?client_id=1559904111883714691&permissions=274878285888&scope=bot%20applications.commands'
 
 export function buildSaweriaUrl(usernameOrUrl?: string): string {
   const clean = (usernameOrUrl || '').trim()
@@ -56,6 +58,11 @@ export function buildDiscordInviteUrl(urlOrCode?: string): string {
   if (!clean) return 'https://discord.gg/K4We3eBqQ'
   if (clean.startsWith('http://') || clean.startsWith('https://')) return clean
   return `https://discord.gg/${clean.replace(/^(https?:\/\/)?(discord\.gg\/|discord\.com\/invite\/)?/, '')}`
+}
+
+export function buildDiscordBotInviteUrl(customClientId?: string): string {
+  const clientId = (customClientId || '').trim() || '1559904111883714691'
+  return `https://discord.com/oauth2/authorize?client_id=${clientId}&permissions=274878285888&scope=bot%20applications.commands`
 }
 
 export function useSupportConfig() {

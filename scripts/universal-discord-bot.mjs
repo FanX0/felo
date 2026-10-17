@@ -22,11 +22,7 @@ const supabaseKey = clean(
   process.env.VITE_SUPABASE_ANON_KEY ||
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
-const rawBotActivity = clean(process.env.DISCORD_BOT_ACTIVITY)
-const botActivity =
-  rawBotActivity && rawBotActivity !== 'Listen Together | Use /help'
-    ? rawBotActivity
-    : 'felo.feloapp.workers.dev | /help'
+const botActivity = clean(process.env.DISCORD_BOT_ACTIVITY) || 'Listen Together | Use /help'
 const botActivityType = Number(process.env.DISCORD_BOT_ACTIVITY_TYPE ?? 4)
 
 if (!token) {
@@ -383,25 +379,53 @@ async function updateApplicationBio() {
     if (!res.ok) return
     const app = await res.json()
     const currentDesc = app.description || ''
-    if (!currentDesc.includes('felo.feloapp.workers.dev')) {
-      const newDesc =
-        'Official Felo Music Bot • Synchronized Listen Together!\n' +
-        '🌐 Web Player: https://felo.feloapp.workers.dev\n' +
-        '• Link channel: /connect <code>\n' +
-        '• Queue songs: /play <query>\n' +
-        '• Visual queue: /queue & /nowplaying\n' +
-        '• Friends join: /invite (1-click Web Player)\n' +
-        'Lossless synchronized audio with zero setup needed. Type /help in your server to get started!'
+    const newDesc =
+      'Official Felo Music Bot • Synchronized Listen Together!\n' +
+      'https://felo.feloapp.workers.dev\n' +
+      '• Link channel: /connect <code>\n' +
+      '• Queue songs: /play <query>\n' +
+      '• Visual queue: /queue & /nowplaying\n' +
+      '• Friends join: /invite (1-click Web Player)\n' +
+      'Lossless synchronized audio with zero setup needed. Type /help in your server to get started!'
 
+    const botPerms = '2150949344'
+    const patchBody = {}
+
+    if (currentDesc !== newDesc) {
+      patchBody.description = newDesc
+    }
+
+    const currentScopes = app.install_params?.scopes || []
+    if (!currentScopes.includes('bot') || !currentScopes.includes('applications.commands')) {
+      patchBody.install_params = {
+        scopes: ['bot', 'applications.commands'],
+        permissions: botPerms
+      }
+      patchBody.integration_types_config = {
+        '0': {
+          oauth2_install_params: {
+            scopes: ['bot', 'applications.commands'],
+            permissions: botPerms
+          }
+        },
+        '1': {
+          oauth2_install_params: {
+            scopes: ['applications.commands']
+          }
+        }
+      }
+    }
+
+    if (Object.keys(patchBody).length > 0) {
       await fetch(`${DISCORD_API}/applications/@me`, {
         method: 'PATCH',
         headers: {
           Authorization: `Bot ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ description: newDesc })
+        body: JSON.stringify(patchBody)
       })
-      console.log('✅ Updated Discord bot application bio with Web Player link!')
+      console.log('✅ Updated Discord bot application bio and installation scopes (bot + applications.commands)!')
     }
   } catch (err) {
     // Non-fatal, ignore
