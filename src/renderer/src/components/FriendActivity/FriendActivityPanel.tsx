@@ -20,6 +20,7 @@ import { useNotificationStore } from '../../stores/useNotificationStore'
 import { getSupabase } from '../../lib/supabase'
 import type { FriendRequest, ListeningRoom, OnlineProfile } from '../../online/types'
 import CommonAvatar from '../Common/Avatar'
+import DeleteFriendModal from '../Common/DeleteFriendModal'
 
 interface FriendActivityPanelProps {
   onClose: () => void
@@ -69,6 +70,10 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
   const [isLoading, setIsLoading] = useState(false)
   const [busyId, setBusyId] = useState('')
   const [error, setError] = useState('')
+  const [friendToDelete, setFriendToDelete] = useState<{
+    request: FriendRequest
+    profile: FriendProfile
+  } | null>(null)
 
   const hostRoom = useListeningStore((s) => s.hostRoom)
   const joinedRoom = useListeningStore((s) => s.joinedRoom)
@@ -492,14 +497,24 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
     })
   }
 
-  const removeRequest = (request: FriendRequest): void => {
-    void runAction(request.id, async () => {
+  const removeRequest = async (request: FriendRequest): Promise<void> => {
+    await runAction(request.id, async () => {
       const { error: deleteError } = await getSupabase()
         .from('friend_requests')
         .delete()
         .eq('id', request.id)
       if (deleteError) throw deleteError
     })
+  }
+
+  const handleConfirmDelete = async (): Promise<void> => {
+    if (!friendToDelete) return
+    try {
+      await removeRequest(friendToDelete.request)
+      setFriendToDelete(null)
+    } catch {
+      // Error is caught and set by runAction
+    }
   }
 
   const profileFor = (request: FriendRequest): FriendProfile | undefined => {
@@ -914,7 +929,7 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
                             <button
                               type="button"
                               disabled={busyId === request.id}
-                              onClick={() => removeRequest(request)}
+                              onClick={() => setFriendToDelete({ request, profile: person })}
                               title="Remove friend"
                               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-muted opacity-0 transition-opacity hover:bg-surface-elevated hover:text-danger group-hover:opacity-100 focus:opacity-100 cursor-pointer"
                             >
@@ -942,6 +957,16 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
           )}
         </div>
       </div>
+
+      <DeleteFriendModal
+        isOpen={friendToDelete !== null}
+        friendName={friendToDelete?.profile.display_name || friendToDelete?.profile.username || 'Friend'}
+        username={friendToDelete?.profile.username}
+        avatarUrl={friendToDelete?.profile.avatar_url}
+        isLoading={Boolean(friendToDelete && busyId === friendToDelete.request.id)}
+        onClose={() => setFriendToDelete(null)}
+        onConfirm={handleConfirmDelete}
+      />
     </aside>
   )
 }

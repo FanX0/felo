@@ -346,19 +346,24 @@ class RoomClockSyncManager {
     this.lastSoftResyncTime = now
     this.resetSoftDriftState()
 
+    // Smooth pitch-preserving rate micro-adjustment:
+    // If guest is ahead (direction = 1), slow down by 2% to let host catch up.
+    // If guest is behind (direction = -1), speed up by 2% to catch up to host.
+    const recommendedRate = direction === 1 ? 0.98 : 1.02
+
     return {
       action: 'soft_align',
       drift,
       targetTime,
-      recommendedRate: 1.0
+      recommendedRate
     }
   }
 
   /**
-   * Retained for backward compatibility.
+   * Rate adjustment is active for smooth drift compensation.
    */
   public canAdjustRate(): boolean {
-    return false
+    return true
   }
 }
 

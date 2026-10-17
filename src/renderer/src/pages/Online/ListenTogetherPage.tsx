@@ -17,6 +17,7 @@ import SelectMediaModal from '../../components/Online/SelectMediaModal'
 import AddFromLibraryModal from '../../components/Online/AddFromLibraryModal'
 import { registerLocalSlotPoolFile, registerLocalSlotPoolPath } from '../../lib/jitAudioPipeline'
 import { toMediaUrl } from '../../lib/media'
+import { playParticipantLeaveSound } from '../../lib/uiSounds'
 import type { ListeningRoom, SpeakerRole } from '../../online/types'
 import type { Song } from '../../types'
 import type { ListenTogetherPageProps, RoomMemberInfo, LiveFriendSession } from './types'
@@ -136,7 +137,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
         const targetIdx = queue.length === 0 ? 0 : queue.length
         usePlayerStore.getState().setQueue(updatedQueue, targetIdx)
         usePlayerStore.getState().setIsPlaying(true)
-        await ensureHostRoom(true, true)
+        await ensureHostRoom(true, false)
         setMessage(`Added ${newSongs.length} local file(s) to room!`)
         setTimeout(() => setMessage(''), 3000)
       }
@@ -228,7 +229,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
         const targetIdx = queue.length === 0 ? 0 : queue.length
         usePlayerStore.getState().setQueue(updatedQueue, targetIdx)
         usePlayerStore.getState().setIsPlaying(true)
-        await ensureHostRoom(true, true)
+        await ensureHostRoom(true, false)
         setMessage(`Added ${preparedSongs.length} track(s) from library to room!`)
         setTimeout(() => setMessage(''), 3000)
       }
@@ -262,7 +263,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       usePlayerStore.getState().setQueue(updatedQueue, updatedQueue.length - 1)
       usePlayerStore.getState().setIsPlaying(true)
       usePlayerStore.setState({ isBuffering: false, isAudioActive: true })
-      await ensureHostRoom(true, true)
+      await ensureHostRoom(true, false)
       setMessage(`Playing YouTube: "${ytSong.title}"`)
       setTimeout(() => setMessage(''), 3000)
     } catch (err: any) {
@@ -450,13 +451,6 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       })
       .finally(() => setBusy(false))
   }, [searchParams, user?.id, joinRoomByCode, ensureHostRoom, setSearchParams])
-
-  // 1c. Re-attach existing active host room if user already has one active
-  useEffect(() => {
-    if (!hostRoom && !joinedRoom && user?.id) {
-      void ensureHostRoom(true, false).catch(() => undefined)
-    }
-  }, [user?.id, hostRoom, joinedRoom, ensureHostRoom])
 
   // 2. Load host display name when in a joined room
   useEffect(() => {
@@ -663,8 +657,29 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   useEffect(() => {
     void loadLiveFriends()
     const timer = window.setInterval(() => void loadLiveFriends(), 10000)
-    return () => window.clearInterval(timer)
-  }, [loadLiveFriends])
+
+    if (!user) return () => window.clearInterval(timer)
+
+    const supabase = getSupabase()
+    const channel = supabase
+      .channel(`live-friends-sync:${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'listening_rooms' },
+        () => void loadLiveFriends()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'listening_room_members' },
+        () => void loadLiveFriends()
+      )
+      .subscribe()
+
+    return () => {
+      window.clearInterval(timer)
+      void supabase.removeChannel(channel)
+    }
+  }, [loadLiveFriends, user?.id])
 
   useEffect(() => {
     if (showShareModal && hostRoom?.code) {
@@ -703,19 +718,45 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
             if (p.userId) presenceMap.set(p.userId, p)
           }
         })
+
+        if (joinedRoom.host_id && !onlineIds.has(joinedRoom.host_id)) {
+          useListeningStore.setState({ syncStatus: 'host_reconnecting' })
+        } else if (useListeningStore.getState().syncStatus === 'host_reconnecting') {
+          useListeningStore.setState({ syncStatus: 'synced' })
+        }
+
         setMembers((prev) =>
-          prev.map((m) => {
-            const p = presenceMap.get(m.userId)
-            return {
-              ...m,
-              isOnline: onlineIds.has(m.userId),
-              displayName: p?.displayName || m.displayName,
-              avatarUrl: p?.avatarUrl || m.avatarUrl,
-              speaker_role: p?.speakerRole || m.speaker_role || 'center',
-              sub_cutoff: typeof p?.subCutoff === 'number' ? p.subCutoff : m.sub_cutoff
-            }
-          })
+          prev
+            .filter((m) => onlineIds.has(m.userId))
+            .map((m) => {
+              const p = presenceMap.get(m.userId)
+              return {
+                ...m,
+                isOnline: true,
+                displayName: p?.displayName || m.displayName,
+                avatarUrl: p?.avatarUrl || m.avatarUrl,
+                speaker_role: p?.speakerRole || m.speaker_role || 'center',
+                sub_cutoff: typeof p?.subCutoff === 'number' ? p.subCutoff : m.sub_cutoff
+              }
+            })
         )
+        const activeCount = Array.from(presenceMap.values()).length || 1
+        useListeningStore.getState().setMemberCount(activeCount)
+      })
+      .on('presence', { event: 'leave' }, ({ leftPresences }: any) => {
+        if (Array.isArray(leftPresences)) {
+          for (const p of leftPresences) {
+            if (p?.userId === joinedRoom.host_id) {
+              setMessage(`${hostName} disconnected from the session.`)
+              useListeningStore.setState({ syncStatus: 'host_reconnecting' })
+              setTimeout(() => setMessage(''), 4000)
+            } else if (p?.displayName) {
+              playParticipantLeaveSound()
+              setMessage(`${p.displayName} left the room.`)
+              setTimeout(() => setMessage(''), 3000)
+            }
+          }
+        }
       })
       .on(
         'postgres_changes',
@@ -753,9 +794,9 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [joinedRoom?.id, user, handleHostSongChange, handleHostPauseResume, handleHostDisconnect, refreshMemberCount, loadMembers, loadMessages, addIncoming])
+  }, [joinedRoom?.id, user, handleHostSongChange, handleHostPauseResume, handleHostDisconnect, refreshMemberCount, loadMembers, loadMessages, addIncoming, hostName])
 
-  // 6b. Real-time chat subscription for active host room
+  // 6b. Real-time chat & presence subscription for active host room
   useEffect(() => {
     if (!hostRoom?.id || joinedRoom) return
     const supabase = getSupabase()
@@ -763,7 +804,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
     void loadMessages(hostRoom.id)
 
     const channel = supabase
-      .channel(`host-chat:${hostRoom.id}`, {
+      .channel(`room-realtime:${hostRoom.id}`, {
         config: { presence: { key: user?.id || 'host' } }
       })
       .on('presence', { event: 'sync' }, () => {
@@ -776,19 +817,57 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
             if (p.userId) presenceMap.set(p.userId, p)
           }
         })
-        setMembers((prev) =>
-          prev.map((m) => {
-            const p = presenceMap.get(m.userId)
-            return {
-              ...m,
-              isOnline: onlineIds.has(m.userId),
-              displayName: p?.displayName || m.displayName,
-              avatarUrl: p?.avatarUrl || m.avatarUrl,
-              speaker_role: p?.speakerRole || m.speaker_role || 'center',
-              sub_cutoff: typeof p?.subCutoff === 'number' ? p.subCutoff : m.sub_cutoff
+
+        setMembers((prev) => {
+          const disconnectedGuests = prev.filter(
+            (m) => !m.isHost && m.userId !== user?.id && !onlineIds.has(m.userId)
+          )
+
+          if (disconnectedGuests.length > 0) {
+            for (const guest of disconnectedGuests) {
+              void supabase
+                .from('listening_room_members')
+                .delete()
+                .eq('room_id', hostRoom.id)
+                .eq('user_id', guest.userId)
             }
-          })
-        )
+          }
+
+          return prev
+            .filter((m) => m.isHost || onlineIds.has(m.userId))
+            .map((m) => {
+              const p = presenceMap.get(m.userId)
+              return {
+                ...m,
+                isOnline: true,
+                displayName: p?.displayName || m.displayName,
+                avatarUrl: p?.avatarUrl || m.avatarUrl,
+                speaker_role: p?.speakerRole || m.speaker_role || 'center',
+                sub_cutoff: typeof p?.subCutoff === 'number' ? p.subCutoff : m.sub_cutoff
+              }
+            })
+        })
+
+        const activeCount = Array.from(presenceMap.values()).length || 1
+        useListeningStore.getState().setMemberCount(activeCount)
+      })
+      .on('presence', { event: 'leave' }, ({ leftPresences }: any) => {
+        if (Array.isArray(leftPresences)) {
+          for (const p of leftPresences) {
+            if (p?.userId && p.userId !== user?.id) {
+              void supabase
+                .from('listening_room_members')
+                .delete()
+                .eq('room_id', hostRoom.id)
+                .eq('user_id', p.userId)
+              playParticipantLeaveSound()
+              if (p.displayName) {
+                setMessage(`${p.displayName} left the room.`)
+                setTimeout(() => setMessage(''), 3000)
+              }
+            }
+          }
+        }
       })
       .on(
         'postgres_changes',
@@ -834,11 +913,16 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   }, [hostRoom?.id, joinedRoom, user, loadMessages, addIncoming, refreshMemberCount, loadMembers])
 
   // Handlers
-  const handleListenAlong = async (friendId: string) => {
+  const handleListenAlong = async (friendId: string, roomId?: string) => {
     setBusy(true)
     setMessage('')
     try {
-      const room = await listenAlongWithFriend(friendId)
+      let room: ListeningRoom
+      if (roomId) {
+        room = await joinRoomById(roomId)
+      } else {
+        room = await listenAlongWithFriend(friendId)
+      }
       setMessage(`Now listening along with ${room.name}!`)
       setTimeout(() => setMessage(''), 3000)
     } catch (err: any) {
@@ -1206,6 +1290,8 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
         loadLiveFriends={loadLiveFriends}
         handleListenAlong={handleListenAlong}
         busy={busy}
+        currentRoomId={hostRoom?.id || null}
+        isHost={Boolean(hostRoom?.id)}
       />
 
       {/* Join with Code Modal */}

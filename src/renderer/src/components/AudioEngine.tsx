@@ -9,11 +9,12 @@ import type { Song } from '../pages/Library/Library'
 import { remoteClient } from '../pages/Remote/remoteClient'
 import { resolveSongAudioUrl } from '../lib/songAudioResolver'
 import { useConnectedDeviceStore } from '../hooks/useConnectedDeviceStore'
+import { useDownloadStore } from '../hooks/useDownloadStore'
 import { useListeningStore } from '../hooks/useListeningStore'
+import { setIsSessionSyncing } from '../stores/listening/helpers'
 import { audioDspEngine } from '../lib/audioDspEngine'
 import { getLocalSlotPoolFile } from '../lib/jitAudioPipeline'
 import { getTrackDisplayTitle } from '../lib/songUtils'
-import YouTubePlayerBridge from './Audio/YouTubePlayerBridge'
 import { isYouTubeSong } from '../lib/youtubeService'
 import { isElectron } from '../lib/appConfig'
 
@@ -377,6 +378,17 @@ export default function AudioEngine() {
       if (!audio.paused) audio.pause()
       return
     }
+
+    // Stop the inactive channel so two audio elements NEVER play simultaneously
+    const otherAudio = audio === audioRefA.current ? audioRefB.current : audioRefA.current
+    if (otherAudio && !otherAudio.paused && !isCrossfadingRef.current) {
+      otherAudio.pause()
+      otherAudio.removeAttribute('src')
+      otherAudio.load()
+    }
+    audioDspEngine.stopBuffer(activeChannelRef.current === 'A' ? 'B' : 'A')
+    window.dispatchEvent(new CustomEvent('felo:stop-youtube'))
+
     remoteClient.pauseMobileAudio()
     audio.muted = false
     void audioDspEngine.resume()
@@ -580,7 +592,7 @@ export default function AudioEngine() {
                   }
                 }))
                 if (state.queue.length > 1) {
-                  setTimeout(() => usePlayerStore.getState().playNext(), 100)
+                  setTimeout(() => usePlayerStore.getState().playNext(true), 100)
                 } else {
                   usePlayerStore.setState({ isPlaying: false })
                 }
@@ -628,6 +640,7 @@ export default function AudioEngine() {
             otherAudio.removeAttribute('src')
             otherAudio.load()
           }
+          audioDspEngine.stopBuffer()
           return
         }
 
@@ -668,7 +681,15 @@ export default function AudioEngine() {
           window.clearTimeout(crossfadeTimerRef.current)
           crossfadeTimerRef.current = null
         }
-        isCrossfadingRef.current = false
+        if (isCrossfadingRef.current) {
+          const other = getInactiveAudio()
+          if (other && !other.paused) {
+            other.pause()
+            other.removeAttribute('src')
+            other.load()
+          }
+          isCrossfadingRef.current = false
+        }
 
         const isLocalBrowserSong = !isElectron && Boolean(
           song && (
@@ -840,6 +861,13 @@ export default function AudioEngine() {
           setDuration(song.duration || inactiveAudio.duration || 0)
         } else if (currentSourceRef.current !== sourceUrl) {
           audioDspEngine.stopBuffer()
+          const inactive = getInactiveAudio()
+          if (inactive) {
+            if (!inactive.paused) inactive.pause()
+            inactive.removeAttribute('src')
+            inactive.load()
+          }
+          window.dispatchEvent(new CustomEvent('felo:stop-youtube'))
           currentSourceRef.current = sourceUrl
           isChangingSourceRef.current = true
           retryCountRef.current = 0
@@ -1018,6 +1046,17 @@ export default function AudioEngine() {
       const activeSong = currentState.queue[currentState.currentSongIndex]
       const playableUrl = activeSong ? resolveSongAudioUrl(activeSong) : null
 
+      // Check if this song is actively being downloaded or queued by background downloader
+      const isDownloadActive = useDownloadStore.getState().transfers.some(
+        (t) =>
+          (t.status === 'downloading' || t.status === 'queued') &&
+          (t.autoPlay || (activeSong && (t.song?.id === activeSong.id || t.title.toLowerCase() === activeSong.title?.toLowerCase())))
+      )
+      if (isDownloadActive) {
+        // Download is legitimately in progress; do not prematurely abort or advance
+        return
+      }
+
       console.warn(
         '[AudioEngine] Buffering stall watchdog triggered after 4s for:',
         activeSong?.title,
@@ -1036,7 +1075,7 @@ export default function AudioEngine() {
           }
         }))
         if (currentState.queue.length > 1) {
-          playNext()
+          playNext(true)
         } else {
           setIsPlaying(false)
         }
@@ -1252,7 +1291,7 @@ export default function AudioEngine() {
           }
           console.warn('Audio playback unrecoverable for track, advancing to next:', activeSong?.title)
           if (storeState.queue.length > 1) {
-            playNext()
+            playNext(true)
           } else {
             setIsPlaying(false)
           }
@@ -1271,7 +1310,7 @@ export default function AudioEngine() {
     console.warn('Audio playback unrecoverable for track, advancing to next:', activeSong?.title)
     setIsBuffering(false)
     if (storeState.queue.length > 1) {
-      playNext()
+      playNext(true)
     } else {
       setIsPlaying(false)
     }
@@ -1285,6 +1324,7 @@ export default function AudioEngine() {
     resumeAfterSeekRef.current = false
     setCurrentTime(e.currentTarget.currentTime)
     updateMediaPosition(e.currentTarget)
+    setIsSessionSyncing(false)
 
     if (shouldResume && storeState.isPlaying && e.currentTarget.paused) {
       e.currentTarget.play().catch((err) => {
@@ -1326,7 +1366,6 @@ export default function AudioEngine() {
     <>
       {renderAudioElement('A', audioRefA)}
       {renderAudioElement('B', audioRefB)}
-      <YouTubePlayerBridge />
       {isAutoplayBlocked && (
         <div
           role="button"

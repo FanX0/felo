@@ -216,7 +216,7 @@ export function primeWebRtcAudioDecoder(
  */
 export async function waitForInitialUnmute(
   tracks: readonly MediaStreamTrack[],
-  timeoutMs = 2000,
+  timeoutMs = 4000,
   settleMs = 80
 ): Promise<boolean> {
   if (tracks.length === 0 || tracks.every((t) => !t.muted)) {
@@ -255,14 +255,18 @@ export async function waitForInitialUnmute(
     }
 
     tracks.forEach((track) => track.addEventListener('unmute', check))
-    timeoutTimer = setTimeout(() => done(true, 'unmute-timeout'), timeoutMs)
+    timeoutTimer = setTimeout(() => {
+      const stillMuted = tracks.some((t) => t.muted)
+      done(!stillMuted, 'unmute-timeout')
+    }, timeoutMs)
     check()
   })
 }
 
 /**
  * Captures the system/device loopback audio stream using standard getDisplayMedia (1:1 MUSIXQUARE parity).
- * Disables echo cancellation, noise suppression, and automatic gain control to preserve full musical dynamics.
+ * In Electron Windows loopback capture, passes plain `audio: true` to avoid OverconstrainedError/NotAllowedError,
+ * and falls back to constraint dictionary for browser environments.
  * Immediately stops all video tracks so screen capture does not persist in the background.
  */
 export async function captureSystemAudioStream(): Promise<{
@@ -272,36 +276,60 @@ export async function captureSystemAudioStream(): Promise<{
 }> {
   let rawStream: MediaStream | null = null
 
+  // 1. In Electron WASAPI loopback, audio must be requested with a plain boolean `audio: true`.
+  // Passing constraint dictionaries ({ echoCancellation: false, ... }) causes Chromium desktop
+  // capture to reject with OverconstrainedError or NotAllowedError.
   try {
     rawStream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-        channelCount: 2,
-        sampleRate: 48000
-      } as any
+      audio: true
     })
-  } catch (displayErr: any) {
-    if (displayErr?.name === 'NotAllowedError' || displayErr?.message?.includes('Permission denied')) {
+  } catch (err: any) {
+    if (err?.name === 'NotAllowedError' || err?.message?.includes('Permission denied')) {
       throw new Error('Screen/audio capture was cancelled or denied by user.')
     }
-    throw new Error('Device audio capture could not be initialized.')
+    // Fallback to constraint dictionary for browser environments if OverconstrainedError/TypeError
+    const isConstraintError =
+      err instanceof DOMException &&
+      (err.name === 'OverconstrainedError' || err.name === 'TypeError')
+    if (isConstraintError) {
+      try {
+        rawStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+            channelCount: 2,
+            sampleRate: 48000
+          } as any
+        })
+      } catch (fallbackErr: any) {
+        if (
+          fallbackErr?.name === 'NotAllowedError' ||
+          fallbackErr?.message?.includes('Permission denied')
+        ) {
+          throw new Error('Screen/audio capture was cancelled or denied by user.')
+        }
+        throw new Error('Device audio capture could not be initialized.')
+      }
+    } else {
+      throw new Error('Device audio capture could not be initialized.')
+    }
   }
 
   if (!rawStream) {
     throw new Error('Device audio capture could not be initialized.')
   }
 
-  // 1. Immediately stop all video tracks — only the captured audio track belongs in the product graph
+  // 2. Immediately stop all video tracks — only the captured audio track belongs in the product graph
   for (const vt of rawStream.getVideoTracks()) {
     try {
       vt.stop()
     } catch {}
   }
 
-  // 2. Validate audio track
+  // 3. Validate audio track
   const audioTracks = rawStream.getAudioTracks()
   if (audioTracks.length === 0) {
     for (const t of rawStream.getTracks()) {
@@ -317,6 +345,17 @@ export async function captureSystemAudioStream(): Promise<{
   const audioTrack = audioTracks[0]
   try {
     audioTrack.contentHint = 'music'
+  } catch {}
+
+  // Apply audio constraints safely directly to the captured track
+  try {
+    void audioTrack
+      .applyConstraints({
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false
+      })
+      .catch(() => {})
   } catch {}
 
   const audioOnlyStream = new MediaStream([audioTrack])
@@ -818,7 +857,7 @@ export class WebRTCAudioHost {
         } catch {}
         return
       }
-      if (existing.connectionState === 'connecting') {
+      if (existing.connectionState === 'connecting' || existing.signalingState === 'have-local-offer') {
         // Handshake already in flight; do not abort ongoing ICE / SDP negotiation
         return
       }
@@ -979,6 +1018,9 @@ export class WebRTCAudioHost {
 
     if (pc.signalingState === 'have-local-offer') {
       await pc.setRemoteDescription(new RTCSessionDescription(answer))
+      for (const sender of pc.getSenders()) {
+        tuneSystemAudioSender(sender, this.bitrateBps)
+      }
       const pending = this.peerPendingCandidates.get(peerId) || []
       this.peerPendingCandidates.delete(peerId)
       for (const cand of pending) {
@@ -1402,7 +1444,7 @@ export class WebRTCAudioClient {
    * 2. Unmutes physical audio output destination for listener.
    * 3. Attaches MediaStream to audioDspEngine (Stereo upmix -> Widener/EQ/MasterGain -> Destination).
    */
-  public playStream(stream: MediaStream): void {
+  public playStream(stream: MediaStream, forceReattach = false): void {
     this.currentStream = stream
     // 1. Prime isolated WebRTC audio decoder (MUSIXQUARE Windows/Chromium parity)
     primeWebRtcAudioDecoder(stream.getAudioTracks(), `client-${this.roomCode}`)
@@ -1410,7 +1452,7 @@ export class WebRTCAudioClient {
     // 2. Unmute listener output and attach stream to full Web Audio DSP graph
     try {
       audioDspEngine.setDestinationMuted(false)
-      audioDspEngine.attachMediaStream(stream, this.volume, true)
+      audioDspEngine.attachMediaStream(stream, this.volume, true, forceReattach)
     } catch (ctxErr) {
       console.warn('[WebRTCClient] Web Audio DSP pipeline error:', ctxErr)
     }
@@ -1557,7 +1599,7 @@ export class WebRTCAudioClient {
         // 2. Wait for initial unmute + settle delay (1:1 MUSIXQUARE parity)
         // In Chromium, audio tracks start muted until the first RTP audio packets are decoded.
         // Creating a MediaStreamAudioSourceNode on a muted track produces a permanently silent node!
-        await waitForInitialUnmute(audioTracks)
+        const isUnmuted = await waitForInitialUnmute(audioTracks, 4000)
 
         // 3. Ensure Web Audio DSP engine context is running
         await audioDspEngine.resume()
@@ -1573,7 +1615,7 @@ export class WebRTCAudioClient {
             try {
               await audioDspEngine.resume()
               this.onAutoplayBlocked?.(false)
-              this.playStream(stream)
+              this.playStream(stream, true)
             } catch (err) {
               console.warn('[WebRTCClient] Error resuming AudioContext on user gesture:', err)
             }
@@ -1584,10 +1626,15 @@ export class WebRTCAudioClient {
           window.addEventListener('keydown', unlockOnGesture, { once: true })
         }
 
-        // 4. Attach stream to full DSP graph
-        this.playStream(stream)
+        // 4. Attach stream to full DSP graph (if unmuted now, attach; otherwise track.onunmute will attach)
+        if (isUnmuted) {
+          this.playStream(stream, true)
+        }
 
+        // On track onunmute, always force re-attach to guarantee Chromium NetEq audio flows to DSP
         event.track.onunmute = () => {
+          console.log('[WebRTCClient] Track onunmute fired; force-reattaching audio graph')
+          this.playStream(stream, true)
           this.levelMonitor?.resume()
           this.resumeAudio()
         }

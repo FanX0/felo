@@ -9,14 +9,12 @@ import { audioDspEngine } from './audioDspEngine'
 
 const STORAGE_KEY = 'felo-ui-sounds-enabled'
 const SESSION_SOUND_COOLDOWN_MS = 300
-const UI_TOUCH_COOLDOWN_MS = 35
 const ANNOUNCEMENT_LOW_FREQUENCY_HZ = 523.25
 const ANNOUNCEMENT_HIGH_FREQUENCY_HZ = 659.25
 const ATTENTION_OUTPUT_GAIN = 2.5
 
 type OutputGraph = {
   context: AudioContext
-  touchInput: GainNode
   attentionInput: GainNode
 }
 
@@ -34,7 +32,6 @@ type ToneOptions = {
 let outputGraph: OutputGraph | null = null
 let enabledCache: boolean | null = null
 let preferenceRevision = 0
-let lastUiTouchAt = Number.NEGATIVE_INFINITY
 let lastSessionSoundAt = Number.NEGATIVE_INFINITY
 let initialized = false
 let removeDomListeners: (() => void) | null = null
@@ -84,12 +81,6 @@ function ensureOutputGraph(context: AudioContext): OutputGraph {
     return compressor
   }
 
-  const touchInput = context.createGain()
-  const touchCompressor = createCompressor()
-  touchInput.gain.value = 1
-  touchInput.connect(touchCompressor)
-  touchCompressor.connect(context.destination)
-
   const attentionInput = context.createGain()
   const attentionCompressor = createCompressor()
   const attentionOutput = context.createGain()
@@ -99,7 +90,7 @@ function ensureOutputGraph(context: AudioContext): OutputGraph {
   attentionCompressor.connect(attentionOutput)
   attentionOutput.connect(context.destination)
 
-  outputGraph = { context, touchInput, attentionInput }
+  outputGraph = { context, attentionInput }
   return outputGraph
 }
 
@@ -170,55 +161,6 @@ function scheduleTone(
   oscillator.stop(end + options.release + 0.01)
 }
 
-function schedulePitchlessTouch(context: AudioContext, destination: AudioNode, time: number): void {
-  const duration = 0.025
-  const totalDuration = 0.055
-  const body = 0.42
-  const snap = 0.22
-  const damping = 1.25
-  const amplitude = 0.34
-  const targetLevel = 0.075
-  const length = Math.max(1, Math.ceil(context.sampleRate * totalDuration))
-  const buffer = context.createBuffer(1, length, context.sampleRate)
-  const samples = buffer.getChannelData(0)
-  const pulses = [
-    [0.0006, 0.00042, 1],
-    [0.00135, 0.0006, -0.72],
-    [0.0026, 0.0009, 0.42],
-    [0.0049, 0.00145, -0.24],
-    [0.0084, 0.0022, 0.13]
-  ] as const
-  let peak = 0
-
-  for (let i = 0; i < samples.length; i += 1) {
-    const localTime = i / context.sampleRate
-    if (localTime > duration) break
-    const attack = Math.min(1, localTime / 0.00055)
-    const decay = Math.exp(-localTime * (86 * damping))
-    let pulseValue = 0
-    for (const [center, width, pulseGain] of pulses) {
-      const distance = (localTime - center) / width
-      pulseValue += Math.exp(-(distance * distance)) * pulseGain
-    }
-    const contact = pulseValue * decay * attack
-    const weight = body + snap * Math.exp(-localTime * 360)
-    const fadeIn = Math.min(1, localTime / 0.001)
-    const sample = contact * weight * amplitude * fadeIn
-    samples[i] = sample
-    peak = Math.max(peak, Math.abs(sample))
-  }
-
-  if (peak > 0) {
-    const scale = targetLevel / peak
-    for (let i = 0; i < samples.length; i += 1) samples[i] *= scale
-  }
-
-  const source = context.createBufferSource()
-  source.buffer = buffer
-  source.connect(destination)
-  source.start(time)
-}
-
 function scheduleMicroEcho(
   context: AudioContext,
   destination: AudioNode,
@@ -244,18 +186,11 @@ function scheduleMicroEcho(
   })
 }
 
-async function playTouch(force = false): Promise<void> {
-  const revision = preferenceRevision
-  const output = await readyOutput(force)
-  if (!output || revision !== preferenceRevision) return
-  schedulePitchlessTouch(output.context, output.touchInput, output.context.currentTime + 0.006)
-}
-
-export function playUiTouchSound(options: { force?: boolean } = {}): void {
-  const now = nowMs()
-  if (!options.force && now - lastUiTouchAt < UI_TOUCH_COOLDOWN_MS) return
-  lastUiTouchAt = now
-  playTouch(options.force === true).catch(() => undefined)
+/**
+ * UI touch/click sound is disabled. Maintained as a no-op for backward compatibility.
+ */
+export function playUiTouchSound(_options: { force?: boolean } = {}): void {
+  // Click sound permanently removed per user request
 }
 
 export function playAnnouncementSound(): void {
@@ -305,24 +240,10 @@ export function playParticipantLeaveSound(): void {
   playSessionSound(ANNOUNCEMENT_LOW_FREQUENCY_HZ)
 }
 
-function isEligibleButton(target: EventTarget | null): target is HTMLElement {
-  if (!(target instanceof Element)) return false
-  const button = target.closest<HTMLElement>('button, [role="button"]')
-  if (!button) return false
-  if (button.matches(':disabled, [aria-disabled="true"], [data-ui-sound="off"]')) return false
-  if (button.closest('[data-ui-sound="off"]')) return false
-  if (button.matches('.playlist-reorder-handle, [role="slider"]')) return false
-  return true
-}
-
 export function initUiSounds(): void {
   if (initialized) return
   initialized = true
 
-  const handleClick = (event: MouseEvent) => {
-    if (!event.isTrusted || !isUiSoundsEnabled() || !isEligibleButton(event.target)) return
-    playUiTouchSound()
-  }
   const handlePointerDown = (event: PointerEvent) => {
     if (event.isTrusted) resumeFromGesture()
   }
@@ -330,11 +251,9 @@ export function initUiSounds(): void {
     if (event.isTrusted && (event.key === 'Enter' || event.key === ' ')) resumeFromGesture()
   }
 
-  document.addEventListener('click', handleClick)
   document.addEventListener('pointerdown', handlePointerDown, { capture: true, passive: true })
   document.addEventListener('keydown', handleKeyDown, { capture: true })
   removeDomListeners = () => {
-    document.removeEventListener('click', handleClick)
     document.removeEventListener('pointerdown', handlePointerDown, { capture: true })
     document.removeEventListener('keydown', handleKeyDown, { capture: true })
   }

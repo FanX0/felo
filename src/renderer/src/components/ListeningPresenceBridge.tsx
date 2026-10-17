@@ -19,14 +19,13 @@ let _activeGuestSyncChannel: any = null
  * Broadcasts room DSP settings (EQ gains, Reverb presets, Virtual Bass) and volume
  * over the active room-sync channel to all connected listeners.
  */
-export function broadcastDspOverSyncChannel(snapshot: DspRoomSnapshot, volume?: number): void {
+export function broadcastDspOverSyncChannel(snapshot: DspRoomSnapshot): void {
   if (_activeHostSyncChannel) {
     void _activeHostSyncChannel.send({
       type: 'broadcast',
       event: 'dsp_settings_sync',
       payload: {
-        settings: snapshot,
-        volume: typeof volume === 'number' ? volume : usePlayerStore.getState().volume
+        settings: snapshot
       }
     })
   }
@@ -40,11 +39,19 @@ registerRoomDspSyncSender(broadcastDspOverSyncChannel)
  */
 export function broadcastHostTrackChange(song: any): void {
   if (_activeHostSyncChannel) {
+    const queue = usePlayerStore.getState().queue
+    const currentIdx = usePlayerStore.getState().currentSongIndex
+    const safeIdx = Math.max(0, currentIdx)
+    const upcomingQueue = queue
+      .slice(safeIdx, safeIdx + 100)
+      .map((s) => toSharedSong(s))
+
     void _activeHostSyncChannel.send({
       type: 'broadcast',
       event: 'track_change',
       payload: {
         song,
+        queue: upcomingQueue,
         position: getActiveAudioTime() || usePlayerStore.getState().currentTime || 0,
         isPlaying: usePlayerStore.getState().isPlaying,
         hostTimestamp: Date.now()
@@ -112,6 +119,76 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
     return () => setPlaybackGuard(null)
   }, [])
 
+  // Global Lifecycle: Clean up room membership or host session if the app/window is closed
+  useEffect(() => {
+    const handleExitCleanup = () => {
+      const listeningState = useListeningStore.getState()
+      const onlineUser = useOnlineStore.getState().user
+      if (!onlineUser?.id) return
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+      const accessToken = useOnlineStore.getState().session?.access_token || supabaseAnonKey
+      if (!supabaseUrl || !supabaseAnonKey) return
+
+      // Case 1: Active Listener in a friend's room
+      const joined = listeningState.joinedRoom
+      if (joined?.id && joined.host_id !== onlineUser.id) {
+        try {
+          const url = `${supabaseUrl}/rest/v1/listening_room_members?room_id=eq.${joined.id}&user_id=eq.${onlineUser.id}`
+          void fetch(url, {
+            method: 'DELETE',
+            headers: {
+              apikey: supabaseAnonKey,
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json'
+            },
+            keepalive: true
+          })
+          void getSupabase()
+            .from('listening_room_members')
+            .delete()
+            .eq('room_id', joined.id)
+            .eq('user_id', onlineUser.id)
+        } catch {
+          // ignore on exit
+        }
+      }
+
+      // Case 2: Active Host of a party room
+      const host = listeningState.hostRoom
+      if (host?.id && host.host_id === onlineUser.id && host.is_active) {
+        try {
+          const url = `${supabaseUrl}/rest/v1/listening_rooms?id=eq.${host.id}&host_id=eq.${onlineUser.id}`
+          void fetch(url, {
+            method: 'PATCH',
+            headers: {
+              apikey: supabaseAnonKey,
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ is_active: false, is_playing: false, updated_at: new Date().toISOString() }),
+            keepalive: true
+          })
+          void getSupabase()
+            .from('listening_rooms')
+            .update({ is_active: false, is_playing: false, updated_at: new Date().toISOString() })
+            .eq('id', host.id)
+            .eq('host_id', onlineUser.id)
+        } catch {
+          // ignore on exit
+        }
+      }
+    }
+
+    window.addEventListener('beforeunload', handleExitCleanup)
+    window.addEventListener('pagehide', handleExitCleanup)
+    return () => {
+      window.removeEventListener('beforeunload', handleExitCleanup)
+      window.removeEventListener('pagehide', handleExitCleanup)
+    }
+  }, [])
+
   // 1. Immediate Broadcast on Playback State Change (Song Change, Queue/Playlist Change, or Play/Pause)
   useEffect(() => {
     // Only broadcast playback updates if user has manually created an active host room
@@ -129,6 +206,23 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
     if (songChanged || queueChanged || playStateChanged) {
       if (isUpdatingRef.current) return
       isUpdatingRef.current = true
+
+      if (queueChanged && _activeHostSyncChannel) {
+        const queue = usePlayerStore.getState().queue
+        const currentIdx = usePlayerStore.getState().currentSongIndex
+        const safeIdx = Math.max(0, currentIdx)
+        const upcomingQueue = queue
+          .slice(safeIdx, safeIdx + 100)
+          .map((s) => toSharedSong(s))
+
+        void _activeHostSyncChannel.send({
+          type: 'broadcast',
+          event: 'queue_update',
+          payload: {
+            queue: upcomingQueue
+          }
+        })
+      }
 
       void ensureHostRoom(true, false).finally(() => {
         isUpdatingRef.current = false
@@ -287,22 +381,41 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
       const playChanged = state.isPlaying !== prevState.isPlaying
       const songChanged = state.currentSongIndex !== prevState.currentSongIndex
       const seekChanged = state.seekRequest !== null && state.seekRequest !== prevState.seekRequest
-      const volumeChanged = state.volume !== prevState.volume
+      const queueChanged = state.queue !== prevState.queue
 
       if (songChanged) {
         const newSong = state.queue[state.currentSongIndex]
         if (newSong) {
+          const safeIdx = Math.max(0, state.currentSongIndex)
+          const upcomingQueue = state.queue
+            .slice(safeIdx, safeIdx + 100)
+            .map((s) => toSharedSong(s))
+
           void syncChannel.send({
             type: 'broadcast',
             event: 'track_change',
             payload: {
               song: toSharedSong(newSong),
+              queue: upcomingQueue,
               position: 0,
               isPlaying: state.isPlaying,
               hostTimestamp: Date.now()
             }
           })
         }
+      } else if (queueChanged) {
+        const safeIdx = Math.max(0, state.currentSongIndex)
+        const upcomingQueue = state.queue
+          .slice(safeIdx, safeIdx + 100)
+          .map((s) => toSharedSong(s))
+
+        void syncChannel.send({
+          type: 'broadcast',
+          event: 'queue_update',
+          payload: {
+            queue: upcomingQueue
+          }
+        })
       }
 
       if (seekChanged && typeof state.seekRequest === 'number') {
@@ -311,18 +424,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
         sendPulse()
       }
 
-      // Sync volume to listeners if Settings Sync is active
-      if (volumeChanged && useDspStore.getState().settingsSync) {
-        const snapshot = useDspStore.getState().getRoomDspSnapshot()
-        void syncChannel.send({
-          type: 'broadcast',
-          event: 'dsp_settings_sync',
-          payload: {
-            settings: snapshot,
-            volume: state.volume
-          }
-        })
-      }
+      // Volume is strictly personal to each user's hardware setup and is NOT synced across room participants
     })
 
     return () => {
@@ -820,7 +922,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
               myRole: 'host'
             })
             usePlayerStore.getState().setIsPlaying(true)
-            void useListeningStore.getState().ensureHostRoom(true, true)
+            void useListeningStore.getState().ensureHostRoom(true, false)
             return
           }
 
@@ -850,28 +952,46 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             return
           }
 
-          const songChanged =
-            next.song?.title !== currentRoom?.song?.title ||
-            next.song?.artist !== currentRoom?.song?.artist ||
-            next.song?.localId !== currentRoom?.song?.localId ||
-            next.song?.lanUrl !== currentRoom?.song?.lanUrl ||
-            next.song?.audioUrl !== currentRoom?.song?.audioUrl ||
-            next.song?.uploadStatus !== currentRoom?.song?.uploadStatus ||
-            next.song?.isTrackStream !== currentRoom?.song?.isTrackStream ||
-            next.is_track_streaming !== currentRoom?.is_track_streaming
+          const currentPlayingSong = usePlayerStore.getState().queue[usePlayerStore.getState().currentSongIndex]
+          const isSongEffectivelyEqual = Boolean(
+            currentRoom?.song &&
+            next.song &&
+            next.song.title === currentRoom.song.title &&
+            next.song.artist === currentRoom.song.artist &&
+            (next.song.localId ? next.song.localId === currentRoom.song.localId : true)
+          )
+          const isAlreadyPlayingThisSong = Boolean(
+            currentPlayingSong &&
+            next.song &&
+            currentPlayingSong.title === next.song.title &&
+            currentPlayingSong.artist === next.song.artist
+          )
 
-          const posChanged =
-            Math.abs((next.position_seconds || 0) - (currentRoom?.position_seconds || 0)) > 1.2 ||
-            Math.abs(
-              (typeof next.song?.hostPosition === 'number' ? next.song.hostPosition : 0) -
-                (typeof currentRoom?.song?.hostPosition === 'number' ? currentRoom.song.hostPosition : 0)
-            ) > 1.2
+          const songChanged = Boolean(
+            next.song &&
+            !isSongEffectivelyEqual &&
+            !isAlreadyPlayingThisSong
+          )
+
+          if (next.song && typeof next.song.hostPosition !== 'number') {
+            next.song = {
+              ...next.song,
+              hostPosition: next.position_seconds || 0,
+              hostTimestamp: new Date(next.updated_at || Date.now()).getTime()
+            }
+          }
 
           useListeningStore.getState().setJoinedRoom(next)
+          useListeningStore.setState({ lastHostUpdate: Date.now() })
+
+          if (newIsDeviceStream) {
+            // Live WebRTC device stream is active. Do not trigger local track sync or player queue updates.
+            return
+          }
 
           if (songChanged) {
             void useListeningStore.getState().handleHostSongChange(next)
-          } else if (next.is_playing !== currentRoom?.is_playing || posChanged) {
+          } else if (next.is_playing !== currentRoom?.is_playing) {
             useListeningStore.getState().handleHostPauseResume(next)
           }
         }
@@ -910,42 +1030,6 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
           }
           void useListeningStore.getState().fetchMembers(roomId)
           void useListeningStore.getState().refreshMemberCount(roomId)
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'listening_rooms',
-          filter: `id=eq.${roomId}`
-        },
-        (payload: any) => {
-          if (payload.new) {
-            const updatedRoom = payload.new as any
-            const currentRoom = useListeningStore.getState().joinedRoom
-            if (!currentRoom) return
-
-            const songChanged =
-              updatedRoom.song?.audioUrl !== currentRoom.song?.audioUrl ||
-              updatedRoom.song?.uploadStatus !== currentRoom.song?.uploadStatus ||
-              updatedRoom.song?.localId !== currentRoom.song?.localId ||
-              updatedRoom.song?.title !== currentRoom.song?.title
-
-            if (songChanged) {
-              const mergedRoom = {
-                ...currentRoom,
-                ...updatedRoom,
-                song: {
-                  ...updatedRoom.song,
-                  hostPosition: updatedRoom.position_seconds || 0,
-                  hostTimestamp: new Date(updatedRoom.updated_at || Date.now()).getTime()
-                }
-              }
-              useListeningStore.setState({ joinedRoom: mergedRoom, lastHostUpdate: Date.now() })
-              void useListeningStore.getState().handleHostSongChange(mergedRoom)
-            }
-          }
         }
       )
       .on(
@@ -990,7 +1074,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
               myRole: 'host'
             })
             usePlayerStore.getState().setIsPlaying(true)
-            void useListeningStore.getState().ensureHostRoom(true, true)
+            void useListeningStore.getState().ensureHostRoom(true, false)
             return
           }
 
@@ -1018,28 +1102,37 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             return
           }
 
-          const songChanged =
-            latestRoom.song?.title !== currentRoom?.song?.title ||
-            latestRoom.song?.artist !== currentRoom?.song?.artist ||
-            latestRoom.song?.localId !== currentRoom?.song?.localId ||
-            latestRoom.song?.lanUrl !== currentRoom?.song?.lanUrl ||
-            latestRoom.song?.audioUrl !== currentRoom?.song?.audioUrl ||
-            latestRoom.song?.uploadStatus !== currentRoom?.song?.uploadStatus ||
-            latestRoom.song?.isTrackStream !== currentRoom?.song?.isTrackStream ||
-            latestRoom.is_track_streaming !== currentRoom?.is_track_streaming
+          const currentPlayingSong = usePlayerStore.getState().queue[usePlayerStore.getState().currentSongIndex]
+          const isSongEffectivelyEqual = Boolean(
+            currentRoom?.song &&
+            latestRoom.song &&
+            latestRoom.song.title === currentRoom.song.title &&
+            latestRoom.song.artist === currentRoom.song.artist &&
+            (latestRoom.song.localId ? latestRoom.song.localId === currentRoom.song.localId : true)
+          )
+          const isAlreadyPlayingThisSong = Boolean(
+            currentPlayingSong &&
+            latestRoom.song &&
+            currentPlayingSong.title === latestRoom.song.title &&
+            currentPlayingSong.artist === latestRoom.song.artist
+          )
 
-          const posChanged =
-            Math.abs((latestRoom.position_seconds || 0) - (currentRoom?.position_seconds || 0)) > 1.2 ||
-            Math.abs(
-              (typeof latestRoom.song?.hostPosition === 'number' ? latestRoom.song.hostPosition : 0) -
-                (typeof currentRoom?.song?.hostPosition === 'number' ? currentRoom.song.hostPosition : 0)
-            ) > 1.2
+          const songChanged = Boolean(
+            latestRoom.song &&
+            !isSongEffectivelyEqual &&
+            !isAlreadyPlayingThisSong
+          )
 
           useListeningStore.getState().setJoinedRoom(latestRoom as any)
 
+          if (newIsDeviceStream) {
+            // Live WebRTC device stream is active. Do not trigger local track sync or player queue updates.
+            return
+          }
+
           if (songChanged) {
             void useListeningStore.getState().handleHostSongChange(latestRoom as any)
-          } else if (latestRoom.is_playing !== currentRoom?.is_playing || posChanged) {
+          } else if (latestRoom.is_playing !== currentRoom?.is_playing) {
             useListeningStore.getState().handleHostPauseResume(latestRoom as any)
           }
         }
@@ -1102,12 +1195,25 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
                 hostPosition: payload.position || 0,
                 hostTimestamp: payload.hostTimestamp || Date.now()
               },
+              queue: Array.isArray(payload.queue) && payload.queue.length > 0 ? payload.queue : currentRoom.queue,
               position_seconds: payload.position || 0,
               is_playing: payload.isPlaying,
               updated_at: new Date(payload.hostTimestamp || Date.now()).toISOString()
             }
-            useListeningStore.setState({ joinedRoom: updatedRoom as any, lastHostUpdate: Date.now() })
+            useListeningStore.getState().setJoinedRoom(updatedRoom as any)
+            useListeningStore.setState({ lastHostUpdate: Date.now() })
             void useListeningStore.getState().handleHostSongChange(updatedRoom as any)
+          }
+        }
+      })
+      .on('broadcast', { event: 'queue_update' }, ({ payload }: { payload: any }) => {
+        if (Array.isArray(payload?.queue) && payload.queue.length > 0) {
+          const currentRoom = useListeningStore.getState().joinedRoom
+          if (currentRoom) {
+            useListeningStore.getState().setJoinedRoom({
+              ...currentRoom,
+              queue: payload.queue
+            })
           }
         }
       })
@@ -1115,9 +1221,6 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
         if (payload?.settings) {
           if (useDspStore.getState().settingsSync) {
             useDspStore.getState().applyRoomDspSnapshot(payload.settings)
-            if (typeof payload.volume === 'number' && Number.isFinite(payload.volume)) {
-              usePlayerStore.getState().setVolume(payload.volume)
-            }
           }
         }
       })

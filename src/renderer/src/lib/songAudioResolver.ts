@@ -19,17 +19,12 @@ import { getLocalSlotBlobUrl, getCachedAudioBlobUrl } from './jitAudioPipeline'
 export function resolveSongAudioUrl(song?: Song | null): string | null {
   if (!song) return null
 
-  // YouTube tracks are handled exclusively by YouTubePlayerBridge via the YouTube IFrame API
-  if (
-    (song as any).isYouTube ||
-    (typeof song.id === 'string' && song.id.startsWith('yt-')) ||
-    (song.audioUrl && /youtube\.com|youtu\.be/i.test(song.audioUrl)) ||
-    (song.filePath && /youtube\.com|youtu\.be/i.test(song.filePath))
-  ) {
-    return null
+  // 1. If running in Electron desktop app and song has a real local path
+  if (isElectron && song.filePath && !song.filePath.startsWith('virtual:') && !song.isOnline && !/^https?:/i.test(song.filePath)) {
+    return toMediaUrl(song.filePath)
   }
 
-  // 1. If song filePath or audioUrl is already a local memory blob: or data: URL
+  // 2. If song filePath or audioUrl is already a local memory blob: or data: URL
   if (song.filePath && /^(blob:|data:)/i.test(song.filePath)) {
     return song.filePath
   }
@@ -37,13 +32,13 @@ export function resolveSongAudioUrl(song?: Song | null): string | null {
     return song.audioUrl
   }
 
-  // 1b. High Priority: RAM cache (MUSIXQUARE auto-downloaded / preloaded bytes)
+  // 2b. High Priority: RAM cache (MUSIXQUARE auto-downloaded / preloaded bytes)
   if (song.id) {
     const cachedBlobUrl = getCachedAudioBlobUrl(song.id)
     if (cachedBlobUrl) return cachedBlobUrl
   }
 
-  // 1c. High Priority: Host local RAM slot pool
+  // 2c. High Priority: Host local RAM slot pool
   if (song.id) {
     const slotBlobUrl = getLocalSlotBlobUrl(song.id)
     if (slotBlobUrl) {
@@ -54,9 +49,14 @@ export function resolveSongAudioUrl(song?: Song | null): string | null {
     }
   }
 
-  // 2. If running in Electron desktop app and song has a real local path
-  if (isElectron && song.filePath && !song.filePath.startsWith('virtual:') && !song.isOnline && !/^https?:/i.test(song.filePath)) {
-    return toMediaUrl(song.filePath)
+  // 3. YouTube tracks without local bytes are handled exclusively by YouTubePlayerBridge via the YouTube IFrame API
+  if (
+    (song as any).isYouTube ||
+    (typeof song.id === 'string' && song.id.startsWith('yt-')) ||
+    (song.audioUrl && /youtube\.com|youtu\.be/i.test(song.audioUrl)) ||
+    (song.filePath && /youtube\.com|youtu\.be/i.test(song.filePath))
+  ) {
+    return null
   }
 
   // 3. If song has an explicit HTTP/HTTPS playable URL or preview URL

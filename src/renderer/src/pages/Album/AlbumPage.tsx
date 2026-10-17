@@ -189,12 +189,55 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
     }
   }, [])
 
+  const librarySongsRef = useRef(librarySongs)
+  useEffect(() => {
+    librarySongsRef.current = librarySongs
+  }, [librarySongs])
+
+  useEffect(() => {
+    if (!librarySongs || librarySongs.length === 0) return
+    setTracks((currTracks) => {
+      if (currTracks.length === 0) return currTracks
+      const exactMatches = new Map(
+        librarySongs.map((local) => [
+          `${normalizeTrack(local.title)}::${normalizeTrack(local.artist || '')}`,
+          local
+        ])
+      )
+      const titleMatches = new Map<string, Song>()
+      librarySongs.forEach((local) => {
+        const key = normalizeTrack(local.title)
+        if (!titleMatches.has(key)) titleMatches.set(key, local)
+      })
+
+      let hasChanges = false
+      const updated = currTracks.map((t) => {
+        const local =
+          exactMatches.get(`${normalizeTrack(t.title)}::${normalizeTrack(t.artist || '')}`) ||
+          titleMatches.get(normalizeTrack(t.title))
+        if (local && (!t.localSong || t.localSong.id !== local.id)) {
+          hasChanges = true
+          return {
+            ...t,
+            id: String(local.id || t.id),
+            localSong: local,
+            thumbnail: t.thumbnail || toMediaUrl(local.artworkPath) || ''
+          }
+        }
+        return t
+      })
+
+      return hasChanges ? updated : currTracks
+    })
+  }, [librarySongs])
+
   useEffect(() => {
     let cancelled = false
     const loadAlbum = async () => {
       setError('')
       // 1. Dual-source offline-first: immediately populate any existing local tracks
-      const localAlbumSongs = librarySongs.filter(
+      const currentLib = librarySongsRef.current
+      const localAlbumSongs = currentLib.filter(
         (song) =>
           song?.title &&
           ((song.album && song.album.toLowerCase() === albumTitle.toLowerCase()) ||
@@ -214,7 +257,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
           localSong: local
         }))
         if (!cancelled) {
-          setTracks(localMapped)
+          setTracks((curr) => (curr.length > localMapped.length ? curr : localMapped))
           const firstArt = localMapped.find((s) => s.thumbnail)?.thumbnail
           if (firstArt) setArtwork(firstArt)
           setError('')
@@ -316,14 +359,15 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
           )
 
           if (selected.length > 0) {
+            const currentLib = librarySongsRef.current
             const exactMatches = new Map(
-              librarySongs.map((local) => [
+              currentLib.map((local) => [
                 `${normalizeTrack(local.title)}::${normalizeTrack(local.artist || '')}`,
                 local
               ])
             )
             const titleMatches = new Map<string, Song>()
-            librarySongs.forEach((local) => {
+            currentLib.forEach((local) => {
               const key = normalizeTrack(local.title)
               if (!titleMatches.has(key)) titleMatches.set(key, local)
             })
@@ -359,7 +403,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
     return () => {
       cancelled = true
     }
-  }, [albumArtist, albumTitle, librarySongs])
+  }, [albumArtist, albumTitle])
 
   const saveOnlineAlbum = async () => {
     if (!tracks.length || isSaving) return

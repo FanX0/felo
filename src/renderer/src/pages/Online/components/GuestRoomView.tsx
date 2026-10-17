@@ -15,7 +15,8 @@ import {
   ListMusic,
   SkipForward,
   X,
-  Search
+  Search,
+  Maximize2
 } from 'lucide-react'
 import type { Song } from '../../../types'
 import type { ListeningRoom } from '../../../online/types'
@@ -24,6 +25,7 @@ import { formatBytes, formatTime, getSongKey } from '../utils'
 import { isYouTubeSong } from '../../../lib/youtubeService'
 import { AppCapabilities } from '../../../lib/appConfig'
 import { getSupabase } from '../../../lib/supabase'
+import { usePlayerStore } from '../../../hooks/usePlayerStore'
 import RoomChat from '../../../components/RoomChat/RoomChat'
 import SettingsSyncSection from '../../../components/Online/SettingsSyncSection'
 import Slider from '../../../components/Common/Slider'
@@ -133,6 +135,7 @@ export default function GuestRoomView({
   const activeJit = (activeTrackKey ? jitStatus[activeTrackKey] : null) ||
     Object.values(jitStatus).find((j) => j.percent < 100) ||
     (activeTrackKey ? jitStatus[activeTrackKey] : null)
+  const playerQueue = usePlayerStore((state) => state.queue)
 
   return (
     <div className="mx-auto flex min-h-full flex-1 w-full max-w-4xl flex-col px-4 sm:px-6 md:px-8 py-5 sm:py-7 pb-36 sm:pb-32 md:pb-24 select-none">
@@ -159,17 +162,17 @@ export default function GuestRoomView({
             onClick={() => setAutoDownloadMissing(!autoDownloadMissing)}
             title={
               autoDownloadMissing
-                ? 'Saving full tracks to local library (Personal copy)'
-                : 'Stream Mode: Ephemeral playback in RAM only (Safe & Compliant • No file saved)'
+                ? 'Auto-Download: ON (Saving full tracks to local library)'
+                : 'Stream Mode (Default): Pure in-memory streaming like public app (No files saved)'
             }
             className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all border cursor-pointer ${
               autoDownloadMissing
-                ? 'border-border bg-surface text-text hover:bg-surface-elevated'
-                : 'border-primary/40 bg-primary text-primary-foreground'
+                ? 'border-primary/50 bg-primary/20 text-primary hover:bg-primary/30 shadow-xs'
+                : 'border-border bg-surface text-text hover:bg-surface-elevated'
             }`}
           >
             <Radio className="h-3.5 w-3.5" />
-            <span>{autoDownloadMissing ? 'Save to Library: ON' : 'Lossless RAM Stream'}</span>
+            <span>{autoDownloadMissing ? 'Auto-Download: ON' : 'Stream Mode (No Save)'}</span>
           </button>
 
           {/* Manual Sync (ms) Latency Calibration - Active for Join User */}
@@ -222,7 +225,7 @@ export default function GuestRoomView({
       </div>
 
       {/* Autoplay Blocked Alert Banner */}
-      {(isReceivingDeviceStream || joinedRoom.song?.isDeviceStream || joinedRoom.is_device_stream || joinedRoom.song?.isTrackStream || joinedRoom.is_track_streaming) && isAutoplayBlocked && (
+      {Boolean(isReceivingDeviceStream || joinedRoom.song?.isDeviceStream || joinedRoom.is_device_stream) && isAutoplayBlocked && (
         <div className="mt-4 rounded-xl border border-border bg-surface-elevated p-4 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3 animate-pulse">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface text-primary border border-border">
@@ -248,12 +251,8 @@ export default function GuestRoomView({
         </div>
       )}
 
-      {/* Live Audio Stream Status Banner */}
-      {(isReceivingDeviceStream ||
-        joinedRoom.song?.isDeviceStream ||
-        joinedRoom.is_device_stream ||
-        joinedRoom.song?.isTrackStream ||
-        joinedRoom.is_track_streaming) && (
+      {/* Live Audio Stream Status Banner (Reserved strictly for explicit system/device audio sharing) */}
+      {Boolean(isReceivingDeviceStream || joinedRoom.song?.isDeviceStream || joinedRoom.is_device_stream) && (
         <div className="mt-4 rounded-xl border border-border bg-surface-elevated p-4 shadow-sm flex flex-col gap-3 animate-fade-in">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -424,11 +423,8 @@ export default function GuestRoomView({
       {/* Missing Song Alert Banner */}
       {syncStatus === 'missing_song' && missingSong && !activeSubstitute && !isReceivingDeviceStream && !joinedRoom.song?.isDeviceStream && (() => {
         const isStreamAvailable = Boolean(
-          joinedRoom.is_track_streaming ||
           joinedRoom.is_device_stream ||
           joinedRoom.song?.isDeviceStream ||
-          joinedRoom.song?.isTrackStream ||
-          joinedRoom.song?.streamType === 'track_stream' ||
           joinedRoom.song?.streamType === 'device_audio'
         )
 
@@ -739,16 +735,33 @@ export default function GuestRoomView({
           </div>
 
           {/* Live Session Queue from Host */}
-          {joinedRoom.queue && joinedRoom.queue.length > 0 && (() => {
-            const currentSong = joinedRoom.song
-            const currentIdx = joinedRoom.queue.findIndex(
+          {(() => {
+            const effectiveQueue: any[] =
+              Array.isArray(joinedRoom.queue) && joinedRoom.queue.length > 0
+                ? joinedRoom.queue
+                : (playerQueue.length > 0
+                    ? playerQueue.map((s) => ({
+                        title: s.title,
+                        artist: s.artist,
+                        album: s.album || '',
+                        duration: s.duration || 0,
+                        artworkUrl: s.artworkUrl || s.artworkPath || '',
+                        audioUrl: s.audioUrl || s.filePath || '',
+                        isPriority: Boolean((s as any).isPriority)
+                      }))
+                    : [])
+
+            if (!joinedRoom.song && effectiveQueue.length === 0) return null
+
+            const currentSong = joinedRoom.song || effectiveQueue[0]
+            const currentIdx = effectiveQueue.findIndex(
               (s) => s.title === currentSong?.title && s.artist === currentSong?.artist
             )
             const baseTrackNum = currentIdx >= 0 ? currentIdx + 1 : 1
-            const priorityTracks = joinedRoom.queue.filter(
+            const priorityTracks = effectiveQueue.filter(
               (s) => Boolean(s?.isPriority && !(s.title === currentSong?.title && s.artist === currentSong?.artist))
             )
-            const backgroundTracks = joinedRoom.queue.filter(
+            const backgroundTracks = effectiveQueue.filter(
               (s) => Boolean(s && !s.isPriority && !(s.title === currentSong?.title && s.artist === currentSong?.artist))
             )
 
@@ -788,7 +801,7 @@ export default function GuestRoomView({
                       Discord Priority: {joinedRoom.song?.discordPriorityEnabled !== false ? 'ON' : 'OFF'}
                     </span>
                     <span className="rounded-full bg-surface px-2.5 py-0.5 text-[10px] font-bold text-text-muted border border-border">
-                      {joinedRoom.queue.length} Tracks Total
+                      {effectiveQueue.length} Tracks Total
                     </span>
                   </div>
                 </div>
@@ -801,10 +814,18 @@ export default function GuestRoomView({
                         id="youtube-stage-dock"
                         className="w-full aspect-video rounded-2xl bg-black/90 border border-border overflow-hidden mb-3 relative shadow-md flex items-center justify-center transition-all"
                       >
-                        <div className="flex flex-col items-center gap-2 text-text-muted text-xs p-4 text-center">
-                          <Radio className="h-5 w-5 text-primary animate-pulse" />
-                          <span className="font-semibold text-text">Synchronizing Live YouTube Stream...</span>
+                        <div className="flex flex-col items-center gap-2.5 text-text-muted text-xs p-6 text-center">
+                          <Radio className="h-6 w-6 text-primary animate-pulse" />
+                          <span className="font-bold text-sm text-text">Synchronizing Live YouTube Stream...</span>
                           <span className="text-[11px] text-text-muted">Audio and video stream in unison across all room listeners.</span>
+                          <button
+                            type="button"
+                            onClick={() => window.dispatchEvent(new CustomEvent('felo:dock-youtube-stage'))}
+                            className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all cursor-pointer border border-white/10 shadow-sm active:scale-95"
+                          >
+                            <Maximize2 className="h-3.5 w-3.5 text-primary" />
+                            <span>Dock Video into Stage</span>
+                          </button>
                         </div>
                       </div>
                     )}
@@ -953,6 +974,12 @@ export default function GuestRoomView({
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {priorityTracks.length === 0 && backgroundTracks.length === 0 && (
+                  <div className="py-6 text-center text-xs text-text-muted">
+                    No upcoming tracks in the host's queue
                   </div>
                 )}
               </div>

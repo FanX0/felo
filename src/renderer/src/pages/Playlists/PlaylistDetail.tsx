@@ -71,9 +71,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   } | null>(null)
   const [creditsSong, setCreditsSong] = useState<Song | null>(null)
   const [isDownloadingMissing, setIsDownloadingMissing] = useState(false)
-  const downloadMissingPlaylistRef = useRef(false)
-  const failedSongIdsRef = useRef<Set<string>>(new Set())
-  const currentDownloadingSongIdRef = useRef<string | null>(null)
+  const abortDownloadMissingRef = useRef(false)
 
   const loadPlaylist = async () => {
     setIsLoading(true)
@@ -116,10 +114,14 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   }
 
   useEffect(() => {
-    downloadMissingPlaylistRef.current = false
+    return () => {
+      abortDownloadMissingRef.current = true
+    }
+  }, [])
+
+  useEffect(() => {
+    abortDownloadMissingRef.current = true
     setIsDownloadingMissing(false)
-    failedSongIdsRef.current.clear()
-    currentDownloadingSongIdRef.current = null
     void loadPlaylist()
     if (window.api?.getSongs) {
       window.api
@@ -145,97 +147,6 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     }
     const handleUpdate = () => void refreshPlaylistAndLibrary().catch(console.error)
     window.addEventListener('felo:library-updated', handleUpdate)
-    const cleanup = window.api?.onDownloadProgress?.(async (event: any) => {
-      if (event?.status !== 'completed' && event?.status !== 'failed') return
-      try {
-        const { nextPlaylist, nextSongs } = await refreshPlaylistAndLibrary()
-        if (!downloadMissingPlaylistRef.current || !nextPlaylist) {
-          setIsDownloadingMissing(false)
-          return
-        }
-
-        if (event?.status === 'completed') {
-          const completedLocalSong = event.song?.id
-            ? nextSongs.find((song) => song.id === event.song.id)
-            : findMatchingLibrarySong(event.song?.title || '', event.song?.artist || '', nextSongs)
-          if (completedLocalSong) enqueueSong(completedLocalSong)
-        } else if (event?.status === 'failed') {
-          const failedId = event.songId || event.song?.id || currentDownloadingSongIdRef.current
-          if (failedId) {
-            failedSongIdsRef.current.add(failedId)
-          }
-          if (event.title) {
-            const matched = (nextPlaylist.songs || []).find(
-              (s: Song) =>
-                s.title?.toLowerCase() === event.title?.toLowerCase() &&
-                (!event.artist || s.artist?.toLowerCase() === event.artist?.toLowerCase())
-            )
-            if (matched) failedSongIdsRef.current.add(matched.id)
-          }
-        }
-
-        // Recompute all missing songs from the latest playlist & library state
-        const updatedPlaylistSongs = nextPlaylist.songs || []
-        const updatedSongs = updatedPlaylistSongs.map((song: Song) => {
-          if (song.filePath && !song.filePath.startsWith('virtual:')) return song
-          const localMatch = findMatchingLibrarySong(song.title || '', song.artist || '', nextSongs)
-          return localMatch ? { ...song, ...localMatch, id: localMatch.id } : song
-        })
-
-        const nextMissing = updatedSongs.find(
-          (song: Song) =>
-            (!song.filePath || song.filePath.startsWith('virtual:')) &&
-            !failedSongIdsRef.current.has(song.id)
-        )
-
-        if (nextMissing) {
-          setIsDownloadingMissing(true)
-          currentDownloadingSongIdRef.current = nextMissing.id
-          void downloadTrackInBackground(nextMissing, { openDrawer: false })
-        } else {
-          downloadMissingPlaylistRef.current = false
-          setIsDownloadingMissing(false)
-          currentDownloadingSongIdRef.current = null
-        }
-      } catch (error) {
-        console.error('Failed to continue playlist downloads:', error)
-        downloadMissingPlaylistRef.current = false
-        setIsDownloadingMissing(false)
-        currentDownloadingSongIdRef.current = null
-      }
-    })
-
-    const handleDownloadFailed = (e: any) => {
-      const detail = e.detail || {}
-      if (!downloadMissingPlaylistRef.current) return
-      const failedId = detail.songId || currentDownloadingSongIdRef.current
-      if (failedId) failedSongIdsRef.current.add(failedId)
-      void refreshPlaylistAndLibrary().then(({ nextPlaylist, nextSongs }) => {
-        if (!downloadMissingPlaylistRef.current || !nextPlaylist) return
-        const updatedPlaylistSongs = nextPlaylist.songs || []
-        const updatedSongs = updatedPlaylistSongs.map((song: Song) => {
-          if (song.filePath && !song.filePath.startsWith('virtual:')) return song
-          const localMatch = findMatchingLibrarySong(song.title || '', song.artist || '', nextSongs)
-          return localMatch ? { ...song, ...localMatch, id: localMatch.id } : song
-        })
-        const nextMissing = updatedSongs.find(
-          (song: Song) =>
-            (!song.filePath || song.filePath.startsWith('virtual:')) &&
-            !failedSongIdsRef.current.has(song.id)
-        )
-        if (nextMissing) {
-          setIsDownloadingMissing(true)
-          currentDownloadingSongIdRef.current = nextMissing.id
-          void downloadTrackInBackground(nextMissing, { openDrawer: false })
-        } else {
-          downloadMissingPlaylistRef.current = false
-          setIsDownloadingMissing(false)
-          currentDownloadingSongIdRef.current = null
-        }
-      })
-    }
-    window.addEventListener('felo:download-failed', handleDownloadFailed)
-    window.addEventListener('fanxmusic:download-failed', handleDownloadFailed)
     window.addEventListener('fanxmusic:library-updated', handleUpdate)
     window.addEventListener('felo:favorites-updated', handleUpdate)
 
@@ -243,9 +154,6 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
       window.removeEventListener('felo:library-updated', handleUpdate)
       window.removeEventListener('fanxmusic:library-updated', handleUpdate)
       window.removeEventListener('felo:favorites-updated', handleUpdate)
-      window.removeEventListener('felo:download-failed', handleDownloadFailed)
-      window.removeEventListener('fanxmusic:download-failed', handleDownloadFailed)
-      cleanup?.()
     }
   }, [id])
 
@@ -328,9 +236,8 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   }
 
   const handleTrackClick = (song: Song) => {
-    downloadMissingPlaylistRef.current = false
+    abortDownloadMissingRef.current = true
     setIsDownloadingMissing(false)
-    currentDownloadingSongIdRef.current = null
 
     const isDownloaded = Boolean(song.filePath && !song.filePath.startsWith('virtual:'))
     if (!isDownloaded && AppCapabilities.downloads) {
@@ -396,30 +303,63 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     })
   }
 
-  const handleDownloadMissing = () => {
-    if (isDownloadingMissing) {
-      downloadMissingPlaylistRef.current = false
+  const playlistActiveTransfers = useMemo(() => {
+    return transfers.filter(
+      (t) =>
+        (t.status === 'downloading' || t.status === 'queued' || t.status === 'waiting_connector') &&
+        songs.some(
+          (song) =>
+            (!song.filePath || song.filePath.startsWith('virtual:')) &&
+            t.title.toLowerCase() === song.title.toLowerCase() &&
+            (!song.artist || !t.artist || t.artist.toLowerCase() === song.artist.toLowerCase())
+        )
+    )
+  }, [songs, transfers])
+
+  const isDownloadingActive = isDownloadingMissing || playlistActiveTransfers.length > 0
+
+  const handleDownloadMissing = async () => {
+    if (isDownloadingActive) {
+      abortDownloadMissingRef.current = true
       setIsDownloadingMissing(false)
-      currentDownloadingSongIdRef.current = null
+      for (const t of playlistActiveTransfers) {
+        try {
+          await window.api?.cancelDownload?.(t.id)
+        } catch {}
+        useDownloadStore.getState().removeTransfer(t.id)
+      }
       return
     }
 
-    failedSongIdsRef.current.clear()
-
-    const firstMissing = songs.find(
-      (song) =>
-        (!song.filePath || song.filePath.startsWith('virtual:')) &&
-        !failedSongIdsRef.current.has(song.id)
+    const missingSongs = songs.filter(
+      (song) => !song.filePath || song.filePath.startsWith('virtual:')
     )
-    if (firstMissing) {
-      downloadMissingPlaylistRef.current = true
-      setIsDownloadingMissing(true)
-      currentDownloadingSongIdRef.current = firstMissing.id
-      void downloadTrackInBackground(firstMissing, { openDrawer: false })
+    if (missingSongs.length === 0) return
+
+    abortDownloadMissingRef.current = false
+    setIsDownloadingMissing(true)
+
+    try {
+      for (const song of missingSongs) {
+        if (abortDownloadMissingRef.current) break
+        await downloadTrackInBackground(song, { openDrawer: false })
+      }
+    } finally {
+      setIsDownloadingMissing(false)
     }
   }
 
   const removeSong = async (songId: string) => {
+    setPlaylist((current) => {
+      if (!current) return null
+      const nextSongs = (current.songs || []).filter((s) => s.id !== songId)
+      return {
+        ...current,
+        songs: nextSongs,
+        songCount: Math.max(0, (current.songCount || current.songs?.length || 1) - 1)
+      }
+    })
+
     if (id === 'liked') {
       if (window.api?.toggleFavorite) {
         await window.api.toggleFavorite(songId, false)
@@ -429,13 +369,52 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
           })
         )
         window.dispatchEvent(new CustomEvent('felo:library-updated'))
+        window.dispatchEvent(new CustomEvent('fanxmusic:library-updated'))
       }
       void loadPlaylist()
       return
     }
     if (!window.api?.removeSongFromPlaylist) return
-    const updated = await window.api.removeSongFromPlaylist(id, songId)
-    setPlaylist(updated)
+    try {
+      const updated = await window.api.removeSongFromPlaylist(id, songId)
+      setPlaylist(updated)
+    } catch (err) {
+      console.error('Failed to remove song from playlist:', err)
+      void loadPlaylist()
+    }
+  }
+
+  const handleRemoveSongFromLibrary = async (song: Song) => {
+    const songId = song.id
+    setPlaylist((current) => {
+      if (!current) return null
+      const nextSongs = (current.songs || []).filter(
+        (s) => s.id !== songId && (s.title !== song.title || s.artist !== song.artist)
+      )
+      return {
+        ...current,
+        songs: nextSongs,
+        songCount: Math.max(0, (current.songCount || current.songs?.length || 1) - 1)
+      }
+    })
+    setLibrarySongs((current) => current.filter((s) => s.id !== songId))
+
+    try {
+      if (id !== 'liked' && window.api?.removeSongFromPlaylist) {
+        const originalTrack = playlist?.songs?.find(
+          (s) => s.id === songId || (s.title === song.title && s.artist === song.artist)
+        )
+        if (originalTrack && originalTrack.id !== songId) {
+          await window.api.removeSongFromPlaylist(id, originalTrack.id).catch(() => {})
+        }
+      }
+      await window.api?.removeSong(songId)
+      window.dispatchEvent(new CustomEvent('felo:library-updated'))
+      window.dispatchEvent(new CustomEvent('fanxmusic:library-updated'))
+    } catch (err) {
+      console.error('Failed to remove song from library:', err)
+      void loadPlaylist()
+    }
   }
 
   const renamePlaylist = async (nextName: string) => {
@@ -524,7 +503,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
         isCurrentPlaylist={isCurrentPlaylist}
         isPlaying={isPlaying}
         isShuffle={isShuffle}
-        isDownloadingMissing={isDownloadingMissing}
+        isDownloadingMissing={isDownloadingActive}
         isPublishing={isPublishing}
         configured={configured}
         initialized={initialized}
@@ -586,11 +565,11 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
                   onDownloadTrack={(s) => handleDownloadTrack(s, false)}
                   onOpenMenu={(s, rect) => {
                     const menuWidth = 220
-                    const menuHeight = 260
+                    const menuHeight = 360
                     setActiveSongMenu({
                       song: s,
-                      x: Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12),
-                      y: Math.min(rect.bottom + 8, window.innerHeight - menuHeight - 12)
+                      x: Math.max(12, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12)),
+                      y: Math.max(12, Math.min(rect.bottom + 8, window.innerHeight - menuHeight - 12))
                     })
                   }}
                 />
@@ -625,6 +604,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
           onDownloadTrack={(s) => handleDownloadTrack(s, false)}
           onChooseSource={handleChooseSource}
           onRemove={(songId) => void removeSong(songId)}
+          onRemoveFromLibrary={(s) => void handleRemoveSongFromLibrary(s)}
         />
       )}
 

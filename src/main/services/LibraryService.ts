@@ -960,10 +960,13 @@ export class LibraryService {
   static relinkVirtualSong(songId: string, replacementSongId: string): void {
     if (!songId || !replacementSongId || songId === replacementSongId) return
     const db = getDb()
-    const virtualSong = db.prepare('SELECT filePath FROM songs WHERE id = ?').get(songId) as any
+    const virtualSong = db.prepare('SELECT filePath, isFavorite FROM songs WHERE id = ?').get(songId) as any
     if (!String(virtualSong?.filePath || '').startsWith('virtual:')) return
 
     const relink = db.transaction(() => {
+      if (virtualSong?.isFavorite === 1) {
+        db.prepare('UPDATE songs SET isFavorite = 1 WHERE id = ?').run(replacementSongId)
+      }
       db.prepare('UPDATE OR IGNORE playlist_items SET songId = ? WHERE songId = ?').run(
         replacementSongId,
         songId

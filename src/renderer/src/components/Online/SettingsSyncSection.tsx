@@ -1,6 +1,5 @@
 import React from 'react'
 import { useDspStore } from '../../hooks/useDspStore'
-import { playUiTouchSound } from '../../lib/uiSounds'
 import { requestRoomDspSync } from '../ListeningPresenceBridge'
 
 /**
@@ -48,9 +47,6 @@ export const SettingsSyncSection: React.FC<SettingsSyncSectionProps> = ({
   const setSettingsSync = useDspStore((s) => s.setSettingsSync)
 
   const handleToggle = (enabled: boolean) => {
-    try {
-      playUiTouchSound()
-    } catch {}
     setSettingsSync(enabled)
     if (enabled) {
       requestRoomDspSync()

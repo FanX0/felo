@@ -925,9 +925,26 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         )
       }
 
-      const newQueue = state.queue.map((item) => (isMatch(item) ? { ...item, ...song } : item))
+      const mergeSong = (item: Song): Song => {
+        const isLocalNow = Boolean(
+          (song.filePath && !song.filePath.startsWith('virtual:') && !/^https?:/i.test(song.filePath)) ||
+          (song.audioUrl && /^(blob:|data:)/i.test(song.audioUrl))
+        )
+        const merged: Song = { ...item, ...song }
+        if (isLocalNow) {
+          delete (merged as any).isYouTube
+          delete (merged as any).videoId
+          delete (merged as any).streamType
+          if (merged.audioUrl && /youtube\.com|youtu\.be/i.test(merged.audioUrl)) {
+            delete (merged as any).audioUrl
+          }
+        }
+        return merged
+      }
+
+      const newQueue = state.queue.map((item) => (isMatch(item) ? mergeSong(item) : item))
       const newOriginalQueue = state.originalQueue.map((item) =>
-        isMatch(item) ? { ...item, ...song } : item
+        isMatch(item) ? mergeSong(item) : item
       )
 
       return {

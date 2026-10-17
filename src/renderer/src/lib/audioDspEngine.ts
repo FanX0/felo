@@ -1269,8 +1269,13 @@ class AudioDspEngine {
    * Connect a MediaStream (e.g. WebRTC remote stream or local captured desktop audio)
    * directly to the full Web Audio DSP graph through FilePlaybackRoute.
    */
-  public attachMediaStream(stream: MediaStream, initialVolume = 1.0, unmuteDestination = true): void {
-    if (this.attachedStream === stream && this.mediaStreamSource) return
+  public attachMediaStream(
+    stream: MediaStream,
+    initialVolume = 1.0,
+    unmuteDestination = true,
+    forceReattach = false
+  ): void {
+    if (!forceReattach && this.attachedStream === stream && this.mediaStreamSource) return
 
     try {
       this.init()

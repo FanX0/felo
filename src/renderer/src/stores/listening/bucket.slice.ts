@@ -10,6 +10,7 @@ import {
   setNudgeReplayTimer,
   setLastHostPulse,
   setIsSessionSyncing,
+  setNeedsInitialSync,
   setLastSyncedSongId
 } from './helpers'
 import {
@@ -434,6 +435,7 @@ export const createAudioBucketSlice: StateCreator<
     }
     setLastHostPulse(null)
     setIsSessionSyncing(false)
+    setNeedsInitialSync(true)
     roomClockSync.reset()
     get().disconnectFromDeviceStream()
     setAudioPlaybackRate(1.0)

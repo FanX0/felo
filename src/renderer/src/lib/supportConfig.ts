@@ -11,7 +11,7 @@ export const DEFAULT_SUPPORT_CONFIG: SupportConfig = {
   trakteerUsername: 'feloapp',
   solanaAddress: 'xfu6UYsfM9wXwZK1itHD3ordW2Km2u7D5AuKkd9qia1',
   githubRepo: 'FanX0/felo',
-  discordInvite: 'https://discord.gg/K4We3eBqQ'
+  discordInvite: 'https://discord.gg/8ujPkbF3CR'
 }
 
 export const SUPPORT_CONFIG = DEFAULT_SUPPORT_CONFIG
@@ -55,7 +55,7 @@ export function buildSolscanUrl(address?: string): string {
 
 export function buildDiscordInviteUrl(urlOrCode?: string): string {
   const clean = (urlOrCode || '').trim()
-  if (!clean) return 'https://discord.gg/K4We3eBqQ'
+  if (!clean) return 'https://discord.gg/8ujPkbF3CR'
   if (clean.startsWith('http://') || clean.startsWith('https://')) return clean
   return `https://discord.gg/${clean.replace(/^(https?:\/\/)?(discord\.gg\/|discord\.com\/invite\/)?/, '')}`
 }

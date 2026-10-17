@@ -21,6 +21,384 @@ export default function SpatialRoomVisualizer({
   const isSub = activeRole === 'subwoofer'
   const isCenter = activeRole === 'center'
 
+  const sweetSpotNode = (
+    <g className="listener-node pointer-events-none">
+      {/* Stereo directional listening angle wedge */}
+      <path
+        d="M 183,160 L 190,148 L 197,160 Z"
+        fill="none"
+        stroke="rgba(255, 255, 255, 0.25)"
+        strokeWidth="0.8"
+      />
+      <circle
+        cx="190"
+        cy="165"
+        r="9"
+        fill="#121318"
+        stroke="rgba(255, 255, 255, 0.28)"
+        strokeWidth="1.2"
+      />
+      <circle
+        cx="190"
+        cy="165"
+        r="4.5"
+        fill="#121318"
+        stroke="rgba(255, 255, 255, 0.35)"
+        strokeWidth="0.8"
+      />
+      <circle cx="190" cy="165" r="2" fill={activeColor} />
+      <text
+        x="190"
+        y="182"
+        textAnchor="middle"
+        fill="rgba(255, 255, 255, 0.55)"
+        fontSize="8"
+        fontFamily="monospace"
+        fontWeight="bold"
+        letterSpacing="0.8"
+      >
+        SWEET SPOT
+      </text>
+    </g>
+  )
+
+  const centerSpeakerNode = (
+    <g
+      key="center-speaker"
+      className={`speaker-node cursor-pointer focus:outline-none ${isCenter ? 'active' : 'inactive'}`}
+      onClick={() => onSelectRole('center')}
+      role="button"
+      tabIndex={-1}
+      aria-label="Center Speaker Channel"
+      style={{ outline: 'none', zIndex: isCenter ? 20 : 10 }}
+    >
+      {/* Active Center Acoustic Ray */}
+      {isCenter && (
+        <line
+          x1="190"
+          y1="165"
+          x2="190"
+          y2="50"
+          stroke={activeColor}
+          strokeWidth="1.8"
+          className="pointer-events-none"
+        />
+      )}
+
+      {/* Isolation Feet */}
+      <rect
+        x="152"
+        y="64"
+        width="8"
+        height="2.5"
+        rx="1"
+        fill="#121318"
+        stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        strokeWidth={isCenter ? '1.8' : '1.2'}
+        className="speaker-stroke"
+      />
+      <rect
+        x="220"
+        y="64"
+        width="8"
+        height="2.5"
+        rx="1"
+        fill="#121318"
+        stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        strokeWidth={isCenter ? '1.8' : '1.2'}
+        className="speaker-stroke"
+      />
+
+      {/* Cabinet Body */}
+      <rect
+        x="142"
+        y="26"
+        width="96"
+        height="38"
+        rx="4"
+        fill="#121318"
+        stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        strokeWidth={isCenter ? '1.8' : '1.2'}
+        className="speaker-stroke"
+      />
+
+      {/* Left Mid-Woofer */}
+      <circle
+        cx="165"
+        cy="45"
+        r="10.5"
+        fill="none"
+        stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        strokeWidth={isCenter ? '1.5' : '1.2'}
+        className="speaker-stroke"
+      />
+      <circle
+        cx="165"
+        cy="45"
+        r="3.5"
+        fill="none"
+        stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        strokeWidth="1"
+        className="speaker-stroke"
+      />
+
+      {/* Center Tweeter */}
+      <circle
+        cx="190"
+        cy="45"
+        r="7"
+        fill="none"
+        stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        strokeWidth={isCenter ? '1.5' : '1.2'}
+        className="speaker-stroke"
+      />
+      <circle
+        cx="190"
+        cy="45"
+        r="2.5"
+        fill={isCenter ? activeColor : 'none'}
+        stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        strokeWidth="1"
+        className="speaker-stroke"
+      />
+
+      {/* Right Mid-Woofer */}
+      <circle
+        cx="215"
+        cy="45"
+        r="10.5"
+        fill="none"
+        stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        strokeWidth={isCenter ? '1.5' : '1.2'}
+        className="speaker-stroke"
+      />
+      <circle
+        cx="215"
+        cy="45"
+        r="3.5"
+        fill="none"
+        stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        strokeWidth="1"
+        className="speaker-stroke"
+      />
+
+      {/* Indicator Dot */}
+      <circle
+        cx="190"
+        cy="33"
+        r="1.6"
+        fill={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        className="speaker-stroke"
+      />
+
+      {/* Center Downward Sound Waves */}
+      {isCenter && (
+        <g className="center-sound-waves pointer-events-none">
+          <path
+            d="M 166,72 Q 190,82 214,72"
+            fill="none"
+            stroke={activeColor}
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            opacity="0.95"
+          />
+          <path
+            d="M 156,81 Q 190,95 224,81"
+            fill="none"
+            stroke={activeColor}
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            opacity="0.65"
+          />
+          <path
+            d="M 146,90 Q 190,108 234,90"
+            fill="none"
+            stroke={activeColor}
+            strokeWidth="1.1"
+            strokeLinecap="round"
+            strokeDasharray="4 3"
+            opacity="0.35"
+          />
+        </g>
+      )}
+
+      {/* Channel Label Badge */}
+      <rect
+        x="172"
+        y="10"
+        width="36"
+        height="12"
+        rx="2.5"
+        fill={isCenter ? activeColor : '#121318'}
+        stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.18)'}
+        strokeWidth="1"
+        className={isCenter ? '' : 'speaker-badge-bg'}
+      />
+      <text
+        x="190"
+        y="18.5"
+        textAnchor="middle"
+        fill={isCenter ? activeForeground : 'rgba(255, 255, 255, 0.7)'}
+        fontSize="7"
+        fontFamily="monospace"
+        fontWeight="bold"
+        className={isCenter ? '' : 'speaker-badge-text'}
+      >
+        CENTER
+      </text>
+    </g>
+  )
+
+  const subwooferSpeakerNode = (
+    <g
+      key="subwoofer-speaker"
+      className={`speaker-node cursor-pointer focus:outline-none ${isSub ? 'active' : 'inactive'}`}
+      onClick={() => onSelectRole('subwoofer')}
+      role="button"
+      tabIndex={-1}
+      aria-label="Subwoofer LFE Channel"
+      style={{ outline: 'none', zIndex: isCenter ? 10 : 20 }}
+    >
+      {/* Isolation Feet */}
+      <rect
+        x="171"
+        y="130"
+        width="8"
+        height="2.5"
+        rx="1"
+        fill="#121318"
+        stroke={isSub ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        strokeWidth={isSub ? '1.8' : '1.2'}
+        className="speaker-stroke"
+      />
+      <rect
+        x="201"
+        y="130"
+        width="8"
+        height="2.5"
+        rx="1"
+        fill="#121318"
+        stroke={isSub ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        strokeWidth={isSub ? '1.8' : '1.2'}
+        className="speaker-stroke"
+      />
+
+      {/* Cabinet Body */}
+      <rect
+        x="165"
+        y="80"
+        width="50"
+        height="50"
+        rx="5"
+        fill="#121318"
+        stroke={isSub ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        strokeWidth={isSub ? '1.8' : '1.2'}
+        className="speaker-stroke"
+      />
+
+      {/* Subwoofer Cone */}
+      <circle
+        cx="190"
+        cy="100"
+        r="14"
+        fill="none"
+        stroke={isSub ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        strokeWidth={isSub ? '1.5' : '1.2'}
+        className="speaker-stroke"
+      />
+      <circle
+        cx="190"
+        cy="100"
+        r="5"
+        fill="none"
+        stroke={isSub ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        strokeWidth="1"
+        className="speaker-stroke"
+      />
+
+      {/* Bass Reflex Port */}
+      <circle
+        cx="190"
+        cy="120"
+        r="3"
+        fill="none"
+        stroke={isSub ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        strokeWidth="1"
+        className="speaker-stroke"
+      />
+
+      {/* Indicator Dot */}
+      <circle
+        cx="173"
+        cy="88"
+        r="1.6"
+        fill={isSub ? activeColor : 'rgba(255, 255, 255, 0.2)'}
+        className="speaker-stroke"
+      />
+
+      {/* Deep Bass Pressure Waves */}
+      {isSub && (
+        <g className="sub-bass-waves pointer-events-none">
+          <circle
+            cx="190"
+            cy="104"
+            r="34"
+            fill="none"
+            stroke={activeColor}
+            strokeWidth="1.5"
+            strokeDasharray="4 3"
+            opacity="0.85"
+          />
+          <circle
+            cx="190"
+            cy="104"
+            r="46"
+            fill="none"
+            stroke={activeColor}
+            strokeWidth="1.2"
+            strokeDasharray="5 4"
+            opacity="0.55"
+          />
+          <circle
+            cx="190"
+            cy="104"
+            r="58"
+            fill="none"
+            stroke={activeColor}
+            strokeWidth="1"
+            strokeDasharray="6 4"
+            opacity="0.28"
+          />
+        </g>
+      )}
+
+      {/* Channel Label Badge */}
+      <rect
+        x="172"
+        y="137"
+        width="36"
+        height="12"
+        rx="2.5"
+        fill={isSub ? activeColor : '#121318'}
+        stroke={isSub ? activeColor : 'rgba(255, 255, 255, 0.18)'}
+        strokeWidth="1"
+        className={isSub ? '' : 'speaker-badge-bg'}
+      />
+      <text
+        x="190"
+        y="145.5"
+        textAnchor="middle"
+        fill={isSub ? activeForeground : 'rgba(255, 255, 255, 0.7)'}
+        fontSize="7"
+        fontFamily="monospace"
+        fontWeight="bold"
+        className={isSub ? '' : 'speaker-badge-text'}
+      >
+        SUB LFE
+      </text>
+    </g>
+  )
+
   return (
     <div className="relative w-full rounded-2xl bg-surface border border-border/60 flex flex-col p-3 select-none overflow-hidden group shadow-inner">
       {/* ── Soundstage HUD Header Readout ── */}
@@ -129,15 +507,17 @@ export default function SpatialRoomVisualizer({
           />
 
           {/* Center Channel Acoustic Ray */}
-          <line
-            x1="190"
-            y1="165"
-            x2="190"
-            y2="50"
-            stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.12)'}
-            strokeWidth={isCenter ? '1.8' : '1'}
-            strokeDasharray={isCenter ? 'none' : '3 3'}
-          />
+          {!isCenter && (
+            <line
+              x1="190"
+              y1="165"
+              x2="190"
+              y2="50"
+              stroke="rgba(255, 255, 255, 0.12)"
+              strokeWidth="1"
+              strokeDasharray="3 3"
+            />
+          )}
 
           {/* Subwoofer LFE Acoustic Ray */}
           <line
@@ -160,51 +540,6 @@ export default function SpatialRoomVisualizer({
             strokeWidth={isRight ? '1.8' : '1'}
             strokeDasharray={isRight ? 'none' : '3 3'}
           />
-        </g>
-
-        {/* ── Sweet Spot / Listening Position Node ── */}
-        <g className="listener-node pointer-events-none">
-          {/* Stereo directional listening angle wedge */}
-          <path
-            d="M 183,160 L 190,148 L 197,160 Z"
-            fill="none"
-            stroke="rgba(255, 255, 255, 0.25)"
-            strokeWidth="0.8"
-          />
-          <circle
-            cx="190"
-            cy="165"
-            r="9"
-            fill="#121318"
-            stroke="rgba(255, 255, 255, 0.28)"
-            strokeWidth="1.2"
-          />
-          <circle
-            cx="190"
-            cy="165"
-            r="4.5"
-            fill="#121318"
-            stroke="rgba(255, 255, 255, 0.35)"
-            strokeWidth="0.8"
-          />
-          <circle
-            cx="190"
-            cy="165"
-            r="2"
-            fill={activeColor}
-          />
-          <text
-            x="190"
-            y="182"
-            textAnchor="middle"
-            fill="rgba(255, 255, 255, 0.55)"
-            fontSize="8"
-            fontFamily="monospace"
-            fontWeight="bold"
-            letterSpacing="0.8"
-          >
-            SWEET SPOT
-          </text>
         </g>
 
         {/* ── 1. Left Studio Monitor Tower ── */}
@@ -368,325 +703,18 @@ export default function SpatialRoomVisualizer({
           </text>
         </g>
 
-        {/* ── 2. Center Channel Monitor ── */}
-        <g
-          className={`speaker-node cursor-pointer focus:outline-none ${isCenter ? 'active' : 'inactive'}`}
-          onClick={() => onSelectRole('center')}
-          role="button"
-          tabIndex={-1}
-          aria-label="Center Speaker Channel"
-          style={{ outline: 'none' }}
-        >
-          {/* Isolation Feet */}
-          <rect
-            x="152"
-            y="64"
-            width="8"
-            height="2.5"
-            rx="1"
-            fill="#121318"
-            stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            strokeWidth={isCenter ? '1.8' : '1.2'}
-            className="speaker-stroke"
-          />
-          <rect
-            x="220"
-            y="64"
-            width="8"
-            height="2.5"
-            rx="1"
-            fill="#121318"
-            stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            strokeWidth={isCenter ? '1.8' : '1.2'}
-            className="speaker-stroke"
-          />
-
-          {/* Cabinet Body */}
-          <rect
-            x="142"
-            y="26"
-            width="96"
-            height="38"
-            rx="4"
-            fill="#121318"
-            stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            strokeWidth={isCenter ? '1.8' : '1.2'}
-            className="speaker-stroke"
-          />
-
-          {/* Left Mid-Woofer */}
-          <circle
-            cx="165"
-            cy="45"
-            r="10.5"
-            fill="none"
-            stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            strokeWidth={isCenter ? '1.5' : '1.2'}
-            className="speaker-stroke"
-          />
-          <circle
-            cx="165"
-            cy="45"
-            r="3.5"
-            fill="none"
-            stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            strokeWidth="1"
-            className="speaker-stroke"
-          />
-
-          {/* Center Tweeter */}
-          <circle
-            cx="190"
-            cy="45"
-            r="7"
-            fill="none"
-            stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            strokeWidth={isCenter ? '1.5' : '1.2'}
-            className="speaker-stroke"
-          />
-          <circle
-            cx="190"
-            cy="45"
-            r="2.5"
-            fill={isCenter ? activeColor : 'none'}
-            stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            strokeWidth="1"
-            className="speaker-stroke"
-          />
-
-          {/* Right Mid-Woofer */}
-          <circle
-            cx="215"
-            cy="45"
-            r="10.5"
-            fill="none"
-            stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            strokeWidth={isCenter ? '1.5' : '1.2'}
-            className="speaker-stroke"
-          />
-          <circle
-            cx="215"
-            cy="45"
-            r="3.5"
-            fill="none"
-            stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            strokeWidth="1"
-            className="speaker-stroke"
-          />
-
-          {/* Indicator Dot */}
-          <circle
-            cx="190"
-            cy="33"
-            r="1.6"
-            fill={isCenter ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            className="speaker-stroke"
-          />
-
-          {/* Center Downward Sound Waves */}
-          {isCenter && (
-            <g className="center-sound-waves pointer-events-none">
-              <path
-                d="M 166,72 Q 190,82 214,72"
-                fill="none"
-                stroke={activeColor}
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                opacity="0.95"
-              />
-              <path
-                d="M 156,81 Q 190,95 224,81"
-                fill="none"
-                stroke={activeColor}
-                strokeWidth="1.4"
-                strokeLinecap="round"
-                opacity="0.65"
-              />
-              <path
-                d="M 146,90 Q 190,108 234,90"
-                fill="none"
-                stroke={activeColor}
-                strokeWidth="1.1"
-                strokeLinecap="round"
-                strokeDasharray="4 3"
-                opacity="0.35"
-              />
-            </g>
-          )}
-
-          {/* Channel Label Badge */}
-          <rect
-            x="172"
-            y="10"
-            width="36"
-            height="12"
-            rx="2.5"
-            fill={isCenter ? activeColor : '#121318'}
-            stroke={isCenter ? activeColor : 'rgba(255, 255, 255, 0.18)'}
-            strokeWidth="1"
-            className={isCenter ? '' : 'speaker-badge-bg'}
-          />
-          <text
-            x="190"
-            y="18.5"
-            textAnchor="middle"
-            fill={isCenter ? activeForeground : 'rgba(255, 255, 255, 0.7)'}
-            fontSize="7"
-            fontFamily="monospace"
-            fontWeight="bold"
-            className={isCenter ? '' : 'speaker-badge-text'}
-          >
-            CENTER
-          </text>
-        </g>
-
-        {/* ── 3. Subwoofer ── */}
-        <g
-          className={`speaker-node cursor-pointer focus:outline-none ${isSub ? 'active' : 'inactive'}`}
-          onClick={() => onSelectRole('subwoofer')}
-          role="button"
-          tabIndex={-1}
-          aria-label="Subwoofer LFE Channel"
-          style={{ outline: 'none' }}
-        >
-          {/* Isolation Feet */}
-          <rect
-            x="171"
-            y="130"
-            width="8"
-            height="2.5"
-            rx="1"
-            fill="#121318"
-            stroke={isSub ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            strokeWidth={isSub ? '1.8' : '1.2'}
-            className="speaker-stroke"
-          />
-          <rect
-            x="201"
-            y="130"
-            width="8"
-            height="2.5"
-            rx="1"
-            fill="#121318"
-            stroke={isSub ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            strokeWidth={isSub ? '1.8' : '1.2'}
-            className="speaker-stroke"
-          />
-
-          {/* Cabinet Body */}
-          <rect
-            x="165"
-            y="80"
-            width="50"
-            height="50"
-            rx="5"
-            fill="#121318"
-            stroke={isSub ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            strokeWidth={isSub ? '1.8' : '1.2'}
-            className="speaker-stroke"
-          />
-
-          {/* Subwoofer Cone */}
-          <circle
-            cx="190"
-            cy="100"
-            r="14"
-            fill="none"
-            stroke={isSub ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            strokeWidth={isSub ? '1.5' : '1.2'}
-            className="speaker-stroke"
-          />
-          <circle
-            cx="190"
-            cy="100"
-            r="5"
-            fill="none"
-            stroke={isSub ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            strokeWidth="1"
-            className="speaker-stroke"
-          />
-
-          {/* Bass Reflex Port */}
-          <circle
-            cx="190"
-            cy="120"
-            r="3"
-            fill="none"
-            stroke={isSub ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            strokeWidth="1"
-            className="speaker-stroke"
-          />
-
-          {/* Indicator Dot */}
-          <circle
-            cx="173"
-            cy="88"
-            r="1.6"
-            fill={isSub ? activeColor : 'rgba(255, 255, 255, 0.2)'}
-            className="speaker-stroke"
-          />
-
-          {/* Deep Bass Pressure Waves */}
-          {isSub && (
-            <g className="sub-bass-waves pointer-events-none">
-              <circle
-                cx="190"
-                cy="104"
-                r="34"
-                fill="none"
-                stroke={activeColor}
-                strokeWidth="1.5"
-                strokeDasharray="4 3"
-                opacity="0.85"
-              />
-              <circle
-                cx="190"
-                cy="104"
-                r="46"
-                fill="none"
-                stroke={activeColor}
-                strokeWidth="1.2"
-                strokeDasharray="5 4"
-                opacity="0.55"
-              />
-              <circle
-                cx="190"
-                cy="104"
-                r="58"
-                fill="none"
-                stroke={activeColor}
-                strokeWidth="1"
-                strokeDasharray="6 4"
-                opacity="0.28"
-              />
-            </g>
-          )}
-
-          {/* Channel Label Badge */}
-          <rect
-            x="172"
-            y="137"
-            width="36"
-            height="12"
-            rx="2.5"
-            fill={isSub ? activeColor : '#121318'}
-            stroke={isSub ? activeColor : 'rgba(255, 255, 255, 0.18)'}
-            strokeWidth="1"
-            className={isSub ? '' : 'speaker-badge-bg'}
-          />
-          <text
-            x="190"
-            y="145.5"
-            textAnchor="middle"
-            fill={isSub ? activeForeground : 'rgba(255, 255, 255, 0.7)'}
-            fontSize="7"
-            fontFamily="monospace"
-            fontWeight="bold"
-            className={isSub ? '' : 'speaker-badge-text'}
-          >
-            SUB LFE
-          </text>
-        </g>
+        {/* ── 2 & 3. Center and Subwoofer Channels (stacking order prioritizes active channel) ── */}
+        {isCenter ? (
+          <>
+            {subwooferSpeakerNode}
+            {centerSpeakerNode}
+          </>
+        ) : (
+          <>
+            {centerSpeakerNode}
+            {subwooferSpeakerNode}
+          </>
+        )}
 
         {/* ── 4. Right Studio Monitor Tower ── */}
         <g
@@ -848,6 +876,9 @@ export default function SpatialRoomVisualizer({
             RIGHT
           </text>
         </g>
+
+        {/* ── Sweet Spot / Listening Position Node ── */}
+        {sweetSpotNode}
       </svg>
     </div>
   )

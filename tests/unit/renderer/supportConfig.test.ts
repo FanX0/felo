@@ -23,12 +23,12 @@ describe('supportConfig URL builders', () => {
   })
 
   it('builds discord invite url correctly', () => {
-    expect(buildDiscordInviteUrl()).toBe('https://discord.gg/K4We3eBqQ')
-    expect(buildDiscordInviteUrl('')).toBe('https://discord.gg/K4We3eBqQ')
-    expect(buildDiscordInviteUrl('https://discord.gg/K4We3eBqQ')).toBe('https://discord.gg/K4We3eBqQ')
-    expect(buildDiscordInviteUrl('K4We3eBqQ')).toBe('https://discord.gg/K4We3eBqQ')
+    expect(buildDiscordInviteUrl()).toBe('https://discord.gg/8ujPkbF3CR')
+    expect(buildDiscordInviteUrl('')).toBe('https://discord.gg/8ujPkbF3CR')
+    expect(buildDiscordInviteUrl('https://discord.gg/8ujPkbF3CR')).toBe('https://discord.gg/8ujPkbF3CR')
+    expect(buildDiscordInviteUrl('8ujPkbF3CR')).toBe('https://discord.gg/8ujPkbF3CR')
     expect(buildDiscordInviteUrl('discord.gg/customRoom')).toBe('https://discord.gg/customRoom')
-    expect(DEFAULT_SUPPORT_CONFIG.discordInvite).toBe('https://discord.gg/K4We3eBqQ')
+    expect(DEFAULT_SUPPORT_CONFIG.discordInvite).toBe('https://discord.gg/8ujPkbF3CR')
   })
 
   it('builds default saweria and trakteer URLs', () => {

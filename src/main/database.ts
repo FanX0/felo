@@ -5,8 +5,15 @@ import fs from 'fs'
 import { parseArtists, getArtistId } from '../shared/artistParser'
 
 const appDataPath = app.getPath('appData')
-app.setName('Felo')
-const feloUserDataPath = join(appDataPath, 'felo')
+if (process.env.NODE_ENV === 'test') {
+  app.setName('Felo-Test')
+} else {
+  app.setName('Felo')
+}
+const feloUserDataPath =
+  process.env.NODE_ENV === 'test'
+    ? join(appDataPath, 'felo-test')
+    : join(appDataPath, 'felo')
 const legacyUserDataPath = join(appDataPath, 'fanxmusic-temp')
 
 if (!fs.existsSync(feloUserDataPath) && fs.existsSync(legacyUserDataPath)) {

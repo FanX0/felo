@@ -70,6 +70,7 @@ function loadYouTubeIframeApi(): Promise<void> {
 export default function YouTubePlayerBridge(): ReactElement | null {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const playerRef = useRef<any>(null)
+  const activeVideoIdRef = useRef<string | null>(null)
   const isSyncingRef = useRef(false)
   const isBufferingRef = useRef(false)
 
@@ -77,7 +78,31 @@ export default function YouTubePlayerBridge(): ReactElement | null {
   const [activeVideoId, setActiveVideoId] = useState<string | null>(null)
   const [isExpanded, setIsExpanded] = useState(false)
   const [isUserFloating, setIsUserFloating] = useState(false)
+  const [isFallbackIframe, setIsFallbackIframe] = useState(false)
   const [playerError, setPlayerError] = useState<string | null>(null)
+
+  // Allow stage placeholder to request re-docking
+  useEffect(() => {
+    const handleDock = () => setIsUserFloating(false)
+    window.addEventListener('felo:dock-youtube-stage', handleDock)
+    return () => window.removeEventListener('felo:dock-youtube-stage', handleDock)
+  }, [])
+
+  // Allow native AudioEngine to enforce immediate YouTube silence on non-YouTube playback
+  useEffect(() => {
+    const handleStopYouTube = () => {
+      try {
+        playerRef.current?.pauseVideo?.()
+        playerRef.current?.stopVideo?.()
+        playerRef.current?.mute?.()
+      } catch {}
+      setIsFallbackIframe(false)
+      activeVideoIdRef.current = null
+      setActiveVideoId(null)
+    }
+    window.addEventListener('felo:stop-youtube', handleStopYouTube)
+    return () => window.removeEventListener('felo:stop-youtube', handleStopYouTube)
+  }, [])
 
   // Listen Together context
   const joinedRoom = useListeningStore((s) => s.joinedRoom)
@@ -127,8 +152,8 @@ export default function YouTubePlayerBridge(): ReactElement | null {
     const el = document.getElementById('youtube-stage-dock')
     if (el) {
       const rect = el.getBoundingClientRect()
-      // Only dock if the stage slot is visible and has positive dimensions
-      if (rect.width > 100 && rect.height > 50 && rect.bottom > 80 && rect.top < window.innerHeight - 50) {
+      // Dock whenever the stage slot exists and is in the active viewport
+      if (rect.width > 50 && rect.height > 50 && rect.bottom > 0 && rect.top < window.innerHeight) {
         setStageRect({
           top: rect.top,
           left: rect.left,
@@ -195,17 +220,14 @@ export default function YouTubePlayerBridge(): ReactElement | null {
           modestbranding: 1,
           rel: 0,
           playsinline: 1,
-          enablejsapi: 1
-        }
-
-        // Only supply origin if running on real HTTP/HTTPS (Electron file:// or custom protocols must omit it)
-        if (typeof window !== 'undefined' && window.location.origin && window.location.origin.startsWith('http')) {
-          playerVars.origin = window.location.origin
+          enablejsapi: 1,
+          iv_load_policy: 3
         }
 
         const playerOptions: any = {
           height: '100%',
           width: '100%',
+          host: 'https://www.youtube-nocookie.com',
           playerVars,
           events: {
             onReady: (event: any) => {
@@ -244,34 +266,23 @@ export default function YouTubePlayerBridge(): ReactElement | null {
                 } catch {}
               }
 
-              // Load active track if currently queued
+              // Synchronize play state if master queue is currently playing and track is genuinely YouTube
               const curState = usePlayerStore.getState()
-              const song = curState.queue[curState.currentSongIndex]
-              if (isYouTubeSong(song)) {
-                const vid =
-                  (song as any)?.videoId ||
-                  extractYouTubeVideoId(song?.id?.replace(/^yt-/, '')) ||
-                  extractYouTubeVideoId(song?.audioUrl) ||
-                  extractYouTubeVideoId(song?.filePath)
-                if (vid) {
-                  setActiveVideoId(vid)
-                  const startTime = curState.currentTime || 0
+              const curSong = curState.queue[curState.currentSongIndex]
+              if (!isListener && curState.isPlaying && isYouTubeSong(curSong)) {
+                try {
+                  event.target.playVideo()
+                } catch {}
+                if (curState.currentTime > 0) {
                   try {
-                    if (curState.isPlaying) {
-                      event.target.loadVideoById({ videoId: vid, startSeconds: startTime })
-                    } else {
-                      event.target.cueVideoById({ videoId: vid, startSeconds: startTime })
-                    }
-                  } catch {
-                    try {
-                      if (curState.isPlaying) {
-                        event.target.loadVideoById(vid, startTime)
-                      } else {
-                        event.target.cueVideoById(vid, startTime)
-                      }
-                    } catch {}
-                  }
+                    event.target.seekTo(curState.currentTime, true)
+                  } catch {}
                 }
+              } else {
+                try {
+                  event.target.stopVideo()
+                  event.target.mute()
+                } catch {}
               }
             },
             onStateChange: (event: any) => {
@@ -310,15 +321,20 @@ export default function YouTubePlayerBridge(): ReactElement | null {
               }
             },
             onError: (err: any) => {
-              console.warn('[YouTubePlayerBridge] YouTube Player error code:', err?.data)
-              usePlayerStore.setState({ isBuffering: false })
               const code = err?.data
+              console.warn('[YouTubePlayerBridge] YouTube Player error code:', code)
+              usePlayerStore.setState({ isBuffering: false })
               if (code === 101 || code === 150) {
-                setPlayerError('Video embedding restricted by owner. Playable on YouTube directly.')
+                setPlayerError('Video embedding restricted by owner. Switching to direct embed...')
+                setIsFallbackIframe(true)
               } else if (code === 2) {
                 setPlayerError('Invalid YouTube video parameters.')
+              } else if (code === 100) {
+                setPlayerError('Video not found or removed.')
               } else {
                 setPlayerError('Playback error occurred on stream.')
+                // Switch to direct iframe fallback if API fails
+                setIsFallbackIframe(true)
               }
             }
           }
@@ -326,6 +342,8 @@ export default function YouTubePlayerBridge(): ReactElement | null {
 
         if (initialVid) {
           playerOptions.videoId = initialVid
+          activeVideoIdRef.current = initialVid
+          setActiveVideoId(initialVid)
         }
 
         playerRef.current = new window.YT.Player(playerId, playerOptions)
@@ -344,8 +362,13 @@ export default function YouTubePlayerBridge(): ReactElement | null {
     if (!isPlayerReady || !playerRef.current) return
 
     if (isCurrentYouTube && currentVideoId) {
-      if (activeVideoId !== currentVideoId) {
+      if (activeVideoIdRef.current !== currentVideoId) {
+        try {
+          playerRef.current.stopVideo?.()
+        } catch {}
+        activeVideoIdRef.current = currentVideoId
         setActiveVideoId(currentVideoId)
+        setIsFallbackIframe(false)
         setPlayerError(null)
 
         try {
@@ -377,18 +400,36 @@ export default function YouTubePlayerBridge(): ReactElement | null {
           console.warn('[YouTubePlayerBridge] Error loading video:', err)
         }
       }
-    } else if (activeVideoId) {
-      // Transitioning away from YouTube to a local file
+    } else {
+      // Transitioning away from YouTube to a local file or stopping
       try {
-        playerRef.current.pauseVideo()
+        playerRef.current.pauseVideo?.()
+        playerRef.current.stopVideo?.()
+        playerRef.current.mute?.()
       } catch {}
+      activeVideoIdRef.current = null
       setActiveVideoId(null)
+      setIsFallbackIframe(false)
     }
-  }, [isPlayerReady, isCurrentYouTube, currentVideoId, activeVideoId, isPlaying])
+  }, [isPlayerReady, isCurrentYouTube, currentVideoId, isPlaying])
+
+  const handleRetry = useCallback(() => {
+    setPlayerError(null)
+    setIsFallbackIframe(true)
+  }, [])
 
   // 3. React to Play/Pause Controls
   useEffect(() => {
-    if (!isPlayerReady || !playerRef.current || !isCurrentYouTube || !activeVideoId) return
+    if (!isPlayerReady || !playerRef.current) return
+
+    if (!isCurrentYouTube || !activeVideoId) {
+      try {
+        playerRef.current.pauseVideo?.()
+        playerRef.current.stopVideo?.()
+        playerRef.current.mute?.()
+      } catch {}
+      return
+    }
 
     try {
       const state = playerRef.current.getPlayerState?.()
@@ -396,6 +437,7 @@ export default function YouTubePlayerBridge(): ReactElement | null {
         playerRef.current.playVideo?.()
       } else if (!isPlaying && state === 1) {
         playerRef.current.pauseVideo?.()
+        playerRef.current.stopVideo?.()
       }
     } catch (err) {
       console.warn('[YouTubePlayerBridge] Play/pause dispatch error:', err)
@@ -487,15 +529,6 @@ export default function YouTubePlayerBridge(): ReactElement | null {
 
       setDesyncSeconds(diff)
       setIsDesynced(diff > 1.8)
-
-      // Smoothly re-align if drifted by more than 2.0s
-      if (diff > 2.0) {
-        isSyncingRef.current = true
-        playerRef.current.seekTo?.(targetTime, true)
-        setTimeout(() => {
-          isSyncingRef.current = false
-        }, 1200)
-      }
     }, 2000)
 
     return () => window.clearInterval(intervalId)
@@ -586,12 +619,22 @@ export default function YouTubePlayerBridge(): ReactElement | null {
         isVisible ? 'opacity-100 pointer-events-auto' : 'pointer-events-none opacity-0'
       )}
     >
-      {/* 1. Underlying YouTube Iframe Target */}
-      <div
-        ref={containerRef}
-        style={{ pointerEvents: isListener ? 'none' : 'auto' }}
-        className="relative w-full h-full [&>iframe]:w-full [&>iframe]:h-full [&>iframe]:absolute [&>iframe]:inset-0 [&>iframe]:border-0"
-      />
+      {/* 1. Underlying YouTube Iframe Target or Direct Embed Fallback */}
+      {isFallbackIframe && currentVideoId ? (
+        <iframe
+          src={`https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=1&playsinline=1&modestbranding=1&rel=0`}
+          title="YouTube Video Stream"
+          className="absolute inset-0 w-full h-full border-0"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+        />
+      ) : (
+        <div
+          ref={containerRef}
+          style={{ pointerEvents: isListener ? 'none' : 'auto' }}
+          className="relative w-full h-full [&>iframe]:w-full [&>iframe]:h-full [&>iframe]:absolute [&>iframe]:inset-0 [&>iframe]:border-0"
+        />
+      )}
 
       {/* 2. Top Live Broadcast HUD (Inspired by Mindory LiveVideoBlock) */}
       <div className="absolute top-0 left-0 right-0 p-2.5 flex items-center justify-between gap-2 z-20 bg-gradient-to-b from-black/80 via-black/40 to-transparent transition-opacity duration-200">
@@ -714,13 +757,22 @@ export default function YouTubePlayerBridge(): ReactElement | null {
       {playerError && (
         <div className="absolute bottom-3 left-3 right-3 z-30 p-2.5 rounded-xl bg-red-950/90 border border-red-500/40 text-red-200 text-xs flex items-center justify-between gap-2 shadow-lg backdrop-blur-md">
           <span className="truncate">{playerError}</span>
-          <button
-            type="button"
-            onClick={() => setPlayerError(null)}
-            className="text-[10px] font-bold text-white bg-red-800/80 hover:bg-red-700 px-2 py-0.5 rounded-md cursor-pointer shrink-0"
-          >
-            Dismiss
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={handleRetry}
+              className="text-[10px] font-bold text-black bg-white hover:bg-white/90 px-2 py-0.5 rounded-md cursor-pointer transition-colors"
+            >
+              Direct Embed
+            </button>
+            <button
+              type="button"
+              onClick={() => setPlayerError(null)}
+              className="text-[10px] font-bold text-white bg-red-800/80 hover:bg-red-700 px-2 py-0.5 rounded-md cursor-pointer shrink-0"
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
     </div>

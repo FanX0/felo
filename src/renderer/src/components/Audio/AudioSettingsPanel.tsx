@@ -41,8 +41,7 @@ import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
 import { audioDspEngine } from '../../lib/audioDspEngine'
 import {
   isUiSoundsEnabled,
-  setUiSoundsEnabled,
-  playUiTouchSound
+  setUiSoundsEnabled
 } from '../../lib/uiSounds'
 import { useThemeStore } from '../../hooks/useThemeStore'
 
@@ -111,7 +110,6 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
   const [copiedLink, setCopiedLink] = useState(false)
 
   const handleSelectRole = (role: SpeakerRole) => {
-    playUiTouchSound()
     setSpeakerRole(role)
     if (joinedRoom?.id || hostRoom?.id) {
       void setMySpeakerRole(role, subCutoff)
@@ -133,7 +131,6 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
   }
 
   const handleTabChange = (tab: AudioSubtab) => {
-    playUiTouchSound()
     setActiveSubtab(tab)
   }
 
@@ -143,7 +140,6 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
   }, [])
 
   const handleToggleUiSounds = (enabled: boolean) => {
-    playUiTouchSound()
     setUiSoundsEnabled(enabled)
     setUiSoundsActive(enabled)
   }
@@ -179,7 +175,6 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
   }, [inviteUrl, qrDarkColor])
 
   const copyToClipboard = async (text: string, type: 'code' | 'link') => {
-    playUiTouchSound()
     try {
       await navigator.clipboard.writeText(text)
       if (type === 'code') {
@@ -228,7 +223,6 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
           <button
             type="button"
             onClick={() => {
-              playUiTouchSound()
               onClose()
             }}
             className="flex h-8 w-8 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-hover hover:text-white cursor-pointer active:scale-95"
@@ -319,9 +313,9 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
             {/* Interface Sound Effects Configuration */}
             <div className="p-4 rounded-xl bg-surface-elevated border border-border/60 space-y-3">
               <div className="space-y-0.5">
-                <span className="font-semibold text-text text-sm">Interface Sound Effects</span>
+                <span className="font-semibold text-text text-sm">Sound Effects</span>
                 <p className="text-text-muted text-xs">
-                  Tactile pitchless micro-transient audio feedback on clicks, toggles, and switches.
+                  Audio alerts for room participants, chat messages, and notifications.
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-2 pt-1">
@@ -530,7 +524,6 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
                   <button
                     type="button"
                     onClick={() => {
-                      playUiTouchSound()
                       setShowReverbAdvanced(!showReverbAdvanced)
                     }}
                     className={`text-[11px] px-2.5 py-0.5 rounded-lg border font-semibold transition-all cursor-pointer ${
@@ -554,7 +547,6 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
                       key={preset}
                       type="button"
                       onClick={() => {
-                        playUiTouchSound()
                         setReverbPreset(preset as ReverbPreset)
                         if (preset === 'advanced') setShowReverbAdvanced(true)
                       }}
@@ -673,7 +665,6 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
                 <button
                   type="button"
                   onClick={() => {
-                    playUiTouchSound()
                     resetEq()
                   }}
                   className="p-1.5 rounded-lg border border-border/60 bg-surface-elevated hover:bg-hover text-text-muted hover:text-white transition-colors cursor-pointer"
@@ -693,7 +684,6 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
                       key={preset}
                       type="button"
                       onClick={() => {
-                        playUiTouchSound()
                         setEqPreset(preset as EqPreset)
                       }}
                       className={`py-2 px-2.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer text-center ${
@@ -790,7 +780,6 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
                 <button
                   type="button"
                   onClick={() => {
-                    playUiTouchSound()
                     toggleVirtualEffect('bass')
                   }}
                   className={`flex flex-col items-center justify-center gap-2 p-3.5 rounded-xl border transition-all cursor-pointer ${
@@ -807,7 +796,6 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
                 <button
                   type="button"
                   onClick={() => {
-                    playUiTouchSound()
                     toggleVirtualEffect('treble')
                   }}
                   className={`flex flex-col items-center justify-center gap-2 p-3.5 rounded-xl border transition-all cursor-pointer ${
@@ -824,7 +812,6 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
                 <button
                   type="button"
                   onClick={() => {
-                    playUiTouchSound()
                     toggleVirtualEffect('surround')
                   }}
                   className={`flex flex-col items-center justify-center gap-2 p-3.5 rounded-xl border transition-all cursor-pointer ${
@@ -841,7 +828,6 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
                 <button
                   type="button"
                   onClick={() => {
-                    playUiTouchSound()
                     toggleVirtualEffect('off')
                   }}
                   className={`flex flex-col items-center justify-center gap-2 p-3.5 rounded-xl border transition-all cursor-pointer ${
@@ -969,7 +955,6 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
                       <select
                         value={member.speaker_role || 'center'}
                         onChange={(e) => {
-                          playUiTouchSound()
                           void setMemberSpeakerRole(
                             member.user_id,
                             e.target.value as SpeakerRole,

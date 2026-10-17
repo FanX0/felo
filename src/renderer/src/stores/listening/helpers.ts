@@ -113,7 +113,7 @@ export function updateCachedRemoteControlInfo(info: { ip?: string; port?: number
   if (info) _cachedRemoteControlInfo = info
 }
 
-export const AUTO_DOWNLOAD_STORAGE_KEY = 'fanxmusic:listen_together:auto_download'
+export const AUTO_DOWNLOAD_STORAGE_KEY = 'felo:listen_together:auto_download_v2'
 export const SUBSTITUTES_STORAGE_KEY = 'fanxmusic:listen_together:substitutes'
 export const DISCORD_PRIORITY_STORAGE_KEY = 'felo:discord-priority-enabled'
 export const MANUAL_SYNC_OFFSET_STORAGE_KEY = 'felo:listen_together:manual_sync_offset_ms'
@@ -124,6 +124,14 @@ export function setIsSessionSyncing(val: boolean): void {
 }
 export function isSessionSyncing(): boolean {
   return _isSessionSyncing
+}
+
+export let _needsInitialSync = true
+export function setNeedsInitialSync(val: boolean): void {
+  _needsInitialSync = val
+}
+export function needsInitialSync(): boolean {
+  return _needsInitialSync
 }
 
 export let _currentSyncEpoch = 0
@@ -161,10 +169,10 @@ export function readInitialDiscordPriority(): boolean {
 export function readInitialAutoDownload(): boolean {
   try {
     const raw = localStorage.getItem(AUTO_DOWNLOAD_STORAGE_KEY)
-    if (raw === null) return true // Default enabled for instant shared audio playback (MUSIXQUARE approach)
+    if (raw === null) return false // Default disabled: stream in-RAM / WebRTC like public app
     return raw === 'true'
   } catch {
-    return true
+    return false
   }
 }
 

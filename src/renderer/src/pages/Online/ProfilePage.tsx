@@ -31,6 +31,7 @@ import {
 import { NavLink, useNavigate, useParams } from 'react-router-dom'
 import OnlineGate from '../../components/Online/OnlineGate'
 import Avatar from '../../components/Common/Avatar'
+import DeleteFriendModal from '../../components/Common/DeleteFriendModal'
 import { useOnlineStore } from '../../hooks/useOnlineStore'
 import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 import { useListeningStore } from '../../hooks/useListeningStore'
@@ -1003,6 +1004,7 @@ function ProfileWorkspace(): ReactElement {
   const [joining, setJoining] = useState(false)
   const [error, setError] = useState('')
   const [isEditing, setIsEditing] = useState(false)
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
   const [showHistoryModal, setShowHistoryModal] = useState(false)
   const [historyModalInitialTab, setHistoryModalInitialTab] = useState<
     'recent' | 'mostPlayed' | 'artists'
@@ -1325,6 +1327,20 @@ function ProfileWorkspace(): ReactElement {
     }
   }
 
+  const handleConfirmRemoveFriend = async (): Promise<void> => {
+    setBusy(true)
+    setError('')
+    try {
+      await removeRelationship()
+      await loadProfile()
+      setIsDeleteModalOpen(false)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Friend action failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const listenTogether = async (): Promise<void> => {
     if (!viewedProfile || relationship?.status !== 'accepted') return
     setJoining(true)
@@ -1438,7 +1454,13 @@ function ProfileWorkspace(): ReactElement {
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => void runFriendAction()}
+                onClick={() => {
+                  if (relationship?.status === 'accepted') {
+                    setIsDeleteModalOpen(true)
+                  } else {
+                    void runFriendAction()
+                  }
+                }}
                 className={`flex h-10 items-center gap-2 rounded-full px-5 text-sm font-black disabled:opacity-50 ${relationship?.status === 'accepted' || (relationship?.status === 'pending' && relationship.requester_id === user?.id) ? 'border border-border text-text' : 'bg-white text-black hover:bg-white/90'}`}
               >
                 {busy ? (
@@ -1876,6 +1898,15 @@ function ProfileWorkspace(): ReactElement {
           onClose={() => setShowHistoryModal(false)}
         />
       )}
+      <DeleteFriendModal
+        isOpen={isDeleteModalOpen}
+        friendName={viewedProfile?.display_name || viewedProfile?.username || 'Friend'}
+        username={viewedProfile?.username}
+        avatarUrl={viewedProfile?.avatar_url}
+        isLoading={busy}
+        onClose={() => setIsDeleteModalOpen(false)}
+        onConfirm={handleConfirmRemoveFriend}
+      />
     </div>
   )
 }

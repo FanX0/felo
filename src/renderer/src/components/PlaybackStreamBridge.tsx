@@ -295,7 +295,7 @@ export default function PlaybackStreamBridge(): null {
 
           // Advance only if the active song index still matches
           if (usePlayerStore.getState().currentSongIndex === currentSongIndex) {
-            usePlayerStore.getState().playNext()
+            usePlayerStore.getState().playNext(true)
           }
           return
         }
@@ -363,7 +363,7 @@ export default function PlaybackStreamBridge(): null {
           window.dispatchEvent(new CustomEvent('felo:download-failed', { detail: failDetail }))
 
           if (usePlayerStore.getState().currentSongIndex === currentSongIndex) {
-            usePlayerStore.getState().playNext()
+            usePlayerStore.getState().playNext(true)
           }
         }
       } finally {

@@ -138,6 +138,7 @@ let heartbeatTimer = null
 let lastHeartbeatAck = true
 let sequenceNumber = null
 let botUser = null
+let hasRegisteredCommands = false
 
 async function searchMusicCatalog(query) {
   try {
@@ -2526,15 +2527,19 @@ function connect() {
           break
         case 7:
         case 9:
-          ws.close()
-          setTimeout(connect, 3000)
+          try {
+            ws.close()
+          } catch (_) {}
           break
         case 0:
           if (t === 'READY') {
             botUser = d.user
             console.log(`🤖 Universal Felo Bot logged in as ${botUser.username}#${botUser.discriminator || '0'} (${botUser.id})`)
-            void registerCommands(botUser.id)
-            void updateApplicationBio()
+            if (!hasRegisteredCommands) {
+              hasRegisteredCommands = true
+              void registerCommands(botUser.id)
+              void updateApplicationBio()
+            }
           } else if (t === 'INTERACTION_CREATE') {
             if (d.type === 2) {
               void handleCommand(d)
@@ -2555,9 +2560,27 @@ function connect() {
     console.error('WebSocket error:', err)
   }
 
+  const FATAL_GATEWAY_CODES = {
+    4004: 'Authentication failed. The DISCORD_BOT_TOKEN is invalid, expired, or was reset.',
+    4010: 'Invalid shard configuration.',
+    4011: 'Sharding required.',
+    4012: 'Invalid API version.',
+    4013: 'Invalid intent(s).',
+    4014: 'Disallowed intent(s). Verify Privileged Gateway Intents in Discord Developer Portal.'
+  }
+
   ws.onclose = (event) => {
     stopHeartbeat()
-    console.log(`Gateway closed (code: ${event?.code}, reason: "${event?.reason}"). Reconnecting in 5s...`)
+    const code = event?.code
+    const reason = event?.reason || ''
+
+    if (code && FATAL_GATEWAY_CODES[code]) {
+      console.error(`\n❌ Fatal Discord Gateway error (code: ${code}): ${FATAL_GATEWAY_CODES[code]}`)
+      console.error(`👉 Action required: Check DISCORD_BOT_TOKEN in .env and .env.local, or regenerate it at https://discord.com/developers/applications\n`)
+      process.exit(1)
+    }
+
+    console.log(`Gateway closed (code: ${code}, reason: "${reason}"). Reconnecting in 5s...`)
     setTimeout(connect, 5000)
   }
 }

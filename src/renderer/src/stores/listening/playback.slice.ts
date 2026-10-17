@@ -44,6 +44,8 @@ import {
   incrementSyncEpoch,
   isSessionSyncing,
   setIsSessionSyncing,
+  needsInitialSync,
+  setNeedsInitialSync,
   _lastHostPulse,
   setLastHostPulse,
   setLastSyncedSongId,
@@ -256,8 +258,39 @@ export const createRoomPlaybackSlice: StateCreator<
     // Monotonic Epoch: supersedes any older in-flight sync/download
     const mySyncEpoch = incrementSyncEpoch()
     setIsSessionSyncing(true)
+    setNeedsInitialSync(true)
     setLastHostPulse(null)
     set({ syncStatus: 'buffering', lastHostUpdate: Date.now() })
+
+    // Helper: Safely applies initial playback state.
+    // In MUSIXQUARE, if clock is not yet calibrated (join time), seeking is deferred
+    // to the incoming calibrated sync_pulse / pong burst to eliminate join jitter.
+    const applyInitialPlaybackState = (
+      targetRoom: ListeningRoom,
+      syncedSongId: string,
+      _songDuration: number
+    ) => {
+      setLastSyncedSongId(syncedSongId)
+
+      if (!targetRoom.is_playing) {
+        usePlayerStore.getState().setIsPlaying(false)
+        set({ syncStatus: 'synced', missingSong: null })
+        setNeedsInitialSync(false)
+        setIsSessionSyncing(false)
+        return
+      }
+
+      // MUSIXQUARE parity: Gated bootstrap deferral.
+      // Changing the player queue reloads the audio element's source.
+      // Seeking immediately before readyState >= HAVE_METADATA causes browser aborts,
+      // resets to 0:00, and audio jumping.
+      // Instead, we mark playback intent, set buffering & needsInitialSync,
+      // and let handleHostSyncPulse bootstrap the single clean seek once metadata is loaded.
+      usePlayerStore.getState().setIsPlaying(true)
+      set({ syncStatus: 'buffering', missingSong: null })
+      setNeedsInitialSync(true)
+      setIsSessionSyncing(false)
+    }
 
     try {
       // Step 0: Check if host is broadcasting live device / system audio
@@ -314,30 +347,7 @@ export const createRoomPlaybackSlice: StateCreator<
         }
         usePlayerStore.getState().setQueue(sessionQueue, targetIndex)
 
-        const hostPos =
-          typeof room.song?.hostPosition === 'number'
-            ? room.song.hostPosition
-            : room.position_seconds || 0
-        const hostTimestamp =
-          typeof room.song?.hostTimestamp === 'number'
-            ? room.song.hostTimestamp
-            : new Date(room.updated_at).getTime()
-        const manualOffsetSec = (get().manualSyncOffsetMs || 0) / 1000
-        const duration = room.song?.duration || 0
-        const targetTime = roomClockSync.calculateTargetTime(
-          hostPos,
-          hostTimestamp,
-          room.is_playing,
-          manualOffsetSec,
-          duration
-        )
-
-        if (targetTime > 0) {
-          usePlayerStore.getState().seek(targetTime)
-        }
-        usePlayerStore.getState().setIsPlaying(room.is_playing)
-        setLastSyncedSongId(ytSong.id)
-        set({ syncStatus: 'synced', missingSong: null })
+        applyInitialPlaybackState(room, ytSong.id, room.song?.duration || 0)
         return
       }
 
@@ -357,36 +367,7 @@ export const createRoomPlaybackSlice: StateCreator<
           subIndex = 0
         }
         usePlayerStore.getState().setQueue(currentQueue, subIndex)
-        if (!room.is_playing) {
-          usePlayerStore.getState().setIsPlaying(false)
-        }
-
-        const hostPos =
-          typeof room.song?.hostPosition === 'number'
-            ? room.song.hostPosition
-            : room.position_seconds || 0
-        const hostTimestamp =
-          typeof room.song?.hostTimestamp === 'number'
-            ? room.song.hostTimestamp
-            : new Date(room.updated_at).getTime()
-        const manualOffsetSec = (get().manualSyncOffsetMs || 0) / 1000
-        const duration = substitute.duration || room.song?.duration || 0
-        const targetTime = roomClockSync.calculateTargetTime(
-          hostPos,
-          hostTimestamp,
-          room.is_playing,
-          manualOffsetSec,
-          duration
-        )
-        if (targetTime > 0) {
-          usePlayerStore.getState().seek(targetTime)
-        }
-        setAudioPlaybackRate(1.0)
-        await new Promise((r) => setTimeout(r, 150))
-        usePlayerStore.getState().setIsPlaying(room.is_playing)
-        await Promise.resolve()
-        setLastSyncedSongId(substitute.id)
-        set({ syncStatus: 'synced', missingSong: null })
+        applyInitialPlaybackState(room, substitute.id, substitute.duration || room.song?.duration || 0)
         return
       }
 
@@ -448,31 +429,7 @@ export const createRoomPlaybackSlice: StateCreator<
 
         usePlayerStore.getState().setQueue(sessionQueue, targetIndex)
 
-        const hostPos =
-          typeof room.song?.hostPosition === 'number'
-            ? room.song.hostPosition
-            : room.position_seconds || 0
-        const hostTimestamp =
-          typeof room.song?.hostTimestamp === 'number'
-            ? room.song.hostTimestamp
-            : new Date(room.updated_at).getTime()
-        const manualOffsetSec = (get().manualSyncOffsetMs || 0) / 1000
-        const duration = room.song.duration || 0
-        const freshTargetTime = roomClockSync.calculateTargetTime(
-          hostPos,
-          hostTimestamp,
-          room.is_playing,
-          manualOffsetSec,
-          duration
-        )
-
-        if (freshTargetTime > 0) {
-          usePlayerStore.getState().seek(freshTargetTime)
-        }
-        usePlayerStore.getState().setIsPlaying(room.is_playing)
-
-        setLastSyncedSongId(syncedSong.id)
-        set({ syncStatus: 'synced', missingSong: null })
+        applyInitialPlaybackState(room, syncedSong.id, room.song.duration || 0)
         void get().preloadNextQueueTracks(room)
         return
       }
@@ -649,32 +606,7 @@ export const createRoomPlaybackSlice: StateCreator<
 
         usePlayerStore.getState().setQueue(sessionQueue, targetIndex)
 
-        // Latency-compensated time seeking via roomClockSync
-        const hostPos =
-          typeof room.song.hostPosition === 'number'
-            ? room.song.hostPosition
-            : room.position_seconds || 0
-        const hostTimestamp =
-          typeof room.song.hostTimestamp === 'number'
-            ? room.song.hostTimestamp
-            : new Date(room.updated_at).getTime()
-        const manualOffsetSec = (get().manualSyncOffsetMs || 0) / 1000
-        const duration = room.song.duration || 0
-        const freshTargetTime = roomClockSync.calculateTargetTime(
-          hostPos,
-          hostTimestamp,
-          room.is_playing,
-          manualOffsetSec,
-          duration
-        )
-
-        if (freshTargetTime > 0) {
-          usePlayerStore.getState().seek(freshTargetTime)
-        }
-        usePlayerStore.getState().setIsPlaying(room.is_playing)
-
-        setLastSyncedSongId(syncedSong.id)
-        set({ syncStatus: 'synced', missingSong: null })
+        applyInitialPlaybackState(room, syncedSong.id, room.song.duration || 0)
 
         // Pre-load the NEXT song in queue into in-memory RAM cache for zero-latency sync
         void get().preloadNextQueueTracks(room)
@@ -828,42 +760,14 @@ export const createRoomPlaybackSlice: StateCreator<
         }
       }
 
-      // Step 6: Seek to host position (latency compensated via roomClockSync)
-      const hostPos =
-        typeof room.song?.hostPosition === 'number'
-          ? room.song.hostPosition
-          : room.position_seconds || 0
-      const hostTimestamp =
-        typeof room.song?.hostTimestamp === 'number'
-          ? room.song.hostTimestamp
-          : new Date(room.updated_at).getTime()
-      const manualOffsetSec = (get().manualSyncOffsetMs || 0) / 1000
-      const duration = matchedSong.duration || room.song?.duration || 0
-      const targetTime = roomClockSync.calculateTargetTime(
-        hostPos,
-        hostTimestamp,
-        room.is_playing,
-        manualOffsetSec,
-        duration
-      )
-      if (targetTime > 0) {
-        usePlayerStore.getState().seek(targetTime)
-      }
-      setAudioPlaybackRate(1.0)
-
-      await new Promise((r) => setTimeout(r, 150))
-      usePlayerStore.getState().setIsPlaying(room.is_playing)
-
-      await Promise.resolve()
-      setLastSyncedSongId(matchedSong.id)
-      set({ syncStatus: 'synced', missingSong: null })
-
+      // Step 6: Initial playback alignment (latency compensated via roomClockSync)
+      applyInitialPlaybackState(room, matchedSong.id, matchedSong.duration || room.song?.duration || 0)
       void get().preloadNextQueueTracks(room)
     } catch (err) {
       console.error('Sync error during song change:', err)
       set({ syncStatus: 'missing_song', missingSong: room.song })
     } finally {
-      if (mySyncEpoch === getCurrentSyncEpoch()) {
+      if (mySyncEpoch === getCurrentSyncEpoch() && !needsInitialSync()) {
         setIsSessionSyncing(false)
       }
     }
@@ -1105,21 +1009,13 @@ export const createRoomPlaybackSlice: StateCreator<
     )
 
     if (room.is_playing) {
-      // Align if drift is substantial (> 1.0s)
-      const drift = Math.abs(currentGuestTime - targetTime)
-      if (drift > 1.0) {
-        setIsSessionSyncing(true)
-        playerState.seek(targetTime)
-        playerState.setCurrentTime(targetTime)
-        setTimeout(() => {
-          setIsSessionSyncing(false)
-        }, 300)
-      }
+      // During active playback, playhead seeks are exclusively managed by real-time sync pulses.
+      // Database positions are not evaluated here to prevent rewind jitter loops.
     } else {
       if (getAudioPlaybackRate() !== 1.0) {
         setAudioPlaybackRate(1.0)
       }
-      // If host switched time while paused, align guest position immediately
+      // If host switched time while paused, align guest position smoothly while paused
       const drift = Math.abs(currentGuestTime - targetTime)
       if (drift > 0.4) {
         setIsSessionSyncing(true)
@@ -1127,7 +1023,7 @@ export const createRoomPlaybackSlice: StateCreator<
         playerState.setCurrentTime(targetTime)
         setTimeout(() => {
           setIsSessionSyncing(false)
-        }, 300)
+        }, 500)
       }
     }
   },
@@ -1141,8 +1037,6 @@ export const createRoomPlaybackSlice: StateCreator<
 
     // Always note host presence unconditionally upon arrival of sync pulse
     set({ lastHostUpdate: Date.now() })
-
-    if (isSessionSyncing()) return
 
     if (joined.song?.isDeviceStream || joined.is_device_stream || get().isReceivingDeviceStream) {
       // Even in WebRTC stream, update joinedRoom position metadata and player current time so lyrics stay in sync!
@@ -1171,7 +1065,7 @@ export const createRoomPlaybackSlice: StateCreator<
     }
 
     const currentStatus = get().syncStatus
-    if (currentStatus === 'missing_song' || currentStatus === 'buffering') {
+    if (currentStatus === 'missing_song') {
       return
     }
 
@@ -1197,10 +1091,63 @@ export const createRoomPlaybackSlice: StateCreator<
       return
     }
 
-    // Do not evaluate drift if local player is actively seeking or buffering
+    // ─── MUSIXQUARE Gated Bootstrap (Initial Join / Track Switch) ────
+    // If guest just joined or switched track, do NOT seek until:
+    // 1. NTP clock is calibrated via ping/pong
+    // 2. Audio element has loaded metadata
+    if (needsInitialSync()) {
+      if (!roomClockSync.isCalibrated()) {
+        return
+      }
+
+      const isYouTube = Boolean((currentSong as any)?.isYouTube || (currentSong as any)?.videoId)
+      const activeEl = getActiveAudioElement()
+      if (!isYouTube && activeEl && activeEl.readyState < HTMLMediaElement.HAVE_METADATA) {
+        return
+      }
+
+      const manualOffsetSec = (get().manualSyncOffsetMs || 0) / 1000
+      const duration = joined.song?.duration || playerState.duration || 0
+      const targetTime = roomClockSync.calculateTargetTime(
+        pulse.position,
+        pulse.hostTimestamp,
+        pulse.isPlaying,
+        manualOffsetSec,
+        duration
+      )
+
+      setIsSessionSyncing(true)
+      if (targetTime > 0) {
+        playerState.seek(targetTime)
+        playerState.setCurrentTime(targetTime)
+      }
+      setAudioPlaybackRate(1.0)
+      playerState.setIsPlaying(pulse.isPlaying)
+      set({ syncStatus: 'synced', missingSong: null })
+      setNeedsInitialSync(false)
+
+      if (joined.song) {
+        joined.song.hostPosition = pulse.position
+        joined.song.hostTimestamp = pulse.hostTimestamp
+      }
+
+      setTimeout(() => {
+        setIsSessionSyncing(false)
+      }, 1000)
+      return
+    }
+
+    // ─── Steady-State Drift Handling ─────────────────────────────────
+    // Suppress drift evaluation if local player is actively seeking, buffering, or settling
+    if (isSessionSyncing()) return
     if (playerState.seekRequest !== null) return
+    if (playerState.isBuffering) return
+
+    const isYouTube = Boolean((currentSong as any)?.isYouTube || (currentSong as any)?.videoId)
     const activeEl = getActiveAudioElement()
-    if (activeEl && activeEl.seeking) return
+    if (!isYouTube && activeEl && (activeEl.seeking || activeEl.readyState < HTMLMediaElement.HAVE_CURRENT_DATA)) {
+      return
+    }
 
     if (playerState.isPlaying !== pulse.isPlaying) {
       playerState.setIsPlaying(pulse.isPlaying)
@@ -1231,7 +1178,7 @@ export const createRoomPlaybackSlice: StateCreator<
         playerState.setCurrentTime(targetTime)
         setTimeout(() => {
           setIsSessionSyncing(false)
-        }, 300)
+        }, 500)
       }
       if (joined.song) {
         joined.song.hostPosition = pulse.position
@@ -1259,8 +1206,7 @@ export const createRoomPlaybackSlice: StateCreator<
     const result = roomClockSync.evaluateDrift(currentGuestTime, targetTime, pulse.isPlaying)
 
     switch (result.action) {
-      case 'hard_seek':
-      case 'soft_align': {
+      case 'hard_seek': {
         setAudioPlaybackRate(1.0)
         setIsSessionSyncing(true)
         playerState.seek(result.targetTime)
@@ -1287,7 +1233,15 @@ export const createRoomPlaybackSlice: StateCreator<
         }))
         setTimeout(() => {
           setIsSessionSyncing(false)
-        }, 300)
+        }, 1000)
+        break
+      }
+      case 'soft_align': {
+        // MUSIXQUARE pitch-preserving micro rate adjustment:
+        // Smoothly catch up without any audio dropout, clicks or seek jumps
+        if (typeof result.recommendedRate === 'number' && Math.abs(result.recommendedRate - 1.0) > 0.005) {
+          setAudioPlaybackRate(result.recommendedRate)
+        }
         break
       }
       case 'in_sync': {
@@ -1383,7 +1337,7 @@ export const createRoomPlaybackSlice: StateCreator<
           syncStatus: 'idle'
         })
         usePlayerStore.getState().setIsPlaying(true)
-        await get().ensureHostRoom(true, true)
+        await get().ensureHostRoom(true, false)
       } else {
         // Another member was elected as the new host
         const newHostRoom = updatedRoom as ListeningRoom

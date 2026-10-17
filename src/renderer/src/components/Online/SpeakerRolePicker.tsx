@@ -10,7 +10,6 @@ import {
 import { useDspStore, type SpeakerRole } from '../../hooks/useDspStore'
 import { useListeningStore } from '../../hooks/useListeningStore'
 import { useThemeStore } from '../../hooks/useThemeStore'
-import { playUiTouchSound } from '../../lib/uiSounds'
 import Slider from '../Common/Slider'
 
 interface SpeakerRolePickerProps {
@@ -85,7 +84,6 @@ export const SpeakerRolePicker = memo(function SpeakerRolePicker({
   const activeColor = accentEnabled && accentColor ? accentColor : '#10b981'
 
   const handleSelectRole = (role: SpeakerRole) => {
-    playUiTouchSound()
     setSpeakerRole(role)
     if (joinedRoom?.id || hostRoom?.id) {
       void setMySpeakerRole(role, subCutoff)

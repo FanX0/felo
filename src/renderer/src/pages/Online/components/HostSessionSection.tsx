@@ -19,7 +19,8 @@ import {
   Play,
   Star,
   Trash2,
-  Music2
+  Music2,
+  Maximize2
 } from 'lucide-react'
 import type { Song } from '../../../types'
 import type { ListeningRoom } from '../../../online/types'
@@ -519,10 +520,18 @@ export default function HostSessionSection({
                   id="youtube-stage-dock"
                   className="w-full aspect-video rounded-2xl bg-black/90 border border-white/15 overflow-hidden mb-3 relative shadow-2xl flex items-center justify-center transition-all"
                 >
-                  <div className="flex flex-col items-center gap-2 text-text-muted text-xs p-4 text-center">
-                    <Radio className="h-5 w-5 text-red-500 animate-pulse" />
-                    <span className="font-semibold text-white/90">Synchronizing Live YouTube Stream...</span>
+                  <div className="flex flex-col items-center gap-2.5 text-text-muted text-xs p-6 text-center">
+                    <Radio className="h-6 w-6 text-primary animate-pulse" />
+                    <span className="font-bold text-sm text-white/95">Synchronizing Live YouTube Stream...</span>
                     <span className="text-[11px] text-text-muted">Audio and video stream in unison across all room listeners.</span>
+                    <button
+                      type="button"
+                      onClick={() => window.dispatchEvent(new CustomEvent('felo:dock-youtube-stage'))}
+                      className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all cursor-pointer border border-white/10 shadow-sm active:scale-95"
+                    >
+                      <Maximize2 className="h-3.5 w-3.5 text-primary" />
+                      <span>Dock Video into Stage</span>
+                    </button>
                   </div>
                 </div>
               )}

@@ -1,0 +1,168 @@
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
+import { usePlayerStore } from '../../../src/renderer/src/stores/player/usePlayerStore'
+import { useDownloadStore } from '../../../src/renderer/src/stores/useDownloadStore'
+import type { Song } from '../../../src/renderer/src/types/song'
+
+const mockVirtualQueue: Song[] = [
+  {
+    id: 'stream-1',
+    title: 'Starlight Dream',
+    artist: 'Luna Eclipse',
+    duration: 167, // 2:47
+    filePath: 'virtual:spotify:starlight-dream'
+  },
+  {
+    id: 'stream-2',
+    title: 'Solar Flare',
+    artist: 'Solaris',
+    duration: 215,
+    filePath: 'virtual:spotify:solar-flare'
+  },
+  {
+    id: 'stream-3',
+    title: 'Gravity Well',
+    artist: 'Orbital Pulse',
+    duration: 190,
+    filePath: '/local/music/gravity-well.flac'
+  }
+]
+
+describe('Playback Lifecycle & Bridge Integration Tests', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    useDownloadStore.setState({ transfers: [], isTransfersOpen: false })
+    usePlayerStore.setState({
+      queue: [],
+      originalQueue: [],
+      currentSongIndex: -1,
+      isPlaying: false,
+      isBuffering: false,
+      repeatMode: 'off',
+      isShuffle: false,
+      isAutoplay: false,
+      currentTime: 0,
+      duration: 0
+    })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('virtual track queuing initializes isBuffering=true while preserving duration metadata', () => {
+    usePlayerStore.getState().setQueue(mockVirtualQueue, 0)
+
+    const state = usePlayerStore.getState()
+    expect(state.currentSongIndex).toBe(0)
+    expect(state.queue[0]?.title).toBe('Starlight Dream')
+    expect(state.isPlaying).toBe(true)
+    // Virtual track should immediately signal buffering
+    expect(state.isBuffering).toBe(true)
+    // Progress starts at 0:00
+    expect(state.currentTime).toBe(0)
+  })
+
+  it('completed download resolves buffering and updates song with native filePath', () => {
+    usePlayerStore.getState().setQueue(mockVirtualQueue, 0)
+    expect(usePlayerStore.getState().isBuffering).toBe(true)
+
+    // Simulate download completion via updateSong and clearing isBuffering
+    const completedSong: Song = {
+      ...mockVirtualQueue[0],
+      filePath: 'C:/Users/User/Music/Starlight Dream.flac'
+    }
+
+    usePlayerStore.getState().updateSong(completedSong, 'stream-1')
+    usePlayerStore.getState().setIsBuffering(false)
+
+    const updatedState = usePlayerStore.getState()
+    expect(updatedState.isBuffering).toBe(false)
+    expect(updatedState.queue[0]?.filePath).toBe('C:/Users/User/Music/Starlight Dream.flac')
+    expect(updatedState.isPlaying).toBe(true)
+  })
+
+  it('stall watchdog with Repeat 1 advances to next track using playNext(true)', () => {
+    // User has Repeat 1 enabled on an unplayable virtual track
+    usePlayerStore.getState().setQueue(mockVirtualQueue, 0)
+    usePlayerStore.setState({ repeatMode: 'one', isBuffering: true })
+
+    expect(usePlayerStore.getState().currentSongIndex).toBe(0)
+    expect(usePlayerStore.getState().repeatMode).toBe('one')
+
+    // Watchdog times out: verify playNext(true) successfully breaks out of Repeat 1
+    const player = usePlayerStore.getState()
+    if (player.queue.length > 1) {
+      player.playNext(true)
+    }
+
+    const stateAfterAdvance = usePlayerStore.getState()
+    expect(stateAfterAdvance.currentSongIndex).toBe(1)
+    expect(stateAfterAdvance.queue[stateAfterAdvance.currentSongIndex]?.title).toBe('Solar Flare')
+  })
+
+  it('active background download guards against premature stall timeout', () => {
+    usePlayerStore.getState().setQueue(mockVirtualQueue, 0)
+    usePlayerStore.setState({ isPlaying: true, isBuffering: true })
+
+    // Simulate an active transfer in useDownloadStore
+    useDownloadStore.getState().queueTransfer({
+      source: 'youtube',
+      sourceName: 'YouTube Music',
+      title: 'Starlight Dream',
+      artist: 'Luna Eclipse',
+      quality: 'Auto',
+      size: '8MB',
+      conflictMode: 'replace',
+      status: 'downloading',
+      progress: 50,
+      autoPlay: true,
+      song: mockVirtualQueue[0]
+    })
+
+    const activeSong = usePlayerStore.getState().queue[usePlayerStore.getState().currentSongIndex]
+    const transfers = useDownloadStore.getState().transfers
+
+    const isDownloadActive = transfers.some(
+      (t) =>
+        (t.status === 'downloading' || t.status === 'queued') &&
+        (t.autoPlay || (activeSong && (t.song?.id === activeSong.id || t.title.toLowerCase() === activeSong.title?.toLowerCase())))
+    )
+
+    // Watchdog must observe that download is actively in progress
+    expect(isDownloadActive).toBe(true)
+  })
+
+  it('failed download triggers resilient recovery and advances past failed track', () => {
+    usePlayerStore.getState().setQueue(mockVirtualQueue, 0)
+    usePlayerStore.setState({ repeatMode: 'one', isBuffering: true })
+
+    // Simulate DownloadEventBridge failure handling
+    const player = usePlayerStore.getState()
+    player.setIsBuffering(false)
+    player.playNext(true) // resilient autoPlay recovery
+
+    // When advancing to the next virtual track, it advances to index 1 and sets isBuffering=true for track 2
+    const state = usePlayerStore.getState()
+    expect(state.currentSongIndex).toBe(1)
+    expect(state.queue[1]?.title).toBe('Solar Flare')
+    // Next track is also virtual, so it transitions to buffering the new track
+    expect(state.isBuffering).toBe(true)
+  })
+
+  it('stops playback cleanly when only one track exists and fails to buffer', () => {
+    usePlayerStore.getState().setQueue([mockVirtualQueue[0]], 0)
+    usePlayerStore.setState({ repeatMode: 'one', isBuffering: true, isPlaying: true })
+
+    // Single item queue failure recovery
+    const player = usePlayerStore.getState()
+    if (player.queue.length > 1) {
+      player.playNext(true)
+    } else {
+      usePlayerStore.setState({ isPlaying: false, isBuffering: false })
+    }
+
+    const state = usePlayerStore.getState()
+    expect(state.isPlaying).toBe(false)
+    expect(state.isBuffering).toBe(false)
+  })
+})

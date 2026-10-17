@@ -26,6 +26,7 @@ interface PlaylistSongMenuProps {
   onDownloadTrack: (song: Song) => void
   onChooseSource: (song: Song) => void
   onRemove: (songId: string) => void
+  onRemoveFromLibrary?: (song: Song) => void
 }
 
 export function PlaylistSongMenu({
@@ -38,7 +39,8 @@ export function PlaylistSongMenu({
   onShowCredits,
   onDownloadTrack,
   onChooseSource,
-  onRemove
+  onRemove,
+  onRemoveFromLibrary
 }: PlaylistSongMenuProps) {
   const navigate = useNavigate()
 
@@ -228,6 +230,20 @@ export function PlaylistSongMenu({
         <Trash2 className="h-4 w-4 fill-current" />
         <span>Remove from playlist</span>
       </button>
+
+      {onRemoveFromLibrary && (
+        <button
+          type="button"
+          onClick={() => {
+            onRemoveFromLibrary(song)
+            onClose()
+          }}
+          className="flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-sm text-danger transition-colors hover:bg-danger/10 cursor-pointer"
+        >
+          <Trash2 className="h-4 w-4 fill-current" />
+          <span>Remove from Library</span>
+        </button>
+      )}
     </div>,
     document.body
   )

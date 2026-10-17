@@ -623,16 +623,19 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
   }
 
   const handleRemoveSong = async (song: Song) => {
+    setSongs((currentSongs) => currentSongs.filter((item) => item.id !== song.id))
+    setSelectedSongIds((prev) => {
+      const next = new Set(prev)
+      next.delete(song.id)
+      return next
+    })
     try {
       await window.api?.removeSong(song.id)
-      setSongs((currentSongs) => currentSongs.filter((item) => item.id !== song.id))
-      setSelectedSongIds((prev) => {
-        const next = new Set(prev)
-        next.delete(song.id)
-        return next
-      })
+      window.dispatchEvent(new CustomEvent('felo:library-updated'))
+      window.dispatchEvent(new CustomEvent('fanxmusic:library-updated'))
     } catch (err) {
       console.error('Failed to remove song:', err)
+      void loadSongs()
     }
   }
 

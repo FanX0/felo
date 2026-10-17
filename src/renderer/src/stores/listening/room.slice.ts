@@ -42,7 +42,25 @@ export const createRoomSlice: StateCreator<
 
   setLiveFriendRooms: (liveFriendRooms) => set({ liveFriendRooms }),
   setHostRoom: (hostRoom) => set({ hostRoom }),
-  setJoinedRoom: (joinedRoom) => set({ joinedRoom }),
+  setJoinedRoom: (joinedRoom) =>
+    set((state) => {
+      if (!joinedRoom) return { joinedRoom: null }
+      const prev = state.joinedRoom
+      const effectiveQueue =
+        Array.isArray(joinedRoom.queue) && joinedRoom.queue.length > 0
+          ? joinedRoom.queue
+          : (prev?.queue && prev.queue.length > 0 ? prev.queue : [])
+      const effectiveSong = joinedRoom.song || prev?.song || null
+
+      return {
+        joinedRoom: {
+          ...(prev || {}),
+          ...joinedRoom,
+          queue: effectiveQueue,
+          song: effectiveSong
+        }
+      }
+    }),
   setMemberCount: (memberCount) => set({ memberCount }),
   setError: (error) => set({ error }),
   setMyRole: (myRole) => set({ myRole }),
@@ -232,14 +250,18 @@ export const createRoomSlice: StateCreator<
     }
 
     const joinedRoom = get().joinedRoom
-    if (!forceNew && (get().isJoiningRoom || (joinedRoom && joinedRoom.host_id !== user.id))) {
+    if (get().isJoiningRoom) {
       setEnsureLock(false)
       return null
     }
 
     if (joinedRoom && joinedRoom.host_id !== user.id) {
-      setEnsureLock(false)
-      return null
+      if (forceNew) {
+        await get().leaveJoinedRoom()
+      } else {
+        setEnsureLock(false)
+        return null
+      }
     }
 
     const playerState = usePlayerStore.getState()
@@ -312,32 +334,19 @@ export const createRoomSlice: StateCreator<
 
         if (!updateError && updatedRoom && updatedRoom.is_active) {
           activeRoom = updatedRoom as ListeningRoom
-        } else {
-          // If the room no longer exists or is inactive in Supabase, clear local state
-          console.warn('[ensureHostRoom] Host room update failed or inactive in database:', updateError)
+        } else if (updatedRoom && !updatedRoom.is_active) {
+          console.warn('[ensureHostRoom] Host room was marked inactive in database')
           set({ hostRoom: null, hostRoomStopped: true })
+        } else if (updateError) {
+          console.warn('[ensureHostRoom] Host room heartbeat update network blip, preserving existing room:', updateError)
+          activeRoom = existingRoom
         }
       }
 
-      // 2. If no active room in memory and forceNew is false, check Supabase to see if user has an active room
-      if (!activeRoom && !forceNew) {
-        const { data: remoteRoom, error: remoteError } = await supabase
-          .from('listening_rooms')
-          .select('*')
-          .eq('host_id', user.id)
-          .eq('is_active', true)
-          .order('updated_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-
-        if (!remoteError && remoteRoom && remoteRoom.is_active) {
-          activeRoom = remoteRoom as ListeningRoom
-        }
-      }
-
-      // 3. If forceNew is false and no active room exists: DO NOT AUTO-CREATE!
-      // Return null so the first login and passive navigation stay in the Lobby for manual creation.
-      if (!activeRoom && !forceNew) {
+      // 2. If forceNew is false and there is no active host room in memory:
+      // DO NOT AUTO-CREATE OR AUTO-RESURRECT REMOTE ROOMS!
+      // Rooms must be created manually by the user clicking "Create Room Now".
+      if (!existingRoom && !forceNew) {
         setEnsureLock(false)
         return null
       }
@@ -376,6 +385,29 @@ export const createRoomSlice: StateCreator<
             createdRoom = newRoom
             break
           }
+
+          // Fallback if schema does not support optional columns
+          if (createError?.code === '42703' || createError?.message?.includes('column')) {
+            const { data: fallbackRoom, error: fbError } = await supabase
+              .from('listening_rooms')
+              .insert({
+                host_id: user.id,
+                code,
+                name: `${profile?.display_name || user.email?.split('@')[0] || 'Friend'}'s Room`,
+                is_active: true,
+                is_playing: playerState.isPlaying,
+                position_seconds: Math.round(livePosition),
+                song: effectiveSong
+              })
+              .select('*')
+              .single()
+
+            if (!fbError && fallbackRoom) {
+              createdRoom = fallbackRoom
+              break
+            }
+          }
+
           lastError = createError
           console.warn(`[ensureHostRoom] Insert attempt ${i + 1} failed:`, createError)
           code = makeCode()
@@ -389,7 +421,7 @@ export const createRoomSlice: StateCreator<
 
       const currentSpeakerRole = useDspStore.getState().speakerRole || 'center'
       const currentSubCutoff = useDspStore.getState().subCutoff || 120
-      await supabase
+      const { error: upsertErr } = await supabase
         .from('listening_room_members')
         .upsert(
           {
@@ -402,13 +434,22 @@ export const createRoomSlice: StateCreator<
           { onConflict: 'room_id,user_id' }
         )
 
+      if (upsertErr) {
+        console.warn('[ensureHostRoom] Member upsert fallback:', upsertErr.message)
+        await supabase
+          .from('listening_room_members')
+          .upsert(
+            {
+              room_id: activeRoom.id,
+              user_id: user.id
+            },
+            { onConflict: 'room_id,user_id' }
+          )
+      }
+
       set({ hostRoom: activeRoom, hostRoomStopped: false, error: null, myRole: 'host' })
       void get().refreshMemberCount(activeRoom.id)
       void get().fetchMembers(activeRoom.id)
-
-      if (!_activeAudioHost && !get().isDeviceAudioSharing) {
-        void get().startAutoTrackStreaming()
-      }
 
       return activeRoom
     } catch (err: any) {
@@ -424,7 +465,7 @@ export const createRoomSlice: StateCreator<
     const user = useOnlineStore.getState().user
     if (!user) throw new Error('You must be signed in to listen along with a friend.')
 
-    set({ isLoading: true, isJoiningRoom: true, error: null, syncStatus: 'buffering', hostRoom: null, hostRoomStopped: true })
+    set({ isLoading: true, isJoiningRoom: true, error: null, syncStatus: 'buffering' })
     const supabase = getSupabase()
 
     try {
@@ -469,62 +510,7 @@ export const createRoomSlice: StateCreator<
         throw new Error('This friend is not in an active party room right now.')
       }
 
-      const prevJoined = get().joinedRoom
-      if (prevJoined && prevJoined.id !== targetRoom.id) {
-        get().cleanupOnLeave()
-        void supabase
-          .from('listening_room_members')
-          .delete()
-          .eq('room_id', prevJoined.id)
-          .eq('user_id', user.id)
-      }
-
-      const currentHostId = get().hostRoom?.id
-      if (currentHostId) {
-        await supabase
-          .from('listening_rooms')
-          .update({ is_active: false, is_playing: false })
-          .eq('id', currentHostId)
-          .eq('host_id', user.id)
-      }
-
-      const currentSpeakerRole = useDspStore.getState().speakerRole || 'center'
-      const currentSubCutoff = useDspStore.getState().subCutoff || 120
-      await supabase
-        .from('listening_room_members')
-        .upsert(
-          {
-            room_id: targetRoom.id,
-            user_id: user.id,
-            speaker_role: currentSpeakerRole,
-            sub_cutoff: currentSubCutoff
-          },
-          { onConflict: 'room_id,user_id', ignoreDuplicates: true }
-        )
-
-      const { data: memberData } = await supabase
-        .from('listening_room_members')
-        .select('role')
-        .eq('room_id', targetRoom.id)
-        .eq('user_id', user.id)
-        .maybeSingle()
-
-      const assignedRole = (memberData?.role as RoomMemberRole) || 'listener'
-
-      set({
-        joinedRoom: targetRoom as ListeningRoom,
-        hostRoom: null,
-        hostRoomStopped: true,
-        lastHostUpdate: Date.now(),
-        myRole: assignedRole
-      })
-      useConnectedDeviceStore.getState().setDevicePlaybackMode('local')
-      useConnectedDeviceStore.getState().claimPlayback()
-      usePlayerStore.getState().claimAudioOwnership()
-      await get().handleHostSongChange(targetRoom as ListeningRoom)
-      void get().refreshMemberCount(targetRoom.id)
-      void get().fetchMembers(targetRoom.id)
-      return targetRoom as ListeningRoom
+      return await get().joinRoomById(targetRoom.id)
     } catch (err: any) {
       set({ syncStatus: 'idle' })
       throw err
@@ -537,7 +523,20 @@ export const createRoomSlice: StateCreator<
     const user = useOnlineStore.getState().user
     if (!user) throw new Error('You must be signed in to join a room.')
 
-    set({ isLoading: true, isJoiningRoom: true, error: null, syncStatus: 'buffering', hostRoom: null, hostRoomStopped: true })
+    // 1. Check if already inside this room
+    const currentJoined = get().joinedRoom
+    if (currentJoined && currentJoined.id === roomId && currentJoined.is_active) {
+      return currentJoined
+    }
+    const currentHost = get().hostRoom
+    if (currentHost && currentHost.id === roomId && currentHost.is_active) {
+      return currentHost
+    }
+
+    const prevHostId = currentHost?.id
+    const prevJoinedId = currentJoined?.id
+
+    set({ isLoading: true, isJoiningRoom: true, error: null, syncStatus: 'buffering' })
     const supabase = getSupabase()
 
     try {
@@ -552,23 +551,29 @@ export const createRoomSlice: StateCreator<
       if (!targetRoom) throw new Error('This listening session is no longer active.')
 
       if (targetRoom.host_id !== user.id) {
-        const prevJoined = get().joinedRoom
-        if (prevJoined && prevJoined.id !== targetRoom.id) {
+        if (prevJoinedId && prevJoinedId !== targetRoom.id) {
           get().cleanupOnLeave()
           void supabase
             .from('listening_room_members')
             .delete()
-            .eq('room_id', prevJoined.id)
+            .eq('room_id', prevJoinedId)
             .eq('user_id', user.id)
         }
 
-        const currentHostId = get().hostRoom?.id
-        if (currentHostId) {
+        // Cleanly deactivate any previous active host room owned by this user
+        if (prevHostId && prevHostId !== targetRoom.id) {
           await supabase
             .from('listening_rooms')
-            .update({ is_active: false, is_playing: false })
-            .eq('id', currentHostId)
+            .update({ is_active: false, is_playing: false, updated_at: new Date().toISOString() })
+            .eq('id', prevHostId)
             .eq('host_id', user.id)
+        } else {
+          await supabase
+            .from('listening_rooms')
+            .update({ is_active: false, is_playing: false, updated_at: new Date().toISOString() })
+            .eq('host_id', user.id)
+            .eq('is_active', true)
+            .neq('id', targetRoom.id)
         }
 
         const currentSpeakerRole = useDspStore.getState().speakerRole || 'center'
@@ -621,6 +626,7 @@ export const createRoomSlice: StateCreator<
         useConnectedDeviceStore.getState().setDevicePlaybackMode('local')
         useConnectedDeviceStore.getState().claimPlayback()
         usePlayerStore.getState().claimAudioOwnership()
+        usePlayerStore.setState({ isAudioActive: true })
         await get().handleHostSongChange(targetRoom as ListeningRoom)
       } else {
         set({ hostRoom: targetRoom as ListeningRoom, joinedRoom: null, hostRoomStopped: false, syncStatus: 'idle', myRole: 'host' })
@@ -644,7 +650,17 @@ export const createRoomSlice: StateCreator<
     const user = useOnlineStore.getState().user
     if (!user) throw new Error('You must be signed in to join a room.')
 
-    set({ isLoading: true, isJoiningRoom: true, error: null, syncStatus: 'buffering', hostRoom: null, hostRoomStopped: true })
+    // 1. Check if already inside this room
+    const currentJoined = get().joinedRoom
+    if (currentJoined && currentJoined.code === cleanCode && currentJoined.is_active) {
+      return currentJoined
+    }
+    const currentHost = get().hostRoom
+    if (currentHost && currentHost.code === cleanCode && currentHost.is_active) {
+      return currentHost
+    }
+
+    set({ isLoading: true, isJoiningRoom: true, error: null, syncStatus: 'buffering' })
     const supabase = getSupabase()
 
     try {
@@ -658,86 +674,7 @@ export const createRoomSlice: StateCreator<
       if (findError) throw findError
       if (!targetRoom) throw new Error(`No active room found with code "${cleanCode}".`)
 
-      if (targetRoom.host_id !== user.id) {
-        const prevJoined = get().joinedRoom
-        if (prevJoined && prevJoined.id !== targetRoom.id) {
-          get().cleanupOnLeave()
-          void supabase
-            .from('listening_room_members')
-            .delete()
-            .eq('room_id', prevJoined.id)
-            .eq('user_id', user.id)
-        }
-
-        const currentHostId = get().hostRoom?.id
-        if (currentHostId) {
-          await supabase
-            .from('listening_rooms')
-            .update({ is_active: false, is_playing: false })
-            .eq('id', currentHostId)
-            .eq('host_id', user.id)
-            .neq('id', targetRoom.id)
-        }
-
-        const currentSpeakerRole = useDspStore.getState().speakerRole || 'center'
-        const currentSubCutoff = useDspStore.getState().subCutoff || 120
-        const { error: memberError } = await supabase
-          .from('listening_room_members')
-          .upsert(
-            {
-              room_id: targetRoom.id,
-              user_id: user.id,
-              speaker_role: currentSpeakerRole,
-              sub_cutoff: currentSubCutoff
-            },
-            { onConflict: 'room_id,user_id', ignoreDuplicates: true }
-          )
-
-        if (memberError) {
-          console.warn('[joinRoomByCode] Member upsert with speaker_role failed, trying fallback:', memberError.message)
-          const { error: fallbackError } = await supabase
-            .from('listening_room_members')
-            .upsert(
-              {
-                room_id: targetRoom.id,
-                user_id: user.id
-              },
-              { onConflict: 'room_id,user_id', ignoreDuplicates: true }
-            )
-          if (fallbackError) {
-            console.warn('[joinRoomByCode] Member upsert fallback notice:', fallbackError.message)
-          }
-        }
-
-        const { data: memberData } = await supabase
-          .from('listening_room_members')
-          .select('role')
-          .eq('room_id', targetRoom.id)
-          .eq('user_id', user.id)
-          .maybeSingle()
-
-        const assignedRole = (memberData?.role as RoomMemberRole) || 'listener'
-
-        set({
-          joinedRoom: targetRoom as ListeningRoom,
-          hostRoom: null,
-          hostRoomStopped: true,
-          lastHostUpdate: Date.now(),
-          myRole: assignedRole
-        })
-        playParticipantJoinSound()
-        useConnectedDeviceStore.getState().setDevicePlaybackMode('local')
-        useConnectedDeviceStore.getState().claimPlayback()
-        usePlayerStore.getState().claimAudioOwnership()
-        usePlayerStore.setState({ isAudioActive: true })
-        await get().handleHostSongChange(targetRoom as ListeningRoom)
-      } else {
-        set({ hostRoom: targetRoom as ListeningRoom, joinedRoom: null, hostRoomStopped: false, syncStatus: 'idle', myRole: 'host' })
-      }
-
-      void get().refreshMemberCount(targetRoom.id)
-      void get().fetchMembers(targetRoom.id)
-      return targetRoom as ListeningRoom
+      return await get().joinRoomById(targetRoom.id)
     } catch (err: any) {
       set({ syncStatus: 'idle' })
       throw err
@@ -784,15 +721,20 @@ export const createRoomSlice: StateCreator<
     if (!user) return
 
     try {
-      const currentHostId = get().hostRoom?.id
-      if (currentHostId) {
-        await getSupabase()
-          .from('listening_rooms')
-          .update({ is_active: false, is_playing: false, updated_at: new Date().toISOString() })
-          .eq('id', currentHostId)
-          .eq('host_id', user.id)
+      const supabase = getSupabase()
+      const currentHostRoom = get().hostRoom
+      if (currentHostRoom?.id) {
+        await supabase
+          .from('listening_room_members')
+          .delete()
+          .eq('room_id', currentHostRoom.id)
       }
-      set({ hostRoom: null, hostRoomStopped: true })
+      await supabase
+        .from('listening_rooms')
+        .update({ is_active: false, is_playing: false, updated_at: new Date().toISOString() })
+        .eq('host_id', user.id)
+        .eq('is_active', true)
+      set({ hostRoom: null, hostRoomStopped: true, myRole: null })
     } catch {
       // best effort cleanup during logout/unmount
     }

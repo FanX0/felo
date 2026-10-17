@@ -114,6 +114,18 @@ export function extractYouTubeVideoId(input?: string | null): string | null {
 
 export function isYouTubeSong(song?: any | null): boolean {
   if (!song) return false
+  // A song that has a real local file path on disk or memory blob is NEVER played via YouTube
+  if (
+    song.filePath &&
+    !song.filePath.startsWith('virtual:') &&
+    !/^https?:/i.test(song.filePath) &&
+    !/youtube\.com|youtu\.be/i.test(song.filePath)
+  ) {
+    return false
+  }
+  if (song.filePath && /^(blob:|data:)/i.test(song.filePath)) return false
+  if (song.audioUrl && /^(blob:|data:)/i.test(song.audioUrl)) return false
+
   if (song.isYouTube || song.streamType === 'youtube') return true
   if (typeof song.id === 'string' && song.id.startsWith('yt-')) return true
   const audioUrl = song.audioUrl || song.filePath || ''

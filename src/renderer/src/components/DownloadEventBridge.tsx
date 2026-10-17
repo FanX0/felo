@@ -79,7 +79,7 @@ export default function DownloadEventBridge(): null {
               if (player.isBuffering) {
                 player.setIsBuffering(false)
               }
-              if (transfer?.autoPlay || player.isPlaying) {
+              if (transfer?.autoPlay) {
                 player.claimAudioOwnership()
                 player.setIsPlaying(true)
               }
@@ -101,7 +101,7 @@ export default function DownloadEventBridge(): null {
                   if (player.isBuffering) {
                     player.setIsBuffering(false)
                   }
-                  if (transfer?.autoPlay || player.isPlaying) {
+                  if (transfer?.autoPlay) {
                     player.claimAudioOwnership()
                     player.setIsPlaying(true)
                   }
@@ -110,13 +110,13 @@ export default function DownloadEventBridge(): null {
                 player.enqueueSong(completedSong)
               } else if (transfer?.playAction === 'play_next') {
                 player.enqueueSongNext(completedSong)
-              } else if (transfer?.playAction === 'play_now' || transfer?.autoPlay) {
+              } else if (transfer?.playAction === 'play_now') {
                 if (player.queue.length === 0) {
                   player.setQueue([completedSong], 0)
                 } else {
                   const currentActive = player.queue[player.currentSongIndex]
                   const isCurrentVirtual = !currentActive?.filePath || currentActive.filePath.startsWith('virtual:')
-                  if (isCurrentVirtual && player.isBuffering && transfer?.autoPlay) {
+                  if (isCurrentVirtual && player.isBuffering) {
                     // Update the active track in-place rather than wiping the user's queue
                     player.updateSong(completedSong, currentActive?.id)
                     player.setIsBuffering(false)
@@ -163,7 +163,7 @@ export default function DownloadEventBridge(): null {
           const isVirtual = !activeSong?.filePath || activeSong.filePath.startsWith('virtual:')
           if (player.isBuffering || isVirtual) {
             player.setIsBuffering(false)
-            player.playNext()
+            player.playNext(true)
           }
         }
       }

@@ -28,7 +28,8 @@ if (process.platform === 'win32') {
 // Register privileged schemes before app ready
 registerMediaScheme()
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock()
+const hasSingleInstanceLock =
+  process.env.NODE_ENV === 'test' || app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) {
   app.quit()
 } else {
@@ -75,10 +76,12 @@ app.whenReady().then(() => {
   // Register display media request handler for system audio loopback capture
   session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
     desktopCapturer
-      .getSources({ types: ['screen'] })
+      .getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 }, fetchWindowIcons: false })
       .then((sources) => {
         if (sources.length > 0) {
-          callback({ video: sources[0], audio: 'loopback' })
+          // On Windows, audio: 'loopback' enables full WASAPI desktop audio broadcast
+          const isWindows = process.platform === 'win32'
+          callback({ video: sources[0], audio: isWindows ? 'loopback' : undefined })
         } else {
           callback({})
         }
@@ -88,6 +91,42 @@ app.whenReady().then(() => {
         callback({})
       })
   })
+
+  // Explicitly approve display-capture and audio media permissions
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    if ((permission as string) === 'display-capture' || permission === 'media') {
+      callback(true)
+      return
+    }
+    callback(false)
+  })
+
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
+    if ((permission as string) === 'display-capture' || permission === 'media') {
+      return true
+    }
+    return false
+  })
+
+  // Ensure YouTube iframe embeds work seamlessly in Electron without origin/referer restrictions
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ['*://*.youtube.com/*', '*://*.youtube-nocookie.com/*'] },
+    (details, callback) => {
+      details.requestHeaders['Referer'] = 'https://www.youtube.com/'
+      details.requestHeaders['Origin'] = 'https://www.youtube.com'
+      callback({ cancel: false, requestHeaders: details.requestHeaders })
+    }
+  )
+
+  session.defaultSession.webRequest.onHeadersReceived(
+    { urls: ['*://*.youtube.com/*', '*://*.youtube-nocookie.com/*'] },
+    (details, callback) => {
+      const responseHeaders = { ...details.responseHeaders }
+      delete responseHeaders['x-frame-options']
+      delete responseHeaders['X-Frame-Options']
+      callback({ cancel: false, responseHeaders })
+    }
+  )
 
   // Register media:// custom protocol
   registerMediaProtocol()

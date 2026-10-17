@@ -19,7 +19,7 @@ import { SettingRow } from '../components/SettingRow'
 import { SettingsSection } from '../components/SettingsSection'
 import DiscordIcon from '../../../components/Common/DiscordIcon'
 import musicPresencePreview from '../../../assets/music-presence-preview.png'
-import { FELO_DISCORD_BOT_INVITE_URL } from '../../../lib/supportConfig'
+import { FELO_DISCORD_BOT_INVITE_URL, DEFAULT_SUPPORT_CONFIG } from '../../../lib/supportConfig'
 import type { DiscordBinding, PresenceStatus } from '../types'
 
 export function DiscordSection() {
@@ -603,13 +603,13 @@ export function DiscordSection() {
               <ExternalLink className="w-3.5 h-3.5 opacity-80" />
             </a>
             <a
-              href="https://discord.gg/K4We3eBqQ"
+              href={DEFAULT_SUPPORT_CONFIG.discordInvite}
               target="_blank"
               rel="noreferrer"
               onClick={(e) => {
                 if (window.api?.openExternal) {
                   e.preventDefault()
-                  void window.api.openExternal('https://discord.gg/K4We3eBqQ')
+                  void window.api.openExternal(DEFAULT_SUPPORT_CONFIG.discordInvite)
                 }
               }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface border border-border/80 text-xs font-semibold text-text hover:bg-hover transition-colors cursor-pointer"
@@ -676,7 +676,7 @@ export function DiscordSection() {
               ) : (
                 <button
                   type="button"
-                  onClick={() => void ensureHostRoom(true)}
+                  onClick={() => void ensureHostRoom(true, true)}
                   className="px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-bold transition-all hover:bg-primary-hover cursor-pointer shadow-sm active:scale-95"
                 >
                   Generate Code

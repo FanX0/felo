@@ -130,8 +130,8 @@ export function AudioSection() {
         <Toggle enabled={normalizeVolume} onChange={setNormalizeVolume} />
       </SettingRow>
       <SettingRow
-        label="Interface Sound Effects"
-        hint="Play subtle micro-transient acoustic clicks on button interactions."
+        label="Sound Effects"
+        hint="Play audio alerts for room participants, chat messages, and notifications."
       >
         <Toggle enabled={uiSoundsEnabled} onChange={handleToggleUiSounds} />
       </SettingRow>

@@ -166,7 +166,7 @@ export function PlaylistDetailHeader({
               title={
                 isDownloadingMissing
                   ? 'Click to stop downloading missing tracks'
-                  : `Download ${missingCount} missing tracks 1 by 1`
+                  : `Download all ${missingCount} missing tracks to library`
               }
               className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-bold shadow-md transition-all cursor-pointer ${
                 isDownloadingMissing
