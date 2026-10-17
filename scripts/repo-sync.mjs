@@ -98,9 +98,9 @@ function syncPublic(message) {
     run('git checkout clean-main')
   }
 
-  // Pull latest updates from backup-full into clean-main working tree
+  // Pull latest updates from backup-full into clean-main working tree, explicitly excluding proprietary paths
   console.log('Syncing clean codebase from backup-full...')
-  run('git checkout backup-full -- .')
+  run('git checkout backup-full -- . ":!src/main/providers" ":!resources/providers" ":!README.private.md"')
 
   // Purge any proprietary files from working tree and staging
   const forbiddenPaths = ['src/main/providers', 'resources/providers', 'README.private.md']
@@ -110,6 +110,8 @@ function syncPublic(message) {
       console.log(`Purging ${relPath} from public branch...`)
       fs.rmSync(fullPath, { recursive: true, force: true })
     }
+    runCapture(`git rm -rf --cached --ignore-unmatch "${relPath}"`)
+    runCapture(`git reset HEAD -- "${relPath}"`)
   }
 
   // 1. Pre-flight Security Audit
