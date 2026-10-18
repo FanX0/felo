@@ -104,10 +104,10 @@ export const createAudioBucketSlice: StateCreator<
     const updatedQueue = [...currentQueue, ...newSongs]
 
     if (currentQueue.length === 0) {
-      player.setQueue(updatedQueue, 0)
+      player.setQueue(updatedQueue, 0, undefined, { isRoomSync: true })
       player.setIsPlaying(true)
     } else {
-      player.setQueue(updatedQueue, player.currentSongIndex)
+      player.setQueue(updatedQueue, player.currentSongIndex, undefined, { isRoomSync: true })
     }
 
     const hostRoom = get().hostRoom
@@ -183,7 +183,14 @@ export const createAudioBucketSlice: StateCreator<
     }
   },
 
-  addYouTubeTrackToQueue: async (videoId: string, title?: string, channel?: string, duration?: number, isPriority?: boolean) => {
+  addYouTubeTrackToQueue: async (
+    videoId: string,
+    title?: string,
+    channel?: string,
+    duration?: number,
+    isPriority?: boolean,
+    playNow?: boolean
+  ) => {
     if (!videoId) return
     const cleanTitle = title?.trim() || 'YouTube Track'
     const cleanArtist = channel?.trim() || 'YouTube'
@@ -202,26 +209,44 @@ export const createAudioBucketSlice: StateCreator<
       audioUrl: ytUrl,
       filePath: ytUrl,
       isPriority: Boolean(isPriority),
-      isOnline: true
-    }
+      isOnline: true,
+      isYouTube: true,
+      streamType: 'youtube',
+      videoId: videoId
+    } as Song
 
     const player = usePlayerStore.getState()
     const currentQueue = [...player.queue]
     let updatedQueue: Song[]
+    let targetIndex = player.currentSongIndex
 
-    if (isPriority && currentQueue.length > 0) {
+    if (playNow) {
+      if (currentQueue.length === 0) {
+        updatedQueue = [song]
+        targetIndex = 0
+      } else {
+        const insertIdx = Math.max(0, player.currentSongIndex + 1)
+        updatedQueue = [...currentQueue]
+        updatedQueue.splice(insertIdx, 0, song)
+        targetIndex = insertIdx
+      }
+      player.setQueue(updatedQueue, targetIndex, undefined, { isRoomSync: true })
+      player.claimAudioOwnership()
+      player.setIsPlaying(true)
+    } else if (isPriority && currentQueue.length > 0) {
       const insertIdx = Math.max(0, player.currentSongIndex + 1)
       updatedQueue = [...currentQueue]
       updatedQueue.splice(insertIdx, 0, song)
+      player.setQueue(updatedQueue, player.currentSongIndex, undefined, { isRoomSync: true })
     } else {
       updatedQueue = [...currentQueue, song]
-    }
-
-    if (currentQueue.length === 0) {
-      player.setQueue(updatedQueue, 0)
-      player.setIsPlaying(true)
-    } else {
-      player.setQueue(updatedQueue, player.currentSongIndex)
+      if (currentQueue.length === 0) {
+        player.setQueue(updatedQueue, 0, undefined, { isRoomSync: true })
+        player.claimAudioOwnership()
+        player.setIsPlaying(true)
+      } else {
+        player.setQueue(updatedQueue, player.currentSongIndex, undefined, { isRoomSync: true })
+      }
     }
 
     const hostRoom = get().hostRoom
@@ -229,7 +254,7 @@ export const createAudioBucketSlice: StateCreator<
 
     if (hostRoom?.id) {
       const sharedQueue = updatedQueue.map((s) => toSharedSong(s))
-      const currentTrack = updatedQueue[player.currentSongIndex >= 0 ? player.currentSongIndex : 0]
+      const currentTrack = updatedQueue[playNow ? targetIndex : (player.currentSongIndex >= 0 ? player.currentSongIndex : 0)]
       const currentShared = currentTrack ? toSharedSong(currentTrack) : null
 
       await getSupabase()
@@ -237,6 +262,8 @@ export const createAudioBucketSlice: StateCreator<
         .update({
           queue: sharedQueue,
           song: currentShared,
+          is_playing: playNow ? true : hostRoom.is_playing,
+          position_seconds: playNow ? 0 : hostRoom.position_seconds,
           updated_at: new Date().toISOString()
         })
         .eq('id', hostRoom.id)
@@ -246,7 +273,8 @@ export const createAudioBucketSlice: StateCreator<
           ? {
               ...state.hostRoom,
               queue: sharedQueue,
-              song: currentShared || state.hostRoom.song
+              song: currentShared || state.hostRoom.song,
+              is_playing: playNow ? true : state.hostRoom.is_playing
             }
           : null
       }))
@@ -270,7 +298,7 @@ export const createAudioBucketSlice: StateCreator<
             audioUrl: ytUrl,
             artworkUrl: artwork,
             isPriority: Boolean(isPriority),
-            action: currentQueue.length === 0 ? 'play_now' : isPriority ? 'play_next' : 'enqueue'
+            action: playNow || currentQueue.length === 0 ? 'play_now' : isPriority ? 'play_next' : 'enqueue'
           }
         })
     }
@@ -495,7 +523,7 @@ export const createAudioBucketSlice: StateCreator<
     savePreJoinPlayerSnapshot(null)
     const player = usePlayerStore.getState()
     if (snapshot && snapshot.queue && snapshot.queue.length > 0) {
-      player.setQueue(snapshot.queue, snapshot.currentSongIndex)
+      player.setQueue(snapshot.queue, snapshot.currentSongIndex, undefined, { isRoomSync: true })
       if (snapshot.currentTime > 0) {
         player.seek(snapshot.currentTime)
         player.setCurrentTime(snapshot.currentTime)

@@ -22,6 +22,11 @@ export interface PlaybackContext {
   route?: string
 }
 
+export interface PlaybackActionOptions {
+  preservePriority?: boolean
+  isRoomSync?: boolean
+}
+
 export interface PlayerState {
   queue: Song[]
   originalQueue: Song[] // preserves original order when shuffle is on
@@ -51,17 +56,17 @@ export interface PlayerState {
     queue: Song[],
     startPlayingIndex?: number,
     context?: PlaybackContext | null,
-    options?: { preservePriority?: boolean }
+    options?: PlaybackActionOptions
   ) => void
   setPlaybackContext: (context: PlaybackContext | null) => void
   enqueueSong: (song: Song) => void
   enqueueSongNext: (song: Song) => void
   enqueueSongPriority: (song: Song) => void
   bumpSongToPriority: (index: number) => void
-  playSong: (index: number) => void
-  togglePlay: () => void
-  playNext: (manual?: boolean) => void
-  playPrevious: () => void
+  playSong: (index: number, options?: PlaybackActionOptions) => void
+  togglePlay: (options?: any) => void
+  playNext: (manual?: boolean, options?: any) => void
+  playPrevious: (options?: any) => void
   removeSongFromQueue: (songId: string) => void
   removeSongFromQueueByIndex: (index: number) => void
   reorderQueue: (fromIndex: number, toIndex: number) => void
@@ -196,7 +201,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setIsBuffering: (isBuffering) => set({ isBuffering }),
 
   setQueue: (newQueue, startPlayingIndex = 0, context, options) => {
-    if (_playbackGuard && _playbackGuard(() => get().setQueue(newQueue, startPlayingIndex, context, options))) {
+    if (!options?.isRoomSync && _playbackGuard && _playbackGuard(() => get().setQueue(newQueue, startPlayingIndex, context, options))) {
       return
     }
     if (!newQueue || newQueue.length === 0) {
@@ -415,8 +420,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     })
   },
 
-  playSong: (index) => {
-    if (_playbackGuard && _playbackGuard(() => get().playSong(index))) {
+  playSong: (index, options) => {
+    if (!options?.isRoomSync && _playbackGuard && _playbackGuard(() => get().playSong(index, options))) {
       return
     }
     const song = get().queue[index]
@@ -434,8 +439,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     })
   },
 
-  togglePlay: () => {
-    if (!get().isPlaying && _playbackGuard && _playbackGuard(() => get().togglePlay())) {
+  togglePlay: (options?: any) => {
+    const isRoomSync = Boolean(options?.isRoomSync)
+    if (!isRoomSync && !get().isPlaying && _playbackGuard && _playbackGuard(() => get().togglePlay(options))) {
       return
     }
     const { currentSongIndex, queue, isPlaying } = get()
@@ -462,8 +468,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
   },
 
-  playNext: (manual = false) => {
-    if (manual && _playbackGuard && _playbackGuard(() => get().playNext(true))) {
+  playNext: (manual = false, options?: any) => {
+    const isRoomSync = Boolean(options?.isRoomSync)
+    if (!isRoomSync && manual && _playbackGuard && _playbackGuard(() => get().playNext(true, options))) {
       return
     }
     const { currentSongIndex, queue, originalQueue, repeatMode, isShuffle } = get()
@@ -579,8 +586,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
   },
 
-  playPrevious: () => {
-    if (_playbackGuard && _playbackGuard(() => get().playPrevious())) {
+  playPrevious: (options?: any) => {
+    const isRoomSync = Boolean(options?.isRoomSync)
+    if (!isRoomSync && _playbackGuard && _playbackGuard(() => get().playPrevious(options))) {
       return
     }
     const { currentSongIndex, queue, currentTime, repeatMode } = get()

@@ -1016,7 +1016,7 @@ export default function AudioEngine() {
     setHandler('play', () => setIsPlaying(true))
     setHandler('pause', () => setIsPlaying(false))
     setHandler('stop', () => setIsPlaying(false))
-    setHandler('previoustrack', playPrevious)
+    setHandler('previoustrack', () => playPrevious())
     setHandler('nexttrack', () => playNext(true))
     setHandler('seekbackward', (details) => {
       skipTime(-(details.seekOffset || 10))
@@ -1070,6 +1070,10 @@ export default function AudioEngine() {
       if (!currentState.isBuffering) return // already resolved naturally
 
       const activeSong = currentState.queue[currentState.currentSongIndex]
+      if (isYouTubeSong(activeSong)) {
+        // YouTube playback and buffering is managed exclusively by YouTubePlayerBridge
+        return
+      }
       const playableUrl = activeSong ? resolveSongAudioUrl(activeSong) : null
 
       // Check if this song is actively being downloaded or queued by background downloader

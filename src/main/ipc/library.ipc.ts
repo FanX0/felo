@@ -3,6 +3,7 @@ import { spawn } from 'child_process'
 import path, { resolve } from 'path'
 import fs from 'fs'
 import { LibraryService } from '../services/LibraryService'
+import { findFfmpegLocation } from '../services/DownloadService'
 import { getDb } from '../database'
 import {
   validateWith,
@@ -206,20 +207,7 @@ export function registerLibraryIpc(): void {
           return { success: false, error: `File not found on disk: ${resolved}` }
         }
 
-        const homeDir = app.getPath('home')
-        const candidates = [
-          path.join(process.resourcesPath || '', 'downloader', 'bin', 'ffmpeg.exe'),
-          path.join(process.resourcesPath || '', 'downloader', 'ffmpeg.exe'),
-          path.join(homeDir, 'AppData', 'Local', 'Microsoft', 'WinGet', 'Links', 'ffmpeg.exe'),
-          'ffmpeg'
-        ]
-        let ffmpegBin = 'ffmpeg'
-        for (const cand of candidates) {
-          if (cand !== 'ffmpeg' && fs.existsSync(cand)) {
-            ffmpegBin = cand
-            break
-          }
-        }
+        const ffmpegBin = findFfmpegLocation() || 'ffmpeg'
 
         const format = options?.format === 'opus' ? 'opus' : 'mp3'
         const bitrate = options?.bitrate || '64k'

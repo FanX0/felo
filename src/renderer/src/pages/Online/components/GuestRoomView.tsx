@@ -127,9 +127,11 @@ export default function GuestRoomView({
   const displaySong = activeSubstitute || joinedRoom.song
   const songDuration = displaySong?.duration || 0
   const effectiveTime =
-    isReceivingDeviceStream || isPlaying === false || activeSubstitute == null
+    isReceivingDeviceStream
       ? syncedGuestTime
-      : (currentTime || syncedGuestTime)
+      : currentTime > 0
+        ? currentTime
+        : syncedGuestTime
   const songProgress = songDuration > 0 ? Math.min(100, (effectiveTime / songDuration) * 100) : 0
   const activeTrackKey = displaySong ? ((displaySong as any).id || (displaySong as any).localId || getSongKey(displaySong)) : ''
   const activeJit = (activeTrackKey ? jitStatus[activeTrackKey] : null) ||

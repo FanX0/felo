@@ -351,6 +351,7 @@ export class JITChunkReceiver {
   private onProgressCallback?: (trackId: string, percent: number, statusText: string) => void
   private onReadyCallback?: (trackId: string, blobUrl: string, mimeType: string) => void
   private currentBlobUrl: string | null = null
+  private watchdogTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(options?: {
     onProgress?: (trackId: string, percent: number, statusText: string) => void
@@ -358,6 +359,13 @@ export class JITChunkReceiver {
   }) {
     if (options?.onProgress) this.onProgressCallback = options.onProgress
     if (options?.onReady) this.onReadyCallback = options.onReady
+  }
+
+  private clearWatchdog(): void {
+    if (this.watchdogTimer) {
+      clearTimeout(this.watchdogTimer)
+      this.watchdogTimer = null
+    }
   }
 
   handleHeader(header: JITChunkHeader): void {
@@ -370,6 +378,7 @@ export class JITChunkReceiver {
       this.onProgressCallback?.(header.trackId, 0, 'Buffering... 0%')
     } else if (header.type === 'jit-end') {
       if (header.trackId === this.activeTrackId) {
+        this.clearWatchdog()
         this.assembleAndEmit()
       }
     } else if (header.type === 'jit-abort') {
@@ -385,17 +394,34 @@ export class JITChunkReceiver {
     this.receivedBytes += chunkData.byteLength
 
     const percent = this.totalSize > 0
-      ? Math.min(99, Math.round((this.receivedBytes / this.totalSize) * 100))
+      ? Math.min(100, Math.round((this.receivedBytes / this.totalSize) * 100))
       : 50
     this.onProgressCallback?.(trackId, percent, `Buffering... ${percent}%`)
 
-    // If all chunks received before jit-end arrived
-    if (this.totalChunks > 0 && this.chunks.size >= this.totalChunks) {
+    // If all chunks or bytes received before jit-end arrived
+    if (
+      (this.totalChunks > 0 && this.chunks.size >= this.totalChunks) ||
+      (this.totalSize > 0 && this.receivedBytes >= this.totalSize)
+    ) {
+      this.clearWatchdog()
       this.assembleAndEmit()
+      return
+    }
+
+    // Assembly stall watchdog: if >= 98% and no new chunks arrive for 2.5s, assemble available chunks
+    if (percent >= 98) {
+      this.clearWatchdog()
+      this.watchdogTimer = setTimeout(() => {
+        if (this.activeTrackId === trackId && this.chunks.size > 0 && !this.currentBlobUrl) {
+          console.warn('[JITChunkReceiver] Near-completion watchdog triggered assembly at', percent, '%')
+          this.assembleAndEmit()
+        }
+      }, 2500)
     }
   }
 
   private assembleAndEmit(): void {
+    this.clearWatchdog()
     if (!this.activeTrackId || this.chunks.size === 0) return
 
     // Order chunks by index
@@ -423,6 +449,7 @@ export class JITChunkReceiver {
   }
 
   reset(): void {
+    this.clearWatchdog()
     if (this.currentBlobUrl) {
       try {
         URL.revokeObjectURL(this.currentBlobUrl)

@@ -14,6 +14,7 @@ import { getLocalSlotPoolFile, getCachedAudioBlobUrl } from '../lib/jitAudioPipe
 
 import { useConnectedDeviceStore } from '../hooks/useConnectedDeviceStore'
 import { isElectron } from '../lib/appConfig'
+import { isYouTubeSong } from '../lib/youtubeService'
 
 export default function PlaybackStreamBridge(): null {
   const playbackTarget = useConnectedDeviceStore((s) => s.playbackTarget)
@@ -57,6 +58,13 @@ export default function PlaybackStreamBridge(): null {
 
     const currentSong = queue[currentSongIndex]
     if (!currentSong || !currentSong.title) {
+      return () => {
+        isCancelled = true
+      }
+    }
+
+    if (isYouTubeSong(currentSong)) {
+      if (isBuffering && isAudioActive) usePlayerStore.getState().setIsBuffering(false)
       return () => {
         isCancelled = true
       }
@@ -409,8 +417,9 @@ export default function PlaybackStreamBridge(): null {
     const nextSong: Song | undefined = queue[nextIndex]
     if (!nextSong || !nextSong.title) return
 
-    // If next track already has local file on disk, in RAM slot pool, cached, or is JIT track, nothing to prefetch
+    // If next track already has local file on disk, in RAM slot pool, cached, or is JIT/YouTube track, nothing to prefetch
     if (
+      isYouTubeSong(nextSong) ||
       (nextSong.filePath && !nextSong.filePath.startsWith('virtual:')) ||
       (nextSong.audioUrl && (nextSong.audioUrl.startsWith('blob:') || nextSong.audioUrl.startsWith('http'))) ||
       (nextSong.id && getLocalSlotPoolFile(nextSong.id)) ||

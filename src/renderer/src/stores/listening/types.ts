@@ -136,7 +136,14 @@ export interface AudioBucketSlice {
     totalBytes?: number
   ) => void
   addLocalFilesToQueue: (files: FileList | File[]) => Promise<void>
-  addYouTubeTrackToQueue: (videoId: string, title?: string, channel?: string, duration?: number, isPriority?: boolean) => Promise<void>
+  addYouTubeTrackToQueue: (
+    videoId: string,
+    title?: string,
+    channel?: string,
+    duration?: number,
+    isPriority?: boolean,
+    playNow?: boolean
+  ) => Promise<void>
   addLibrarySongsToQueue: (songs: Song[]) => Promise<void>
   syncPlayerQueueToRoom: () => Promise<void>
   cleanupOnLeave: () => void

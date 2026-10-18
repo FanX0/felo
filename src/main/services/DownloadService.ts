@@ -328,7 +328,7 @@ function findYtDlp(): CommandResolution {
 
 let cachedFfmpegLocation: string | undefined = undefined
 
-function findFfmpegLocation(): string | undefined {
+export function findFfmpegLocation(): string | undefined {
   if (cachedFfmpegLocation !== undefined) return cachedFfmpegLocation
 
   const homeDir = app.getPath('home')

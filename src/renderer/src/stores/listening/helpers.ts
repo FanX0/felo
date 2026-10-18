@@ -141,12 +141,23 @@ export const SUBSTITUTES_STORAGE_KEY = 'fanxmusic:listen_together:substitutes'
 export const DISCORD_PRIORITY_STORAGE_KEY = 'felo:discord-priority-enabled'
 export const MANUAL_SYNC_OFFSET_STORAGE_KEY = 'felo:listen_together:manual_sync_offset_ms'
 
+let _sessionSyncDepth = 0
 export let _isSessionSyncing = false
 export function setIsSessionSyncing(val: boolean): void {
-  _isSessionSyncing = val
+  if (val) {
+    _sessionSyncDepth = Math.max(1, _sessionSyncDepth + 1)
+    _isSessionSyncing = true
+  } else {
+    _sessionSyncDepth = Math.max(0, _sessionSyncDepth - 1)
+    _isSessionSyncing = _sessionSyncDepth > 0
+  }
+}
+export function resetSessionSync(): void {
+  _sessionSyncDepth = 0
+  _isSessionSyncing = false
 }
 export function isSessionSyncing(): boolean {
-  return _isSessionSyncing
+  return _sessionSyncDepth > 0 || _isSessionSyncing
 }
 
 export let _needsInitialSync = true

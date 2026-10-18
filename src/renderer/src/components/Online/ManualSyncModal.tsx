@@ -303,7 +303,7 @@ export const ManualSyncModal: React.FC<ManualSyncModalProps> = ({
 
               <button
                 type="button"
-                onClick={togglePlay}
+                onClick={() => togglePlay()}
                 className="w-8 h-8 rounded-full bg-primary hover:bg-primary-hover text-primary-foreground flex items-center justify-center transition-all active:scale-95 cursor-pointer shadow-sm"
                 title={isPlaying ? 'Pause playback' : 'Play audio'}
                 aria-label={isPlaying ? 'Pause' : 'Play'}

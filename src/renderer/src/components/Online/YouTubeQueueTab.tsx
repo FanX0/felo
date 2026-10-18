@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, type ReactElement } from 'react'
 import {
   Search,
   Loader2,
+  Play,
   Plus,
   Star,
   ClipboardPaste,
@@ -133,6 +134,25 @@ export default function YouTubeQueueTab({ onSongAdded }: YouTubeQueueTabProps): 
     }
   }
 
+  const handlePlayNow = async (item: YouTubeSearchResult) => {
+    setAddingId(item.id)
+    try {
+      await addYouTubeTrackToQueue(
+        item.id,
+        item.title,
+        item.artist,
+        undefined,
+        false,
+        true
+      )
+      onSongAdded?.(item.title)
+    } catch (err: any) {
+      console.warn('[YouTubeQueueTab] Play track failed:', err)
+    } finally {
+      setAddingId(null)
+    }
+  }
+
   const handleAddTrack = async (item: YouTubeSearchResult, isPriority: boolean) => {
     setAddingId(item.id)
     try {
@@ -250,31 +270,41 @@ export default function YouTubeQueueTab({ onSongAdded }: YouTubeQueueTabProps): 
                   </div>
                 </div>
 
-                {/* Action Buttons: Add Queue vs Add Priority */}
+                {/* Action Buttons: Play Now, Queue, Next */}
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     type="button"
                     disabled={isAdding}
-                    onClick={() => handleAddTrack(item, false)}
-                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold bg-surface-elevated hover:bg-hover border border-border text-text transition-all cursor-pointer disabled:opacity-50 active:scale-95"
-                    title="Add to end of queue"
+                    onClick={() => handlePlayNow(item)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold bg-primary text-primary-foreground hover:bg-primary/90 transition-all cursor-pointer disabled:opacity-50 active:scale-95 shadow-xs"
+                    title="Play now immediately"
                   >
                     {isAdding ? (
                       <Loader2 className="h-3 w-3 animate-spin" />
                     ) : (
-                      <Plus className="h-3 w-3" />
+                      <Play className="h-3 w-3 fill-current" />
                     )}
+                    <span>Play</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isAdding}
+                    onClick={() => handleAddTrack(item, false)}
+                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium bg-surface-elevated hover:bg-hover border border-border text-text transition-all cursor-pointer disabled:opacity-50 active:scale-95"
+                    title="Add to end of queue"
+                  >
+                    <Plus className="h-3 w-3" />
                     <span>Queue</span>
                   </button>
                   <button
                     type="button"
                     disabled={isAdding}
                     onClick={() => handleAddTrack(item, true)}
-                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold bg-primary text-primary-foreground hover:bg-primary/90 transition-all cursor-pointer disabled:opacity-50 active:scale-95 shadow-xs"
-                    title="Play next with priority"
+                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium bg-surface-elevated hover:bg-hover border border-border text-text-muted hover:text-text transition-all cursor-pointer disabled:opacity-50 active:scale-95"
+                    title="Play next after current track"
                   >
-                    <Star className="h-3 w-3 fill-current" />
-                    <span>Play Next</span>
+                    <Star className="h-3 w-3" />
+                    <span>Next</span>
                   </button>
                 </div>
               </div>

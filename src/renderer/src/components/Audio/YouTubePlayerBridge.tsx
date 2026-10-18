@@ -5,8 +5,8 @@ import { useListeningStore } from '../../hooks/useListeningStore'
 import {
   Minimize2,
   Maximize2,
-  Maximize,
-  Minimize,
+  PictureInPicture2,
+  ArrowDownLeft,
   Volume2,
   VolumeX,
   SkipForward,
@@ -78,7 +78,6 @@ export default function YouTubePlayerBridge(): ReactElement | null {
   const isBufferingRef = useRef(false)
 
   const [isPlayerReady, setIsPlayerReady] = useState(false)
-  const [activeVideoId, setActiveVideoId] = useState<string | null>(null)
   const [isExpanded, setIsExpanded] = useState(false)
   const [isUserFloating, setIsUserFloating] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -199,7 +198,6 @@ export default function YouTubePlayerBridge(): ReactElement | null {
       } catch {}
       setIsFallbackIframe(false)
       activeVideoIdRef.current = null
-      setActiveVideoId(null)
       registerAudioTimeProvider(null)
     }
     window.addEventListener('felo:stop-youtube', handleStopYouTube)
@@ -282,13 +280,17 @@ export default function YouTubePlayerBridge(): ReactElement | null {
           rel: 0,
           playsinline: 1,
           enablejsapi: 1,
-          iv_load_policy: 3
+          iv_load_policy: 3,
+          origin:
+            typeof window !== 'undefined' && window.location.origin.startsWith('http')
+              ? window.location.origin
+              : 'https://www.youtube.com'
         }
 
         const playerOptions: any = {
           height: '100%',
           width: '100%',
-          host: 'https://www.youtube-nocookie.com',
+          host: 'https://www.youtube.com',
           playerVars,
           events: {
             onReady: (event: any) => {
@@ -425,7 +427,6 @@ export default function YouTubePlayerBridge(): ReactElement | null {
         if (initialVid) {
           playerOptions.videoId = initialVid
           activeVideoIdRef.current = initialVid
-          setActiveVideoId(initialVid)
         }
 
         playerRef.current = new window.YT.Player(playerId, playerOptions)
@@ -451,7 +452,6 @@ export default function YouTubePlayerBridge(): ReactElement | null {
       } catch {}
       setIsFallbackIframe(false)
       activeVideoIdRef.current = null
-      setActiveVideoId(null)
       return
     }
 
@@ -461,7 +461,6 @@ export default function YouTubePlayerBridge(): ReactElement | null {
           playerRef.current.pauseVideo?.()
         } catch {}
         activeVideoIdRef.current = currentVideoId
-        setActiveVideoId(currentVideoId)
         setIsFallbackIframe(false)
         setPlayerError(null)
 
@@ -489,15 +488,19 @@ export default function YouTubePlayerBridge(): ReactElement | null {
           isSyncingRef.current = true
           if (isPlaying) {
             try {
-              playerRef.current.loadVideoById({ videoId: currentVideoId, startSeconds: startTime })
-            } catch {
               playerRef.current.loadVideoById(currentVideoId, startTime)
+            } catch {
+              try {
+                playerRef.current.loadVideoById({ videoId: currentVideoId, startSeconds: startTime })
+              } catch {}
             }
           } else {
             try {
-              playerRef.current.cueVideoById({ videoId: currentVideoId, startSeconds: startTime })
-            } catch {
               playerRef.current.cueVideoById(currentVideoId, startTime)
+            } catch {
+              try {
+                playerRef.current.cueVideoById({ videoId: currentVideoId, startSeconds: startTime })
+              } catch {}
             }
           }
           setTimeout(() => {
@@ -516,6 +519,14 @@ export default function YouTubePlayerBridge(): ReactElement | null {
         } catch (err) {
           console.warn('[YouTubePlayerBridge] Error loading video:', err)
         }
+      } else if (isPlaying) {
+        // Same video ID re-triggered to play (e.g. replay or resume)
+        try {
+          const pState = playerRef.current.getPlayerState?.()
+          if (pState !== 1 && pState !== 3) {
+            playerRef.current.playVideo?.()
+          }
+        } catch {}
       }
     } else {
       // Transitioning away from YouTube to a local file or stopping
@@ -525,7 +536,6 @@ export default function YouTubePlayerBridge(): ReactElement | null {
         playerRef.current.mute?.()
       } catch {}
       activeVideoIdRef.current = null
-      setActiveVideoId(null)
       setIsFallbackIframe(false)
     }
   }, [isPlayerReady, isCurrentYouTube, currentVideoId, isPlaying])
@@ -539,7 +549,7 @@ export default function YouTubePlayerBridge(): ReactElement | null {
   useEffect(() => {
     if (!isPlayerReady || !playerRef.current) return
 
-    if (!isCurrentYouTube || !activeVideoId) {
+    if (!isCurrentYouTube || !currentVideoId) {
       try {
         playerRef.current.pauseVideo?.()
         playerRef.current.stopVideo?.()
@@ -572,7 +582,7 @@ export default function YouTubePlayerBridge(): ReactElement | null {
     } catch (err) {
       console.warn('[YouTubePlayerBridge] Play/pause dispatch error:', err)
     }
-  }, [isPlaying, isPlayerReady, isCurrentYouTube, activeVideoId, isListener])
+  }, [isPlaying, isPlayerReady, isCurrentYouTube, currentVideoId, isListener])
 
   // 4. React to Volume Changes
   useEffect(() => {
@@ -820,6 +830,11 @@ export default function YouTubePlayerBridge(): ReactElement | null {
     <div
       aria-hidden={!isVisible}
       style={containerStyle}
+      onDoubleClick={() => {
+        if (!isFullscreen && !isDockedInStage) {
+          setIsExpanded((prev) => !prev)
+        }
+      }}
       className={cn(
         'shadow-2xl bg-black select-none group/video',
         isVisible ? 'opacity-100 pointer-events-auto' : 'pointer-events-none opacity-0',
@@ -923,55 +938,62 @@ export default function YouTubePlayerBridge(): ReactElement | null {
             </button>
           )}
 
-          {/* Dedicated FULL SCREEN Button */}
-          <button
-            type="button"
-            onClick={() => {
-              if (isFullscreen) {
-                exitFullscreen()
-              } else {
-                enterFullscreen()
-              }
-            }}
-            className={cn(
-              'flex items-center gap-1.5 rounded-xl transition-all cursor-pointer shadow-xs active:scale-95',
-              isFullscreen
-                ? 'h-8 px-2.5 sm:px-3 bg-red-600/90 hover:bg-red-600 text-white text-xs font-bold'
-                : 'p-1.5 rounded-full bg-black/60 hover:bg-black/90 text-white/80 hover:text-white border border-white/10'
-            )}
-            title={isFullscreen ? 'Exit full screen (Esc)' : 'Open Full Screen'}
-          >
-            {isFullscreen ? (
-              <>
-                <Minimize2 className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Exit Fullscreen</span>
-              </>
-            ) : (
-              <Maximize2 className="h-3.5 w-3.5" />
-            )}
-          </button>
-
-          {/* Miniplayer / Dock Toggle (only in docked mode) */}
-          {!isFullscreen && dockEl && (
-            <button
-              type="button"
-              onClick={() => setIsUserFloating(!isUserFloating)}
-              className="p-1.5 rounded-full bg-black/60 hover:bg-black/90 text-white/80 hover:text-white border border-white/10 transition-all cursor-pointer shadow-xs"
-              title={isUserFloating ? 'Dock into stage' : 'Pop out into miniplayer'}
-            >
-              {isUserFloating ? <Maximize className="h-3.5 w-3.5" /> : <Minimize className="h-3.5 w-3.5" />}
-            </button>
+          {/* Docked Mode Controls (Inside Stage) */}
+          {!isFullscreen && isDockedInStage && (
+            <>
+              <button
+                type="button"
+                onClick={() => setIsUserFloating(true)}
+                className="p-1.5 rounded-full bg-black/60 hover:bg-black/90 text-white/80 hover:text-white border border-white/10 transition-all cursor-pointer shadow-xs active:scale-95"
+                title="Pop out into miniplayer"
+              >
+                <PictureInPicture2 className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={enterFullscreen}
+                className="p-1.5 rounded-full bg-black/60 hover:bg-black/90 text-white/80 hover:text-white border border-white/10 transition-all cursor-pointer shadow-xs active:scale-95"
+                title="Open Full Screen"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+              </button>
+            </>
           )}
 
-          {/* Expand Toggle (only in floating miniplayer) */}
+          {/* Floating Miniplayer Controls */}
           {!isFullscreen && !isDockedInStage && (
+            <>
+              {dockEl && (
+                <button
+                  type="button"
+                  onClick={() => setIsUserFloating(false)}
+                  className="p-1.5 rounded-full bg-black/60 hover:bg-black/90 text-white/80 hover:text-white border border-white/10 transition-all cursor-pointer shadow-xs active:scale-95"
+                  title="Dock into stage"
+                >
+                  <ArrowDownLeft className="h-3.5 w-3.5" />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={enterFullscreen}
+                className="p-1.5 rounded-full bg-black/60 hover:bg-black/90 text-white/80 hover:text-white border border-white/10 transition-all cursor-pointer shadow-xs active:scale-95"
+                title="Open Full Screen"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
+
+          {/* Fullscreen Mode Exit Button */}
+          {isFullscreen && (
             <button
               type="button"
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="p-1.5 rounded-full bg-black/60 hover:bg-black/90 text-white/80 hover:text-white border border-white/10 transition-all cursor-pointer shadow-xs"
-              title={isExpanded ? 'Smaller miniplayer' : 'Expand miniplayer'}
+              onClick={exitFullscreen}
+              className="flex items-center gap-1.5 h-8 px-2.5 sm:px-3 bg-red-600/90 hover:bg-red-600 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs active:scale-95"
+              title="Exit full screen (Esc)"
             >
-              {isExpanded ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
+              <Minimize2 className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Exit Fullscreen</span>
             </button>
           )}
         </div>
@@ -997,7 +1019,7 @@ export default function YouTubePlayerBridge(): ReactElement | null {
           {/* Underlying YouTube Iframe Target or Direct Embed Fallback */}
           {isFallbackIframe && currentVideoId ? (
             <iframe
-              src={`https://www.youtube-nocookie.com/embed/${currentVideoId}?autoplay=1&playsinline=1&modestbranding=1&rel=0`}
+              src={`https://www.youtube.com/embed/${currentVideoId}?autoplay=1&playsinline=1&modestbranding=1&rel=0`}
               title="YouTube Video Stream"
               className="w-full h-full border-0 absolute inset-0"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"

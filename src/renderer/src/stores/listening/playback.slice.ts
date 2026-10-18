@@ -366,7 +366,7 @@ export const createRoomPlaybackSlice: StateCreator<
             targetIndex = 0
           }
         }
-        usePlayerStore.getState().setQueue(sessionQueue, targetIndex)
+        usePlayerStore.getState().setQueue(sessionQueue, targetIndex, undefined, { isRoomSync: true })
 
         const hostPos = typeof room.song?.hostPosition === 'number' ? room.song.hostPosition : room.position_seconds || 0
         const hostTimestamp = typeof room.song?.hostTimestamp === 'number' ? room.song.hostTimestamp : new Date(room.updated_at).getTime()
@@ -401,7 +401,7 @@ export const createRoomPlaybackSlice: StateCreator<
           currentQueue = [substitute, ...playerState.queue]
           subIndex = 0
         }
-        usePlayerStore.getState().setQueue(currentQueue, subIndex)
+        usePlayerStore.getState().setQueue(currentQueue, subIndex, undefined, { isRoomSync: true })
         applyInitialPlaybackState(room, substitute.id, substitute.duration || room.song?.duration || 0)
         return
       }
@@ -462,7 +462,7 @@ export const createRoomPlaybackSlice: StateCreator<
           targetIndex = 0
         }
 
-        usePlayerStore.getState().setQueue(sessionQueue, targetIndex)
+        usePlayerStore.getState().setQueue(sessionQueue, targetIndex, undefined, { isRoomSync: true })
 
         applyInitialPlaybackState(room, syncedSong.id, room.song.duration || 0)
         void get().preloadNextQueueTracks(room)
@@ -552,35 +552,6 @@ export const createRoomPlaybackSlice: StateCreator<
           }
         }
 
-        // 5. In-Memory JIT Audio Buffer Ingestion:
-        // Automatically download audio bytes into an in-RAM Blob with 90s watchdog and transient retry
-        if (!blobUrl && streamSourceUrl) {
-          try {
-            set({ syncStatus: 'buffering' })
-            const blob = await downloadRemoteAudioFileWithRetry(streamSourceUrl, {
-              trackId: isUsingPreview ? `${songId}_preview` : songId,
-              onProgress: (progress, details) => {
-                const percent = Math.min(99, Math.round(progress * 100))
-                get().setJitStatus(
-                  songId,
-                  percent,
-                  isUsingPreview ? `Fast Join Preview... ${percent}%` : `Buffering... ${percent}%`,
-                  details?.loaded,
-                  details?.total
-                )
-              }
-            })
-            if (mySyncEpoch !== getCurrentSyncEpoch()) return
-            if (blob && blob.size > 0) {
-              blobUrl = cacheAudioBlob(isUsingPreview ? `${songId}_preview` : songId, blob)
-              get().setJitStatus(songId, 100, isUsingPreview ? 'Playing (Preview)' : 'Playing (Synced)', blob.size, blob.size)
-              set({ syncStatus: 'synced' })
-            }
-          } catch (fetchErr) {
-            console.warn('[handleHostSongChange] In-RAM audio fetch failed, falling back to direct URL:', fetchErr)
-          }
-        }
-
         let directUrl = blobUrl || streamSourceUrl
 
         if (!directUrl && room.song.lanUrl && typeof window !== 'undefined') {
@@ -655,26 +626,53 @@ export const createRoomPlaybackSlice: StateCreator<
           targetIndex = 0
         }
 
-        usePlayerStore.getState().setQueue(sessionQueue, targetIndex)
-
+        // Instant Progressive Start: Set queue with { isRoomSync: true } to bypass PlaybackGuard
+        usePlayerStore.getState().setQueue(sessionQueue, targetIndex, undefined, { isRoomSync: true })
         applyInitialPlaybackState(room, syncedSong.id, room.song.duration || 0)
 
-        // If we started with the fast compressed preview, initiate background download of full quality track
-        if (isUsingPreview && fullSourceUrl) {
+        // Asynchronous Background RAM Cache & Progressive Upgrade
+        // Starts streaming immediately while caching/upgrading audio in the background
+        if (!blobUrl && streamSourceUrl) {
           void (async () => {
             try {
-              console.log(`[handleHostSongChange] Progressive upgrade: downloading full quality file for "${room.song!.title}"...`)
-              const fullBlob = await downloadRemoteAudioFileWithRetry(fullSourceUrl, {
-                trackId: songId
+              const downloadTargetUrl = isUsingPreview && fullSourceUrl ? fullSourceUrl : streamSourceUrl
+              const isTargetFull = Boolean(isUsingPreview && fullSourceUrl)
+              const trackIdToCache = isTargetFull ? songId : isUsingPreview ? `${songId}_preview` : songId
+
+              const downloadedBlob = await downloadRemoteAudioFileWithRetry(downloadTargetUrl, {
+                trackId: trackIdToCache,
+                onProgress: (progress, details) => {
+                  const percent = Math.min(100, Math.round(progress * 100))
+                  get().setJitStatus(
+                    songId,
+                    percent,
+                    isUsingPreview && !isTargetFull ? `Fast Join Preview... ${percent}%` : `Buffering... ${percent}%`,
+                    details?.loaded,
+                    details?.total
+                  )
+                }
               })
               if (mySyncEpoch !== getCurrentSyncEpoch()) return
-              if (fullBlob && fullBlob.size > 0) {
-                const fullBlobUrl = cacheAudioBlob(songId, fullBlob)
-                console.log(`[handleHostSongChange] Full quality download complete for "${room.song!.title}", hot-swapping...`)
-                await get().hotSwapToFullQuality(fullBlobUrl)
+              if (downloadedBlob && downloadedBlob.size > 0) {
+                const cachedUrl = cacheAudioBlob(trackIdToCache, downloadedBlob)
+                get().setJitStatus(
+                  songId,
+                  100,
+                  isTargetFull || !isUsingPreview ? 'Playing (Synced)' : 'Playing (Preview)',
+                  downloadedBlob.size,
+                  downloadedBlob.size
+                )
+                set({
+                  syncStatus: 'synced',
+                  audioQuality: isTargetFull || !isUsingPreview ? 'full' : 'preview'
+                })
+                if (isTargetFull) {
+                  console.log(`[handleHostSongChange] Progressive upgrade ready, hot-swapping to full quality...`)
+                  await get().hotSwapToFullQuality(cachedUrl)
+                }
               }
             } catch (err) {
-              console.warn('[handleHostSongChange] Progressive upgrade download failed:', err)
+              console.warn('[handleHostSongChange] Background audio fetch/upgrade failed (progressive streaming remains active):', err)
             }
           })()
         }
@@ -825,7 +823,7 @@ export const createRoomPlaybackSlice: StateCreator<
       // Step 5: Switch to session queue and matched song
       const currentPlaying = playerState.queue[playerState.currentSongIndex]
       if (!currentPlaying || currentPlaying.id !== matchedSong.id) {
-        usePlayerStore.getState().setQueue(sessionQueue, targetIndex)
+        usePlayerStore.getState().setQueue(sessionQueue, targetIndex, undefined, { isRoomSync: true })
         if (!room.is_playing) {
           usePlayerStore.getState().setIsPlaying(false)
         }

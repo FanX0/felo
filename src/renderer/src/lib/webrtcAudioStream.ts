@@ -1877,7 +1877,7 @@ export class WebRTCAudioClient {
         this.losslessChunks.push(event.data)
         this.losslessReceivedSize += event.data.byteLength
         if (this.losslessTotalSize > 0) {
-          const percent = Math.min(99, Math.round((this.losslessReceivedSize / this.losslessTotalSize) * 100))
+          const percent = Math.min(100, Math.round((this.losslessReceivedSize / this.losslessTotalSize) * 100))
           this.onJITProgress?.(
             this.activeTrackId || '',
             percent,
