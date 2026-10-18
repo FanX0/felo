@@ -14,6 +14,7 @@ import AccountPage from './pages/Online/AccountPage'
 import ProfilePage from './pages/Online/ProfilePage'
 import ChatPage from './pages/Online/ChatPage'
 import ListenTogetherPage from './pages/Online/ListenTogetherPage'
+import FriendActivityPage from './pages/Online/FriendActivityPage'
 import DownloadPage from './pages/Download/DownloadPage'
 
 export interface AppRoutesProps {
@@ -38,6 +39,11 @@ export function AppRoutes({ onOpenDownloadPanel }: AppRoutesProps) {
       <Route path="/profile" element={<ProfilePage />} />
       <Route path="/profile/:username" element={<ProfilePage />} />
       <Route path="/chat" element={<ChatPage onOpenDownloadPanel={onOpenDownloadPanel} />} />
+
+      {/* Friend Activity Routes & Aliases */}
+      <Route path="/friends" element={<FriendActivityPage onOpenDownloadPanel={onOpenDownloadPanel} />} />
+      <Route path="/friend-activity" element={<FriendActivityPage onOpenDownloadPanel={onOpenDownloadPanel} />} />
+      <Route path="/activity" element={<FriendActivityPage onOpenDownloadPanel={onOpenDownloadPanel} />} />
 
       {/* Listen Together Routes & Aliases */}
       <Route path="/listen-together" element={<ListenTogetherPage onOpenDownloadPanel={onOpenDownloadPanel} />} />

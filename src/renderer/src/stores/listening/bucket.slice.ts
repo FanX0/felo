@@ -183,7 +183,7 @@ export const createAudioBucketSlice: StateCreator<
     }
   },
 
-  addYouTubeTrackToQueue: async (videoId: string, title?: string, channel?: string, duration?: number) => {
+  addYouTubeTrackToQueue: async (videoId: string, title?: string, channel?: string, duration?: number, isPriority?: boolean) => {
     if (!videoId) return
     const cleanTitle = title?.trim() || 'YouTube Track'
     const cleanArtist = channel?.trim() || 'YouTube'
@@ -201,12 +201,21 @@ export const createAudioBucketSlice: StateCreator<
       artworkPath: artwork,
       audioUrl: ytUrl,
       filePath: ytUrl,
+      isPriority: Boolean(isPriority),
       isOnline: true
     }
 
     const player = usePlayerStore.getState()
     const currentQueue = [...player.queue]
-    const updatedQueue = [...currentQueue, song]
+    let updatedQueue: Song[]
+
+    if (isPriority && currentQueue.length > 0) {
+      const insertIdx = Math.max(0, player.currentSongIndex + 1)
+      updatedQueue = [...currentQueue]
+      updatedQueue.splice(insertIdx, 0, song)
+    } else {
+      updatedQueue = [...currentQueue, song]
+    }
 
     if (currentQueue.length === 0) {
       player.setQueue(updatedQueue, 0)
@@ -260,7 +269,8 @@ export const createAudioBucketSlice: StateCreator<
             duration: duration || 180,
             audioUrl: ytUrl,
             artworkUrl: artwork,
-            action: currentQueue.length === 0 ? 'play_now' : 'enqueue'
+            isPriority: Boolean(isPriority),
+            action: currentQueue.length === 0 ? 'play_now' : isPriority ? 'play_next' : 'enqueue'
           }
         })
     }

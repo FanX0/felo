@@ -26,9 +26,11 @@ import {
 } from '../../lib/profileSearch'
 import CommonAvatar from '../Common/Avatar'
 import DeleteFriendModal from '../Common/DeleteFriendModal'
+import { cn } from '../../lib/utils'
 
 interface FriendActivityPanelProps {
-  onClose: () => void
+  onClose?: () => void
+  isPage?: boolean
 }
 
 function formatTime(seconds: number): string {
@@ -60,7 +62,10 @@ function Avatar({
   )
 }
 
-export default function FriendActivityPanel({ onClose }: FriendActivityPanelProps): ReactElement {
+export default function FriendActivityPanel({
+  onClose,
+  isPage = false
+}: FriendActivityPanelProps): ReactElement {
   const { configured, user } = useOnlineStore()
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
@@ -437,15 +442,18 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
       } else {
         await useListeningStore.getState().listenAlongWithFriend(friendId)
       }
+      navigate('/listen-together')
     } catch (cause) {
       console.warn('Failed to join friend room by id, falling back:', cause)
       try {
         await useListeningStore.getState().listenAlongWithFriend(friendId)
-      } catch (fallbackError) {
+        navigate('/listen-together')
+      } catch (fallbackError: any) {
         console.error('Failed to listen along with friend:', fallbackError)
+        setError(fallbackError?.message || 'This room is no longer active.')
+        void loadActivities(friendIds)
       }
     }
-    navigate('/listen-together')
   }
 
   const handleRefresh = async (): Promise<void> => {
@@ -523,47 +531,97 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
   }
 
   return (
-    <aside className="h-full w-full shrink-0 overflow-hidden rounded-xl border border-border/70 bg-canvas shadow-2xl no-drag">
-      <div className="flex h-full flex-col">
-        <div className="flex items-center justify-between px-5 py-5">
-          <h2 className="text-lg font-black text-text">Listening activity</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            title="Close friend activity"
-            className="flex h-8 w-8 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-hover hover:text-text"
-          >
-            <X className="h-5 w-5" />
-          </button>
+    <aside
+      className={cn(
+        'w-full no-drag',
+        isPage
+          ? 'mx-auto flex min-h-full flex-1 max-w-3xl flex-col px-4 sm:px-6 py-5 sm:py-7'
+          : 'h-full shrink-0 overflow-hidden rounded-xl border border-border/70 bg-canvas shadow-2xl'
+      )}
+    >
+      <div className={cn('flex flex-col', isPage ? 'min-h-full flex-1' : 'h-full')}>
+        <div
+          className={cn(
+            'flex items-center justify-between',
+            isPage ? 'pb-5 border-b border-border/80' : 'px-5 py-5'
+          )}
+        >
+          <div className="flex items-center gap-2.5">
+            <Users className="h-6 w-6 text-primary" />
+            <div>
+              <h2 className={cn('font-black text-text', isPage ? 'text-2xl tracking-tight' : 'text-lg')}>
+                Friend Activity
+              </h2>
+              {isPage && (
+                <p className="mt-0.5 text-xs text-text-muted">
+                  Find friends, chat, and listen together in real-time.
+                </p>
+              )}
+            </div>
+          </div>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              title="Close friend activity"
+              className="flex h-8 w-8 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-hover hover:text-text cursor-pointer"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          )}
         </div>
 
-        <div className="px-4 pb-5">
+        <div className={cn(isPage ? 'py-5' : 'px-4 pb-5')}>
           <div className="mb-2 px-1 text-[11px] font-black uppercase text-text-muted">Online</div>
-          <div className="space-y-1">
+          <div className={cn('space-y-1', isPage && 'grid grid-cols-1 sm:grid-cols-2 gap-3 space-y-0')}>
             {[
-              { to: '/chat', label: 'Chat', icon: MessageCircle },
-
-              { to: '/listen-together', label: 'Listen together', icon: Radio }
-            ].map(({ to, label, icon: Icon }) => (
+              {
+                to: '/chat',
+                label: 'Chat',
+                subtitle: 'Direct messaging & song sharing',
+                icon: MessageCircle
+              },
+              {
+                to: '/listen-together',
+                label: 'Listen together',
+                subtitle: 'Live synchronized room sync',
+                icon: Radio
+              }
+            ].map(({ to, label, subtitle, icon: Icon }) => (
               <NavLink
                 key={to}
                 to={to}
+                onClick={() => onClose?.()}
                 className={({ isActive }) =>
-                  `flex w-full items-center gap-4 rounded-md px-3 py-3 text-left transition-colors ${
+                  `flex w-full items-center gap-3.5 rounded-xl px-4 py-3 text-left transition-all border ${
                     isActive
-                      ? 'bg-surface-elevated text-text'
-                      : 'text-text-muted hover:bg-hover hover:text-text'
+                      ? 'bg-surface-elevated text-text border-primary/40 shadow-sm'
+                      : isPage
+                        ? 'bg-surface/50 border-border/50 text-text-muted hover:bg-hover hover:text-text hover:border-border'
+                        : 'border-transparent text-text-muted hover:bg-hover hover:text-text'
                   }`
                 }
               >
-                <Icon className="h-6 w-6 shrink-0" />
-                <span className="truncate text-base font-black">{label}</span>
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-elevated text-primary border border-border/40">
+                  <Icon className="h-5 w-5 shrink-0" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="truncate text-sm font-bold text-text block">{label}</span>
+                  {isPage && subtitle && (
+                    <span className="truncate text-xs text-text-muted block mt-0.5">{subtitle}</span>
+                  )}
+                </div>
               </NavLink>
             ))}
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto border-t border-border/60 px-4 pb-5 pt-4">
+        <div
+          className={cn(
+            'border-t border-border/60',
+            isPage ? 'pt-5 flex-1' : 'flex-1 overflow-y-auto px-4 pb-5 pt-4'
+          )}
+        >
           {!configured || !user ? (
             <div className="flex min-h-52 flex-col items-center justify-center gap-3 text-center">
               <Users className="h-8 w-8 text-text-muted" />
@@ -615,7 +673,7 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
                       >
                         <NavLink
                           to={`/profile/${encodeURIComponent(person.username)}`}
-                          onClick={onClose}
+                          onClick={() => onClose?.()}
                           className="flex min-w-0 flex-1 items-center gap-3 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
                         >
                           <Avatar profile={person} />
@@ -682,7 +740,7 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
                         >
                           <NavLink
                             to={`/profile/${encodeURIComponent(person.username)}`}
-                            onClick={onClose}
+                            onClick={() => onClose?.()}
                             className="flex min-w-0 flex-1 items-center gap-3 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
                           >
                             <Avatar profile={person} />
@@ -724,7 +782,7 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
                         >
                           <NavLink
                             to={`/profile/${encodeURIComponent(person.username)}`}
-                            onClick={onClose}
+                            onClick={() => onClose?.()}
                             className="flex min-w-0 flex-1 items-center gap-3 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
                           >
                             <Avatar profile={person} />
@@ -805,7 +863,7 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
                         >
                           <NavLink
                             to={`/profile/${encodeURIComponent(person.username)}`}
-                            onClick={onClose}
+                            onClick={() => onClose?.()}
                             className="flex min-w-0 flex-1 items-start gap-3 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
                           >
                             <Avatar profile={person} online={Boolean(isRoomReady)} />
@@ -889,6 +947,7 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
                                 <button
                                   type="button"
                                   onClick={() => {
+                                    onClose?.()
                                     navigate(`/chat?friend=${encodeURIComponent(person.id)}`)
                                   }}
                                   title={`Chat with ${person.display_name}`}
@@ -900,7 +959,7 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      onClose()
+                                      onClose?.()
                                       navigate('/listen-together')
                                     }}
                                     title="You are currently listening in this room"
@@ -913,7 +972,7 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      onClose()
+                                      onClose?.()
                                       void handleJoinFriendRoom(activity, person.id)
                                     }}
                                     title={`Join ${person.display_name}'s party room directly without entering code`}
@@ -928,6 +987,7 @@ export default function FriendActivityPanel({ onClose }: FriendActivityPanelProp
                               <button
                                 type="button"
                                 onClick={() => {
+                                  onClose?.()
                                   navigate(`/chat?friend=${encodeURIComponent(person.id)}`)
                                 }}
                                 title={`Chat with ${person.display_name}`}

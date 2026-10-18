@@ -72,8 +72,13 @@ export const createRoomPlaybackSlice: StateCreator<
   substitutes: readInitialSubstitutes(),
   manualSyncOffsetMs: readInitialManualSyncOffset(),
   isManualSyncModalOpen: false,
+  isSyncLocked: false,
+  isGuestBuffering: false,
+  driftSeconds: 0,
+  audioQuality: null,
 
   setSyncStatus: (syncStatus) => set({ syncStatus }),
+  setAudioQuality: (audioQuality) => set({ audioQuality }),
 
   setAutoDownloadMissing: (enabled: boolean) => {
     try {
@@ -237,6 +242,20 @@ export const createRoomPlaybackSlice: StateCreator<
 
   setIsManualSyncModalOpen: (isOpen: boolean) => {
     set({ isManualSyncModalOpen: isOpen })
+  },
+
+  setIsSyncLocked: (locked: boolean) => {
+    set({ isSyncLocked: locked })
+    if (locked) {
+      // Mindory pattern: auto-release sync lock after 1500ms cooldown
+      setTimeout(() => {
+        set({ isSyncLocked: false })
+      }, 1500)
+    }
+  },
+
+  setIsGuestBuffering: (buffering: boolean) => {
+    set({ isGuestBuffering: buffering })
   },
 
   handleHostSongChange: async (room: ListeningRoom): Promise<void> => {
@@ -501,12 +520,28 @@ export const createRoomPlaybackSlice: StateCreator<
           }
         }
 
-        // 4. Resolve stream URL
+        // 4. Resolve stream URL (Progressive two-tier delivery: Preview first -> Full quality)
+        const hasPreview = Boolean(room.song.previewUrl && /^https?:\/\//i.test(room.song.previewUrl))
+        const fullSourceUrl =
+          room.song.audioUrl && /^https?:\/\//i.test(room.song.audioUrl) && !/127\.0\.0\.1|localhost/i.test(room.song.audioUrl)
+            ? room.song.audioUrl
+            : songId
+              ? getSongPublicBucketUrl(songId)
+              : ''
+
         let streamSourceUrl = ''
-        if (room.song.audioUrl && /^https?:\/\//i.test(room.song.audioUrl) && !/127\.0\.0\.1|localhost/i.test(room.song.audioUrl)) {
-          streamSourceUrl = room.song.audioUrl
-        } else if (songId) {
-          streamSourceUrl = getSongPublicBucketUrl(songId)
+        let isUsingPreview = false
+
+        if (blobUrl) {
+          // Already have cached full blob in RAM
+          set({ audioQuality: 'full' })
+        } else if (hasPreview) {
+          streamSourceUrl = room.song.previewUrl!
+          isUsingPreview = true
+          set({ audioQuality: 'preview' })
+        } else if (fullSourceUrl) {
+          streamSourceUrl = fullSourceUrl
+          set({ audioQuality: 'full' })
         }
 
         if (!streamSourceUrl && room.song.lanUrl && typeof window !== 'undefined') {
@@ -517,19 +552,19 @@ export const createRoomPlaybackSlice: StateCreator<
           }
         }
 
-        // 5. In-Memory JIT Audio Buffer Ingestion (MUSIXQUARE approach):
+        // 5. In-Memory JIT Audio Buffer Ingestion:
         // Automatically download audio bytes into an in-RAM Blob with 90s watchdog and transient retry
         if (!blobUrl && streamSourceUrl) {
           try {
             set({ syncStatus: 'buffering' })
             const blob = await downloadRemoteAudioFileWithRetry(streamSourceUrl, {
-              trackId: songId,
+              trackId: isUsingPreview ? `${songId}_preview` : songId,
               onProgress: (progress, details) => {
                 const percent = Math.min(99, Math.round(progress * 100))
                 get().setJitStatus(
                   songId,
                   percent,
-                  `Buffering... ${percent}%`,
+                  isUsingPreview ? `Fast Join Preview... ${percent}%` : `Buffering... ${percent}%`,
                   details?.loaded,
                   details?.total
                 )
@@ -537,8 +572,8 @@ export const createRoomPlaybackSlice: StateCreator<
             })
             if (mySyncEpoch !== getCurrentSyncEpoch()) return
             if (blob && blob.size > 0) {
-              blobUrl = cacheAudioBlob(songId, blob)
-              get().setJitStatus(songId, 100, 'Playing (Synced)', blob.size, blob.size)
+              blobUrl = cacheAudioBlob(isUsingPreview ? `${songId}_preview` : songId, blob)
+              get().setJitStatus(songId, 100, isUsingPreview ? 'Playing (Preview)' : 'Playing (Synced)', blob.size, blob.size)
               set({ syncStatus: 'synced' })
             }
           } catch (fetchErr) {
@@ -623,6 +658,26 @@ export const createRoomPlaybackSlice: StateCreator<
         usePlayerStore.getState().setQueue(sessionQueue, targetIndex)
 
         applyInitialPlaybackState(room, syncedSong.id, room.song.duration || 0)
+
+        // If we started with the fast compressed preview, initiate background download of full quality track
+        if (isUsingPreview && fullSourceUrl) {
+          void (async () => {
+            try {
+              console.log(`[handleHostSongChange] Progressive upgrade: downloading full quality file for "${room.song!.title}"...`)
+              const fullBlob = await downloadRemoteAudioFileWithRetry(fullSourceUrl, {
+                trackId: songId
+              })
+              if (mySyncEpoch !== getCurrentSyncEpoch()) return
+              if (fullBlob && fullBlob.size > 0) {
+                const fullBlobUrl = cacheAudioBlob(songId, fullBlob)
+                console.log(`[handleHostSongChange] Full quality download complete for "${room.song!.title}", hot-swapping...`)
+                await get().hotSwapToFullQuality(fullBlobUrl)
+              }
+            } catch (err) {
+              console.warn('[handleHostSongChange] Progressive upgrade download failed:', err)
+            }
+          })()
+        }
 
         // Pre-load the NEXT song in queue into in-memory RAM cache for zero-latency sync
         void get().preloadNextQueueTracks(room)
@@ -1173,18 +1228,17 @@ export const createRoomPlaybackSlice: StateCreator<
       return
     }
 
-    // ─── Steady-State Drift Handling ─────────────────────────────────
-    // Suppress drift evaluation if local player is actively seeking, buffering, or settling
+    // ─── Steady-State: Passive Drift Monitoring Only (Event-Driven Sync) ─────
+    // The heartbeat is ONLY used for drift detection and play/pause state.
+    // It NEVER seeks or adjusts playback rate. All active correction is handled
+    // by explicit event handlers (host_seek, host_play_pause, track_change).
     if (isSessionSyncing()) return
+    if (get().isSyncLocked) return
+    if (get().isGuestBuffering) return
     if (playerState.seekRequest !== null) return
     if (playerState.isBuffering) return
 
-    const isYouTube = Boolean((currentSong as any)?.isYouTube || (currentSong as any)?.videoId)
-    const activeEl = getActiveAudioElement()
-    if (!isYouTube && activeEl && (activeEl.seeking || activeEl.readyState < HTMLMediaElement.HAVE_CURRENT_DATA)) {
-      return
-    }
-
+    // Sync play/pause state from heartbeat (but not position)
     if (playerState.isPlaying !== pulse.isPlaying) {
       playerState.setIsPlaying(pulse.isPlaying)
     }
@@ -1202,14 +1256,16 @@ export const createRoomPlaybackSlice: StateCreator<
     const activeTime = getActiveAudioTime()
     const currentGuestTime = activeTime > 0 ? activeTime : playerState.currentTime || 0
 
+    // If host is paused, snap position once so lyrics/frame match
     if (!pulse.isPlaying) {
       if (getAudioPlaybackRate() !== 1.0) {
         setAudioPlaybackRate(1.0)
       }
-      // If host is paused, snap guest position accurately (drift > 0.05s) so listener's frame & lyrics match host exactly
       const drift = Math.abs(currentGuestTime - targetTime)
-      if (drift > 0.05) {
+      if (drift > 0.5) {
+        // Only snap on pause if drift is significant (>500ms), not aggressive 50ms
         setIsSessionSyncing(true)
+        get().setIsSyncLocked(true)
         playerState.seek(targetTime)
         playerState.setCurrentTime(targetTime)
         setTimeout(() => {
@@ -1221,6 +1277,7 @@ export const createRoomPlaybackSlice: StateCreator<
         joined.song.hostTimestamp = pulse.hostTimestamp
       }
       set((state) => ({
+        driftSeconds: 0,
         joinedRoom: state.joinedRoom
           ? {
               ...state.joinedRoom,
@@ -1239,54 +1296,36 @@ export const createRoomPlaybackSlice: StateCreator<
       return
     }
 
-    const result = roomClockSync.evaluateDrift(currentGuestTime, targetTime, pulse.isPlaying)
+    // During active playback: ONLY record drift for CatchUp HUD, never seek or adjust rate
+    const drift = currentGuestTime - targetTime
+    set({ driftSeconds: drift })
 
-    switch (result.action) {
-      case 'hard_seek': {
-        setAudioPlaybackRate(1.0)
-        setIsSessionSyncing(true)
-        playerState.seek(result.targetTime)
-        playerState.setCurrentTime(result.targetTime)
-        if (joined.song) {
-          joined.song.hostPosition = pulse.position
-          joined.song.hostTimestamp = pulse.hostTimestamp
-        }
-        set((state) => ({
-          joinedRoom: state.joinedRoom
-            ? {
-                ...state.joinedRoom,
-                position_seconds: Math.round(pulse.position),
-                is_playing: pulse.isPlaying,
-                song: state.joinedRoom.song
-                  ? {
-                      ...state.joinedRoom.song,
-                      hostPosition: pulse.position,
-                      hostTimestamp: pulse.hostTimestamp
-                    }
-                  : null
-              }
-            : null
-        }))
-        setTimeout(() => {
-          setIsSessionSyncing(false)
-        }, 1000)
-        break
-      }
-      case 'soft_align': {
-        // MUSIXQUARE pitch-preserving micro rate adjustment:
-        // Smoothly catch up without any audio dropout, clicks or seek jumps (HTML5 local audio only)
-        if (!isYouTube && typeof result.recommendedRate === 'number' && Math.abs(result.recommendedRate - 1.0) > 0.005) {
-          setAudioPlaybackRate(result.recommendedRate)
-        }
-        break
-      }
-      case 'in_sync': {
-        if (!isYouTube && getAudioPlaybackRate() !== 1.0) {
-          setAudioPlaybackRate(1.0)
-        }
-        break
-      }
+    // Ensure rate is always 1.0x during normal playback (no micro-adjustments from heartbeat)
+    if (getAudioPlaybackRate() !== 1.0) {
+      setAudioPlaybackRate(1.0)
     }
+
+    // Update joinedRoom metadata for UI display
+    if (joined.song) {
+      joined.song.hostPosition = pulse.position
+      joined.song.hostTimestamp = pulse.hostTimestamp
+    }
+    set((state) => ({
+      joinedRoom: state.joinedRoom
+        ? {
+            ...state.joinedRoom,
+            position_seconds: Math.round(pulse.position),
+            is_playing: pulse.isPlaying,
+            song: state.joinedRoom.song
+              ? {
+                  ...state.joinedRoom.song,
+                  hostPosition: pulse.position,
+                  hostTimestamp: pulse.hostTimestamp
+                }
+              : null
+          }
+        : null
+    }))
   },
 
   handleHostExplicitSeek: (payload: { position: number; hostTimestamp: number; trackId?: string }): void => {
@@ -1319,6 +1358,9 @@ export const createRoomPlaybackSlice: StateCreator<
       return
     }
 
+    // Sync lock + buffering guard: prevent echo loop seeks
+    if (get().isSyncLocked || get().isGuestBuffering) return
+
     const duration = joined.song?.duration || playerState.duration || 0
     const manualOffsetSec = (get().manualSyncOffsetMs || 0) / 1000
     const targetTime = roomClockSync.calculateTargetTime(
@@ -1330,6 +1372,7 @@ export const createRoomPlaybackSlice: StateCreator<
     )
 
     setIsSessionSyncing(true)
+    get().setIsSyncLocked(true)
     roomClockSync.notifyManualOffsetChanged()
     playerState.seek(targetTime)
     playerState.setCurrentTime(targetTime)
@@ -1339,6 +1382,7 @@ export const createRoomPlaybackSlice: StateCreator<
       joined.song.hostTimestamp = payload.hostTimestamp
     }
     set((state) => ({
+      driftSeconds: 0,
       joinedRoom: state.joinedRoom
         ? {
             ...state.joinedRoom,
@@ -1456,6 +1500,10 @@ export const createRoomPlaybackSlice: StateCreator<
             }
             return
           }
+        } else if (freshRoom && !freshRoom.is_active) {
+          // Room was explicitly marked inactive in the database
+          await get().handleHostDisconnect()
+          return
         }
       } catch {
         // network issue, proceed
@@ -1542,6 +1590,53 @@ export const createRoomPlaybackSlice: StateCreator<
     set({ hostRoom: null, joinedRoom: null, hostRoomStopped: true, syncStatus: 'idle' })
   },
 
+  hotSwapToFullQuality: async (fullUrl: string): Promise<void> => {
+    const state = get()
+    const joined = state.joinedRoom
+    if (!joined || !joined.song) return
+
+    // 1. Acquire sync lock with cooldown to prevent drift correction from triggering during swap
+    get().setIsSyncLocked(true)
+
+    try {
+      const player = usePlayerStore.getState()
+      const currentSong = player.queue[player.currentSongIndex]
+      if (!currentSong) return
+
+      // Read current playback position
+      const audioEl = document.querySelector('audio')
+      const targetPosition = audioEl?.currentTime || player.currentTime || 0
+      const wasPlaying = player.isPlaying
+
+      console.log(`[hotSwapToFullQuality] Hot-swapping to full quality at position ${targetPosition.toFixed(2)}s`)
+
+      // Update current song's audioUrl and filePath to full quality source
+      const updatedSong: Song = {
+        ...currentSong,
+        filePath: fullUrl,
+        audioUrl: fullUrl
+      }
+      player.updateSong(updatedSong, currentSong.id)
+
+      // Align audio element position smoothly
+      if (audioEl) {
+        audioEl.currentTime = targetPosition
+        if (wasPlaying && audioEl.paused) {
+          await audioEl.play().catch(() => {})
+        }
+      }
+
+      set({ audioQuality: 'full' })
+      get().setJitStatus(currentSong.id, 100, 'Playing (Lossless / Full)', 0, 0)
+    } catch (err) {
+      console.warn('[hotSwapToFullQuality] Hot-swap failed:', err)
+    } finally {
+      setTimeout(() => {
+        get().setIsSyncLocked(false)
+      }, 800)
+    }
+  },
+
   refreshJoinedRoomState: async (): Promise<void> => {
     const joined = get().joinedRoom
     if (!joined) return
@@ -1555,6 +1650,9 @@ export const createRoomPlaybackSlice: StateCreator<
       if (freshRoom && freshRoom.is_active) {
         set({ joinedRoom: freshRoom as ListeningRoom, lastHostUpdate: Date.now() })
         await get().handleHostSongChange(freshRoom as ListeningRoom)
+      } else if (!freshRoom || !freshRoom.is_active) {
+        console.warn('[refreshJoinedRoomState] Room not found or inactive, leaving room...')
+        await get().handleHostDisconnect()
       }
     } catch (err) {
       console.warn('[refreshJoinedRoomState] Error fetching room:', err)

@@ -107,6 +107,11 @@ const api = {
     explicitPath?: string
   ): Promise<{ success: boolean; data?: ArrayBuffer; contentType?: string; size?: number; error?: string }> =>
     ipcRenderer.invoke('library:readAudioFile', songIdOrPath, explicitPath),
+  compressAudio: (
+    songIdOrPath: string,
+    options?: { bitrate?: string; format?: string; explicitPath?: string }
+  ): Promise<{ success: boolean; data?: Uint8Array | Buffer; contentType?: string; size?: number; error?: string }> =>
+    ipcRenderer.invoke('library:compressAudio', songIdOrPath, options),
 
   // Library Roots
   getLibraryRoots: (): Promise<any[]> => ipcRenderer.invoke('library:getRoots'),

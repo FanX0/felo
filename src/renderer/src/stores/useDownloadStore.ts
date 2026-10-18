@@ -52,9 +52,19 @@ export const useDownloadStore = create<DownloadStore>((set) => ({
   },
   updateTransfer: (id, update) =>
     set((state) => ({
-      transfers: state.transfers.map((transfer) =>
-        transfer.id === id ? { ...transfer, ...update } : transfer
-      )
+      transfers: state.transfers.map((transfer) => {
+        if (transfer.id !== id) return transfer
+        // Monotonic progress clamping: during active downloads, progress can never decrease.
+        // This prevents jumping progress bars from multi-source fallbacks and yt-dlp fragment resets.
+        if (
+          update.progress !== undefined &&
+          transfer.status === 'downloading' &&
+          (update.status === undefined || update.status === 'downloading')
+        ) {
+          update = { ...update, progress: Math.max(transfer.progress || 0, update.progress) }
+        }
+        return { ...transfer, ...update }
+      })
     })),
   setTransfersOpen: (isTransfersOpen) => set({ isTransfersOpen }),
   toggleTransfers: () => set((state) => ({ isTransfersOpen: !state.isTransfersOpen })),

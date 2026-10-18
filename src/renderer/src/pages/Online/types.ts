@@ -1,6 +1,8 @@
 import type { ListeningRoom, SpeakerRole } from '../../online/types'
 import type { DownloadTarget } from '../../components/DownloadPanel/DownloadPanel'
 
+export type QueueTab = 'all' | 'priority' | 'local' | 'youtube'
+
 export interface ListenTogetherPageProps {
   onOpenDownloadPanel?: (target: DownloadTarget) => void
 }

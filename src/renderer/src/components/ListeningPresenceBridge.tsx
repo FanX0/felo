@@ -17,10 +17,12 @@ import { playParticipantLeaveSound } from '../lib/uiSounds'
 import { roomClockSync } from '../lib/roomClockSync'
 import { getActiveAudioTime, getAudioPlaybackRate } from '../lib/audioBridge'
 import { isYouTubeSong } from '../lib/youtubeService'
+import { evaluateAutoPriority, recordUserRequest } from '../lib/autoPriority'
 import type { Song } from '../pages/Library/Library'
 
 let _activeHostSyncChannel: any = null
 let _activeGuestSyncChannel: any = null
+const _userRequestCountsMap = new Map<string, number>()
 
 /**
  * Broadcasts room DSP settings (EQ gains, Reverb presets, Virtual Bass) and volume
@@ -74,6 +76,24 @@ export function broadcastHostTrackChange(song: any): void {
         position: getActiveAudioTime() || usePlayerStore.getState().currentTime || 0,
         isPlaying: usePlayerStore.getState().isPlaying,
         hostTimestamp: Date.now()
+      }
+    })
+  }
+}
+
+/**
+ * Broadcasts when full audio quality becomes available on the CDN for a track
+ * that guests might currently be playing in low-bitrate preview mode.
+ */
+export function broadcastHostTrackUpgrade(trackId: string, fullUrl: string): void {
+  if (_activeHostSyncChannel) {
+    void _activeHostSyncChannel.send({
+      type: 'broadcast',
+      event: 'track_upgrade',
+      payload: {
+        trackId,
+        fullUrl,
+        timestamp: Date.now()
       }
     })
   }
@@ -243,6 +263,22 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
       if (isUpdatingRef.current) return
       isUpdatingRef.current = true
 
+      if (songChanged && _activeHostSyncChannel) {
+        const currentTrack = usePlayerStore.getState().queue[usePlayerStore.getState().currentSongIndex]
+        if (currentTrack) {
+          const shared = toSharedSong(currentTrack)
+          broadcastHostTrackChange(shared)
+          if (!isYouTubeSong(currentTrack)) {
+            void (async () => {
+              try {
+                const { ensureTrackInAudioBucket } = await import('../lib/audioBucketService')
+                await ensureTrackInAudioBucket(currentTrack)
+              } catch {}
+            })()
+          }
+        }
+      }
+
       if (queueChanged && _activeHostSyncChannel) {
         const queue = usePlayerStore.getState().queue
         const currentIdx = usePlayerStore.getState().currentSongIndex
@@ -405,10 +441,10 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
       })
       .subscribe()
 
-    // Periodic pulse every 2.0s unconditionally (continuous presence heartbeat like MUSIXQUARE)
+    // Passive heartbeat every 10s for drift detection only (event-driven sync handles real-time actions)
     const interval = window.setInterval(() => {
       sendPulse()
-    }, 2000)
+    }, 10_000)
 
     // Immediate pulse on playback state changes (play, pause, seek, song change, volume change)
     const unsub = usePlayerStore.subscribe((state, prevState) => {
@@ -480,7 +516,19 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
         })
         sendPulse()
       } else if (songChanged) {
-        sendPulse()
+        const song = state.queue[state.currentSongIndex]
+        if (song) {
+          broadcastHostTrackChange(toSharedSong(song))
+          if (!isYouTubeSong(song)) {
+            void (async () => {
+              try {
+                const { ensureTrackInAudioBucket } = await import('../lib/audioBucketService')
+                await ensureTrackInAudioBucket(song)
+              } catch {}
+            })()
+          }
+        }
+        sendPulse(0)
       }
 
       // Volume is strictly personal to each user's hardware setup and is NOT synced across room participants
@@ -537,8 +585,25 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             const targetTitle = (title || query).toLowerCase()
             const targetArtist = artist.toLowerCase()
             const isPriorityEnabled = useListeningStore.getState().discordPriorityEnabled
-            const effectiveAction = !isPriorityEnabled && action === 'play_next' ? 'enqueue' : action
-            const isPriority = Boolean(isPriorityEnabled && (effectiveAction === 'play_next' || effectiveAction === 'play_now'))
+
+            // Industry-standard Auto-Priority fair rotation
+            const recentArtists = player.queue
+              .slice(Math.max(0, player.currentSongIndex - 4), player.currentSongIndex + 1)
+              .map((s) => s.artist)
+              .filter(Boolean)
+            const senderKey = record?.sender_name || 'Discord'
+            const autoPriorityEval = evaluateAutoPriority({
+              senderKey,
+              artist,
+              duration,
+              isExplicitPriority: Boolean(isPriorityEnabled && (action === 'play_next' || action === 'play_now')),
+              recentArtists,
+              userRequestCounts: _userRequestCountsMap
+            })
+            recordUserRequest(senderKey, _userRequestCountsMap)
+
+            const isPriority = autoPriorityEval.isPriority
+            const effectiveAction = isPriority ? (action === 'play_now' ? 'play_now' : 'play_next') : 'enqueue'
 
             const qWords = cleanQ.split(/\s+/).filter((w) => w.length >= 2)
             const matchesTrack = (s: { title?: string; artist?: string }) => {
@@ -845,7 +910,24 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             const artworkUrl = cmdPayload?.artworkUrl || ''
             const action = cmdPayload?.action || 'enqueue'
             const requester = record?.sender_name ? `@${record.sender_name}` : (cmdPayload?.requestedBy || 'Member')
-            const isPriority = Boolean(cmdPayload?.isPriority)
+            const senderKey = record?.sender_name || 'Member'
+            const isPriorityEnabled = useListeningStore.getState().discordPriorityEnabled
+
+            const recentArtists = player.queue
+              .slice(Math.max(0, player.currentSongIndex - 4), player.currentSongIndex + 1)
+              .map((s) => s.artist)
+              .filter(Boolean)
+
+            const autoPriorityEval = evaluateAutoPriority({
+              senderKey,
+              artist,
+              duration,
+              isExplicitPriority: Boolean(cmdPayload?.isPriority || (isPriorityEnabled && (action === 'play_next' || action === 'play_now'))),
+              recentArtists,
+              userRequestCounts: _userRequestCountsMap
+            })
+            recordUserRequest(senderKey, _userRequestCountsMap)
+            const isPriority = autoPriorityEval.isPriority
 
             const incomingSong: Song = {
               id: songId,
@@ -956,12 +1038,17 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
       .on(
         'postgres_changes',
         {
-          event: 'UPDATE',
+          event: '*',
           schema: 'public',
           table: 'listening_rooms',
           filter: `id=eq.${roomId}`
         },
         (payload) => {
+          if (payload.eventType === 'DELETE') {
+            void useListeningStore.getState().handleHostDisconnect()
+            return
+          }
+
           const next = payload.new as any
           if (!next) return
 
@@ -1042,7 +1129,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
 
           const songChanged = Boolean(
             next.song &&
-            (!isSongEffectivelyEqual || !isAlreadyPlayingThisSong)
+            !isSongEffectivelyEqual && !isAlreadyPlayingThisSong
           )
 
           if (next.song && typeof next.song.hostPosition !== 'number') {
@@ -1126,11 +1213,17 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
     // 3. Periodic polling fallback (every 5s) to ensure zero desync even if WebSocket drops
     const pollInterval = window.setInterval(async () => {
       try {
-        const { data: latestRoom } = await supabase
+        const { data: latestRoom, error: pollError } = await supabase
           .from('listening_rooms')
           .select('*')
           .eq('id', roomId)
           .maybeSingle()
+
+        if (!pollError && (!latestRoom || !latestRoom.is_active)) {
+          // Room was closed by host or deleted from database
+          void useListeningStore.getState().handleHostDisconnect()
+          return
+        }
 
         if (latestRoom && latestRoom.is_active) {
           // Room is active in database: refresh host presence heartbeat
@@ -1205,7 +1298,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
 
           const songChanged = Boolean(
             latestRoom.song &&
-            (!isSongEffectivelyEqual || !isAlreadyPlayingThisSong)
+            !isSongEffectivelyEqual && !isAlreadyPlayingThisSong
           )
 
           useListeningStore.getState().setJoinedRoom(latestRoom as any)
@@ -1286,6 +1379,18 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
         if (payload?.song) {
           const currentRoom = useListeningStore.getState().joinedRoom
           if (currentRoom) {
+            // Same-song detection: If the incoming track_change is for the SAME song
+            // (e.g., host finished uploading to CDN), update the URL in-place
+            // WITHOUT restarting the queue, which would cause a seek-to-0 jump.
+            const currentSong = usePlayerStore.getState().queue[usePlayerStore.getState().currentSongIndex]
+            const isSameSong = Boolean(
+              currentSong &&
+              currentRoom.song &&
+              payload.song.title === currentRoom.song.title &&
+              payload.song.artist === currentRoom.song.artist &&
+              (payload.song.localId ? payload.song.localId === currentRoom.song.localId : true)
+            )
+
             const updatedRoom = {
               ...currentRoom,
               song: {
@@ -1300,8 +1405,23 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             }
             useListeningStore.getState().setJoinedRoom(updatedRoom as any)
             useListeningStore.setState({ lastHostUpdate: Date.now() })
-            void useListeningStore.getState().handleHostSongChange(updatedRoom as any)
+
+            if (isSameSong) {
+              // Same song — host just uploaded to CDN or updated metadata.
+              // Update audioUrl in-place without restarting the queue.
+              // The next sync pulse will naturally align position.
+              console.log('[track_change] Same song upload completion detected, skipping queue restart')
+            } else {
+              // Actual song change — full handleHostSongChange
+              void useListeningStore.getState().handleHostSongChange(updatedRoom as any)
+            }
           }
+        }
+      })
+      .on('broadcast', { event: 'track_upgrade' }, ({ payload }: { payload: any }) => {
+        if (payload?.fullUrl) {
+          console.log('[track_upgrade] Full audio quality available, initiating seamless hot-swap:', payload.fullUrl)
+          void useListeningStore.getState().hotSwapToFullQuality(payload.fullUrl)
         }
       })
       .on('broadcast', { event: 'queue_update' }, ({ payload }: { payload: any }) => {

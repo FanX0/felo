@@ -26,6 +26,77 @@ export function getSongPublicBucketUrl(songId: string): string {
   return `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/${key}`
 }
 
+/**
+ * Returns the storage key for a low-bitrate preview (64k MP3).
+ */
+export function getSongPreviewStorageKey(songId: string): string {
+  const cleanId = songId.trim().replace(/^(synced|ephemeral)-/, '')
+  const safeId = cleanId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  return `${safeId}_preview.mp3`
+}
+
+/**
+ * Returns the permanent public CDN URL for an audio track's compressed preview.
+ */
+export function getSongPreviewBucketUrl(songId: string): string {
+  const key = getSongPreviewStorageKey(songId)
+  return `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/${key}`
+}
+
+const _uploadedPreviewsCache = new Set<string>()
+
+export function isSongPreviewUploadedToBucket(songId: string): boolean {
+  if (!songId) return false
+  return _uploadedPreviewsCache.has(songId)
+}
+
+export function markSongPreviewUploadedToBucket(songId: string): void {
+  if (songId) _uploadedPreviewsCache.add(songId)
+}
+
+export async function isSongPreviewInAudioBucket(songId: string): Promise<boolean> {
+  if (!songId) return false
+  if (_uploadedPreviewsCache.has(songId)) return true
+  const url = getSongPreviewBucketUrl(songId)
+  try {
+    const res = await fetch(url, { method: 'HEAD', cache: 'no-cache' })
+    const ok = res.ok && res.status === 200
+    if (ok) _uploadedPreviewsCache.add(songId)
+    return ok
+  } catch {
+    return false
+  }
+}
+
+export async function uploadSongPreviewToAudioBucket(
+  songId: string,
+  previewBlob: Blob,
+  contentType = 'audio/mpeg'
+): Promise<string | null> {
+  try {
+    const supabase = getSupabase()
+    const fileName = getSongPreviewStorageKey(songId)
+
+    const { error } = await supabase.storage
+      .from(SUPABASE_STORAGE_BUCKET)
+      .upload(fileName, previewBlob, {
+        contentType,
+        upsert: true
+      })
+
+    if (error) {
+      console.warn('[audioBucketService] Preview upload failed:', error)
+      return null
+    }
+
+    markSongPreviewUploadedToBucket(songId)
+    return getSongPreviewBucketUrl(songId)
+  } catch (err) {
+    console.warn('[audioBucketService] Preview upload exception:', err)
+    return null
+  }
+}
+
 const _uploadedSongsCache = new Set<string>()
 
 export function isSongUploadedToBucket(songId: string): boolean {
@@ -372,6 +443,48 @@ export async function ensureTrackInAudioBucket(song: Song): Promise<string | nul
 
       registerLocalSlotPoolFile(song.id, blob)
 
+      // Generate and upload low-bitrate compressed preview (64k MP3) first so join users start playing in 2-3 seconds
+      let previewUrl: string | null = null
+      if (typeof window !== 'undefined' && (window as any).api?.compressAudio) {
+        try {
+          const compRes = await (window as any).api.compressAudio(song.id, {
+            bitrate: '64k',
+            format: 'mp3',
+            explicitPath: song.filePath
+          })
+          if (compRes?.success && compRes.data) {
+            const previewBlob = new Blob([compRes.data], { type: compRes.contentType || 'audio/mpeg' })
+            previewUrl = await uploadSongPreviewToAudioBucket(song.id, previewBlob)
+            if (previewUrl) {
+              console.log(`[audioBucketService] Fast preview uploaded for "${song.title}":`, previewUrl)
+              const currentHostRoom = useListeningStore.getState().hostRoom
+              if (currentHostRoom?.id && currentHostRoom.song) {
+                const previewReadySong = {
+                  ...currentHostRoom.song,
+                  previewUrl,
+                  uploadStatus: 'PREVIEW_READY' as const,
+                  statusText: 'Preview Ready (Fast Join)'
+                }
+                useListeningStore.setState((prev) => ({
+                  hostRoom: prev.hostRoom ? { ...prev.hostRoom, song: previewReadySong } : null
+                }))
+                await getSupabase()
+                  .from('listening_rooms')
+                  .update({ song: previewReadySong, updated_at: new Date().toISOString() })
+                  .eq('id', currentHostRoom.id)
+
+                try {
+                  const { broadcastHostTrackChange } = await import('../components/ListeningPresenceBridge')
+                  broadcastHostTrackChange(previewReadySong)
+                } catch {}
+              }
+            }
+          }
+        } catch (compErr) {
+          console.warn('[audioBucketService] Preview compression skipped:', compErr)
+        }
+      }
+
       const uploadedUrl = await uploadSongToAudioBucket(song.id, blob, contentType)
       if (uploadedUrl) {
         console.log(`[audioBucketService] Successfully cached track "${song.title}" (${contentType}) to cloud audio bucket:`, uploadedUrl)
@@ -396,6 +509,7 @@ export async function ensureTrackInAudioBucket(song: Song): Promise<string | nul
             const updatedSong = {
               ...freshHostRoom.song,
               audioUrl: uploadedUrl,
+              previewUrl: previewUrl || freshHostRoom.song.previewUrl,
               uploadStatus: 'UPLOADED' as const,
               uploadProgress: 100,
               statusText: 'Ready (Cloud CDN)'
@@ -411,8 +525,9 @@ export async function ensureTrackInAudioBucket(song: Song): Promise<string | nul
               })
               .eq('id', freshHostRoom.id)
             try {
-              const { broadcastHostTrackChange } = await import('../components/ListeningPresenceBridge')
+              const { broadcastHostTrackChange, broadcastHostTrackUpgrade } = await import('../components/ListeningPresenceBridge')
               broadcastHostTrackChange(updatedSong)
+              broadcastHostTrackUpgrade(song.id, uploadedUrl)
             } catch {}
           }
         } catch {}

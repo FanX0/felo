@@ -23,9 +23,11 @@ import {
 import type { Song } from '../../../types'
 import { cn } from '../../../lib/utils'
 import type { ListeningRoom } from '../../../online/types'
-import type { RoomMemberInfo } from '../types'
+import type { RoomMemberInfo, QueueTab } from '../types'
 import { formatBytes, formatTime, getSongKey } from '../utils'
 import { isYouTubeSong } from '../../../lib/youtubeService'
+import YouTubeIcon from '../../../components/Common/YouTubeIcon'
+import YouTubeQueueTab from '../../../components/Online/YouTubeQueueTab'
 import { getSupabase } from '../../../lib/supabase'
 import { usePlayerStore } from '../../../hooks/usePlayerStore'
 import { useListeningStore } from '../../../hooks/useListeningStore'
@@ -69,8 +71,8 @@ interface GuestRoomViewProps {
   setSelectedMember: (m: RoomMemberInfo) => void
   user: any
   setMessage: (msg: string) => void
-  listenerQueueTab: 'all' | 'priority' | 'local'
-  setListenerQueueTab: (tab: 'all' | 'priority' | 'local') => void
+  listenerQueueTab: QueueTab
+  setListenerQueueTab: (tab: QueueTab) => void
   transfers?: any[]
   onOpenDownloadPanel?: (target: any) => void
   showReplaceModal: boolean
@@ -135,6 +137,7 @@ export default function GuestRoomView({
     (activeTrackKey ? jitStatus[activeTrackKey] : null)
   const playerQueue = usePlayerStore((state) => state.queue)
   const myRole = useListeningStore((state) => state.myRole)
+  const audioQuality = useListeningStore((state) => state.audioQuality)
 
   const [isYouTubeFullscreen, setIsYouTubeFullscreen] = useState(false)
 
@@ -670,8 +673,11 @@ export default function GuestRoomView({
             const priorityTracks = effectiveQueue.filter(
               (s) => Boolean(s?.isPriority && !(s.title === currentSong?.title && s.artist === currentSong?.artist))
             )
+            const youtubeTracks = effectiveQueue.filter(
+              (s) => Boolean(s && isYouTubeSong(s) && !(s.title === currentSong?.title && s.artist === currentSong?.artist))
+            )
             const backgroundTracks = effectiveQueue.filter(
-              (s) => Boolean(s && !s.isPriority && !(s.title === currentSong?.title && s.artist === currentSong?.artist))
+              (s) => Boolean(s && !s.isPriority && !isYouTubeSong(s) && !(s.title === currentSong?.title && s.artist === currentSong?.artist))
             )
 
             return (
@@ -775,6 +781,24 @@ export default function GuestRoomView({
                                   Priority Request
                                 </span>
                               ) : null}
+                              {audioQuality === 'preview' && (
+                                <span
+                                  className="rounded-full bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-[9px] font-bold text-amber-500 flex items-center gap-1"
+                                  title="Instant fast-start preview (64kbps). Full lossless audio is downloading in background."
+                                >
+                                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                                  SD Preview
+                                </span>
+                              )}
+                              {audioQuality === 'full' && (
+                                <span
+                                  className="rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[9px] font-bold text-emerald-500 flex items-center gap-1"
+                                  title="Lossless / High Definition stream active."
+                                >
+                                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                  HD Lossless
+                                </span>
+                              )}
                             </div>
                             <p className="text-sm font-bold text-text truncate mt-0.5">
                               {currentSong.title}
@@ -796,7 +820,7 @@ export default function GuestRoomView({
                 )}
 
                 {/* Queue Filter Tabs */}
-                <div className="flex items-center gap-2 mt-4 mb-3 border-b border-border pb-2 text-xs">
+                <div className="flex items-center gap-2 mt-4 mb-3 border-b border-border pb-2 text-xs flex-wrap">
                   <button
                     type="button"
                     onClick={() => setListenerQueueTab('all')}
@@ -806,7 +830,7 @@ export default function GuestRoomView({
                         : 'text-text-muted hover:text-text'
                     }`}
                   >
-                    All Upcoming ({priorityTracks.length + backgroundTracks.length})
+                    All Upcoming ({priorityTracks.length + backgroundTracks.length + youtubeTracks.length})
                   </button>
                   <button
                     type="button"
@@ -829,6 +853,18 @@ export default function GuestRoomView({
                     }`}
                   >
                     Background Queue ({backgroundTracks.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setListenerQueueTab('youtube')}
+                    className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                      listenerQueueTab === 'youtube'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-text-muted hover:text-text'
+                    }`}
+                  >
+                    <YouTubeIcon className="h-3.5 w-3.5 text-danger" />
+                    <span>YouTube ({youtubeTracks.length})</span>
                   </button>
                 </div>
 
@@ -956,7 +992,102 @@ export default function GuestRoomView({
                   </div>
                 )}
 
-                {priorityTracks.length === 0 && backgroundTracks.length === 0 && (
+                {/* YouTube Inline Search & Fast Queue for Listeners/Co-hosts */}
+                {listenerQueueTab === 'youtube' && (
+                  <YouTubeQueueTab
+                    onSongAdded={(title) => {
+                      setMessage(`Requested "${title}" for YouTube stream!`)
+                      setTimeout(() => setMessage(''), 3000)
+                    }}
+                  />
+                )}
+
+                {/* YouTube Queue */}
+                {(listenerQueueTab === 'all' || listenerQueueTab === 'youtube') && youtubeTracks.length > 0 && (
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-text flex items-center gap-1.5">
+                        <YouTubeIcon className="h-3.5 w-3.5 text-danger" />
+                        <span>YouTube Stream Queue</span>
+                        <span className="rounded-full bg-surface border border-border px-1.5 py-0.2 text-[9px] font-mono text-text-muted">
+                          {youtubeTracks.length}
+                        </span>
+                      </span>
+                    </div>
+                    <div className="space-y-1">
+                      {youtubeTracks.slice(0, 10).map((song, idx) => (
+                        <div
+                          key={`${(song as any).id || song.title}-${idx}`}
+                          className="flex items-center justify-between gap-3 p-2 rounded-lg hover:bg-hover transition-colors"
+                        >
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <span className="text-[10px] font-mono text-text-muted w-5 text-center shrink-0">
+                              #{idx + 1}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <p className="text-xs font-semibold text-text truncate">{song.title}</p>
+                                {song.isPriority && (
+                                  <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-primary/20 text-primary shrink-0">
+                                    Priority
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-text-muted truncate">{song.artist}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[10px] font-mono text-text-muted">
+                              {formatTime(song.duration || 0)}
+                            </span>
+                            {myRole === 'co_host' && (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleCoHostCommand('jump', song.title)}
+                                  className="p-1 rounded text-text-muted hover:text-text cursor-pointer"
+                                  title="Play Now (Co-host)"
+                                >
+                                  <Play className="h-3 w-3 fill-current" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleCoHostCommand('bump', song.title)}
+                                  className="p-1 rounded text-text-muted hover:text-primary cursor-pointer"
+                                  title="Make Priority / Play Next (Co-host)"
+                                >
+                                  <Star className="h-3 w-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleCoHostCommand('remove', song.title)}
+                                  className="p-1 rounded text-text-muted hover:text-danger cursor-pointer"
+                                  title="Remove from Queue (Co-host)"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {listenerQueueTab === 'youtube' && youtubeTracks.length === 0 && (
+                  <div className="py-6 text-center text-xs text-text-muted">
+                    No upcoming YouTube tracks in the session queue
+                  </div>
+                )}
+
+                {listenerQueueTab === 'local' && backgroundTracks.length === 0 && (
+                  <div className="py-6 text-center text-xs text-text-muted">
+                    No upcoming background tracks in the session queue
+                  </div>
+                )}
+
+                {priorityTracks.length === 0 && backgroundTracks.length === 0 && youtubeTracks.length === 0 && (
                   <div className="py-6 text-center text-xs text-text-muted">
                     No upcoming tracks in the host's queue
                   </div>

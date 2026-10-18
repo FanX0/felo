@@ -25,10 +25,12 @@ import {
 } from 'lucide-react'
 import type { Song } from '../../../types'
 import type { ListeningRoom } from '../../../online/types'
-import type { RoomMemberInfo } from '../types'
+import type { RoomMemberInfo, QueueTab } from '../types'
 import { formatBytes, formatTime } from '../utils'
 import { cn } from '../../../lib/utils'
 import { isYouTubeSong } from '../../../lib/youtubeService'
+import YouTubeIcon from '../../../components/Common/YouTubeIcon'
+import YouTubeQueueTab from '../../../components/Online/YouTubeQueueTab'
 import SettingsSyncSection from '../../../components/Online/SettingsSyncSection'
 import Avatar from '../../../components/Common/Avatar'
 
@@ -65,11 +67,12 @@ interface HostSessionSectionProps {
   bumpSongToPriority: (idx: number) => void
   showAllQueue: boolean
   setShowAllQueue: (fn: (prev: boolean) => boolean) => void
-  hostQueueTab: 'all' | 'priority' | 'local'
-  setHostQueueTab: (tab: 'all' | 'priority' | 'local') => void
+  hostQueueTab: QueueTab
+  setHostQueueTab: (tab: QueueTab) => void
   currentPlayingTrack?: Song
   priorityTracksList: Array<{ song: Song; idx: number }>
   backgroundTracksList: Array<{ song: Song; idx: number }>
+  youtubeTracksList?: Array<{ song: Song; idx: number }>
   setMessage: (msg: string) => void
 }
 
@@ -111,6 +114,7 @@ export default function HostSessionSection({
   currentPlayingTrack,
   priorityTracksList,
   backgroundTracksList,
+  youtubeTracksList = [],
   setMessage
 }: HostSessionSectionProps): ReactElement {
   const [isYouTubeFullscreen, setIsYouTubeFullscreen] = useState(false)
@@ -607,8 +611,8 @@ export default function HostSessionSection({
             </div>
           )}
 
-          {/* Queue Filter Tabs: All, Priority Requests, Local Tracks */}
-          <div className="flex items-center gap-2 mt-4 mb-3 border-b border-border pb-2 text-xs">
+          {/* Queue Filter Tabs: All, Priority Requests, Local Tracks, YouTube */}
+          <div className="flex items-center gap-2 mt-4 mb-3 border-b border-border pb-2 text-xs flex-wrap">
             <button
               type="button"
               onClick={() => setHostQueueTab('all')}
@@ -618,7 +622,7 @@ export default function HostSessionSection({
                   : 'text-text-muted hover:text-text'
               }`}
             >
-              All Upcoming ({priorityTracksList.length + backgroundTracksList.length})
+              All Upcoming ({priorityTracksList.length + backgroundTracksList.length + youtubeTracksList.length})
             </button>
             <button
               type="button"
@@ -641,6 +645,18 @@ export default function HostSessionSection({
               }`}
             >
               Local Tracks ({backgroundTracksList.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setHostQueueTab('youtube')}
+              className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                hostQueueTab === 'youtube'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-text-muted hover:text-text'
+              }`}
+            >
+              <YouTubeIcon className="h-3.5 w-3.5 text-danger" />
+              <span>YouTube ({youtubeTracksList.length})</span>
             </button>
           </div>
 
@@ -804,11 +820,118 @@ export default function HostSessionSection({
             </div>
           )}
 
+          {/* YouTube Inline Search & Fast Queue */}
+          {hostQueueTab === 'youtube' && (
+            <YouTubeQueueTab
+              onSongAdded={(title) => {
+                setMessage(`Added "${title}" to YouTube queue!`)
+                setTimeout(() => setMessage(''), 3000)
+              }}
+            />
+          )}
+
+          {/* Tier 3: YOUTUBE TRACKS */}
+          {(hostQueueTab === 'all' || hostQueueTab === 'youtube') && youtubeTracksList.length > 0 && (
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5">
+                  <YouTubeIcon className="h-3.5 w-3.5 text-danger" />
+                  <span>YouTube Stream Queue</span>
+                  <span className="rounded-full bg-surface-elevated border border-border px-1.5 py-0.2 text-[9px] font-mono text-text-muted">
+                    {youtubeTracksList.length}
+                  </span>
+                </span>
+                <span className="text-[10px] text-text-muted">Direct YouTube Stream</span>
+              </div>
+              <div className="space-y-1">
+                {youtubeTracksList.map(({ song, idx }) => (
+                  <div
+                    key={`${song.id}-${idx}`}
+                    className="flex items-center justify-between gap-3 p-2 rounded-lg hover:bg-hover transition-colors"
+                  >
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <span className="text-[10px] font-mono text-text-muted w-5 text-center shrink-0">
+                        #{idx + 1}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs font-semibold text-text truncate">{song.title}</p>
+                          {song.isPriority && (
+                            <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-primary/20 text-primary shrink-0">
+                              Priority
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-text-muted truncate">{song.artist}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-[10px] font-mono text-text-muted">
+                        {formatTime(song.duration)}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            playTrackByIndex(idx)
+                            void ensureHostRoom(true)
+                          }}
+                          className="p-1 rounded text-text-muted hover:text-text cursor-pointer"
+                          title="Play Now"
+                        >
+                          <Play className="h-3 w-3 fill-current" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            bumpSongToPriority(idx)
+                            void ensureHostRoom(true)
+                          }}
+                          className="p-1 rounded text-text-muted hover:text-primary cursor-pointer"
+                          title="Make Important / Play Next"
+                        >
+                          <Star className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            removeSongFromQueueByIndex(idx)
+                            void ensureHostRoom(true)
+                          }}
+                          className="p-1 rounded text-text-muted hover:text-danger cursor-pointer"
+                          title="Remove"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {hostQueueTab === 'local' && backgroundTracksList.length === 0 && (
             <div className="rounded-xl border border-dashed border-border/50 bg-surface/30 p-6 text-center">
               <Music2 className="h-6 w-6 text-text-muted/50 mx-auto mb-2" />
               <p className="text-xs font-bold text-text">No Upcoming Local Playlist Tracks</p>
               <p className="text-[11px] text-text-muted mt-1">Add tracks from your Library to continue background playback.</p>
+            </div>
+          )}
+
+          {hostQueueTab === 'youtube' && youtubeTracksList.length === 0 && (
+            <div className="rounded-xl border border-dashed border-border/50 bg-surface/30 p-6 text-center">
+              <YouTubeIcon className="h-6 w-6 text-danger/60 mx-auto mb-2" />
+              <p className="text-xs font-bold text-text">No Upcoming YouTube Tracks</p>
+              <p className="text-[11px] text-text-muted mt-1">Add tracks from YouTube using the + Add Media button above.</p>
+              <button
+                type="button"
+                onClick={() => setShowSelectMediaModal(true)}
+                className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface border border-border text-xs font-bold text-text hover:bg-hover transition-colors cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Add YouTube Track</span>
+              </button>
             </div>
           )}
         </section>

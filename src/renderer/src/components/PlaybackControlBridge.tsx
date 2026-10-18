@@ -496,7 +496,16 @@ export default function PlaybackControlBridge() {
                   state: publish()
                 }
               } catch (err: any) {
-                result = { ok: false, error: err?.message || 'JOIN_ROOM_FAILED' }
+                const isNotFound =
+                  err?.code === 'ROOM_NOT_FOUND' ||
+                  err?.name === 'RoomNotFoundError' ||
+                  err?.message?.toLowerCase().includes('not found') ||
+                  err?.message?.toLowerCase().includes('no longer active')
+                result = {
+                  ok: false,
+                  error: isNotFound ? 'ROOM_NOT_FOUND' : (err?.message || 'JOIN_ROOM_FAILED'),
+                  message: err?.message || 'Could not find or join the specified listening room.'
+                }
               }
               window.api.respondToExternalPlayerCommand(requestId, result)
               return
@@ -558,9 +567,15 @@ export default function PlaybackControlBridge() {
                   state: publish()
                 }
               } catch (err: any) {
+                const isNotFound =
+                  err?.code === 'ROOM_NOT_FOUND' ||
+                  err?.name === 'RoomNotFoundError' ||
+                  err?.message?.toLowerCase().includes('not in an active party') ||
+                  err?.message?.toLowerCase().includes('no longer active')
                 result = {
                   ok: false,
-                  error: err?.message || 'LISTEN_ALONG_FAILED',
+                  error: isNotFound ? 'ROOM_NOT_FOUND' : (err?.message || 'LISTEN_ALONG_FAILED'),
+                  message: err?.message || 'This friend is not in an active party room right now.',
                   friend: { id: targetFriendId, name: targetFriendName }
                 }
               }

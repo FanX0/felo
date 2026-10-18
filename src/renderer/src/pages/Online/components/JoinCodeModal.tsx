@@ -1,5 +1,5 @@
 import { FormEvent, type ReactElement } from 'react'
-import { X, ClipboardPaste, Loader2 } from 'lucide-react'
+import { X, ClipboardPaste, Loader2, AlertCircle } from 'lucide-react'
 import { sanitizeCodeInput } from '../utils'
 
 interface JoinCodeModalProps {
@@ -9,6 +9,7 @@ interface JoinCodeModalProps {
   setJoinCodeInput: (code: string) => void
   onSubmit: (e: FormEvent) => void
   busy: boolean
+  error?: string | null
 }
 
 export default function JoinCodeModal({
@@ -17,7 +18,8 @@ export default function JoinCodeModal({
   joinCodeInput,
   setJoinCodeInput,
   onSubmit,
-  busy
+  busy,
+  error
 }: JoinCodeModalProps): ReactElement | null {
   if (!isOpen) return null
 
@@ -53,7 +55,7 @@ export default function JoinCodeModal({
             spellCheck={false}
             inputMode="text"
             onChange={(e) => setJoinCodeInput(sanitizeCodeInput(e.target.value))}
-            className="h-12 w-full rounded-xl border border-border bg-surface-elevated px-3 pr-10 text-center text-lg font-bold font-mono tracking-widest text-text outline-none focus:border-primary uppercase"
+            className={`h-12 w-full rounded-xl border ${error ? 'border-red-500/80 focus:border-red-500' : 'border-border focus:border-primary'} bg-surface-elevated px-3 pr-10 text-center text-lg font-bold font-mono tracking-widest text-text outline-none transition-colors uppercase`}
           />
           <button
             type="button"
@@ -73,6 +75,13 @@ export default function JoinCodeModal({
             <ClipboardPaste className="h-4 w-4" />
           </button>
         </div>
+
+        {error && (
+          <div className="mt-3 flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-500/10 p-2.5 text-xs text-red-400 animate-in fade-in">
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+            <span className="leading-snug">{error}</span>
+          </div>
+        )}
 
         <button
           type="submit"

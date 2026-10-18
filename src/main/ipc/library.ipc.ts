@@ -1,4 +1,5 @@
-import { ipcMain } from 'electron'
+import { ipcMain, app } from 'electron'
+import { spawn } from 'child_process'
 import path, { resolve } from 'path'
 import fs from 'fs'
 import { LibraryService } from '../services/LibraryService'
@@ -166,6 +167,105 @@ export function registerLibraryIpc(): void {
         }
       } catch (err: any) {
         console.error('[Main] readAudioFile error:', err)
+        return { success: false, error: err?.message || String(err) }
+      }
+    }
+  )
+
+  // Library: Compress audio file to low-bitrate preview (64k MP3 or Opus) for rapid Listen Together join streaming
+  ipcMain.handle(
+    'library:compressAudio',
+    async (
+      _event,
+      songIdOrPath: string,
+      options?: { bitrate?: string; format?: string; explicitPath?: string }
+    ) => {
+      try {
+        let filePath = options?.explicitPath || songIdOrPath
+        const db = getDb()
+
+        if (songIdOrPath) {
+          const row = db
+            .prepare('SELECT filePath FROM songs WHERE id = ? OR filePath = ? COLLATE NOCASE LIMIT 1')
+            .get(songIdOrPath, songIdOrPath) as { filePath?: string } | undefined
+          if (row?.filePath) {
+            filePath = row.filePath
+          }
+        }
+
+        if (!filePath || filePath.startsWith('virtual:')) {
+          return { success: false, error: 'File is virtual or missing' }
+        }
+
+        if (filePath.startsWith('file://')) {
+          filePath = filePath.replace(/^file:\/\/\/?/i, '')
+        }
+
+        const resolved = resolve(filePath)
+        if (!fs.existsSync(resolved)) {
+          return { success: false, error: `File not found on disk: ${resolved}` }
+        }
+
+        const homeDir = app.getPath('home')
+        const candidates = [
+          path.join(process.resourcesPath || '', 'downloader', 'bin', 'ffmpeg.exe'),
+          path.join(process.resourcesPath || '', 'downloader', 'ffmpeg.exe'),
+          path.join(homeDir, 'AppData', 'Local', 'Microsoft', 'WinGet', 'Links', 'ffmpeg.exe'),
+          'ffmpeg'
+        ]
+        let ffmpegBin = 'ffmpeg'
+        for (const cand of candidates) {
+          if (cand !== 'ffmpeg' && fs.existsSync(cand)) {
+            ffmpegBin = cand
+            break
+          }
+        }
+
+        const format = options?.format === 'opus' ? 'opus' : 'mp3'
+        const bitrate = options?.bitrate || '64k'
+        const tempOut = path.join(
+          app.getPath('temp'),
+          `felo-preview-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${format}`
+        )
+
+        const codecArgs =
+          format === 'opus'
+            ? ['-c:a', 'libopus', '-b:a', bitrate, '-vbr', 'on', '-ac', '2']
+            : ['-c:a', 'libmp3lame', '-b:a', bitrate, '-ac', '2']
+
+        const args = ['-y', '-i', resolved, ...codecArgs, tempOut]
+
+        await new Promise<void>((resolvePromise, rejectPromise) => {
+          const proc = spawn(ffmpegBin, args, { windowsHide: true })
+          let stderr = ''
+          proc.stderr?.on('data', (d) => {
+            stderr += d.toString()
+          })
+          proc.on('close', (code) => {
+            if (code === 0 && fs.existsSync(tempOut)) {
+              resolvePromise()
+            } else {
+              rejectPromise(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-300)}`))
+            }
+          })
+          proc.on('error', (err) => {
+            rejectPromise(err)
+          })
+        })
+
+        const buffer = await fs.promises.readFile(tempOut)
+        try {
+          await fs.promises.unlink(tempOut)
+        } catch {}
+
+        return {
+          success: true,
+          data: buffer,
+          contentType: format === 'opus' ? 'audio/opus' : 'audio/mpeg',
+          size: buffer.byteLength
+        }
+      } catch (err: any) {
+        console.warn('[Main] compressAudio error:', err?.message || err)
         return { success: false, error: err?.message || String(err) }
       }
     }

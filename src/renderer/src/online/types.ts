@@ -62,9 +62,11 @@ export interface SharedSong {
   discordPriorityEnabled?: boolean
   lanUrl?: string
   audioUrl?: string
+  previewUrl?: string
+  audioQuality?: 'preview' | 'full'
   deviceId?: string
   sizeBytes?: number
-  uploadStatus?: 'METADATA_ONLY' | 'UPLOADING' | 'UPLOADED' | 'ERROR'
+  uploadStatus?: 'METADATA_ONLY' | 'PREVIEW_READY' | 'UPLOADING' | 'UPLOADED' | 'ERROR'
   uploadProgress?: number
   statusText?: string
   isAlreadyCompressed?: boolean

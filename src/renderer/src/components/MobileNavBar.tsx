@@ -1,4 +1,4 @@
-import { Home, Search, Library, Radio, User } from 'lucide-react'
+import { Home, Search, Library, Users, User } from 'lucide-react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useOnlineStore } from '../hooks/useOnlineStore'
 import Avatar from './Common/Avatar'
@@ -31,10 +31,10 @@ export default function MobileNavBar({ onOpenAccountMenu }: MobileNavBarProps = 
     currentPath.startsWith('/playlists') ||
     currentPath.startsWith('/album') ||
     currentPath.startsWith('/artist')
-  const isTogether =
-    currentPath.startsWith('/listen') ||
-    currentPath.startsWith('/together') ||
-    currentPath.startsWith('/online/listen')
+  const isFriendActivity =
+    currentPath.startsWith('/friends') ||
+    currentPath.startsWith('/friend') ||
+    currentPath.startsWith('/activity')
   const isAccount =
     currentPath.startsWith('/account') ||
     currentPath.startsWith('/profile') ||
@@ -112,17 +112,25 @@ export default function MobileNavBar({ onOpenAccountMenu }: MobileNavBarProps = 
         )}
       </button>
 
-      {/* 4. Together */}
+      {/* 4. Friend Activity */}
       <button
         type="button"
-        onClick={() => handleNav('/listen-together', isTogether)}
+        onClick={() => handleNav('/friends', isFriendActivity)}
+        title="Friend Activity"
         className={`flex-1 py-1.5 min-h-[44px] flex flex-col items-center justify-center gap-1 transition-all cursor-pointer relative outline-none focus:outline-none focus-visible:outline-none focus:ring-0 active:outline-none select-none ${
-          isTogether ? 'text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'
+          isFriendActivity ? 'text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'
         }`}
       >
-        <Radio className={`w-5 h-5 ${isTogether ? 'stroke-[2.5] text-emerald-400' : 'stroke-[1.8]'}`} />
-        <span className={isTogether ? 'text-white' : ''}>Together</span>
-        {isTogether && (
+        <Users className={`w-5 h-5 ${isFriendActivity ? 'stroke-[2.5] text-emerald-400' : 'stroke-[1.8]'}`} />
+        <span
+          className={cn(
+            'truncate max-w-[74px] text-center text-[10px] sm:text-[11px]',
+            isFriendActivity ? 'text-white' : ''
+          )}
+        >
+          Friend Activity
+        </span>
+        {isFriendActivity && (
           <span className="absolute bottom-0.5 w-1 h-1 rounded-full bg-emerald-400" />
         )}
       </button>

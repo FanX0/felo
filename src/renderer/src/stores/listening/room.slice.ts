@@ -1,4 +1,5 @@
 import type { StateCreator } from 'zustand'
+import { RoomNotFoundError } from './types'
 import type { RoomSlice, ListeningStoreState } from './types'
 import type { ListeningRoom, RoomMember, RoomMemberRole, SpeakerRole, SharedSong } from '../../online/types'
 import { getSupabase } from '../../lib/supabase'
@@ -509,12 +510,14 @@ export const createRoomSlice: StateCreator<
       }
 
       if (!targetRoom) {
-        throw new Error('This friend is not in an active party room right now.')
+        const notFoundErr = new RoomNotFoundError('This friend is not in an active party room right now.', friendId)
+        set({ error: notFoundErr.message, syncStatus: 'idle' })
+        throw notFoundErr
       }
 
       return await get().joinRoomById(targetRoom.id)
     } catch (err: any) {
-      set({ syncStatus: 'idle' })
+      set({ syncStatus: 'idle', error: err?.message || 'Failed to connect to friend session.' })
       throw err
     } finally {
       set({ isLoading: false, isJoiningRoom: false })
@@ -525,13 +528,20 @@ export const createRoomSlice: StateCreator<
     const user = useOnlineStore.getState().user
     if (!user) throw new Error('You must be signed in to join a room.')
 
+    const cleanRoomId = (roomId || '').trim()
+    if (!cleanRoomId) {
+      const err = new RoomNotFoundError('Room ID is required.')
+      set({ error: err.message, syncStatus: 'idle' })
+      throw err
+    }
+
     // 1. Check if already inside this room
     const currentJoined = get().joinedRoom
-    if (currentJoined && currentJoined.id === roomId && currentJoined.is_active) {
+    if (currentJoined && currentJoined.id === cleanRoomId && currentJoined.is_active) {
       return currentJoined
     }
     const currentHost = get().hostRoom
-    if (currentHost && currentHost.id === roomId && currentHost.is_active) {
+    if (currentHost && currentHost.id === cleanRoomId && currentHost.is_active) {
       return currentHost
     }
 
@@ -545,12 +555,19 @@ export const createRoomSlice: StateCreator<
       const { data: targetRoom, error: findError } = await supabase
         .from('listening_rooms')
         .select('*')
-        .eq('id', roomId)
+        .eq('id', cleanRoomId)
         .eq('is_active', true)
         .maybeSingle()
 
-      if (findError) throw findError
-      if (!targetRoom) throw new Error('This listening session is no longer active.')
+      if (findError) {
+        set({ error: findError.message, syncStatus: 'idle' })
+        throw findError
+      }
+      if (!targetRoom) {
+        const notFoundErr = new RoomNotFoundError('This listening session is no longer active or does not exist.', cleanRoomId)
+        set({ error: notFoundErr.message, syncStatus: 'idle' })
+        throw notFoundErr
+      }
 
       if (targetRoom.host_id !== user.id) {
         if (!currentJoined) {
@@ -662,7 +679,7 @@ export const createRoomSlice: StateCreator<
   },
 
   joinRoomByCode: async (code: string): Promise<ListeningRoom> => {
-    const cleanCode = code.trim().toUpperCase()
+    const cleanCode = (code || '').trim().toUpperCase()
     if (!cleanCode) throw new Error('Please enter a room code.')
 
     const user = useOnlineStore.getState().user
@@ -689,12 +706,19 @@ export const createRoomSlice: StateCreator<
         .eq('is_active', true)
         .maybeSingle()
 
-      if (findError) throw findError
-      if (!targetRoom) throw new Error(`No active room found with code "${cleanCode}".`)
+      if (findError) {
+        set({ error: findError.message, syncStatus: 'idle' })
+        throw findError
+      }
+      if (!targetRoom) {
+        const notFoundErr = new RoomNotFoundError(`No active room found with code "${cleanCode}".`, cleanCode)
+        set({ error: notFoundErr.message, syncStatus: 'idle' })
+        throw notFoundErr
+      }
 
       return await get().joinRoomById(targetRoom.id)
     } catch (err: any) {
-      set({ syncStatus: 'idle' })
+      set({ syncStatus: 'idle', error: err?.message || 'Failed to join room.' })
       throw err
     } finally {
       set({ isLoading: false, isJoiningRoom: false })

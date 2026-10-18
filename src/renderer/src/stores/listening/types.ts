@@ -57,6 +57,14 @@ export interface RoomPlaybackSlice {
   substitutes: Record<string, Song>
   manualSyncOffsetMs: number
   isManualSyncModalOpen: boolean
+  /** Sync lock: true while a seek is in-flight (prevents echo loop seeks) */
+  isSyncLocked: boolean
+  /** Buffering guard: true while <audio> is stalling/buffering (prevents seeks during buffering) */
+  isGuestBuffering: boolean
+  /** Current drift from host in seconds (for CatchUp HUD display) */
+  driftSeconds: number
+  /** Current audio quality tier ('preview' = 64kbps fast start, 'full' = lossless/high quality) */
+  audioQuality: 'preview' | 'full' | null
 
   setSyncStatus: (status: SyncStatus) => void
   setAutoDownloadMissing: (enabled: boolean) => void
@@ -64,6 +72,9 @@ export interface RoomPlaybackSlice {
   setManualSyncOffsetMs: (offsetMs: number) => void
   adjustManualSyncOffsetMs: (deltaMs: number) => void
   setIsManualSyncModalOpen: (isOpen: boolean) => void
+  setIsSyncLocked: (locked: boolean) => void
+  setIsGuestBuffering: (buffering: boolean) => void
+  setAudioQuality: (quality: 'preview' | 'full' | null) => void
 
   handleHostSongChange: (room: ListeningRoom) => Promise<void>
   handleHostPauseResume: (room: ListeningRoom) => void
@@ -71,6 +82,7 @@ export interface RoomPlaybackSlice {
   handleHostExplicitSeek: (payload: { position: number; hostTimestamp: number; trackId?: string }) => void
   handleHostExplicitPlayPause: (payload: { isPlaying: boolean; position?: number; hostTimestamp: number; trackId?: string }) => void
   handleHostDisconnect: () => Promise<void>
+  hotSwapToFullQuality: (fullUrl: string) => Promise<void>
   preloadNextQueueTracks: (room: ListeningRoom) => Promise<void>
   refreshJoinedRoomState: () => Promise<void>
   checkHostHealth: () => Promise<void>
@@ -124,10 +136,29 @@ export interface AudioBucketSlice {
     totalBytes?: number
   ) => void
   addLocalFilesToQueue: (files: FileList | File[]) => Promise<void>
-  addYouTubeTrackToQueue: (videoId: string, title?: string, channel?: string, duration?: number) => Promise<void>
+  addYouTubeTrackToQueue: (videoId: string, title?: string, channel?: string, duration?: number, isPriority?: boolean) => Promise<void>
   addLibrarySongsToQueue: (songs: Song[]) => Promise<void>
   syncPlayerQueueToRoom: () => Promise<void>
   cleanupOnLeave: () => void
 }
 
 export type ListeningStoreState = RoomSlice & RoomPlaybackSlice & WebRTCSlice & AudioBucketSlice
+
+export class RoomNotFoundError extends Error {
+  readonly code = 'ROOM_NOT_FOUND' as const
+  readonly identifier?: string
+
+  constructor(message = 'The listening session was not found or is no longer active.', identifier?: string) {
+    super(message)
+    this.name = 'RoomNotFoundError'
+    this.identifier = identifier
+    Object.setPrototypeOf(this, RoomNotFoundError.prototype)
+  }
+}
+
+export function isRoomNotFoundError(err: unknown): err is RoomNotFoundError {
+  return (
+    err instanceof RoomNotFoundError ||
+    (typeof err === 'object' && err !== null && (err as any).code === 'ROOM_NOT_FOUND')
+  )
+}

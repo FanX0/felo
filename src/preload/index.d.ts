@@ -83,6 +83,10 @@ declare global {
         songIdOrPath: string,
         explicitPath?: string
       ) => Promise<{ success: boolean; data?: ArrayBuffer; contentType?: string; size?: number; error?: string }>
+      compressAudio?: (
+        songIdOrPath: string,
+        options?: { bitrate?: string; format?: string; explicitPath?: string }
+      ) => Promise<{ success: boolean; data?: Uint8Array | Buffer; contentType?: string; size?: number; error?: string }>
 
       // Library Roots
       getLibraryRoots: () => Promise<any[]>

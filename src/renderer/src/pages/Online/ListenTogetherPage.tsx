@@ -1,5 +1,5 @@
 import { FormEvent, type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Radio } from 'lucide-react'
+import { Radio, AlertCircle, X } from 'lucide-react'
 import QRCode from 'qrcode'
 import { useSearchParams } from 'react-router-dom'
 import OnlineGate from '../../components/Online/OnlineGate'
@@ -15,12 +15,14 @@ import { getSupabase } from '../../lib/supabase'
 import { roomClockSync } from '../../lib/roomClockSync'
 import SelectMediaModal from '../../components/Online/SelectMediaModal'
 import AddFromLibraryModal from '../../components/Online/AddFromLibraryModal'
+import CatchUpHUD from '../../components/Online/CatchUpHUD'
 import { registerLocalSlotPoolFile, registerLocalSlotPoolPath } from '../../lib/jitAudioPipeline'
 import { toMediaUrl } from '../../lib/media'
 import { playParticipantLeaveSound } from '../../lib/uiSounds'
 import type { ListeningRoom, SpeakerRole } from '../../online/types'
 import type { Song } from '../../types'
-import type { ListenTogetherPageProps, RoomMemberInfo, LiveFriendSession } from './types'
+import type { ListenTogetherPageProps, RoomMemberInfo, LiveFriendSession, QueueTab } from './types'
+import { isYouTubeSong } from '../../lib/youtubeService'
 import { getSongKey, sanitizeCodeInput } from './utils'
 import {
   GuestRoomView,
@@ -100,11 +102,17 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
 
   const [joinCodeInput, setJoinCodeInput] = useState('')
   const [showJoinModal, setShowJoinModal] = useState(false)
+  const [joinModalError, setJoinModalError] = useState<string | null>(null)
   const [showReplaceModal, setShowReplaceModal] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
   const [showHostChat, setShowHostChat] = useState(false)
   const [showSelectMediaModal, setShowSelectMediaModal] = useState(false)
   const [showAddLibraryModal, setShowAddLibraryModal] = useState(false)
+
+  const handleJoinCodeChange = (code: string) => {
+    setJoinCodeInput(code)
+    if (joinModalError) setJoinModalError(null)
+  }
 
   const handleSelectLocalFiles = async (files: FileList | File[]) => {
     const fileArray = Array.from(files)
@@ -300,8 +308,8 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   const [message, setMessage] = useState('')
   const [copied, setCopied] = useState(false)
   const [showAllQueue, setShowAllQueue] = useState(false)
-  const [hostQueueTab, setHostQueueTab] = useState<'all' | 'priority' | 'local'>('all')
-  const [listenerQueueTab, setListenerQueueTab] = useState<'all' | 'priority' | 'local'>('all')
+  const [hostQueueTab, setHostQueueTab] = useState<QueueTab>('all')
+  const [listenerQueueTab, setListenerQueueTab] = useState<QueueTab>('all')
   const [qrDataUrl, setQrDataUrl] = useState('')
   const [allFriends, setAllFriends] = useState<
     Array<{ id: string; username: string; display_name: string; avatar_url: string | null }>
@@ -374,8 +382,12 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
     return upcomingTracks.filter((t) => Boolean(t?.song?.isPriority))
   }, [upcomingTracks])
 
+  const youtubeTracksList = useMemo(() => {
+    return upcomingTracks.filter((t) => Boolean(t?.song && isYouTubeSong(t.song)))
+  }, [upcomingTracks])
+
   const backgroundTracksList = useMemo(() => {
-    return upcomingTracks.filter((t) => Boolean(t?.song && !t.song.isPriority))
+    return upcomingTracks.filter((t) => Boolean(t?.song && !t.song.isPriority && !isYouTubeSong(t.song)))
   }, [upcomingTracks])
 
   const shareUrl = useMemo(() => {
@@ -407,6 +419,8 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       })
       .catch((err) => {
         setMessage(err instanceof Error ? err.message : 'Could not join session.')
+        setSearchParams({}, { replace: true })
+        directJoinAttempt.current = null
       })
       .finally(() => setBusy(false))
   }, [searchParams, user?.id, joinRoomById, setSearchParams])
@@ -433,6 +447,8 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
         })
         .catch((err) => {
           setMessage(err instanceof Error ? err.message : 'Could not host session.')
+          setSearchParams({}, { replace: true })
+          directJoinAttempt.current = null
         })
         .finally(() => setBusy(false))
       return
@@ -448,6 +464,8 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       })
       .catch((err) => {
         setMessage(err instanceof Error ? err.message : 'Could not join session.')
+        setSearchParams({}, { replace: true })
+        directJoinAttempt.current = null
       })
       .finally(() => setBusy(false))
   }, [searchParams, user?.id, joinRoomByCode, ensureHostRoom, setSearchParams])
@@ -954,6 +972,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       setTimeout(() => setMessage(''), 3000)
     } catch (err: any) {
       setMessage(err?.message || 'Failed to start listening along.')
+      void loadLiveFriends()
     } finally {
       setBusy(false)
     }
@@ -1043,16 +1062,20 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
     const cleanCode = sanitizeCodeInput(joinCodeInput)
     if (!cleanCode) return
     setBusy(true)
+    setJoinModalError(null)
     setMessage('Connecting to session...')
     try {
       const joined = await joinRoomByCode(cleanCode)
       setShowJoinModal(false)
       setJoinCodeInput('')
+      setJoinModalError(null)
       setSearchParams({})
       setMessage(`Joined ${joined.name}!`)
       setTimeout(() => setMessage(''), 3000)
     } catch (err: any) {
-      setMessage(err?.message || 'Failed to join session with code.')
+      const errorMsg = err?.message || 'Failed to join session with code.'
+      setJoinModalError(errorMsg)
+      setMessage(errorMsg)
     } finally {
       setBusy(false)
     }
@@ -1155,7 +1178,9 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   // VIEW A: CURRENTLY LISTENING ALONG WITH A FRIEND
   if (joinedRoom) {
     return (
-      <GuestRoomView
+      <>
+        <CatchUpHUD />
+        <GuestRoomView
         joinedRoom={joinedRoom}
         hostName={hostName}
         activeSubstitute={activeSubstitute}
@@ -1201,6 +1226,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
         filteredLibrary={filteredLibrary}
         handleSelectSubstitute={handleSelectSubstitute}
       />
+      </>
     )
   }
 
@@ -1250,8 +1276,35 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       </header>
 
       {message && (
-        <div className="mt-4 rounded-xl border border-border/60 bg-surface-elevated/80 p-3 text-xs font-bold text-text text-center">
-          {message}
+        <div
+          className={`mt-4 flex items-center justify-between gap-3 rounded-xl border p-3 text-xs font-bold animate-in fade-in ${
+            message.toLowerCase().includes('not found') ||
+            message.toLowerCase().includes('failed') ||
+            message.toLowerCase().includes('error') ||
+            message.toLowerCase().includes('no longer active')
+              ? 'border-red-500/30 bg-red-500/10 text-red-400'
+              : 'border-border/60 bg-surface-elevated/80 text-text'
+          }`}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            {message.toLowerCase().includes('not found') ||
+            message.toLowerCase().includes('failed') ||
+            message.toLowerCase().includes('error') ||
+            message.toLowerCase().includes('no longer active') ? (
+              <AlertCircle className="h-4 w-4 text-red-400 shrink-0" />
+            ) : (
+              <span className="h-2 w-2 rounded-full bg-primary shrink-0" />
+            )}
+            <span className="truncate">{message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMessage('')}
+            className="text-text-muted hover:text-text p-1 rounded-md hover:bg-hover cursor-pointer transition-colors shrink-0"
+            title="Dismiss"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
         </div>
       )}
 
@@ -1261,7 +1314,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
           handleCreateRoom={handleCreateRoom}
           busy={busy}
           joinCodeInput={joinCodeInput}
-          setJoinCodeInput={setJoinCodeInput}
+          setJoinCodeInput={handleJoinCodeChange}
           handleJoinWithCode={handleJoinWithCode}
         />
       )}
@@ -1306,6 +1359,7 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
           currentPlayingTrack={currentPlayingTrack}
           priorityTracksList={priorityTracksList}
           backgroundTracksList={backgroundTracksList}
+          youtubeTracksList={youtubeTracksList}
           setMessage={setMessage}
         />
       )}
@@ -1325,11 +1379,15 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
       {/* Join with Code Modal */}
       <JoinCodeModal
         isOpen={showJoinModal}
-        onClose={() => setShowJoinModal(false)}
+        onClose={() => {
+          setShowJoinModal(false)
+          setJoinModalError(null)
+        }}
         joinCodeInput={joinCodeInput}
-        setJoinCodeInput={setJoinCodeInput}
+        setJoinCodeInput={handleJoinCodeChange}
         onSubmit={handleJoinWithCode}
         busy={busy}
+        error={joinModalError}
       />
 
       {/* Invite Friends & QR Code Modal */}
