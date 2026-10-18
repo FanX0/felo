@@ -526,6 +526,17 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             queue: upcomingQueue
           }
         })
+
+        // Host sliding window: ensure the new upcoming track is ready in Cloud CDN
+        const nextSong = state.queue[state.currentSongIndex + 1]
+        if (nextSong && !isYouTubeSong(nextSong)) {
+          void (async () => {
+            try {
+              const { ensureTrackInAudioBucket } = await import('../lib/audioBucketService')
+              await ensureTrackInAudioBucket(nextSong)
+            } catch {}
+          })()
+        }
       }
 
       // Volume is strictly personal to each user's hardware setup and is NOT synced across room participants
@@ -1439,10 +1450,12 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
         if (Array.isArray(payload?.queue) && payload.queue.length > 0) {
           const currentRoom = useListeningStore.getState().joinedRoom
           if (currentRoom) {
-            useListeningStore.getState().setJoinedRoom({
+            const updatedRoom = {
               ...currentRoom,
               queue: payload.queue
-            })
+            }
+            useListeningStore.getState().setJoinedRoom(updatedRoom as any)
+            void useListeningStore.getState().preloadNextQueueTracks(updatedRoom as any)
           }
         }
       })

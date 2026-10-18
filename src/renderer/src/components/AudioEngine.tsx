@@ -1008,6 +1008,11 @@ export default function AudioEngine() {
     window.addEventListener('felo:private-session-changed', handlePrivacyRefresh)
     window.addEventListener('felo:media-session-refresh', handlePrivacyRefresh)
 
+    const handleBlobCached = () => {
+      schedulePreload()
+    }
+    window.addEventListener('felo:audio-blob-cached', handleBlobCached)
+
     const unsubscribe = usePlayerStore.subscribe((state, previousState) => {
       const song = state.queue[state.currentSongIndex]
       const previousSong = previousState.queue[previousState.currentSongIndex]
@@ -1018,12 +1023,15 @@ export default function AudioEngine() {
         song?.filePath !== previousSong?.filePath
       ) {
         syncAudio(state)
+      } else if (state.queue !== previousState.queue || state.repeatMode !== previousState.repeatMode) {
+        schedulePreload()
       }
     })
 
     return () => {
       window.removeEventListener('felo:private-session-changed', handlePrivacyRefresh)
       window.removeEventListener('felo:media-session-refresh', handlePrivacyRefresh)
+      window.removeEventListener('felo:audio-blob-cached', handleBlobCached)
       unsubscribe()
     }
   }, [getActiveAudio, getInactiveAudio, schedulePreload, setCurrentTime, setDuration])

@@ -132,6 +132,10 @@ export function cacheAudioBlob(trackId: string, blob: Blob): string {
       _inMemoryAudioBlobCache.delete(oldestKey)
     }
   }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('felo:audio-blob-cached', { detail: { trackId, blobUrl } }))
+  }
+
   return blobUrl
 }
 
