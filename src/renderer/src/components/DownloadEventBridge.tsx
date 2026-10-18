@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useDownloadStore } from '../hooks/useDownloadStore'
 import { usePlayerStore } from '../hooks/usePlayerStore'
 import { useListeningStore } from '../hooks/useListeningStore'
+import { useConnectedDeviceStore } from '../stores/useConnectedDeviceStore'
 import { findMatchingLibrarySong } from '../lib/songMatching'
 import type { Song } from '../pages/Library/Library'
 
@@ -51,8 +52,35 @@ export default function DownloadEventBridge(): null {
           const listeningState = useListeningStore.getState()
           const joined = listeningState.joinedRoom
           if (joined && joined.song) {
-            if (listeningState.syncStatus === 'missing_song') {
-              void listeningState.handleHostSongChange(joined)
+            const isTargetRoomSong =
+              completedSong.id === joined.song.localId ||
+              completedSong.id === (joined.song as any).id ||
+              targetQueueId === (joined.song as any).id ||
+              targetQueueId === joined.song.localId ||
+              (Boolean(completedSong.title && joined.song.title) &&
+                completedSong.title.trim().toLowerCase() === joined.song.title.trim().toLowerCase() &&
+                (!joined.song.artist || !completedSong.artist || completedSong.artist.trim().toLowerCase() === joined.song.artist.trim().toLowerCase()))
+
+            if (isTargetRoomSong) {
+              console.log('[DownloadEventBridge] Active room song downloaded. Performing 1-time sync with host...')
+              useConnectedDeviceStore.getState().setDevicePlaybackMode('local')
+              useConnectedDeviceStore.getState().claimPlayback()
+              usePlayerStore.getState().claimAudioOwnership()
+
+              if (listeningState.syncStatus === 'missing_song') {
+                void listeningState.handleHostSongChange(joined).then(() => {
+                  listeningState.performOneTimeSyncWithHost({
+                    forceSeek: true,
+                    logReason: 'Download completed from missing_song'
+                  })
+                })
+              } else {
+                listeningState.performOneTimeSyncWithHost({
+                  forceSeek: true,
+                  logReason: 'Active room song download completed'
+                })
+                void listeningState.preloadNextQueueTracks(joined)
+              }
             } else {
               void listeningState.preloadNextQueueTracks(joined)
             }

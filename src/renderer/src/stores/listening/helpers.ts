@@ -1,7 +1,7 @@
 import type { Song } from '../../types/song'
 import type { SharedSong } from '../../online/types'
 import { WebRTCAudioHost, WebRTCAudioClient } from '../../lib/webrtcAudioStream'
-import { scoreProviderMatch } from '../../lib/songMatching'
+import { scoreProviderMatch, findMatchingLibrarySong } from '../../lib/songMatching'
 import { toMediaUrl } from '../../lib/media'
 import { resolveSongAudioUrl } from '../../lib/songAudioResolver'
 import { getCurrentDeviceId } from '../../lib/deviceInfo'
@@ -416,29 +416,9 @@ export function normalizeSongValue(value: string): string {
 }
 
 export function findSongMatchIndex(songs: Song[], targetTitle: string, targetArtist: string): number {
-  const nTitle = normalizeSongValue(targetTitle)
-  const nArtist = normalizeSongValue(targetArtist)
-  if (!nTitle) return -1
-
-  // 1. Exact normalized match (only real files on disk)
-  let idx = songs.findIndex((s) => {
-    if (!s.filePath || String(s.filePath).startsWith('virtual:')) return false
-    const sTitle = normalizeSongValue(s.title || '')
-    const sArtist = normalizeSongValue(s.artist || '')
-    return sTitle === nTitle && (!nArtist || !sArtist || sArtist === nArtist)
-  })
-  if (idx >= 0) return idx
-
-  // 2. Fuzzy substring match (title match + artist match, only real files on disk)
-  idx = songs.findIndex((s) => {
-    if (!s.filePath || String(s.filePath).startsWith('virtual:')) return false
-    const sTitle = normalizeSongValue(s.title || '')
-    const sArtist = normalizeSongValue(s.artist || '')
-    const titleMatch = sTitle && nTitle && (sTitle.includes(nTitle) || nTitle.includes(sTitle))
-    const artistMatch = !nArtist || !sArtist || sArtist.includes(nArtist) || nArtist.includes(sArtist)
-    return Boolean(titleMatch && artistMatch)
-  })
-  return idx
+  if (!songs || songs.length === 0 || !targetTitle) return -1
+  const matched = findMatchingLibrarySong(targetTitle, targetArtist, songs)
+  return matched ? songs.indexOf(matched) : -1
 }
 
 export function findBestDownloadMatch(

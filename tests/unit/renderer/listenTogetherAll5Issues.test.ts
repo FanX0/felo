@@ -290,4 +290,85 @@ describe('Listen Together: 5-Point Bug Fixes & Regression Test Suite', () => {
       expect(activeQueue[currentIdx]?.audioUrl).toBe('https://cdn.example.com/beta.mp3')
     })
   })
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // ISSUE 6: Post-Download Authoritative 1-Time Sync
+  // ──────────────────────────────────────────────────────────────────────────
+  describe('Issue 6: Post-Download Authoritative 1-Time Sync', () => {
+    it('calculateCurrentHostTargetTime projects live host position accurately', () => {
+      const now = Date.now()
+      const room: ListeningRoom = {
+        id: 'room-sync-1',
+        code: 'SYNC01',
+        host_id: 'host-user',
+        is_active: true,
+        is_playing: true,
+        position_seconds: 40,
+        song: {
+          ...toSharedSong(song1),
+          hostPosition: 40,
+          hostTimestamp: now - 3000 // 3 seconds ago
+        },
+        queue: [toSharedSong(song1)],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+
+      useListeningStore.setState({
+        joinedRoom: room,
+        myRole: 'listener'
+      })
+
+      const targetTime = useListeningStore.getState().calculateCurrentHostTargetTime()
+      // Should be roughly 40 + 3 = 43 seconds (allowing small variance)
+      expect(targetTime).toBeGreaterThanOrEqual(42.5)
+      expect(targetTime).toBeLessThanOrEqual(43.5)
+    })
+
+    it('performOneTimeSyncWithHost seeks player store and aligns playback state after download completes', () => {
+      const room: ListeningRoom = {
+        id: 'room-sync-2',
+        code: 'SYNC02',
+        host_id: 'host-user',
+        is_active: true,
+        is_playing: true,
+        position_seconds: 75,
+        song: {
+          ...toSharedSong(song1),
+          hostPosition: 75,
+          hostTimestamp: Date.now()
+        },
+        queue: [toSharedSong(song1)],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+
+      useListeningStore.setState({
+        joinedRoom: room,
+        myRole: 'listener',
+        driftSeconds: 25,
+        syncStatus: 'buffering'
+      })
+
+      // Guest was at 0:00 (just finished downloading audio file)
+      usePlayerStore.setState({
+        currentTime: 0,
+        isPlaying: false
+      })
+
+      // Trigger 1-time authoritative sync
+      useListeningStore.getState().performOneTimeSyncWithHost({
+        forceSeek: true,
+        logReason: 'Download complete unit test'
+      })
+
+      const playerState = usePlayerStore.getState()
+      const listeningState = useListeningStore.getState()
+
+      expect(playerState.isPlaying).toBe(true)
+      expect(playerState.currentTime).toBeGreaterThanOrEqual(74)
+      expect(listeningState.driftSeconds).toBe(0)
+      expect(listeningState.syncStatus).toBe('synced')
+    })
+  })
 })

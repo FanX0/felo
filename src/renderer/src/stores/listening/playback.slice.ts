@@ -377,10 +377,8 @@ export const createRoomPlaybackSlice: StateCreator<
           (get().manualSyncOffsetMs || 0) / 1000,
           room.song?.duration || 0
         )
-        if (initialTargetTime > 0) {
-          usePlayerStore.getState().setCurrentTime(initialTargetTime)
-          usePlayerStore.getState().seek(initialTargetTime)
-        }
+        usePlayerStore.getState().setCurrentTime(initialTargetTime)
+        usePlayerStore.getState().seek(initialTargetTime)
 
         applyInitialPlaybackState(room, ytSong.id, room.song?.duration || 0)
         return
@@ -438,7 +436,14 @@ export const createRoomPlaybackSlice: StateCreator<
         let targetIndex = 0
 
         if (room.queue && room.queue.length > 0) {
+          const isIndex0Target =
+            (room.queue[0].localId && (room.queue[0].localId === songId || room.queue[0].localId === room.song.localId)) ||
+            ((room.queue[0] as any).id && ((room.queue[0] as any).id === songId || (room.queue[0] as any).id === (room.song as any).id)) ||
+            (normalizeSongValue(room.queue[0].title) === normalizeSongValue(room.song.title) &&
+              normalizeSongValue(room.queue[0].artist) === normalizeSongValue(room.song.artist))
+
           sessionQueue = room.queue.map((shared, idx) => {
+            if (idx === 0 && isIndex0Target) return syncedSong
             const isTarget =
               (shared.localId && shared.localId === songId) ||
               ((shared as any).id && (shared as any).id === songId) ||
@@ -455,8 +460,13 @@ export const createRoomPlaybackSlice: StateCreator<
               filePath: shared.audioUrl || ''
             } as Song
           })
-          const activeIdx = sessionQueue.findIndex((s) => s.id === syncedSong.id)
-          targetIndex = activeIdx >= 0 ? activeIdx : 0
+          if (isIndex0Target) {
+            sessionQueue[0] = syncedSong
+            targetIndex = 0
+          } else {
+            const activeIdx = sessionQueue.findIndex((s) => s.id === syncedSong.id)
+            targetIndex = activeIdx >= 0 ? activeIdx : 0
+          }
         } else {
           sessionQueue = [syncedSong]
           targetIndex = 0
@@ -598,7 +608,14 @@ export const createRoomPlaybackSlice: StateCreator<
         let targetIndex = 0
 
         if (room.queue && room.queue.length > 0) {
+          const isIndex0Target =
+            (room.queue[0].localId && (room.queue[0].localId === songId || room.queue[0].localId === room.song.localId)) ||
+            ((room.queue[0] as any).id && ((room.queue[0] as any).id === songId || (room.queue[0] as any).id === (room.song as any).id)) ||
+            (normalizeSongValue(room.queue[0].title) === normalizeSongValue(room.song.title) &&
+              normalizeSongValue(room.queue[0].artist) === normalizeSongValue(room.song.artist))
+
           sessionQueue = room.queue.map((shared, idx) => {
+            if (idx === 0 && isIndex0Target) return syncedSong
             const isTarget =
               (shared.localId && shared.localId === songId) ||
               ((shared as any).id && (shared as any).id === songId) ||
@@ -619,8 +636,13 @@ export const createRoomPlaybackSlice: StateCreator<
               filePath: shared.audioUrl || ''
             } as Song
           })
-          const activeIdx = sessionQueue.findIndex((s) => s.id === syncedSong.id)
-          targetIndex = activeIdx >= 0 ? activeIdx : 0
+          if (isIndex0Target) {
+            sessionQueue[0] = syncedSong
+            targetIndex = 0
+          } else {
+            const activeIdx = sessionQueue.findIndex((s) => s.id === syncedSong.id)
+            targetIndex = activeIdx >= 0 ? activeIdx : 0
+          }
         } else {
           sessionQueue = [syncedSong]
           targetIndex = 0
@@ -670,6 +692,7 @@ export const createRoomPlaybackSlice: StateCreator<
                   console.log(`[handleHostSongChange] Progressive upgrade ready, hot-swapping to full quality...`)
                   await get().hotSwapToFullQuality(cachedUrl)
                 }
+                get().performOneTimeSyncWithHost({ forceSeek: true, logReason: 'Background download complete' })
               }
             } catch (err) {
               console.warn('[handleHostSongChange] Background audio fetch/upgrade failed (progressive streaming remains active):', err)
@@ -786,7 +809,16 @@ export const createRoomPlaybackSlice: StateCreator<
       let targetIndex = 0
 
       if (room.queue && room.queue.length > 0) {
+        const isIndex0Target =
+          (room.queue[0].localId && (room.queue[0].localId === songId || room.queue[0].localId === room.song.localId)) ||
+          ((room.queue[0] as any).id && ((room.queue[0] as any).id === songId || (room.queue[0] as any).id === (room.song as any).id)) ||
+          (normalizeSongValue(room.queue[0].title) === normalizeSongValue(room.song.title) &&
+            normalizeSongValue(room.queue[0].artist) === normalizeSongValue(room.song.artist))
+
         sessionQueue = room.queue.map((shared, idx) => {
+          if (idx === 0 && isIndex0Target) {
+            return matchedSong
+          }
           const localMatchIdx = findSongMatchIndex(allLocalSongs, shared.title, shared.artist)
           if (localMatchIdx >= 0) {
             return allLocalSongs[localMatchIdx]
@@ -803,17 +835,22 @@ export const createRoomPlaybackSlice: StateCreator<
           } as Song
         })
 
-        const activeInQueueIdx = sessionQueue.findIndex(
-          (s) =>
-            normalizeSongValue(s.title) === normalizeSongValue(room.song!.title) &&
-            normalizeSongValue(s.artist) === normalizeSongValue(room.song!.artist)
-        )
-        if (activeInQueueIdx >= 0) {
-          sessionQueue[activeInQueueIdx] = matchedSong
-          targetIndex = activeInQueueIdx
-        } else {
-          sessionQueue = [matchedSong, ...sessionQueue]
+        if (isIndex0Target) {
+          sessionQueue[0] = matchedSong
           targetIndex = 0
+        } else {
+          const activeInQueueIdx = sessionQueue.findIndex(
+            (s) =>
+              normalizeSongValue(s.title) === normalizeSongValue(room.song!.title) &&
+              normalizeSongValue(s.artist) === normalizeSongValue(room.song!.artist)
+          )
+          if (activeInQueueIdx >= 0) {
+            sessionQueue[activeInQueueIdx] = matchedSong
+            targetIndex = activeInQueueIdx
+          } else {
+            sessionQueue = [matchedSong, ...sessionQueue]
+            targetIndex = 0
+          }
         }
       } else {
         sessionQueue = [matchedSong]
@@ -826,6 +863,17 @@ export const createRoomPlaybackSlice: StateCreator<
         usePlayerStore.getState().setQueue(sessionQueue, targetIndex, undefined, { isRoomSync: true })
         if (!room.is_playing) {
           usePlayerStore.getState().setIsPlaying(false)
+        }
+      } else {
+        // Same song replay/loop: ensure queue index is targetIndex and seek to host position
+        if (playerState.currentSongIndex !== targetIndex) {
+          usePlayerStore.setState({ currentSongIndex: targetIndex })
+        }
+        const hostPos = typeof room.song.hostPosition === 'number' ? room.song.hostPosition : room.position_seconds || 0
+        playerState.seek(hostPos)
+        playerState.setCurrentTime(hostPos)
+        if (room.is_playing) {
+          playerState.setIsPlaying(true)
         }
       }
 
@@ -1206,10 +1254,8 @@ export const createRoomPlaybackSlice: StateCreator<
       )
 
       setIsSessionSyncing(true)
-      if (targetTime > 0) {
-        playerState.seek(targetTime)
-        playerState.setCurrentTime(targetTime)
-      }
+      playerState.seek(targetTime)
+      playerState.setCurrentTime(targetTime)
       setAudioPlaybackRate(1.0)
       playerState.setIsPlaying(pulse.isPlaying)
       set({ syncStatus: 'synced', missingSong: null })
@@ -1326,7 +1372,7 @@ export const createRoomPlaybackSlice: StateCreator<
     }))
   },
 
-  handleHostExplicitSeek: (payload: { position: number; hostTimestamp: number; trackId?: string }): void => {
+  handleHostExplicitSeek: (payload: { position: number; hostTimestamp: number; trackId?: string; isLoop?: boolean }): void => {
     const user = useOnlineStore.getState().user
     const joined = get().joinedRoom
     if (!joined || joined.host_id === user?.id) return
@@ -1356,8 +1402,10 @@ export const createRoomPlaybackSlice: StateCreator<
       return
     }
 
-    // Sync lock + buffering guard: prevent echo loop seeks
-    if (get().isSyncLocked || get().isGuestBuffering) return
+    const isLoopRewind = Boolean(payload.position === 0 || payload.isLoop)
+
+    // Sync lock + buffering guard: prevent echo loop seeks (unless explicit loop rewind)
+    if ((get().isSyncLocked || get().isGuestBuffering) && !isLoopRewind) return
 
     const duration = joined.song?.duration || playerState.duration || 0
     const manualOffsetSec = (get().manualSyncOffsetMs || 0) / 1000
@@ -1374,6 +1422,12 @@ export const createRoomPlaybackSlice: StateCreator<
     roomClockSync.notifyManualOffsetChanged()
     playerState.seek(targetTime)
     playerState.setCurrentTime(targetTime)
+
+    if (isLoopRewind || joined.is_playing) {
+      if (!playerState.isPlaying) {
+        playerState.setIsPlaying(true)
+      }
+    }
 
     if (joined.song) {
       joined.song.hostPosition = payload.position
@@ -1601,10 +1655,9 @@ export const createRoomPlaybackSlice: StateCreator<
       const currentSong = player.queue[player.currentSongIndex]
       if (!currentSong) return
 
-      // Read current playback position
-      const audioEl = document.querySelector('audio')
-      const targetPosition = audioEl?.currentTime || player.currentTime || 0
-      const wasPlaying = player.isPlaying
+      // Read current playback position calculated against authoritative host clock
+      const targetPosition = get().calculateCurrentHostTargetTime()
+      const wasPlaying = typeof joined.is_playing === 'boolean' ? joined.is_playing : player.isPlaying
 
       console.log(`[hotSwapToFullQuality] Hot-swapping to full quality at position ${targetPosition.toFixed(2)}s`)
 
@@ -1617,6 +1670,7 @@ export const createRoomPlaybackSlice: StateCreator<
       player.updateSong(updatedSong, currentSong.id)
 
       // Align audio element position smoothly
+      const audioEl = getActiveAudioElement() || document.querySelector('audio')
       if (audioEl) {
         audioEl.currentTime = targetPosition
         if (wasPlaying && audioEl.paused) {
@@ -1626,6 +1680,7 @@ export const createRoomPlaybackSlice: StateCreator<
 
       set({ audioQuality: 'full' })
       get().setJitStatus(currentSong.id, 100, 'Playing (Lossless / Full)', 0, 0)
+      get().performOneTimeSyncWithHost({ forceSeek: true, logReason: 'Full quality hot-swap complete' })
     } catch (err) {
       console.warn('[hotSwapToFullQuality] Hot-swap failed:', err)
     } finally {
@@ -1633,6 +1688,112 @@ export const createRoomPlaybackSlice: StateCreator<
         get().setIsSyncLocked(false)
       }, 800)
     }
+  },
+
+  calculateCurrentHostTargetTime: (): number => {
+    const state = get()
+    const joined = state.joinedRoom
+    if (!joined) return 0
+
+    const manualOffsetSec = (state.manualSyncOffsetMs || 0) / 1000
+    const ps = usePlayerStore.getState()
+    const duration = joined.song?.duration || ps.duration || 0
+
+    const hostPulse = _lastHostPulse as SyncPulsePayload | null
+    if (hostPulse && hostPulse.hostTimestamp > 0) {
+      return roomClockSync.calculateTargetTime(
+        hostPulse.position,
+        hostPulse.hostTimestamp,
+        hostPulse.isPlaying,
+        manualOffsetSec,
+        duration
+      )
+    }
+
+    const hostPos =
+      typeof joined.song?.hostPosition === 'number'
+        ? joined.song.hostPosition
+        : (joined.position_seconds || 0)
+    const hostTimestamp =
+      typeof joined.song?.hostTimestamp === 'number'
+        ? joined.song.hostTimestamp
+        : new Date(joined.updated_at || Date.now()).getTime()
+
+    return roomClockSync.calculateTargetTime(
+      hostPos,
+      hostTimestamp,
+      joined.is_playing,
+      manualOffsetSec,
+      duration
+    )
+  },
+
+  performOneTimeSyncWithHost: (options?: { forceSeek?: boolean; logReason?: string }): void => {
+    const state = get()
+    const user = useOnlineStore.getState().user
+    const joined = state.joinedRoom
+    if (!joined || joined.host_id === user?.id) return
+
+    // Do not sync local audio if joined is device streaming
+    if (joined.song?.isDeviceStream || joined.is_device_stream || state.isReceivingDeviceStream) return
+
+    const playerState = usePlayerStore.getState()
+    const targetTime = state.calculateCurrentHostTargetTime()
+    const isHostPlaying = typeof joined.is_playing === 'boolean' ? joined.is_playing : true
+
+    console.log(
+      `[performOneTimeSyncWithHost] Performing 1-time sync (${options?.logReason || 'lifecycle'}): targetTime=${targetTime.toFixed(2)}s, isPlaying=${isHostPlaying}`
+    )
+
+    // 1. Acquire sync lock with cooldown to suppress echo seeks and heartbeat interference
+    setIsSessionSyncing(true)
+    get().setIsSyncLocked(true)
+    get().setIsGuestBuffering(false)
+
+    // 2. Align play/pause state
+    if (playerState.isPlaying !== isHostPlaying) {
+      playerState.setIsPlaying(isHostPlaying)
+    }
+
+    // 3. Align position via player store and active audio element
+    playerState.setCurrentTime(targetTime)
+    playerState.seek(targetTime)
+
+    const activeAudio = getActiveAudioElement()
+    if (activeAudio) {
+      try {
+        activeAudio.currentTime = targetTime
+        if (isHostPlaying && activeAudio.paused) {
+          activeAudio.play().catch((err) => {
+            console.warn('[performOneTimeSyncWithHost] Audio play failed:', err)
+          })
+        } else if (!isHostPlaying && !activeAudio.paused) {
+          activeAudio.pause()
+        }
+      } catch (audioErr) {
+        console.warn('[performOneTimeSyncWithHost] Error updating audio element:', audioErr)
+      }
+    }
+
+    // 4. Reset drift and update room state
+    setNeedsInitialSync(false)
+    set((s) => ({
+      driftSeconds: 0,
+      syncStatus: 'synced',
+      missingSong: null,
+      joinedRoom: s.joinedRoom
+        ? {
+            ...s.joinedRoom,
+            position_seconds: Math.round(targetTime),
+            is_playing: isHostPlaying
+          }
+        : null
+    }))
+
+    // 5. Release session syncing after safe delay
+    setTimeout(() => {
+      setIsSessionSyncing(false)
+    }, 1000)
   },
 
   refreshJoinedRoomState: async (): Promise<void> => {

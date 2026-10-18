@@ -11,7 +11,7 @@ import { resolveSongAudioUrl } from '../lib/songAudioResolver'
 import { useConnectedDeviceStore } from '../hooks/useConnectedDeviceStore'
 import { useDownloadStore } from '../hooks/useDownloadStore'
 import { useListeningStore } from '../hooks/useListeningStore'
-import { setIsSessionSyncing } from '../stores/listening/helpers'
+import { setIsSessionSyncing, needsInitialSync } from '../stores/listening/helpers'
 import { audioDspEngine } from '../lib/audioDspEngine'
 import { getLocalSlotPoolFile } from '../lib/jitAudioPipeline'
 import { getTrackDisplayTitle } from '../lib/songUtils'
@@ -287,6 +287,18 @@ export default function AudioEngine() {
       if (isBuf) {
         audioDspEngine.stopBuffer(channel)
       }
+
+      // LISTEN TOGETHER GUEST: In a shared room, the host controls track transitions and looping!
+      // The guest MUST NOT advance the queue or loop independently when their local audio finishes.
+      const listeningState = useListeningStore.getState()
+      if (listeningState.joinedRoom && !listeningState.isReceivingDeviceStream) {
+        console.log('[AudioEngine] Joined room track ended; waiting for host transition or loop')
+        if (audio && !audio.paused) {
+          audio.pause()
+        }
+        return
+      }
+
       playNext(false)
     },
     [getActiveAudio, playNext]
@@ -294,11 +306,18 @@ export default function AudioEngine() {
 
   const applySeek = useCallback(
     (time: number) => {
-      // Avoid micro-stutter/pop if seekRequest(0) arrives mid-crossfade
-      if (isCrossfadingRef.current && time === 0) return true
+      const inRoom = Boolean(useListeningStore.getState().joinedRoom)
+      // Avoid micro-stutter/pop if seekRequest(0) arrives mid-crossfade (unless in room sync loop)
+      if (isCrossfadingRef.current && time === 0 && !inRoom) return true
 
       if (audioDspEngine.isBufferActive(activeChannelRef.current)) {
-        audioDspEngine.seekBuffer(time, activeChannelRef.current)
+        const channel = activeChannelRef.current
+        const buf = audioDspEngine.getCurrentAudioBuffer(channel)
+        audioDspEngine.seekBuffer(time, channel)
+        const shouldPlay = resumeAfterSeekRef.current || (inRoom && usePlayerStore.getState().isPlaying)
+        if (shouldPlay && !audioDspEngine.isBufferPlaying(channel) && buf) {
+          audioDspEngine.playBuffer(buf, time, () => handleEnded(channel), channel)
+        }
         setCurrentTime(time)
         return true
       }
@@ -318,7 +337,8 @@ export default function AudioEngine() {
       audio.currentTime = Math.max(0, Math.min(time, duration))
       setCurrentTime(audio.currentTime)
 
-      if ((wasEnded || audio.paused) && resumeAfterSeekRef.current) {
+      const shouldResume = resumeAfterSeekRef.current || (inRoom && usePlayerStore.getState().isPlaying)
+      if ((wasEnded || audio.paused) && shouldResume) {
         audio.play().catch((err) => {
           console.warn('[AudioEngine] Playback failed resuming after ended:', err)
         })
@@ -326,7 +346,7 @@ export default function AudioEngine() {
 
       return true
     },
-    [getActiveAudio, setCurrentTime]
+    [getActiveAudio, setCurrentTime, handleEnded]
   )
 
   // Web Audio buffer source position sync ticker
@@ -1126,6 +1146,17 @@ export default function AudioEngine() {
       pendingSeekRef.current = null
       applySeek(pendingSeek)
     }
+
+    // 1-Time Sync: If in a Listen Together room as a guest and needs initial sync (or after download),
+    // sync immediately once metadata is ready
+    const listeningState = useListeningStore.getState()
+    if (listeningState.joinedRoom && !listeningState.isReceivingDeviceStream && needsInitialSync()) {
+      listeningState.performOneTimeSyncWithHost({
+        forceSeek: true,
+        logReason: 'Audio metadata ready (1-time sync)'
+      })
+    }
+
     resumePendingPlayback(event.currentTarget)
     notifyAudioTrackChanged()
   }
@@ -1135,6 +1166,16 @@ export default function AudioEngine() {
     isChangingSourceRef.current = false
     event.currentTarget.muted = false
     setIsBuffering(false)
+
+    // Resilient fallback: ensure 1-time sync runs if loadedmetadata didn't catch it
+    const listeningState = useListeningStore.getState()
+    if (listeningState.joinedRoom && !listeningState.isReceivingDeviceStream && needsInitialSync()) {
+      listeningState.performOneTimeSyncWithHost({
+        forceSeek: true,
+        logReason: 'Audio canplay ready (1-time sync)'
+      })
+    }
+
     resumePendingPlayback(event.currentTarget)
     notifyAudioTrackChanged()
     schedulePreload()

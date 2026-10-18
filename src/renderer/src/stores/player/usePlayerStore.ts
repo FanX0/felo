@@ -208,6 +208,32 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       get().clearQueue()
       return
     }
+
+    const contextToSet = context !== undefined ? context : get().playbackContext
+    const tabId = typeof window !== 'undefined' ? getTabInstanceId() : null
+
+    // Room Sync Fast Path: Host session queue is authoritative.
+    // NEVER shuffle room queue with guest's personal shuffle setting, and NEVER inject stale local priorities.
+    if (options?.isRoomSync) {
+      const safeIndex = Math.max(0, Math.min(newQueue.length - 1, startPlayingIndex))
+      const selectedSong = newQueue[safeIndex] || newQueue[0]
+      rememberPlayedSong(selectedSong)
+      const isVirtual = !selectedSong?.filePath || selectedSong.filePath.startsWith('virtual:')
+      set({
+        originalQueue: newQueue,
+        queue: newQueue,
+        currentSongIndex: safeIndex,
+        isPlaying: true,
+        isBuffering: isVirtual,
+        currentTime: 0,
+        seekRequest: 0,
+        playbackContext: contextToSet,
+        isAudioActive: true,
+        activeInstanceId: tabId
+      })
+      return
+    }
+
     const { isShuffle, queue: currentQueue, currentSongIndex: currentIdx } = get()
     const preservePriority = options?.preservePriority !== false
     const pendingPriorities =
@@ -216,11 +242,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         : []
     const pendingPriorityIds = new Set(pendingPriorities.map((s) => s.id))
 
-    const contextToSet = context !== undefined ? context : get().playbackContext
     const selectedSong = newQueue[startPlayingIndex] || newQueue[0]
     rememberPlayedSong(selectedSong)
     const isVirtual = !selectedSong?.filePath || selectedSong.filePath.startsWith('virtual:')
-    const tabId = typeof window !== 'undefined' ? getTabInstanceId() : null
 
     // Deduplicate any priority tracks from newQueue that already exist in pendingPriorities
     const filteredNewQueue = newQueue.filter((s) => !pendingPriorityIds.has(s.id))

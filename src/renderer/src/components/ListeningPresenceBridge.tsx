@@ -461,34 +461,31 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             .slice(safeIdx, safeIdx + 100)
             .map((s) => toSharedSong(s))
 
+          const shared = toSharedSong(newSong)
           void syncChannel.send({
             type: 'broadcast',
             event: 'track_change',
             payload: {
-              song: toSharedSong(newSong),
+              song: shared,
               queue: upcomingQueue,
               position: 0,
               isPlaying: state.isPlaying,
               hostTimestamp: Date.now()
             }
           })
-        }
-      } else if (queueChanged) {
-        const safeIdx = Math.max(0, state.currentSongIndex)
-        const upcomingQueue = state.queue
-          .slice(safeIdx, safeIdx + 100)
-          .map((s) => toSharedSong(s))
 
-        void syncChannel.send({
-          type: 'broadcast',
-          event: 'queue_update',
-          payload: {
-            queue: upcomingQueue
+          broadcastHostTrackChange(shared)
+          if (!isYouTubeSong(newSong)) {
+            void (async () => {
+              try {
+                const { ensureTrackInAudioBucket } = await import('../lib/audioBucketService')
+                await ensureTrackInAudioBucket(newSong)
+              } catch {}
+            })()
           }
-        })
-      }
-
-      if (seekChanged && typeof state.seekRequest === 'number') {
+        }
+        sendPulse(0)
+      } else if (seekChanged && typeof state.seekRequest === 'number') {
         const song = state.queue[state.currentSongIndex]
         void syncChannel.send({
           type: 'broadcast',
@@ -496,7 +493,8 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
           payload: {
             position: state.seekRequest,
             hostTimestamp: Date.now(),
-            trackId: song?.id
+            trackId: song?.id,
+            isLoop: state.seekRequest === 0
           }
         })
         sendPulse(state.seekRequest)
@@ -515,20 +513,19 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
           }
         })
         sendPulse()
-      } else if (songChanged) {
-        const song = state.queue[state.currentSongIndex]
-        if (song) {
-          broadcastHostTrackChange(toSharedSong(song))
-          if (!isYouTubeSong(song)) {
-            void (async () => {
-              try {
-                const { ensureTrackInAudioBucket } = await import('../lib/audioBucketService')
-                await ensureTrackInAudioBucket(song)
-              } catch {}
-            })()
+      } else if (queueChanged) {
+        const safeIdx = Math.max(0, state.currentSongIndex)
+        const upcomingQueue = state.queue
+          .slice(safeIdx, safeIdx + 100)
+          .map((s) => toSharedSong(s))
+
+        void syncChannel.send({
+          type: 'broadcast',
+          event: 'queue_update',
+          payload: {
+            queue: upcomingQueue
           }
-        }
-        sendPulse(0)
+        })
       }
 
       // Volume is strictly personal to each user's hardware setup and is NOT synced across room participants
@@ -1119,17 +1116,9 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             next.song.artist === currentRoom.song.artist &&
             (next.song.localId ? next.song.localId === currentRoom.song.localId : true)
           )
-          const isAlreadyPlayingThisSong = Boolean(
-            !sourceTypeChanged &&
-            currentPlayingSong &&
-            next.song &&
-            currentPlayingSong.title === next.song.title &&
-            currentPlayingSong.artist === next.song.artist
-          )
-
           const songChanged = Boolean(
             next.song &&
-            !isSongEffectivelyEqual && !isAlreadyPlayingThisSong
+            !isSongEffectivelyEqual
           )
 
           if (next.song && typeof next.song.hostPosition !== 'number') {
@@ -1150,6 +1139,18 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
 
           if (songChanged) {
             void useListeningStore.getState().handleHostSongChange(next)
+          } else if (
+            next.song &&
+            (next.position_seconds === 0 || next.song.hostPosition === 0) &&
+            ((getActiveAudioTime() || currentPlayingSong?.duration || 0) > 3)
+          ) {
+            // Host looped / replayed the same song from 0
+            useListeningStore.getState().handleHostExplicitSeek({
+              position: 0,
+              hostTimestamp: new Date(next.updated_at || Date.now()).getTime(),
+              trackId: next.song.localId || (next.song as any).id,
+              isLoop: true
+            })
           } else if (next.is_playing !== currentRoom?.is_playing) {
             useListeningStore.getState().handleHostPauseResume(next)
           }
@@ -1288,17 +1289,9 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             latestRoom.song.artist === currentRoom.song.artist &&
             (latestRoom.song.localId ? latestRoom.song.localId === currentRoom.song.localId : true)
           )
-          const isAlreadyPlayingThisSong = Boolean(
-            !sourceTypeChanged &&
-            currentPlayingSong &&
-            latestRoom.song &&
-            currentPlayingSong.title === latestRoom.song.title &&
-            currentPlayingSong.artist === latestRoom.song.artist
-          )
-
           const songChanged = Boolean(
             latestRoom.song &&
-            !isSongEffectivelyEqual && !isAlreadyPlayingThisSong
+            !isSongEffectivelyEqual
           )
 
           useListeningStore.getState().setJoinedRoom(latestRoom as any)
@@ -1310,6 +1303,18 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
 
           if (songChanged) {
             void useListeningStore.getState().handleHostSongChange(latestRoom as any)
+          } else if (
+            latestRoom.song &&
+            (latestRoom.position_seconds === 0 || latestRoom.song.hostPosition === 0) &&
+            ((getActiveAudioTime() || currentPlayingSong?.duration || 0) > 3)
+          ) {
+            // Host looped / replayed the same song from 0
+            useListeningStore.getState().handleHostExplicitSeek({
+              position: 0,
+              hostTimestamp: new Date(latestRoom.updated_at || Date.now()).getTime(),
+              trackId: latestRoom.song.localId || (latestRoom.song as any).id,
+              isLoop: true
+            })
           } else if (latestRoom.is_playing !== currentRoom?.is_playing) {
             useListeningStore.getState().handleHostPauseResume(latestRoom as any)
           }
@@ -1407,10 +1412,16 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             useListeningStore.setState({ lastHostUpdate: Date.now() })
 
             if (isSameSong) {
-              // Same song — host just uploaded to CDN or updated metadata.
-              // Update audioUrl in-place without restarting the queue.
-              // The next sync pulse will naturally align position.
-              console.log('[track_change] Same song upload completion detected, skipping queue restart')
+              if (payload.position === 0 || payload.isLoop) {
+                // Host looped the current track!
+                usePlayerStore.getState().seek(0)
+                usePlayerStore.getState().setCurrentTime(0)
+                usePlayerStore.getState().setIsPlaying(payload.isPlaying !== false)
+              } else {
+                // Same song — host just uploaded to CDN or updated metadata.
+                // Update audioUrl in-place without restarting the queue.
+                console.log('[track_change] Same song upload completion detected, skipping queue restart')
+              }
             } else {
               // Actual song change — full handleHostSongChange
               void useListeningStore.getState().handleHostSongChange(updatedRoom as any)
