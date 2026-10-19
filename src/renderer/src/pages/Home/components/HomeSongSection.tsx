@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Play,
   Pause,
@@ -33,6 +33,7 @@ import { cn } from '../../../lib/utils'
 import { remoteClient } from '../../Remote/remoteClient'
 import { PersonalizationService } from '../../../services/PersonalizationService'
 import { usePlaybackArbitration } from '../../../hooks/usePlaybackArbitration'
+import { calculateMenuPosition, useMenuAutoPosition } from '../../../lib/menuPosition'
 import type { Song } from '../../Library/Library'
 
 interface HomeSongSectionProps {
@@ -170,17 +171,30 @@ export function HomeSongSection({
     index: number
     x: number
     y: number
+    openUpwards?: boolean
+    triggerRect?: { top: number; bottom: number; left: number; right: number } | DOMRect | null
   } | null>(null)
   const [creditsSong, setCreditsSong] = useState<Song | null>(null)
   const isRemoteConnected = remoteClient.getIsConnected()
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useMenuAutoPosition({
+    menuRef,
+    triggerRect: activeMenu?.triggerRect,
+    initialX: activeMenu?.x,
+    initialY: activeMenu?.y,
+    openUpwards: activeMenu?.openUpwards
+  })
 
   useEffect(() => {
     const closeMenu = () => setActiveMenu(null)
     window.addEventListener('click', closeMenu)
     window.addEventListener('resize', closeMenu)
+    window.addEventListener('scroll', closeMenu, true)
     return () => {
       window.removeEventListener('click', closeMenu)
       window.removeEventListener('resize', closeMenu)
+      window.removeEventListener('scroll', closeMenu, true)
     }
   }, [])
 
@@ -198,13 +212,18 @@ export function HomeSongSection({
   ) => {
     e.stopPropagation()
     const rect = e.currentTarget.getBoundingClientRect()
-    const menuWidth = 240
-    const menuHeight = 300
+    const pos = calculateMenuPosition({
+      triggerRect: rect,
+      menuWidth: 240,
+      estimatedHeight: 400
+    })
     setActiveMenu({
       song,
       index,
-      x: Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12),
-      y: Math.max(12, Math.min(rect.bottom + 8, window.innerHeight - menuHeight - 12))
+      x: pos.x,
+      y: pos.y,
+      openUpwards: pos.openUpwards,
+      triggerRect: rect
     })
   }
 
@@ -215,13 +234,18 @@ export function HomeSongSection({
   ) => {
     e.preventDefault()
     e.stopPropagation()
-    const menuWidth = 240
-    const menuHeight = 260
+    const pos = calculateMenuPosition({
+      cursorX: e.clientX,
+      cursorY: e.clientY,
+      menuWidth: 240,
+      estimatedHeight: 400
+    })
     setActiveMenu({
       song,
       index,
-      x: Math.min(e.clientX, window.innerWidth - menuWidth - 12),
-      y: Math.min(e.clientY, window.innerHeight - menuHeight - 12)
+      x: pos.x,
+      y: pos.y,
+      openUpwards: pos.openUpwards
     })
   }
 
@@ -717,7 +741,8 @@ export function HomeSongSection({
       {/* ─── Context Action Menu ─── */}
       {activeMenu && (
         <div
-          className="fixed z-[9999] w-[240px] rounded-xl border border-border bg-surface-elevated p-1.5 shadow-2xl backdrop-blur-md"
+          ref={menuRef}
+          className="fixed z-[9999] w-[240px] max-h-[calc(100vh-24px)] overflow-y-auto rounded-xl border border-border bg-surface-elevated p-1.5 shadow-2xl backdrop-blur-md"
           style={{ left: activeMenu.x, top: activeMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -835,7 +860,7 @@ export function HomeSongSection({
             }
 
             const isNearRightEdge = activeMenu.x > window.innerWidth - 440
-            const isNearBottomEdge = activeMenu.y > window.innerHeight - 250
+            const isNearBottomEdge = Boolean(activeMenu.openUpwards || activeMenu.y > window.innerHeight - 280)
 
             return (
               <div className="relative group/artist-sub">

@@ -33,6 +33,7 @@ import { LibraryContextMenu } from './components/LibraryContextMenu'
 import { LibraryBatchToolbar } from './components/LibraryBatchToolbar'
 import { LibraryEmptyState } from './components/LibraryEmptyState'
 import { getCleanDeviceName } from './utils'
+import { calculateMenuPosition } from '../../lib/menuPosition'
 
 export type { Song, SongArtist }
 
@@ -429,9 +430,11 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     }
     window.addEventListener('click', closeMenu)
     window.addEventListener('resize', closeAllMenus)
+    window.addEventListener('scroll', closeAllMenus, true)
     return () => {
       window.removeEventListener('click', closeMenu)
       window.removeEventListener('resize', closeAllMenus)
+      window.removeEventListener('scroll', closeAllMenus, true)
     }
   }, [])
 
@@ -587,13 +590,18 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
   ) => {
     event.stopPropagation()
     const rect = event.currentTarget.getBoundingClientRect()
-    const menuWidth = 250
-    const menuHeight = 242
+    const pos = calculateMenuPosition({
+      triggerRect: rect,
+      menuWidth: 250,
+      estimatedHeight: 440
+    })
     setActiveMenu({
       song,
       index,
-      x: Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12),
-      y: Math.min(rect.bottom + 8, window.innerHeight - menuHeight - 12)
+      x: pos.x,
+      y: pos.y,
+      openUpwards: pos.openUpwards,
+      triggerRect: rect
     })
   }
 

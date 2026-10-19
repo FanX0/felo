@@ -473,12 +473,12 @@ export async function ensureTrackInAudioBucket(song: Song): Promise<string | nul
 
       registerLocalSlotPoolFile(song.id, blob)
 
-      // Generate and upload low-bitrate compressed preview (64k MP3) first so join users start playing in 2-3 seconds
+      // Generate and upload high-fidelity compressed preview (256k MP3) first so join users start playing in 2-3 seconds with full frequency spectrum
       let previewUrl: string | null = null
       if (typeof window !== 'undefined' && (window as any).api?.compressAudio) {
         try {
           const compRes = await (window as any).api.compressAudio(song.id, {
-            bitrate: '64k',
+            bitrate: '256k',
             format: 'mp3',
             explicitPath: song.filePath
           })

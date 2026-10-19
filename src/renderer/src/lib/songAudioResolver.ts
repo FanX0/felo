@@ -19,8 +19,8 @@ import { getLocalSlotBlobUrl, getCachedAudioBlobUrl } from './jitAudioPipeline'
 export function resolveSongAudioUrl(song?: Song | null): string | null {
   if (!song) return null
 
-  // 1. If running in Electron desktop app and song has a real local path
-  if (isElectron && song.filePath && !song.filePath.startsWith('virtual:') && !song.isOnline && !/^https?:/i.test(song.filePath)) {
+  // 1. If running in Electron desktop app and song has a real local path on disk
+  if (isElectron && song.filePath && !song.filePath.startsWith('virtual:') && !/^https?:/i.test(song.filePath)) {
     return toMediaUrl(song.filePath)
   }
 

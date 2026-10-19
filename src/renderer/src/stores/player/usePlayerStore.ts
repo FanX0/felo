@@ -971,7 +971,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           delete (merged as any).isYouTube
           delete (merged as any).videoId
           delete (merged as any).streamType
-          if (merged.audioUrl && /youtube\.com|youtu\.be/i.test(merged.audioUrl)) {
+          merged.isOnline = false
+          delete (merged as any).previewUrl
+          if (merged.audioUrl && (/youtube\.com|youtu\.be/i.test(merged.audioUrl) || /^https?:/i.test(merged.audioUrl))) {
             delete (merged as any).audioUrl
           }
         }

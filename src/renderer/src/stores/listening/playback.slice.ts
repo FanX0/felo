@@ -21,6 +21,8 @@ import {
 } from '../../lib/audioBridge'
 import { roomClockSync, type SyncPulsePayload } from '../../lib/roomClockSync'
 import { resolveSongAudioUrl } from '../../lib/songAudioResolver'
+import { toMediaUrl } from '../../lib/media'
+import { isElectron } from '../../lib/appConfig'
 import {
   isSongInAudioBucket,
   ensureTrackInAudioBucket,
@@ -568,13 +570,19 @@ export const createRoomPlaybackSlice: StateCreator<
               ? getSongPublicBucketUrl(songId)
               : ''
 
+        const isFullUploaded = room.song.uploadStatus === 'UPLOADED'
         let streamSourceUrl = ''
         let isUsingPreview = false
 
         if (blobUrl) {
           // Already have cached full blob in RAM
           set({ audioQuality: 'full' })
+        } else if (fullSourceUrl && isFullUploaded) {
+          // Full quality file is already uploaded to cloud CDN — play full quality directly!
+          streamSourceUrl = fullSourceUrl
+          set({ audioQuality: 'full' })
         } else if (hasPreview) {
+          // Full upload in progress: play high-fidelity preview while full track finishes uploading
           streamSourceUrl = room.song.previewUrl!
           isUsingPreview = true
           set({ audioQuality: 'preview' })
@@ -1739,23 +1747,36 @@ export const createRoomPlaybackSlice: StateCreator<
       const targetPosition = get().calculateCurrentHostTargetTime()
       const wasPlaying = typeof joined.is_playing === 'boolean' ? joined.is_playing : player.isPlaying
 
-      console.log(`[hotSwapToFullQuality] Hot-swapping to full quality at position ${targetPosition.toFixed(2)}s`)
+      // Resolve playable media URL (convert local disk path to media:// in Electron)
+      const resolvedMediaUrl =
+        (!/^https?:|^blob:|^data:|^media:/i.test(fullUrl) && isElectron
+          ? toMediaUrl(fullUrl)
+          : fullUrl) || fullUrl
+
+      console.log(`[hotSwapToFullQuality] Hot-swapping to full quality at position ${targetPosition.toFixed(2)}s:`, resolvedMediaUrl)
 
       // Update current song's audioUrl and filePath to full quality source
       const updatedSong: Song = {
         ...currentSong,
         filePath: fullUrl,
-        audioUrl: fullUrl
+        audioUrl: resolvedMediaUrl || undefined,
+        isOnline: false
       }
+      delete (updatedSong as any).previewUrl
       player.updateSong(updatedSong, currentSong.id)
 
-      // Align audio element position smoothly
-      const audioEl = getActiveAudioElement() || document.querySelector('audio')
-      if (audioEl) {
-        audioEl.currentTime = targetPosition
-        if (wasPlaying && audioEl.paused) {
-          await audioEl.play().catch(() => {})
-        }
+      // Seamless dual-channel hot-swap in AudioEngine
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('felo:hot-swap-quality', {
+            detail: {
+              fullUrl: resolvedMediaUrl,
+              targetPosition,
+              songId: currentSong.id,
+              wasPlaying
+            }
+          })
+        )
       }
 
       set({ audioQuality: 'full' })
@@ -1766,7 +1787,7 @@ export const createRoomPlaybackSlice: StateCreator<
     } finally {
       setTimeout(() => {
         get().setIsSyncLocked(false)
-      }, 800)
+      }, 1000)
     }
   },
 

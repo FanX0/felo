@@ -59,7 +59,7 @@ export interface WebRTCAudioStats {
  * - In-band Forward Error Correction (useinbandfec=1)
  * - Studio frame pacing (minptime=10, maxptime=20)
  */
-export function forceStereoSdp(sdp: string, bitrateBps = 256000): string {
+export function forceStereoSdp(sdp: string, bitrateBps = 320000): string {
   try {
     const lines = sdp.split(/\r?\n/)
     const opusPTs: string[] = []
@@ -77,6 +77,9 @@ export function forceStereoSdp(sdp: string, bitrateBps = 256000): string {
       'stereo=1',
       'sprop-stereo=1',
       `maxaveragebitrate=${bitrateBps}`,
+      'maxplaybackrate=48000',
+      'sprop-maxcapturerate=48000',
+      'cbr=1',
       'useinbandfec=1'
     ]
 
@@ -90,7 +93,7 @@ export function forceStereoSdp(sdp: string, bitrateBps = 256000): string {
               .split(';')
               .map((p) => p.trim())
               .filter(Boolean)
-              .filter((p) => !/^(stereo|sprop-stereo|maxaveragebitrate|useinbandfec)=/i.test(p))
+              .filter((p) => !/^(stereo|sprop-stereo|maxaveragebitrate|useinbandfec|maxplaybackrate|sprop-maxcapturerate|cbr)=/i.test(p))
           : []
         lines[fmtpIdx] = `a=fmtp:${pt} ${[...preservedParams, ...stereoParams].join('; ')}`
       } else {
@@ -112,7 +115,7 @@ export function forceStereoSdp(sdp: string, bitrateBps = 256000): string {
 export const enhanceOpusSdp = forceStereoSdp
 
 /** Boost bitrate and disable microphone DSP constraints for system audio sender (1:1 MUSIXQUARE parity). */
-export function tuneSystemAudioSender(sender: RTCRtpSender, bitrateBps = 256000): void {
+export function tuneSystemAudioSender(sender: RTCRtpSender, bitrateBps = 320000): void {
   if (sender.track?.kind !== 'audio') return
   const track = sender.track
   try {

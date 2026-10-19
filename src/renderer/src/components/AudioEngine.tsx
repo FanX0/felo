@@ -1046,6 +1046,96 @@ export default function AudioEngine() {
     }
     window.addEventListener('felo:audio-blob-cached', handleBlobCached)
 
+    const handleHotSwapQuality = (e: Event) => {
+      const customEvent = e as CustomEvent<{
+        fullUrl: string
+        targetPosition: number
+        songId: string
+        wasPlaying?: boolean
+      }>
+      const detail = customEvent.detail
+      if (!detail?.fullUrl) return
+
+      const { fullUrl, targetPosition, wasPlaying } = detail
+      const activeAudio = getActiveAudio()
+      const inactiveAudio = getInactiveAudio()
+      if (!inactiveAudio) return
+
+      // If activeAudio is already playing this exact source, ignore
+      if (currentSourceRef.current === fullUrl && activeAudio?.src === fullUrl) {
+        return
+      }
+
+      console.log(`[AudioEngine] Seamless dual-channel hot-swap to full quality on Channel ${activeChannelRef.current === 'A' ? 'B' : 'A'} at ${targetPosition.toFixed(2)}s`)
+
+      const nextChannel = activeChannelRef.current === 'A' ? 'B' : 'A'
+
+      if (/^(https?|media):/i.test(fullUrl)) {
+        inactiveAudio.crossOrigin = 'anonymous'
+      } else {
+        inactiveAudio.removeAttribute('crossOrigin')
+      }
+
+      inactiveAudio.src = fullUrl
+      inactiveAudio.playbackRate = 1.0
+
+      const performSwap = () => {
+        try {
+          const hostTarget = useListeningStore.getState().calculateCurrentHostTargetTime() || targetPosition
+          inactiveAudio.currentTime = Math.max(0, hostTarget)
+
+          const shouldPlay = typeof wasPlaying === 'boolean' ? wasPlaying : usePlayerStore.getState().isPlaying
+          if (shouldPlay) {
+            inactiveAudio.play().then(() => {
+              activeChannelRef.current = nextChannel
+              registerActiveAudioElement(inactiveAudio)
+              audioDspEngine.setCrossfadeMix(nextChannel === 'B' ? 1.0 : 0.0, 0.04)
+
+              if (activeAudio && !activeAudio.paused) {
+                setTimeout(() => {
+                  try {
+                    activeAudio.pause()
+                    activeAudio.removeAttribute('src')
+                    activeAudio.load()
+                  } catch {}
+                }, 80)
+              }
+              currentSourceRef.current = fullUrl
+              console.log(`[AudioEngine] Seamless hot-swap active on Channel ${nextChannel}`)
+            }).catch((playErr) => {
+              console.warn('[AudioEngine] Inactive play failed during hot-swap:', playErr)
+            })
+          } else {
+            activeChannelRef.current = nextChannel
+            registerActiveAudioElement(inactiveAudio)
+            audioDspEngine.setCrossfadeMix(nextChannel === 'B' ? 1.0 : 0.0, 0.01)
+            if (activeAudio) {
+              activeAudio.pause()
+              activeAudio.removeAttribute('src')
+              activeAudio.load()
+            }
+            currentSourceRef.current = fullUrl
+          }
+        } catch (swapErr) {
+          console.warn('[AudioEngine] performSwap error:', swapErr)
+        }
+      }
+
+      if (inactiveAudio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        performSwap()
+      } else {
+        const onCanPlay = () => {
+          inactiveAudio.removeEventListener('canplay', onCanPlay)
+          performSwap()
+        }
+        inactiveAudio.addEventListener('canplay', onCanPlay)
+        setTimeout(() => {
+          inactiveAudio.removeEventListener('canplay', onCanPlay)
+        }, 3000)
+      }
+    }
+    window.addEventListener('felo:hot-swap-quality', handleHotSwapQuality as EventListener)
+
     const unsubscribe = usePlayerStore.subscribe((state, previousState) => {
       const song = state.queue[state.currentSongIndex]
       const previousSong = previousState.queue[previousState.currentSongIndex]
@@ -1053,7 +1143,8 @@ export default function AudioEngine() {
         state.isPlaying !== previousState.isPlaying ||
         state.isAudioActive !== previousState.isAudioActive ||
         song?.id !== previousSong?.id ||
-        song?.filePath !== previousSong?.filePath
+        song?.filePath !== previousSong?.filePath ||
+        song?.audioUrl !== previousSong?.audioUrl
       ) {
         syncAudio(state)
       } else if (state.queue !== previousState.queue || state.repeatMode !== previousState.repeatMode) {
@@ -1065,6 +1156,7 @@ export default function AudioEngine() {
       window.removeEventListener('felo:private-session-changed', handlePrivacyRefresh)
       window.removeEventListener('felo:media-session-refresh', handlePrivacyRefresh)
       window.removeEventListener('felo:audio-blob-cached', handleBlobCached)
+      window.removeEventListener('felo:hot-swap-quality', handleHotSwapQuality as EventListener)
       unsubscribe()
     }
   }, [getActiveAudio, getInactiveAudio, schedulePreload, setCurrentTime, setDuration])

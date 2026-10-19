@@ -77,6 +77,9 @@ export default function DownloadEventBridge(): null {
                   })
                 })
               } else {
+                if (completedSong.filePath) {
+                  void listeningState.hotSwapToFullQuality(completedSong.filePath)
+                }
                 listeningState.performOneTimeSyncWithHost({
                   forceSeek: true,
                   logReason: 'Active room song download completed'

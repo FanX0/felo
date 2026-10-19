@@ -210,7 +210,7 @@ export function registerLibraryIpc(): void {
         const ffmpegBin = findFfmpegLocation() || 'ffmpeg'
 
         const format = options?.format === 'opus' ? 'opus' : 'mp3'
-        const bitrate = options?.bitrate || '64k'
+        const bitrate = options?.bitrate || '256k'
         const tempOut = path.join(
           app.getPath('temp'),
           `felo-preview-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${format}`
@@ -218,8 +218,8 @@ export function registerLibraryIpc(): void {
 
         const codecArgs =
           format === 'opus'
-            ? ['-c:a', 'libopus', '-b:a', bitrate, '-vbr', 'on', '-ac', '2']
-            : ['-c:a', 'libmp3lame', '-b:a', bitrate, '-ac', '2']
+            ? ['-c:a', 'libopus', '-b:a', bitrate, '-vbr', 'on', '-application', 'audio', '-ac', '2']
+            : ['-c:a', 'libmp3lame', '-b:a', bitrate, '-q:a', '0', '-ac', '2']
 
         const args = ['-y', '-i', resolved, ...codecArgs, tempOut]
 

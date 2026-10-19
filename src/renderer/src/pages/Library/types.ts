@@ -16,6 +16,13 @@ export interface ActiveMenuState {
   index: number
   x: number
   y: number
+  openUpwards?: boolean
+  triggerRect?: {
+    top: number
+    bottom: number
+    left: number
+    right: number
+  } | DOMRect | null
 }
 
 export interface RemoteLibraryDevice {

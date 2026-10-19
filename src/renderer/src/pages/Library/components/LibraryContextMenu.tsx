@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import {
   Laptop2,
   Download,
@@ -17,6 +18,7 @@ import { parseArtists } from '../../../lib/artistParser'
 import { remoteClient } from '../../Remote/remoteClient'
 import { resolveSongDownloadUrl } from '../../../lib/songAudioResolver'
 import { AppCapabilities } from '../../../lib/appConfig'
+import { useMenuAutoPosition } from '../../../lib/menuPosition'
 import type { Song, ActiveMenuState } from '../types'
 import type { DownloadTarget } from '../../../components/DownloadPanel/DownloadPanel'
 
@@ -54,10 +56,20 @@ export function LibraryContextMenu({
   onOpenDownloadPanel
 }: LibraryContextMenuProps) {
   const song = activeMenu.song
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useMenuAutoPosition({
+    menuRef,
+    triggerRect: activeMenu.triggerRect,
+    initialX: activeMenu.x,
+    initialY: activeMenu.y,
+    openUpwards: activeMenu.openUpwards
+  })
 
   return (
     <div
-      className="fixed z-[9999] w-[250px] rounded-xl border border-white/15 bg-[#1a1a1a] p-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.8),0_2px_8px_rgba(0,0,0,0.4)] backdrop-blur-md"
+      ref={menuRef}
+      className="fixed z-[9999] w-[250px] max-h-[calc(100vh-24px)] overflow-y-auto rounded-xl border border-white/15 bg-[#1a1a1a] p-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.8),0_2px_8px_rgba(0,0,0,0.4)] backdrop-blur-md"
       style={{ left: activeMenu.x, top: activeMenu.y }}
       onClick={(event) => event.stopPropagation()}
     >
@@ -188,7 +200,7 @@ export function LibraryContextMenu({
         }
 
         const isNearRightEdge = activeMenu.x > window.innerWidth - 440
-        const isNearBottomEdge = activeMenu.y > window.innerHeight - 250
+        const isNearBottomEdge = Boolean(activeMenu.openUpwards || activeMenu.y > window.innerHeight - 280)
 
         return (
           <div className="relative group/artist-sub">
