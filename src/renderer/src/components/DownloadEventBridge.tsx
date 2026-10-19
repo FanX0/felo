@@ -4,6 +4,7 @@ import { usePlayerStore } from '../hooks/usePlayerStore'
 import { useListeningStore } from '../hooks/useListeningStore'
 import { useConnectedDeviceStore } from '../stores/useConnectedDeviceStore'
 import { setNeedsInitialSync } from '../stores/listening/helpers'
+import { requestImmediateHostSyncPulse } from './ListeningPresenceBridge'
 import { findMatchingLibrarySong } from '../lib/songMatching'
 import type { Song } from '../pages/Library/Library'
 
@@ -68,6 +69,7 @@ export default function DownloadEventBridge(): null {
               useConnectedDeviceStore.getState().claimPlayback()
               usePlayerStore.getState().claimAudioOwnership()
               setNeedsInitialSync(true)
+              requestImmediateHostSyncPulse()
 
               if (listeningState.syncStatus === 'missing_song') {
                 void listeningState.handleHostSongChange(joined).then(() => {

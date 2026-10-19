@@ -22,6 +22,8 @@ export interface SyncPulsePayload {
   isPlaying: boolean
   trackId?: string
   playbackRate?: number
+  title?: string
+  artist?: string
 }
 
 export interface SyncPingPayload {

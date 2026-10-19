@@ -101,6 +101,23 @@ export function broadcastHostTrackUpgrade(trackId: string, fullUrl: string): voi
 }
 
 /**
+ * Requests an immediate sync ping/pong burst and live sync_pulse from the host
+ * (e.g. immediately when a download finishes or after buffering).
+ */
+export function requestImmediateHostSyncPulse(): void {
+  if (_activeGuestSyncChannel) {
+    void _activeGuestSyncChannel.send({
+      type: 'broadcast',
+      event: 'sync_ping',
+      payload: {
+        guestId: roomClockSync.getGuestId(),
+        t0: Date.now()
+      }
+    })
+  }
+}
+
+/**
  * Requests the current host DSP settings and volume snapshot when joining or when
  * turning Settings Sync ON.
  */
@@ -410,7 +427,9 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
           hostTimestamp: Date.now(),
           isPlaying: Boolean(player.isPlaying && song),
           trackId: song?.id,
-          playbackRate: getAudioPlaybackRate()
+          playbackRate: getAudioPlaybackRate(),
+          title: song?.title,
+          artist: song?.artist
         }
       })
     }
@@ -501,11 +520,14 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             position: state.seekRequest,
             hostTimestamp: Date.now(),
             trackId: song?.id,
-            isLoop: state.seekRequest === 0
+            isLoop: state.seekRequest === 0,
+            title: song?.title,
+            artist: song?.artist
           }
         })
         sendPulse(state.seekRequest)
-      } else if (playChanged) {
+      }
+      if (!songChanged && playChanged) {
         const song = state.queue[state.currentSongIndex]
         const currentAudioTime = getActiveAudioTime()
         const livePos = currentAudioTime > 0 ? currentAudioTime : state.currentTime || 0
@@ -516,7 +538,9 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             isPlaying: state.isPlaying,
             position: livePos,
             hostTimestamp: Date.now(),
-            trackId: song?.id
+            trackId: song?.id,
+            title: song?.title,
+            artist: song?.artist
           }
         })
         sendPulse()
@@ -1460,8 +1484,33 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
       })
       .on('broadcast', { event: 'track_upgrade' }, ({ payload }: { payload: any }) => {
         if (payload?.fullUrl) {
-          console.log('[track_upgrade] Full audio quality available, initiating seamless hot-swap:', payload.fullUrl)
-          void useListeningStore.getState().hotSwapToFullQuality(payload.fullUrl)
+          const currentSong = usePlayerStore.getState().queue[usePlayerStore.getState().currentSongIndex]
+          const joinedRoom = useListeningStore.getState().joinedRoom
+          const isCurrentTrack = Boolean(
+            !payload.trackId ||
+            (currentSong && (currentSong.id === payload.trackId || (currentSong as any).localId === payload.trackId)) ||
+            (joinedRoom?.song && (joinedRoom.song.localId === payload.trackId || (joinedRoom.song as any).id === payload.trackId))
+          )
+          if (isCurrentTrack) {
+            console.log('[track_upgrade] Full audio quality available for active song, initiating seamless hot-swap:', payload.fullUrl)
+            void useListeningStore.getState().hotSwapToFullQuality(payload.fullUrl)
+          } else {
+            console.log('[track_upgrade] Full audio quality available for upcoming track:', payload.trackId)
+            if (payload.trackId) {
+              void (async () => {
+                try {
+                  const { downloadRemoteAudioFileWithRetry, cacheAudioBlob } = await import('../lib/jitAudioPipeline')
+                  const blob = await downloadRemoteAudioFileWithRetry(payload.fullUrl, {
+                    trackId: payload.trackId,
+                    onProgress: () => {}
+                  })
+                  if (blob && blob.size > 0) {
+                    cacheAudioBlob(payload.trackId, blob)
+                  }
+                } catch {}
+              })()
+            }
+          }
         }
       })
       .on('broadcast', { event: 'queue_update' }, ({ payload }: { payload: any }) => {

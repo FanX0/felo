@@ -25,6 +25,7 @@ export interface PlaybackContext {
 export interface PlaybackActionOptions {
   preservePriority?: boolean
   isRoomSync?: boolean
+  initialTime?: number
 }
 
 export interface PlayerState {
@@ -219,14 +220,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       const selectedSong = newQueue[safeIndex] || newQueue[0]
       rememberPlayedSong(selectedSong)
       const isVirtual = !selectedSong?.filePath || selectedSong.filePath.startsWith('virtual:')
+      const startTime =
+        typeof options?.initialTime === 'number' && !isNaN(options.initialTime) && options.initialTime >= 0
+          ? options.initialTime
+          : 0
       set({
         originalQueue: newQueue,
         queue: newQueue,
         currentSongIndex: safeIndex,
         isPlaying: true,
         isBuffering: isVirtual,
-        currentTime: 0,
-        seekRequest: null,
+        currentTime: startTime,
+        seekRequest: startTime > 0 ? startTime : null,
         playbackContext: contextToSet,
         isAudioActive: true,
         activeInstanceId: tabId
