@@ -9,6 +9,7 @@ import { PlaylistsHeader } from './components/PlaylistsHeader'
 import { PlaylistCard } from './components/PlaylistCard'
 import { PlaylistContextMenu } from './components/PlaylistContextMenu'
 import { PlaylistsEmptyState } from './components/PlaylistsEmptyState'
+import { calculateMenuPosition } from '../../lib/menuPosition'
 
 export default function Playlists() {
   const navigate = useNavigate()
@@ -21,6 +22,8 @@ export default function Playlists() {
     playlist: Playlist
     x: number
     y: number
+    openUpwards?: boolean
+    triggerRect?: DOMRect | { top: number; bottom: number; left: number; right: number } | null
   } | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
@@ -66,9 +69,11 @@ export default function Playlists() {
     const closeMenu = () => setActiveMenu(null)
     window.addEventListener('click', closeMenu)
     window.addEventListener('resize', closeMenu)
+    window.addEventListener('scroll', closeMenu, true)
     return () => {
       window.removeEventListener('click', closeMenu)
       window.removeEventListener('resize', closeMenu)
+      window.removeEventListener('scroll', closeMenu, true)
     }
   }, [])
 
@@ -163,15 +168,20 @@ export default function Playlists() {
   }
 
   const handleOpenMenu = (playlist: Playlist, rect: DOMRect) => {
-    const menuWidth = 220
-    const menuHeight = 104
+    const pos = calculateMenuPosition({
+      triggerRect: rect,
+      menuWidth: 220,
+      estimatedHeight: 160
+    })
     setActiveMenu((current) =>
       current?.playlist.id === playlist.id
         ? null
         : {
             playlist,
-            x: Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12),
-            y: Math.min(rect.bottom + 8, window.innerHeight - menuHeight - 12)
+            x: pos.x,
+            y: pos.y,
+            openUpwards: pos.openUpwards,
+            triggerRect: rect
           }
     )
   }
@@ -226,6 +236,8 @@ export default function Playlists() {
           playlist={activeMenu.playlist}
           x={activeMenu.x}
           y={activeMenu.y}
+          openUpwards={activeMenu.openUpwards}
+          triggerRect={activeMenu.triggerRect}
           onClose={() => setActiveMenu(null)}
           onPlay={(pid) => void playPlaylist(pid)}
           onRename={(pid) => void renamePlaylist(pid)}

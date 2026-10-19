@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useLayoutEffect } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   AlertCircle,
@@ -74,6 +74,18 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
     document.addEventListener('click', handleOutsideClick)
     return () => document.removeEventListener('click', handleOutsideClick)
   }, [])
+
+  useLayoutEffect(() => {
+    if (!activeMenuTransferId || !menuContainerRef.current) return
+    const el = menuContainerRef.current
+    const rect = el.getBoundingClientRect()
+    if (rect.bottom > window.innerHeight - 12) {
+      el.style.top = 'auto'
+      el.style.bottom = '100%'
+      el.style.marginTop = '0px'
+      el.style.marginBottom = '4px'
+    }
+  }, [activeMenuTransferId])
 
   const loadStats = async () => {
     try {

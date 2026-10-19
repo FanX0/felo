@@ -23,6 +23,7 @@ import { PlaylistDetailHeader } from './components/PlaylistDetailHeader'
 import { PlaylistTrackRow } from './components/PlaylistTrackRow'
 import { PlaylistSongMenu } from './components/PlaylistSongMenu'
 import { AddSongsModal } from './components/AddSongsModal'
+import { calculateMenuPosition } from '../../lib/menuPosition'
 
 interface PlaylistDetailProps {
   onOpenDownloadPanel?: (target: DownloadTarget) => void
@@ -68,10 +69,24 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     song: Song
     x: number
     y: number
+    openUpwards?: boolean
+    triggerRect?: DOMRect | { top: number; bottom: number; left: number; right: number } | null
   } | null>(null)
   const [creditsSong, setCreditsSong] = useState<Song | null>(null)
   const [isDownloadingMissing, setIsDownloadingMissing] = useState(false)
   const abortDownloadMissingRef = useRef(false)
+
+  useEffect(() => {
+    const handleClose = () => setActiveSongMenu(null)
+    window.addEventListener('click', handleClose)
+    window.addEventListener('resize', handleClose)
+    window.addEventListener('scroll', handleClose, true)
+    return () => {
+      window.removeEventListener('click', handleClose)
+      window.removeEventListener('resize', handleClose)
+      window.removeEventListener('scroll', handleClose, true)
+    }
+  }, [])
 
   const loadPlaylist = async () => {
     setIsLoading(true)
@@ -564,12 +579,17 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
                   }}
                   onDownloadTrack={(s) => handleDownloadTrack(s, false)}
                   onOpenMenu={(s, rect) => {
-                    const menuWidth = 220
-                    const menuHeight = 360
+                    const pos = calculateMenuPosition({
+                      triggerRect: rect,
+                      menuWidth: 220,
+                      estimatedHeight: 380
+                    })
                     setActiveSongMenu({
                       song: s,
-                      x: Math.max(12, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12)),
-                      y: Math.max(12, Math.min(rect.bottom + 8, window.innerHeight - menuHeight - 12))
+                      x: pos.x,
+                      y: pos.y,
+                      openUpwards: pos.openUpwards,
+                      triggerRect: rect
                     })
                   }}
                 />
@@ -597,6 +617,8 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
           song={activeSongMenu.song}
           x={activeSongMenu.x}
           y={activeSongMenu.y}
+          openUpwards={activeSongMenu.openUpwards}
+          triggerRect={activeSongMenu.triggerRect}
           onClose={() => setActiveSongMenu(null)}
           onPlay={handleTrackClick}
           onEnqueue={enqueueSong}

@@ -34,6 +34,7 @@ import { remoteLibraryService } from '../../services/RemoteLibraryService'
 import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
 import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 import { QualityPill } from '../Library/components/QualityPill'
+import { calculateMenuPosition, useMenuAutoPosition } from '../../lib/menuPosition'
 
 interface AlbumPageProps {
   onOpenDownloadPanel?: (target: DownloadTarget) => void
@@ -112,16 +113,29 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
     song: Song
     x: number
     y: number
+    openUpwards?: boolean
+    triggerRect?: { top: number; bottom: number; left: number; right: number } | DOMRect | null
   } | null>(null)
   const [creditsSong, setCreditsSong] = useState<Song | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useMenuAutoPosition({
+    menuRef,
+    triggerRect: activeMenu?.triggerRect,
+    initialX: activeMenu?.x,
+    initialY: activeMenu?.y,
+    openUpwards: activeMenu?.openUpwards
+  })
 
   useEffect(() => {
     const closeMenu = () => setActiveMenu(null)
     window.addEventListener('click', closeMenu)
     window.addEventListener('resize', closeMenu)
+    window.addEventListener('scroll', closeMenu, true)
     return () => {
       window.removeEventListener('click', closeMenu)
       window.removeEventListener('resize', closeMenu)
+      window.removeEventListener('scroll', closeMenu, true)
     }
   }, [])
 
@@ -786,13 +800,18 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                     filePath: `virtual:${track.title} - ${track.artist || albumArtist}`,
                     isOnline: true
                   }
-                  const menuWidth = 220
-                  const menuHeight = 220
+                  const pos = calculateMenuPosition({
+                    cursorX: e.clientX,
+                    cursorY: e.clientY,
+                    menuWidth: 220,
+                    estimatedHeight: 380
+                  })
                   setActiveMenu({
                     track,
                     song,
-                    x: Math.min(e.clientX, window.innerWidth - menuWidth - 12),
-                    y: Math.min(e.clientY, window.innerHeight - menuHeight - 12)
+                    x: pos.x,
+                    y: pos.y,
+                    openUpwards: pos.openUpwards
                   })
                 }}
                 className="group grid h-16 grid-cols-[28px_minmax(0,1fr)_84px] sm:grid-cols-[40px_48px_minmax(0,1fr)_120px] items-center gap-2 sm:gap-3 rounded-md px-2 sm:px-3 text-left hover:bg-white/10 transition-colors cursor-pointer"
@@ -900,16 +919,21 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                         isOnline: true
                       }
                       const rect = e.currentTarget.getBoundingClientRect()
-                      const menuWidth = 220
-                      const menuHeight = 280
+                      const pos = calculateMenuPosition({
+                        triggerRect: rect,
+                        menuWidth: 220,
+                        estimatedHeight: 380
+                      })
                       setActiveMenu((curr) =>
                         curr?.track.id === track.id
                           ? null
                           : {
                               track,
                               song,
-                              x: Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12),
-                              y: Math.max(12, Math.min(rect.bottom + 8, window.innerHeight - menuHeight - 12))
+                              x: pos.x,
+                              y: pos.y,
+                              openUpwards: pos.openUpwards,
+                              triggerRect: rect
                             }
                       )
                     }}
@@ -933,7 +957,8 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
       {activeMenu &&
         createPortal(
           <div
-            className="fixed z-[9999] w-[220px] rounded-lg border border-white/15 bg-[#1a1a1a] p-1 shadow-[0_8px_24px_rgba(0,0,0,0.8),0_2px_8px_rgba(0,0,0,0.4)]"
+            ref={menuRef}
+            className="fixed z-[9999] w-[220px] max-h-[calc(100vh-24px)] overflow-y-auto rounded-lg border border-white/15 bg-[#1a1a1a] p-1 shadow-[0_8px_24px_rgba(0,0,0,0.8),0_2px_8px_rgba(0,0,0,0.4)]"
             style={{ left: activeMenu.x, top: activeMenu.y }}
             onClick={(event) => event.stopPropagation()}
           >
@@ -1011,7 +1036,7 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
               }
 
               const isNearRightEdge = activeMenu.x > window.innerWidth - 440
-              const isNearBottomEdge = activeMenu.y > window.innerHeight - 250
+              const isNearBottomEdge = Boolean(activeMenu.openUpwards || activeMenu.y > window.innerHeight - 280)
 
               return (
                 <div className="relative group/artist-sub">

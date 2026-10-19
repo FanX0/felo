@@ -1,5 +1,5 @@
 import { useNavigate, useParams } from 'react-router-dom'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import {
   CheckCircle2,
@@ -38,6 +38,7 @@ import { AppCapabilities } from '../../lib/appConfig'
 import { remoteClient } from '../Remote/remoteClient'
 import { remoteLibraryService } from '../../services/RemoteLibraryService'
 import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
+import { calculateMenuPosition, useMenuAutoPosition } from '../../lib/menuPosition'
 import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 
 type ArtistPageTrack = {
@@ -151,8 +152,19 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
     song: ArtistPageTrack
     x: number
     y: number
+    openUpwards?: boolean
+    triggerRect?: { top: number; bottom: number; left: number; right: number } | DOMRect | null
     flyoutArtist: boolean
   } | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useMenuAutoPosition({
+    menuRef,
+    triggerRect: activeMenu?.triggerRect,
+    initialX: activeMenu?.x,
+    initialY: activeMenu?.y,
+    openUpwards: activeMenu?.openUpwards
+  })
   const {
     togglePlay,
     enqueueSong,
@@ -356,9 +368,11 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
     const closeMenu = () => setActiveMenu(null)
     window.addEventListener('click', closeMenu)
     window.addEventListener('resize', closeMenu)
+    window.addEventListener('scroll', closeMenu, true)
     return () => {
       window.removeEventListener('click', closeMenu)
       window.removeEventListener('resize', closeMenu)
+      window.removeEventListener('scroll', closeMenu, true)
     }
   }, [])
 
@@ -657,10 +671,17 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
         onContextMenu={(e) => {
           e.preventDefault()
           e.stopPropagation()
+          const pos = calculateMenuPosition({
+            cursorX: e.clientX,
+            cursorY: e.clientY,
+            menuWidth: 220,
+            estimatedHeight: 380
+          })
           setActiveMenu({
             song,
-            x: Math.min(e.clientX, window.innerWidth - 232),
-            y: Math.min(e.clientY, window.innerHeight - 260),
+            x: pos.x,
+            y: pos.y,
+            openUpwards: pos.openUpwards,
             flyoutArtist: false
           })
         }}
@@ -800,13 +821,20 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
             onClick={(e) => {
               e.stopPropagation()
               const rect = e.currentTarget.getBoundingClientRect()
+              const pos = calculateMenuPosition({
+                triggerRect: rect,
+                menuWidth: 220,
+                estimatedHeight: 380
+              })
               setActiveMenu((curr) =>
                 curr?.song.id === song.id
                   ? null
                   : {
                       song,
-                      x: Math.min(rect.right - 220, window.innerWidth - 232),
-                      y: Math.max(12, Math.min(rect.bottom + 8, window.innerHeight - 300)),
+                      x: pos.x,
+                      y: pos.y,
+                      openUpwards: pos.openUpwards,
+                      triggerRect: rect,
                       flyoutArtist: false
                     }
               )
@@ -1066,7 +1094,8 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
       {activeMenu &&
         createPortal(
           <div
-            className="fixed z-[9999] min-w-[220px] rounded-lg bg-[#282828] py-1 shadow-[0_8px_24px_rgba(0,0,0,0.5)] border border-white/10"
+            ref={menuRef}
+            className="fixed z-[9999] min-w-[220px] max-h-[calc(100vh-24px)] overflow-y-auto rounded-lg bg-[#282828] py-1 shadow-[0_8px_24px_rgba(0,0,0,0.5)] border border-white/10"
             style={{ left: activeMenu.x, top: activeMenu.y }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1175,7 +1204,7 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
                   </button>
                   {activeMenu.flyoutArtist && (
                     <div
-                      className={`absolute top-0 min-w-[180px] rounded-lg bg-[#3e3e3e] py-1 shadow-[0_8px_24px_rgba(0,0,0,0.5)] border border-white/10 ${
+                      className={`absolute ${activeMenu.openUpwards || activeMenu.y > window.innerHeight - 280 ? 'bottom-0' : 'top-0'} min-w-[180px] rounded-lg bg-[#3e3e3e] py-1 shadow-[0_8px_24px_rgba(0,0,0,0.5)] border border-white/10 ${
                         activeMenu.x + 220 + 180 > window.innerWidth ? 'right-full mr-1' : 'left-full ml-1'
                       }`}
                       onClick={(e) => e.stopPropagation()}

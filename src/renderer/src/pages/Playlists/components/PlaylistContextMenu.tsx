@@ -1,11 +1,15 @@
+import { useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { Pencil, Play, Trash2 } from 'lucide-react'
+import { useMenuAutoPosition } from '../../../lib/menuPosition'
 import type { Playlist } from '../types'
 
 interface PlaylistContextMenuProps {
   playlist: Playlist
   x: number
   y: number
+  openUpwards?: boolean
+  triggerRect?: DOMRect | { top: number; bottom: number; left: number; right: number } | null
   onClose: () => void
   onPlay: (playlistId: string) => void
   onRename: (playlistId: string) => void
@@ -16,14 +20,27 @@ export function PlaylistContextMenu({
   playlist,
   x,
   y,
+  openUpwards,
+  triggerRect,
   onClose,
   onPlay,
   onRename,
   onDelete
 }: PlaylistContextMenuProps) {
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useMenuAutoPosition({
+    menuRef,
+    triggerRect,
+    initialX: x,
+    initialY: y,
+    openUpwards
+  })
+
   return createPortal(
     <div
-      className="fixed z-[9999] w-[220px] rounded-lg border border-white/15 bg-[#1a1a1a] p-1 shadow-[0_8px_24px_rgba(0,0,0,0.8),0_2px_8px_rgba(0,0,0,0.4)]"
+      ref={menuRef}
+      className="fixed z-[9999] w-[220px] max-h-[calc(100vh-24px)] overflow-y-auto rounded-lg border border-white/15 bg-[#1a1a1a] p-1 shadow-[0_8px_24px_rgba(0,0,0,0.8),0_2px_8px_rgba(0,0,0,0.4)]"
       style={{ left: x, top: y }}
       onClick={(event) => event.stopPropagation()}
     >
