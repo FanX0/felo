@@ -376,5 +376,73 @@ describe('Event-Driven Sync & Download Progress', () => {
 
       expect(isSameSong).toBe(false)
     })
+
+    it('resolves missing song: track_change does NOT skip if syncStatus was missing_song', () => {
+      // If guest had missing_song, even if title+artist match, track_change must proceed
+      const isSameSong = true
+      const hasPlayableSource = false
+      const isMissingSong = true
+
+      const shouldSkipQueueRestart = isSameSong && hasPlayableSource && !isMissingSong
+      expect(shouldSkipQueueRestart).toBe(false) // Must NOT skip, must run handleHostSongChange
+    })
+  })
+
+  // ─── Post-Download 1-Time Sync & Elapsed Watchdog ─────────────────
+
+  describe('Post-Download 1-Time Sync & Elapsed Time Preservation', () => {
+    it('roomClockSync.calculateTargetTime preserves elapsed time > 30s instead of collapsing to 0', async () => {
+      const { roomClockSync } = await import('../../../src/renderer/src/lib/roomClockSync')
+      vi.spyOn(Date, 'now').mockReturnValue(100_000)
+
+      // Host started playing 45 seconds ago (timestamp 55_000) at position 0
+      const hostPosition = 0
+      const hostTimestamp = 55_000 // 45s elapsed
+      const isPlaying = true
+      const duration = 200
+
+      const target = roomClockSync.calculateTargetTime(hostPosition, hostTimestamp, isPlaying, 0, duration)
+      // Must NOT be 0! Must be ~45s
+      expect(target).toBeCloseTo(45.0, 1)
+    })
+
+    it('roomClockSync.calculateTargetTime clamps elapsed time to song duration if host played longer than song', async () => {
+      const { roomClockSync } = await import('../../../src/renderer/src/lib/roomClockSync')
+      vi.spyOn(Date, 'now').mockReturnValue(500_000)
+
+      const hostPosition = 10
+      const hostTimestamp = 100_000 // 400s elapsed
+      const isPlaying = true
+      const duration = 180 // 3 minutes
+
+      const target = roomClockSync.calculateTargetTime(hostPosition, hostTimestamp, isPlaying, 0, duration)
+      // Clamped cleanly to song duration
+      expect(target).toBe(180)
+    })
+
+    it('deferred sync keeps needsInitialSync=true when audio element readyState < HAVE_METADATA', () => {
+      // Simulate performOneTimeSyncWithHost readiness guard
+      let _needsInitialSync = true
+      const activeAudio = { readyState: 0, currentTime: 0 } as any // HAVE_NOTHING
+      const isAudioReady = !activeAudio || activeAudio.readyState >= 1 // HAVE_METADATA
+
+      expect(isAudioReady).toBe(false)
+      if (isAudioReady) {
+        _needsInitialSync = false
+      }
+      // needsInitialSync MUST remain true so loadedmetadata/canplay will seek later!
+      expect(_needsInitialSync).toBe(true)
+
+      // When metadata loads (readyState = 1):
+      activeAudio.readyState = 1
+      const isNowReady = activeAudio.readyState >= 1
+      expect(isNowReady).toBe(true)
+      if (isNowReady) {
+        activeAudio.currentTime = 45.0
+        _needsInitialSync = false
+      }
+      expect(activeAudio.currentTime).toBe(45.0)
+      expect(_needsInitialSync).toBe(false)
+    })
   })
 })

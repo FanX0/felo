@@ -251,8 +251,9 @@ class RoomClockSyncManager {
     // Elapsed time since host recorded this position using getHostNow()
     const hostElapsed = isPlaying ? Math.max(0, (this.getHostNow() - hostTimestamp) / 1000) : 0
 
-    // Clock-skew watchdog: if elapsed is absurdly high (> 30s) due to stale data, clamp to 0
-    const safeElapsed = hostElapsed < 30 ? hostElapsed : 0
+    // Clock-skew watchdog: elapsed time cannot exceed song duration (or safe ceiling of 2h if duration unknown)
+    const maxPossibleElapsed = duration > 0 ? Math.max(0, duration - hostPosition) : 7200
+    const safeElapsed = Math.min(hostElapsed, maxPossibleElapsed)
 
     const platformOffset = getPlatformLocalFileOutputOffset()
     const rawTarget = hostPosition + safeElapsed + manualOffsetSec + platformOffset

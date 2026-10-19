@@ -254,9 +254,15 @@ export async function ensureTrackInAudioBucket(song: Song): Promise<string | nul
         const { useListeningStore } = await import('../hooks/useListeningStore')
         ;(useListeningStore.getState() as any).setHostTrackUploadProgress?.(song.id, 25, 'Uploading to Cloud (25%)...')
 
-        // Update room status to UPLOADING in Supabase so guests see upload indicator immediately!
+        // Update room status to UPLOADING in Supabase ONLY IF this is the active playing song!
         const hostRoom = useListeningStore.getState().hostRoom
-        if (hostRoom?.id && hostRoom.song) {
+        const isCurrentSong = Boolean(
+          hostRoom?.id &&
+          hostRoom.song &&
+          (hostRoom.song.localId === song.id || (hostRoom.song as any).id === song.id)
+        )
+
+        if (isCurrentSong && hostRoom?.song) {
           const uploadingSong = {
             ...hostRoom.song,
             uploadStatus: 'UPLOADING' as const,
@@ -289,28 +295,41 @@ export async function ensureTrackInAudioBucket(song: Song): Promise<string | nul
           } catch {}
 
           const freshHostRoom = useListeningStore.getState().hostRoom
-          if (freshHostRoom?.id && freshHostRoom.song) {
-            const updatedSong = {
-              ...freshHostRoom.song,
-              audioUrl: uploadedUrl,
-              uploadStatus: 'UPLOADED' as const,
-              uploadProgress: 100,
-              statusText: 'Ready (Cloud CDN)'
+          if (freshHostRoom?.id) {
+            const isNowCurrent = Boolean(
+              freshHostRoom.song &&
+              (freshHostRoom.song.localId === song.id || (freshHostRoom.song as any).id === song.id)
+            )
+
+            if (isNowCurrent && freshHostRoom.song) {
+              const updatedSong = {
+                ...freshHostRoom.song,
+                audioUrl: uploadedUrl,
+                uploadStatus: 'UPLOADED' as const,
+                uploadProgress: 100,
+                statusText: 'Ready (Cloud CDN)'
+              }
+              useListeningStore.setState((prev) => ({
+                hostRoom: prev.hostRoom ? { ...prev.hostRoom, song: updatedSong } : null
+              }))
+              await getSupabase()
+                .from('listening_rooms')
+                .update({
+                  song: updatedSong,
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', freshHostRoom.id)
+              try {
+                const { broadcastHostTrackChange } = await import('../components/ListeningPresenceBridge')
+                broadcastHostTrackChange(updatedSong)
+              } catch {}
+            } else {
+              // Upcoming queue track (N+1): notify room participants of upgraded audio URL
+              try {
+                const { broadcastHostTrackUpgrade } = await import('../components/ListeningPresenceBridge')
+                broadcastHostTrackUpgrade(song.id, uploadedUrl)
+              } catch {}
             }
-            useListeningStore.setState((prev) => ({
-              hostRoom: prev.hostRoom ? { ...prev.hostRoom, song: updatedSong } : null
-            }))
-            await getSupabase()
-              .from('listening_rooms')
-              .update({
-                song: updatedSong,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', freshHostRoom.id)
-            try {
-              const { broadcastHostTrackChange } = await import('../components/ListeningPresenceBridge')
-              broadcastHostTrackChange(updatedSong)
-            } catch {}
           }
         }
       } catch (err) {
@@ -355,10 +374,16 @@ export async function ensureTrackInAudioBucket(song: Song): Promise<string | nul
   // Asynchronous background upload to avoid blocking UI playback
   void (async () => {
     try {
-      // Mark UPLOADING immediately so guests don't see 0% stuck
+      // Mark UPLOADING immediately so guests don't see 0% stuck (ONLY IF active song)
       const { useListeningStore } = await import('../hooks/useListeningStore')
       const initialHostRoom = useListeningStore.getState().hostRoom
-      if (initialHostRoom?.id && initialHostRoom.song) {
+      const isCurrentSong = Boolean(
+        initialHostRoom?.id &&
+        initialHostRoom.song &&
+        (initialHostRoom.song.localId === song.id || (initialHostRoom.song as any).id === song.id)
+      )
+
+      if (isCurrentSong && initialHostRoom?.song) {
         const uploadingSong = {
           ...initialHostRoom.song,
           uploadStatus: 'UPLOADING' as const,
@@ -423,7 +448,12 @@ export async function ensureTrackInAudioBucket(song: Song): Promise<string | nul
         console.warn(`[audioBucketService] Could not read local track stream for: ${song.title}`)
         try {
           const failRoom = useListeningStore.getState().hostRoom
-          if (failRoom?.id && failRoom.song) {
+          const isFailCurrent = Boolean(
+            failRoom?.id &&
+            failRoom.song &&
+            (failRoom.song.localId === song.id || (failRoom.song as any).id === song.id)
+          )
+          if (isFailCurrent && failRoom?.song) {
             const failedSong: SharedSong = {
               ...failRoom.song,
               uploadStatus: 'ERROR',
@@ -458,7 +488,12 @@ export async function ensureTrackInAudioBucket(song: Song): Promise<string | nul
             if (previewUrl) {
               console.log(`[audioBucketService] Fast preview uploaded for "${song.title}":`, previewUrl)
               const currentHostRoom = useListeningStore.getState().hostRoom
-              if (currentHostRoom?.id && currentHostRoom.song) {
+              const isPreviewCurrent = Boolean(
+                currentHostRoom?.id &&
+                currentHostRoom.song &&
+                (currentHostRoom.song.localId === song.id || (currentHostRoom.song as any).id === song.id)
+              )
+              if (isPreviewCurrent && currentHostRoom?.song) {
                 const previewReadySong = {
                   ...currentHostRoom.song,
                   previewUrl,
@@ -505,36 +540,54 @@ export async function ensureTrackInAudioBucket(song: Song): Promise<string | nul
 
         try {
           const freshHostRoom = useListeningStore.getState().hostRoom
-          if (freshHostRoom?.id && freshHostRoom.song) {
-            const updatedSong = {
-              ...freshHostRoom.song,
-              audioUrl: uploadedUrl,
-              previewUrl: previewUrl || freshHostRoom.song.previewUrl,
-              uploadStatus: 'UPLOADED' as const,
-              uploadProgress: 100,
-              statusText: 'Ready (Cloud CDN)'
+          if (freshHostRoom?.id) {
+            const isNowCurrent = Boolean(
+              freshHostRoom.song &&
+              (freshHostRoom.song.localId === song.id || (freshHostRoom.song as any).id === song.id)
+            )
+
+            if (isNowCurrent && freshHostRoom.song) {
+              const updatedSong = {
+                ...freshHostRoom.song,
+                audioUrl: uploadedUrl,
+                previewUrl: previewUrl || freshHostRoom.song.previewUrl,
+                uploadStatus: 'UPLOADED' as const,
+                uploadProgress: 100,
+                statusText: 'Ready (Cloud CDN)'
+              }
+              useListeningStore.setState((prev) => ({
+                hostRoom: prev.hostRoom ? { ...prev.hostRoom, song: updatedSong } : null
+              }))
+              await getSupabase()
+                .from('listening_rooms')
+                .update({
+                  song: updatedSong,
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', freshHostRoom.id)
+              try {
+                const { broadcastHostTrackChange, broadcastHostTrackUpgrade } = await import('../components/ListeningPresenceBridge')
+                broadcastHostTrackChange(updatedSong)
+                broadcastHostTrackUpgrade(song.id, uploadedUrl)
+              } catch {}
+            } else {
+              // Upcoming queue track (N+1): only upgrade track in background, NEVER overwrite current song!
+              try {
+                const { broadcastHostTrackUpgrade } = await import('../components/ListeningPresenceBridge')
+                broadcastHostTrackUpgrade(song.id, uploadedUrl)
+              } catch {}
             }
-            useListeningStore.setState((prev) => ({
-              hostRoom: prev.hostRoom ? { ...prev.hostRoom, song: updatedSong } : null
-            }))
-            await getSupabase()
-              .from('listening_rooms')
-              .update({
-                song: updatedSong,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', freshHostRoom.id)
-            try {
-              const { broadcastHostTrackChange, broadcastHostTrackUpgrade } = await import('../components/ListeningPresenceBridge')
-              broadcastHostTrackChange(updatedSong)
-              broadcastHostTrackUpgrade(song.id, uploadedUrl)
-            } catch {}
           }
         } catch {}
       } else {
         try {
           const freshHostRoom = useListeningStore.getState().hostRoom
-          if (freshHostRoom?.id && freshHostRoom.song) {
+          const isFailCurrent = Boolean(
+            freshHostRoom?.id &&
+            freshHostRoom.song &&
+            (freshHostRoom.song.localId === song.id || (freshHostRoom.song as any).id === song.id)
+          )
+          if (isFailCurrent && freshHostRoom?.song) {
             const failedSong: SharedSong = {
               ...freshHostRoom.song,
               uploadStatus: 'ERROR',

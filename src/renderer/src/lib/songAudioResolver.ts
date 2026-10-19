@@ -33,14 +33,21 @@ export function resolveSongAudioUrl(song?: Song | null): string | null {
   }
 
   // 2b. High Priority: RAM cache (MUSIXQUARE auto-downloaded / preloaded bytes)
-  if (song.id) {
-    const cachedBlobUrl = getCachedAudioBlobUrl(song.id)
+  const lookupId = song.id || (song as any).localId
+  if (lookupId) {
+    const cachedBlobUrl = getCachedAudioBlobUrl(lookupId)
     if (cachedBlobUrl) return cachedBlobUrl
+
+    const strippedId = lookupId.replace(/^session-\d+-/, '')
+    if (strippedId !== lookupId) {
+      const strippedBlobUrl = getCachedAudioBlobUrl(strippedId)
+      if (strippedBlobUrl) return strippedBlobUrl
+    }
   }
 
   // 2c. High Priority: Host local RAM slot pool
-  if (song.id) {
-    const slotBlobUrl = getLocalSlotBlobUrl(song.id)
+  if (lookupId) {
+    const slotBlobUrl = getLocalSlotBlobUrl(lookupId) || getLocalSlotBlobUrl(lookupId.replace(/^session-\d+-/, ''))
     if (slotBlobUrl) {
       if (!song.audioUrl || !song.audioUrl.startsWith('blob:')) {
         song.audioUrl = slotBlobUrl

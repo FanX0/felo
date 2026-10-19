@@ -11,7 +11,7 @@ import { resolveSongAudioUrl } from '../lib/songAudioResolver'
 import { useConnectedDeviceStore } from '../hooks/useConnectedDeviceStore'
 import { useDownloadStore } from '../hooks/useDownloadStore'
 import { useListeningStore } from '../hooks/useListeningStore'
-import { setIsSessionSyncing, needsInitialSync } from '../stores/listening/helpers'
+import { setIsSessionSyncing, needsInitialSync, setNeedsInitialSync } from '../stores/listening/helpers'
 import { audioDspEngine } from '../lib/audioDspEngine'
 import { getLocalSlotPoolFile } from '../lib/jitAudioPipeline'
 import { getTrackDisplayTitle } from '../lib/songUtils'
@@ -474,12 +474,22 @@ export default function AudioEngine() {
     }
     if (!nextSong) {
       preloadedUrlRef.current = null
+      const inactive = getInactiveAudio()
+      if (inactive && inactive.src) {
+        inactive.removeAttribute('src')
+        inactive.load()
+      }
       return
     }
 
     const nextUrl = resolveSongAudioUrl(nextSong)
     if (!nextUrl) {
       preloadedUrlRef.current = null
+      const inactive = getInactiveAudio()
+      if (inactive && inactive.src) {
+        inactive.removeAttribute('src')
+        inactive.load()
+      }
       return
     }
 
@@ -887,6 +897,8 @@ export default function AudioEngine() {
         // Check if the next song was already preloaded on the inactive audio
         const isPreloadedOnInactive = Boolean(inactiveAudio && inactiveAudio.src && inactiveAudio.src === sourceUrl)
 
+        const inRoom = Boolean(useListeningStore.getState().joinedRoom && !useListeningStore.getState().isReceivingDeviceStream)
+
         if (isPreloadedOnInactive && inactiveAudio) {
           // Instant gapless switch to the preloaded channel with smooth 30ms micro-fade
           const nextChannel = activeChannelRef.current === 'A' ? 'B' : 'A'
@@ -901,10 +913,23 @@ export default function AudioEngine() {
           scrobbledSongIdRef.current = null
           playTimeAccumulatedRef.current = 0
           lastPlayTickRef.current = performance.now()
-          inactiveAudio.currentTime = 0
-          inactiveAudio.playbackRate = 1.0
-          setCurrentTime(0)
-          setDuration(song.duration || inactiveAudio.duration || 0)
+
+          if (inRoom) {
+            const targetTime = useListeningStore.getState().calculateCurrentHostTargetTime()
+            inactiveAudio.currentTime = targetTime
+            inactiveAudio.playbackRate = 1.0
+            setCurrentTime(targetTime)
+            setDuration(song.duration || inactiveAudio.duration || 0)
+            useListeningStore.getState().performOneTimeSyncWithHost({
+              forceSeek: true,
+              logReason: 'Preloaded channel switch 1-time sync'
+            })
+          } else {
+            inactiveAudio.currentTime = 0
+            inactiveAudio.playbackRate = 1.0
+            setCurrentTime(0)
+            setDuration(song.duration || inactiveAudio.duration || 0)
+          }
         } else if (currentSourceRef.current !== sourceUrl) {
           audioDspEngine.stopBuffer()
           const inactive = getInactiveAudio()
@@ -931,9 +956,17 @@ export default function AudioEngine() {
           audioDspEngine.setCrossfadeMix(activeChannelRef.current === 'B' ? 1.0 : 0.0, 0.03)
 
           audio.src = sourceUrl
-          audio.currentTime = 0
           audio.playbackRate = 1.0
-          setCurrentTime(0)
+
+          if (inRoom) {
+            const targetTime = useListeningStore.getState().calculateCurrentHostTargetTime()
+            pendingSeekRef.current = targetTime
+            setCurrentTime(targetTime)
+            setNeedsInitialSync(true)
+          } else {
+            audio.currentTime = 0
+            setCurrentTime(0)
+          }
           setDuration(song.duration || 0)
         }
 
@@ -1175,6 +1208,12 @@ export default function AudioEngine() {
     event.currentTarget.muted = false
     setIsBuffering(false)
 
+    if (pendingSeekRef.current !== null) {
+      const pendingSeek = pendingSeekRef.current
+      pendingSeekRef.current = null
+      applySeek(pendingSeek)
+    }
+
     // Resilient fallback: ensure 1-time sync runs if loadedmetadata didn't catch it
     const listeningState = useListeningStore.getState()
     if (listeningState.joinedRoom && !listeningState.isReceivingDeviceStream && needsInitialSync()) {
@@ -1369,7 +1408,8 @@ export default function AudioEngine() {
             return
           }
           console.warn('Audio playback unrecoverable for track, advancing to next:', activeSong?.title)
-          if (storeState.queue.length > 1) {
+          const inRoom = Boolean(useListeningStore.getState().joinedRoom)
+          if (!inRoom && storeState.queue.length > 1) {
             playNext(true)
           } else {
             setIsPlaying(false)
@@ -1388,7 +1428,8 @@ export default function AudioEngine() {
     }
     console.warn('Audio playback unrecoverable for track, advancing to next:', activeSong?.title)
     setIsBuffering(false)
-    if (storeState.queue.length > 1) {
+    const inRoom = Boolean(useListeningStore.getState().joinedRoom)
+    if (!inRoom && storeState.queue.length > 1) {
       playNext(true)
     } else {
       setIsPlaying(false)

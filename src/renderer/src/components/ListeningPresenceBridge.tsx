@@ -17,6 +17,7 @@ import { playParticipantLeaveSound } from '../lib/uiSounds'
 import { roomClockSync } from '../lib/roomClockSync'
 import { getActiveAudioTime, getAudioPlaybackRate } from '../lib/audioBridge'
 import { isYouTubeSong } from '../lib/youtubeService'
+import { resolveSongAudioUrl } from '../lib/songAudioResolver'
 import { evaluateAutoPriority, recordUserRequest } from '../lib/autoPriority'
 import type { Song } from '../pages/Library/Library'
 
@@ -480,6 +481,11 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
               try {
                 const { ensureTrackInAudioBucket } = await import('../lib/audioBucketService')
                 await ensureTrackInAudioBucket(newSong)
+                // N+1 Preloader: Also proactively pre-upload the upcoming track in queue for 0ms transitions
+                const nextTrack = state.queue[state.currentSongIndex + 1]
+                if (nextTrack && !isYouTubeSong(nextTrack)) {
+                  await ensureTrackInAudioBucket(nextTrack)
+                }
               } catch {}
             })()
           }
@@ -1422,19 +1428,30 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             useListeningStore.getState().setJoinedRoom(updatedRoom as any)
             useListeningStore.setState({ lastHostUpdate: Date.now() })
 
-            if (isSameSong) {
+            const playerState = usePlayerStore.getState()
+            const currentPlayingTrack = playerState.queue[playerState.currentSongIndex]
+            const hasPlayableSource = Boolean(currentPlayingTrack && resolveSongAudioUrl(currentPlayingTrack))
+            const isMissingSong = useListeningStore.getState().syncStatus === 'missing_song'
+
+            if (isSameSong && hasPlayableSource && !isMissingSong) {
               if (payload.position === 0 || payload.isLoop) {
                 // Host looped the current track!
                 usePlayerStore.getState().seek(0)
                 usePlayerStore.getState().setCurrentTime(0)
                 usePlayerStore.getState().setIsPlaying(payload.isPlaying !== false)
+                useListeningStore.getState().performOneTimeSyncWithHost({
+                  forceSeek: true,
+                  logReason: 'Host looped current track'
+                })
               } else {
                 // Same song — host just uploaded to CDN or updated metadata.
-                // Update audioUrl in-place without restarting the queue.
-                console.log('[track_change] Same song upload completion detected, skipping queue restart')
+                if (payload.song?.audioUrl && useListeningStore.getState().audioQuality === 'preview') {
+                  void useListeningStore.getState().hotSwapToFullQuality(payload.song.audioUrl)
+                }
+                console.log('[track_change] Same song upload completion detected, updated room in-place')
               }
             } else {
-              // Actual song change — full handleHostSongChange
+              // Actual song change OR resolving missing/unplayable song — full handleHostSongChange
               void useListeningStore.getState().handleHostSongChange(updatedRoom as any)
             }
           }

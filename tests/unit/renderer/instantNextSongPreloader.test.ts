@@ -184,5 +184,53 @@ describe('Professional Standard: Instant Next-Song Preloader ($N+1$ Sliding Wind
       expect(player.queue[0].filePath?.startsWith('blob:')).toBe(true)
       expect(player.isPlaying).toBe(true)
     })
+
+    it('setQueue with isRoomSync: true does NOT set seekRequest to 0', () => {
+      usePlayerStore.getState().setQueue([song1, song2], 0, undefined, { isRoomSync: true })
+      const state = usePlayerStore.getState()
+      // seekRequest must be null so it does not override host targetTime with 0:00
+      expect(state.seekRequest).toBeNull()
+    })
+
+    it('resolves downloaded next song from player queue candidate pool when getSongs has not indexed it', async () => {
+      // Suppose song3 was preloaded and placed in queue with a local filePath
+      const preloadedSong3: Song = {
+        ...song3,
+        filePath: 'C:/Users/felo/Music/Song Three.flac'
+      }
+      usePlayerStore.setState({
+        queue: [song1, preloadedSong3],
+        currentSongIndex: 0
+      })
+
+      // window.api.getSongs returns empty (library not rescanned yet)
+      window.api = {
+        ...window.api,
+        getSongs: async () => []
+      } as any
+
+      const sharedSong3 = toSharedSong(song3)
+      const room: ListeningRoom = {
+        id: 'room-instant-2',
+        code: 'INST02',
+        host_id: 'host-1',
+        name: 'Instant Room 2',
+        is_active: true,
+        is_playing: true,
+        position_seconds: 0,
+        song: sharedSong3,
+        queue: [sharedSong3],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+
+      useListeningStore.setState({ joinedRoom: room })
+      await useListeningStore.getState().handleHostSongChange(room)
+
+      const player = usePlayerStore.getState()
+      expect(player.queue[0].title).toBe('Song Three')
+      expect(player.queue[0].filePath).toBe('C:/Users/felo/Music/Song Three.flac')
+      expect(useListeningStore.getState().syncStatus).not.toBe('missing_song')
+    })
   })
 })
