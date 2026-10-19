@@ -370,5 +370,86 @@ describe('Listen Together: 5-Point Bug Fixes & Regression Test Suite', () => {
       expect(listeningState.driftSeconds).toBe(0)
       expect(listeningState.syncStatus).toBe('synced')
     })
+
+    it('handleHostSongChange on same song does NOT jump to 3rd song when queue slice differs', async () => {
+      const song3: Song = {
+        id: 'track-gamma',
+        title: 'Gamma Song',
+        artist: 'Artist Gamma',
+        album: 'Gamma Album',
+        duration: 180,
+        filePath: 'C:\\Music\\gamma.mp3',
+        audioUrl: 'https://cdn.example.com/gamma.mp3'
+      }
+
+      // Guest currently has sliced queue [song2, song3] at index 0 (playing song2 / Beta Song)
+      usePlayerStore.setState({
+        queue: [song2, song3],
+        currentSongIndex: 0,
+        isPlaying: true
+      })
+
+      // Host room comes in with full queue [song1, song2, song3], where song2 is at index 1
+      const room: ListeningRoom = {
+        id: 'room-sync-3',
+        code: 'SYNC03',
+        host_id: 'host-user',
+        is_active: true,
+        is_playing: true,
+        position_seconds: 30,
+        song: {
+          ...toSharedSong(song2),
+          hostPosition: 30,
+          hostTimestamp: Date.now()
+        },
+        queue: [toSharedSong(song1), toSharedSong(song2), toSharedSong(song3)],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+
+      useListeningStore.setState({
+        joinedRoom: room,
+        myRole: 'listener'
+      })
+
+      // Execute handleHostSongChange
+      await useListeningStore.getState().handleHostSongChange(room)
+
+      const player = usePlayerStore.getState()
+      // Current playing song must remain song2 (Beta Song), NOT jump to song3 (Gamma Song)!
+      expect(player.queue[player.currentSongIndex].title).toBe('Beta Song')
+    })
+
+    it('handleHostSyncPulse persists hostPosition and hostTimestamp even when needsInitialSync is true', () => {
+      const room: ListeningRoom = {
+        id: 'room-sync-4',
+        code: 'SYNC04',
+        host_id: 'host-user',
+        is_active: true,
+        is_playing: true,
+        position_seconds: 0,
+        song: toSharedSong(song1),
+        queue: [toSharedSong(song1)],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+
+      useListeningStore.setState({
+        joinedRoom: room,
+        myRole: 'listener'
+      })
+
+      // Simulate guest downloading (needsInitialSync = true)
+      useListeningStore.getState().handleHostSyncPulse({
+        position: 55.4,
+        hostTimestamp: Date.now(),
+        isPlaying: true,
+        trackId: song1.id
+      })
+
+      const joined = useListeningStore.getState().joinedRoom
+      expect(joined?.song?.hostPosition).toBe(55.4)
+    })
   })
 })
+

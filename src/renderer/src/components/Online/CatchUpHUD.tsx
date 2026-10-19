@@ -1,8 +1,5 @@
 import { useCallback, useMemo, type ReactElement } from 'react'
 import { useListeningStore } from '../../hooks/useListeningStore'
-import { usePlayerStore } from '../../hooks/usePlayerStore'
-import { roomClockSync, type SyncPulsePayload } from '../../lib/roomClockSync'
-import { setIsSessionSyncing, _lastHostPulse } from '../../stores/listening/helpers'
 import { RefreshCw } from 'lucide-react'
 
 /** Drift thresholds (seconds) for CatchUp HUD visibility */
@@ -39,32 +36,11 @@ export default function CatchUpHUD(): ReactElement | null {
   }, [isVisible, driftSeconds, absDrift])
 
   const handleCatchUp = useCallback(() => {
-    const hostPulse = _lastHostPulse as SyncPulsePayload | null
-    if (!hostPulse) return
-
-    const state = useListeningStore.getState()
-    const joined = state.joinedRoom
-    if (!joined) return
-
-    const manualOffsetSec = (state.manualSyncOffsetMs || 0) / 1000
-    const duration = joined.song?.duration || usePlayerStore.getState().duration || 0
-    const targetTime = roomClockSync.calculateTargetTime(
-      hostPulse.position,
-      hostPulse.hostTimestamp,
-      hostPulse.isPlaying,
-      manualOffsetSec,
-      duration
-    )
-
-    setIsSessionSyncing(true)
-    state.setIsSyncLocked(true)
-    usePlayerStore.getState().seek(targetTime)
-    usePlayerStore.getState().setCurrentTime(targetTime)
+    useListeningStore.getState().performOneTimeSyncWithHost({
+      forceSeek: true,
+      logReason: 'CatchUp HUD'
+    })
     useListeningStore.setState({ driftSeconds: 0 })
-
-    setTimeout(() => {
-      setIsSessionSyncing(false)
-    }, 800)
   }, [])
 
   if (!isVisible) return null

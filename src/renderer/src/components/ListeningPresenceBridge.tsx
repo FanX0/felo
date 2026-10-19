@@ -427,6 +427,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             t1: Date.now()
           }
         })
+        sendPulse()
       })
       .on('broadcast', { event: 'dsp_request_sync' }, () => {
         const snapshot = useDspStore.getState().getRoomDspSnapshot()

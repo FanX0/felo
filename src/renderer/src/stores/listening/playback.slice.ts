@@ -890,16 +890,35 @@ export const createRoomPlaybackSlice: StateCreator<
 
       // Step 5: Switch to session queue and matched song
       const currentPlaying = playerState.queue[playerState.currentSongIndex]
-      if (!currentPlaying || currentPlaying.id !== matchedSong.id) {
+      const isAlreadyPlayingMatchedSong = Boolean(
+        currentPlaying &&
+        (currentPlaying.id === matchedSong.id ||
+          (normalizeSongValue(currentPlaying.title) === normalizeSongValue(matchedSong.title) &&
+            normalizeSongValue(currentPlaying.artist) === normalizeSongValue(matchedSong.artist)))
+      )
+
+      if (!isAlreadyPlayingMatchedSong) {
         usePlayerStore.getState().setQueue(sessionQueue, targetIndex, undefined, { isRoomSync: true })
         if (!room.is_playing) {
           usePlayerStore.getState().setIsPlaying(false)
         }
       } else {
-        // Same song replay/loop: ensure queue index is targetIndex and seek to host position
-        if (playerState.currentSongIndex !== targetIndex) {
-          usePlayerStore.setState({ currentSongIndex: targetIndex })
-        }
+        // Same song replay/loop or sync refresh:
+        // Update the queue so upcoming tracks match sessionQueue, and ensure
+        // currentSongIndex accurately points to the active song in sessionQueue!
+        const activeIdxInSession = sessionQueue.findIndex(
+          (s) =>
+            s.id === currentPlaying.id ||
+            (normalizeSongValue(s.title) === normalizeSongValue(currentPlaying.title) &&
+              normalizeSongValue(s.artist) === normalizeSongValue(currentPlaying.artist))
+        )
+        const safeTargetIndex = activeIdxInSession >= 0 ? activeIdxInSession : targetIndex
+
+        usePlayerStore.setState({
+          queue: sessionQueue,
+          currentSongIndex: safeTargetIndex
+        })
+
         const targetPos = get().calculateCurrentHostTargetTime()
         playerState.seek(targetPos)
         playerState.setCurrentTime(targetPos)
@@ -963,8 +982,10 @@ export const createRoomPlaybackSlice: StateCreator<
         )
       }
 
-      // Pre-buffer the next 1-2 tracks ahead
-      const startIndex = currentIndex >= 0 ? currentIndex + 1 : 1
+      // Pre-buffer the next 1-2 tracks ahead:
+      // If room.queue has the current song, upcoming tracks start at currentIndex + 1.
+      // If current song is NOT found (e.g. room.queue is already an upcoming-only slice), start at 0!
+      const startIndex = currentIndex >= 0 ? currentIndex + 1 : 0
       const upcomingTracks = room.queue.slice(startIndex, startIndex + 2)
 
       for (const upcomingSong of upcomingTracks) {
@@ -1231,12 +1252,15 @@ export const createRoomPlaybackSlice: StateCreator<
     // Always note host presence unconditionally upon arrival of sync pulse
     set({ lastHostUpdate: Date.now() })
 
+    // Unconditionally update host position metadata on joinedRoom so all lifecycle
+    // and fallback calculations have the live host playback timestamp even while buffering/downloading
+    if (joined.song) {
+      joined.song.hostPosition = pulse.position
+      joined.song.hostTimestamp = pulse.hostTimestamp
+    }
+
     if (joined.song?.isDeviceStream || joined.is_device_stream || get().isReceivingDeviceStream) {
       // Even in WebRTC stream, update joinedRoom position metadata and player current time so lyrics stay in sync!
-      if (joined.song) {
-        joined.song.hostPosition = pulse.position
-        joined.song.hostTimestamp = pulse.hostTimestamp
-      }
       set((state) => ({
         joinedRoom: state.joinedRoom
           ? {
@@ -1767,7 +1791,10 @@ export const createRoomPlaybackSlice: StateCreator<
         !joined.song ||
         hostPulse.trackId === joined.song.localId ||
         hostPulse.trackId === (joined.song as any).id ||
-        (currentSongId && hostPulse.trackId === currentSongId))
+        (currentSongId && hostPulse.trackId === currentSongId) ||
+        (joined.song?.title && currentSong?.title &&
+          normalizeSongValue(joined.song.title) === normalizeSongValue(currentSong.title) &&
+          normalizeSongValue(joined.song.artist) === normalizeSongValue(currentSong.artist)))
     )
 
     if (isPulseForCurrentTrack && hostPulse) {
