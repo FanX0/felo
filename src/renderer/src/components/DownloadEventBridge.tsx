@@ -47,9 +47,6 @@ export default function DownloadEventBridge(): null {
 
         const targetQueueId = (transfer?.song as any)?.id || (event as any).songId
         if (completedSong?.id) {
-          // 2. Always update the song in the queue (whether active or upcoming prefetch)
-          usePlayerStore.getState().updateSong(completedSong, targetQueueId)
-
           // 3. If in a Listen Together room waiting for this track:
           const listeningState = useListeningStore.getState()
           const joined = listeningState.joinedRoom
@@ -71,27 +68,30 @@ export default function DownloadEventBridge(): null {
               setNeedsInitialSync(true)
               requestImmediateHostSyncPulse()
 
-              const currentQueueSong = usePlayerStore.getState().queue[usePlayerStore.getState().currentSongIndex]
-              const hasLoadedLocalAudio = Boolean(currentQueueSong && currentQueueSong.filePath === completedSong.filePath)
+              const isCurrentlyPlayingPreview =
+                listeningState.audioQuality === 'preview' &&
+                listeningState.syncStatus === 'synced' &&
+                !usePlayerStore.getState().isBuffering
 
-              if (!hasLoadedLocalAudio || listeningState.syncStatus === 'missing_song') {
+              if (isCurrentlyPlayingPreview && completedSong.filePath) {
+                usePlayerStore.getState().updateSong(completedSong, targetQueueId)
+                void listeningState.hotSwapToFullQuality(completedSong.filePath)
+                listeningState.performOneTimeSyncWithHost({
+                  forceSeek: true,
+                  logReason: 'Active room song preview hot-swap to full'
+                })
+              } else {
                 void listeningState.handleHostSongChange(joined).then(() => {
                   listeningState.performOneTimeSyncWithHost({
                     forceSeek: true,
                     logReason: 'Download completed active room track'
                   })
                 })
-              } else {
-                if (completedSong.filePath) {
-                  void listeningState.hotSwapToFullQuality(completedSong.filePath)
-                }
-                listeningState.performOneTimeSyncWithHost({
-                  forceSeek: true,
-                  logReason: 'Active room song download completed'
-                })
               }
               void listeningState.preloadNextQueueTracks(joined)
             } else {
+              // Upcoming prefetch or other room track
+              usePlayerStore.getState().updateSong(completedSong, targetQueueId)
               void listeningState.preloadNextQueueTracks(joined)
             }
           } else {

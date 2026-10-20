@@ -1159,6 +1159,7 @@ export default function AudioEngine() {
       if (
         state.isPlaying !== previousState.isPlaying ||
         state.isAudioActive !== previousState.isAudioActive ||
+        state.isBuffering !== previousState.isBuffering ||
         song?.id !== previousSong?.id ||
         song?.filePath !== previousSong?.filePath ||
         song?.audioUrl !== previousSong?.audioUrl

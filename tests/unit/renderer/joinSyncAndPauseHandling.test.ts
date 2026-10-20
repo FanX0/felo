@@ -812,4 +812,115 @@ describe('Join Sync, N+1 Track Transition & Bilateral Pause Handling Suite', () 
       playBufferSpy.mockRestore()
     })
   })
+
+  // ─── 8. Immediate Track Change on Download Completion Without Host Pause ───────────
+
+  describe('8. Immediate Track Change on Download Completion Without Host Pause', () => {
+    it('sets queue and transitions from placeholder to downloaded song when download completes while buffering', async () => {
+      const hostRoom: ListeningRoom = {
+        id: 'room-1',
+        host_id: 'host-user-888',
+        name: 'Party Room',
+        code: 'SYNC',
+        is_active: true,
+        is_playing: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        song: {
+          localId: 'song-target-999',
+          title: 'Blinding Lights',
+          artist: 'The Weeknd',
+          duration: 200,
+          hostPosition: 45,
+          hostTimestamp: Date.now()
+        } as any
+      }
+
+      // Guest starts with buffering placeholder (empty filePath)
+      const placeholder: Song = {
+        id: 'song-target-999',
+        title: 'Blinding Lights',
+        artist: 'The Weeknd',
+        duration: 200,
+        filePath: '',
+        audioUrl: ''
+      }
+      usePlayerStore.setState({
+        queue: [placeholder],
+        currentSongIndex: 0,
+        isPlaying: true,
+        isBuffering: true,
+        currentTime: 0
+      })
+      useListeningStore.setState({
+        joinedRoom: hostRoom,
+        syncStatus: 'buffering'
+      })
+
+      // Download finishes: window.api.getSongs now returns the downloaded file on disk
+      const downloadedSong: Song = {
+        id: 'song-target-999',
+        title: 'Blinding Lights',
+        artist: 'The Weeknd',
+        duration: 200,
+        filePath: 'C:/Music/Blinding_Lights.flac',
+        audioUrl: ''
+      }
+      ;(window as any).api = {
+        getSongs: vi.fn().mockResolvedValue([downloadedSong])
+      }
+
+      // Guest calls handleHostSongChange (as triggered by DownloadEventBridge on completion)
+      await useListeningStore.getState().handleHostSongChange(hostRoom)
+
+      // Verify player queue was updated with the real downloaded filePath
+      const updatedQueue = usePlayerStore.getState().queue
+      expect(updatedQueue[0].filePath).toBe('C:/Music/Blinding_Lights.flac')
+      expect(usePlayerStore.getState().currentSongIndex).toBe(0)
+
+      // Verify playback is active and time was aligned to host (approx 45s, not 0s)
+      expect(usePlayerStore.getState().isPlaying).toBe(true)
+      expect(usePlayerStore.getState().currentTime).toBeGreaterThanOrEqual(44)
+      expect(usePlayerStore.getState().currentTime).toBeLessThanOrEqual(46)
+    })
+
+    it('preserves paused state when host is paused during song change', async () => {
+      const pausedHostRoom: ListeningRoom = {
+        id: 'room-1',
+        host_id: 'host-user-888',
+        name: 'Party Room',
+        code: 'SYNC',
+        is_active: true,
+        is_playing: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        song: {
+          localId: 'song-paused-123',
+          title: 'Save Your Tears',
+          artist: 'The Weeknd',
+          duration: 215,
+          hostPosition: 12,
+          hostTimestamp: Date.now()
+        } as any
+      }
+
+      const downloadedSong: Song = {
+        id: 'song-paused-123',
+        title: 'Save Your Tears',
+        artist: 'The Weeknd',
+        duration: 215,
+        filePath: 'C:/Music/Save_Your_Tears.flac',
+        audioUrl: ''
+      }
+      ;(window as any).api = {
+        getSongs: vi.fn().mockResolvedValue([downloadedSong])
+      }
+
+      await useListeningStore.getState().handleHostSongChange(pausedHostRoom)
+
+      // isPlaying must be false because host is paused!
+      expect(usePlayerStore.getState().isPlaying).toBe(false)
+      expect(usePlayerStore.getState().queue[0].filePath).toBe('C:/Music/Save_Your_Tears.flac')
+    })
+  })
 })

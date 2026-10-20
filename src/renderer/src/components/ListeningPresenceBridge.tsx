@@ -470,7 +470,13 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
     // Immediate pulse on playback state changes (play, pause, seek, song change, volume change)
     const unsub = usePlayerStore.subscribe((state, prevState) => {
       const playChanged = state.isPlaying !== prevState.isPlaying
-      const songChanged = state.currentSongIndex !== prevState.currentSongIndex
+      const currentTrack = state.queue[state.currentSongIndex]
+      const prevTrack = prevState.queue[prevState.currentSongIndex]
+      const songChanged =
+        state.currentSongIndex !== prevState.currentSongIndex ||
+        currentTrack?.id !== prevTrack?.id ||
+        currentTrack?.title !== prevTrack?.title ||
+        currentTrack?.artist !== prevTrack?.artist
       const seekChanged = state.seekRequest !== null && state.seekRequest !== prevState.seekRequest
       const queueChanged = state.queue !== prevState.queue
 

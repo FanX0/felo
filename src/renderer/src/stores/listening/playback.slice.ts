@@ -311,6 +311,12 @@ export const createRoomPlaybackSlice: StateCreator<
       if (activeEl && !activeEl.paused) {
         activeEl.pause()
       }
+      if (audioDspEngine.isBufferActive('A')) {
+        audioDspEngine.stopBuffer('A')
+      }
+      if (audioDspEngine.isBufferActive('B')) {
+        audioDspEngine.stopBuffer('B')
+      }
     }
 
     // Helper: Safely applies initial playback state.
@@ -407,7 +413,7 @@ export const createRoomPlaybackSlice: StateCreator<
           (get().manualSyncOffsetMs || 0) / 1000,
           room.song?.duration || 0
         )
-        usePlayerStore.getState().setQueue(sessionQueue, targetIndex, undefined, { isRoomSync: true, initialTime: initialTargetTime })
+        usePlayerStore.getState().setQueue(sessionQueue, targetIndex, undefined, { isRoomSync: true, initialTime: initialTargetTime, isPlaying: room.is_playing })
         usePlayerStore.getState().setCurrentTime(initialTargetTime)
         usePlayerStore.getState().seek(initialTargetTime)
 
@@ -431,7 +437,7 @@ export const createRoomPlaybackSlice: StateCreator<
           subIndex = 0
         }
         const initialTargetTime = get().calculateCurrentHostTargetTime()
-        usePlayerStore.getState().setQueue(currentQueue, subIndex, undefined, { isRoomSync: true, initialTime: initialTargetTime })
+        usePlayerStore.getState().setQueue(currentQueue, subIndex, undefined, { isRoomSync: true, initialTime: initialTargetTime, isPlaying: room.is_playing })
         applyInitialPlaybackState(room, substitute.id, substitute.duration || room.song?.duration || 0)
         return
       }
@@ -506,7 +512,7 @@ export const createRoomPlaybackSlice: StateCreator<
         }
 
         const initialTargetTime = get().calculateCurrentHostTargetTime()
-        usePlayerStore.getState().setQueue(sessionQueue, targetIndex, undefined, { isRoomSync: true, initialTime: initialTargetTime })
+        usePlayerStore.getState().setQueue(sessionQueue, targetIndex, undefined, { isRoomSync: true, initialTime: initialTargetTime, isPlaying: room.is_playing })
 
         applyInitialPlaybackState(room, syncedSong.id, room.song.duration || 0)
         const activeEl = getActiveAudioElement()
@@ -697,7 +703,7 @@ export const createRoomPlaybackSlice: StateCreator<
           }
 
           const targetIndex = sessionQueue.findIndex((s) => s.id === syncedSong.id)
-          usePlayerStore.getState().setQueue(sessionQueue, targetIndex >= 0 ? targetIndex : 0, undefined, { isRoomSync: true, initialTime: targetPos })
+          usePlayerStore.getState().setQueue(sessionQueue, targetIndex >= 0 ? targetIndex : 0, undefined, { isRoomSync: true, initialTime: targetPos, isPlaying: room.is_playing })
 
           if (typeof window !== 'undefined' && window.api) {
             void get().triggerRoomTrackDownload(room, room.song)
@@ -765,7 +771,7 @@ export const createRoomPlaybackSlice: StateCreator<
 
         // Instant Progressive Start: Set queue with { isRoomSync: true } to bypass PlaybackGuard
         const initialTargetTime = get().calculateCurrentHostTargetTime()
-        usePlayerStore.getState().setQueue(sessionQueue, targetIndex, undefined, { isRoomSync: true, initialTime: initialTargetTime })
+        usePlayerStore.getState().setQueue(sessionQueue, targetIndex, undefined, { isRoomSync: true, initialTime: initialTargetTime, isPlaying: room.is_playing })
         applyInitialPlaybackState(room, syncedSong.id, room.song.duration || 0)
 
         // Asynchronous Background RAM Cache & Progressive Upgrade
@@ -890,8 +896,26 @@ export const createRoomPlaybackSlice: StateCreator<
 
       // Step 5: Switch to session queue and matched song
       const currentPlaying = playerState.queue[playerState.currentSongIndex]
+      const activeEl = getActiveAudioElement()
+      const hasActivePlayableAudio = Boolean(
+        activeEl &&
+        activeEl.src &&
+        !activeEl.paused &&
+        activeEl.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+      ) || (audioDspEngine.isBufferActive('A') && audioDspEngine.isBufferPlaying('A')) || (audioDspEngine.isBufferActive('B') && audioDspEngine.isBufferPlaying('B'))
+
+      const isCurrentSourceLoaded = Boolean(
+        currentPlaying &&
+        matchedSong &&
+        ((currentPlaying.filePath && currentPlaying.filePath === matchedSong.filePath) ||
+          (currentPlaying.audioUrl && currentPlaying.audioUrl === matchedSong.audioUrl))
+      )
+
       const isAlreadyPlayingMatchedSong = Boolean(
         currentPlaying &&
+        isCurrentSourceLoaded &&
+        hasActivePlayableAudio &&
+        !usePlayerStore.getState().isBuffering &&
         (currentPlaying.id === matchedSong.id ||
           (normalizeSongValue(currentPlaying.title) === normalizeSongValue(matchedSong.title) &&
             normalizeSongValue(currentPlaying.artist) === normalizeSongValue(matchedSong.artist)))
@@ -899,7 +923,11 @@ export const createRoomPlaybackSlice: StateCreator<
 
       if (!isAlreadyPlayingMatchedSong) {
         const initialTargetTime = get().calculateCurrentHostTargetTime()
-        usePlayerStore.getState().setQueue(sessionQueue, targetIndex, undefined, { isRoomSync: true, initialTime: initialTargetTime })
+        usePlayerStore.getState().setQueue(sessionQueue, targetIndex, undefined, {
+          isRoomSync: true,
+          initialTime: initialTargetTime,
+          isPlaying: room.is_playing
+        })
         if (!room.is_playing) {
           usePlayerStore.getState().setIsPlaying(false)
         }
@@ -930,13 +958,13 @@ export const createRoomPlaybackSlice: StateCreator<
 
       // Step 6: Initial playback alignment (latency compensated via roomClockSync)
       applyInitialPlaybackState(room, matchedSong.id, matchedSong.duration || room.song?.duration || 0)
-      const activeEl = getActiveAudioElement()
+      const activeElAfter = getActiveAudioElement()
       const matchedUrl = resolveSongAudioUrl(matchedSong)
       const isMatchedAudioAlreadyLoaded = Boolean(
-        activeEl &&
+        activeElAfter &&
         matchedUrl &&
-        (activeEl.src === matchedUrl || activeEl.currentSrc === matchedUrl) &&
-        activeEl.readyState >= HTMLMediaElement.HAVE_METADATA
+        (activeElAfter.src === matchedUrl || activeElAfter.currentSrc === matchedUrl) &&
+        activeElAfter.readyState >= HTMLMediaElement.HAVE_METADATA
       )
       if (isMatchedAudioAlreadyLoaded) {
         get().performOneTimeSyncWithHost({

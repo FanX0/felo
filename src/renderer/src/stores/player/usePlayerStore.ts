@@ -26,6 +26,7 @@ export interface PlaybackActionOptions {
   preservePriority?: boolean
   isRoomSync?: boolean
   initialTime?: number
+  isPlaying?: boolean
 }
 
 export interface PlayerState {
@@ -228,7 +229,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         originalQueue: newQueue,
         queue: newQueue,
         currentSongIndex: safeIndex,
-        isPlaying: true,
+        isPlaying: typeof options?.isPlaying === 'boolean' ? options.isPlaying : true,
         isBuffering: isVirtual,
         currentTime: startTime,
         seekRequest: startTime > 0 ? startTime : null,
