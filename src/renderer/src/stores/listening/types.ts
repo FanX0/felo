@@ -84,6 +84,7 @@ export interface RoomPlaybackSlice {
   handleHostDisconnect: () => Promise<void>
   hotSwapToFullQuality: (fullUrl: string) => Promise<void>
   preloadNextQueueTracks: (room: ListeningRoom) => Promise<void>
+  triggerRoomTrackDownload: (room: ListeningRoom, targetSong: SharedSong) => Promise<void>
   refreshJoinedRoomState: () => Promise<void>
   checkHostHealth: () => Promise<void>
   calculateCurrentHostTargetTime: () => number

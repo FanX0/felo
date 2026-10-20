@@ -104,16 +104,17 @@ describe('Listen Together: Sound Suppression on User Join Suite', () => {
     vi.restoreAllMocks()
   })
 
-  describe('1. UI Sounds Engine (playParticipantJoinSound)', () => {
+  describe('1. UI Sounds Engine (playParticipantJoinSound & playParticipantLeaveSound)', () => {
     it('is a safe no-op function and never accesses AudioContext or output graph when invoked', () => {
       expect(isUiSoundsEnabled()).toBe(true)
 
       const getAudioContextSpy = vi.spyOn(audioDspEngine, 'getAudioContext')
 
-      // Invoking participant join sound should execute cleanly without audio graph activation
+      // Invoking participant join and leave sounds should execute cleanly without audio graph activation
       expect(() => playParticipantJoinSound()).not.toThrow()
+      expect(() => playParticipantLeaveSound()).not.toThrow()
 
-      // Verification: AudioContext was NOT requested for participant join
+      // Verification: AudioContext was NOT requested for participant join or leave
       expect(getAudioContextSpy).not.toHaveBeenCalled()
     })
 
@@ -122,6 +123,7 @@ describe('Listen Together: Sound Suppression on User Join Suite', () => {
 
       for (let i = 0; i < 50; i++) {
         playParticipantJoinSound()
+        playParticipantLeaveSound()
       }
 
       // Even across 50 rapid calls, zero audio contexts or audio nodes are generated
@@ -179,7 +181,7 @@ describe('Listen Together: Sound Suppression on User Join Suite', () => {
       expect(getAudioContextSpy).not.toHaveBeenCalled()
     })
 
-    it('retains audio alert when a participant leaves the room (DELETE event)', () => {
+    it('does NOT trigger any leave chime when a participant leaves the room (DELETE event)', () => {
       const hostRoom: ListeningRoom = {
         id: 'host-room-1',
         code: 'ROOM1',
@@ -201,6 +203,7 @@ describe('Listen Together: Sound Suppression on User Join Suite', () => {
       })
 
       const refreshMemberCountSpy = vi.spyOn(useListeningStore.getState(), 'refreshMemberCount')
+      const getAudioContextSpy = vi.spyOn(audioDspEngine, 'getAudioContext')
 
       const memberDeletePayload = {
         eventType: 'DELETE',
@@ -221,13 +224,14 @@ describe('Listen Together: Sound Suppression on User Join Suite', () => {
 
       handleMemberChange(memberDeletePayload)
 
-      // Verification: Leave sound was explicitly triggered on DELETE
+      // Verification: Handler ran, but zero AudioContext or audio graphs were engaged
       expect(leaveSoundInvoked).toBe(true)
       expect(refreshMemberCountSpy).toHaveBeenCalledWith(hostRoom.id)
+      expect(getAudioContextSpy).not.toHaveBeenCalled()
     })
   })
 
-  describe('3. Room Store Slice (Local User Joins Room)', () => {
+  describe('3. Room Store Slice (Local User Joins and Leaves Room)', () => {
     it('joins room without triggering any audio chime or sound', async () => {
       const getAudioContextSpy = vi.spyOn(audioDspEngine, 'getAudioContext')
 
@@ -240,6 +244,21 @@ describe('Listen Together: Sound Suppression on User Join Suite', () => {
       expect(useListeningStore.getState().myRole).toBe('listener')
 
       // Verification: Absolutely zero UI sound AudioContext requests were made
+      expect(getAudioContextSpy).not.toHaveBeenCalled()
+    })
+
+    it('leaves room without triggering any audio chime or sound', async () => {
+      const getAudioContextSpy = vi.spyOn(audioDspEngine, 'getAudioContext')
+
+      await useListeningStore.getState().joinRoomById('room-test-join')
+      expect(useListeningStore.getState().joinedRoom).not.toBeNull()
+
+      await useListeningStore.getState().leaveJoinedRoom()
+
+      // Verification: Left cleanly, joinedRoom cleared
+      expect(useListeningStore.getState().joinedRoom).toBeNull()
+
+      // Verification: Absolutely zero UI sound AudioContext requests were made on leave
       expect(getAudioContextSpy).not.toHaveBeenCalled()
     })
   })

@@ -483,4 +483,188 @@ describe('Join Sync, N+1 Track Transition & Bilateral Pause Handling Suite', () 
       expect(targetTime).toBeGreaterThanOrEqual(18)
     })
   })
+
+  // ─── 6. Unsynced Lag Recovery & Arbitrary Track Acquisition ───────────
+
+  describe('6. Unsynced Lag Recovery & Arbitrary Track Acquisition', () => {
+    it('snaps guest from near-zero (< 1.5s) to host target (> 2.5s) even when needsInitialSync is false', () => {
+      const guestSong: Song = {
+        id: 'guest-local-db-123',
+        title: 'Arbitrary Track',
+        artist: 'Some Artist',
+        duration: 200,
+        filePath: 'C:/Music/Arbitrary.mp3'
+      }
+      usePlayerStore.setState({
+        queue: [guestSong],
+        currentSongIndex: 0,
+        isPlaying: true,
+        currentTime: 0.2 // Guest just downloaded and started at 0.2s
+      })
+      mockAudio.currentTime = 0.2
+      mockAudio.paused = false
+
+      const dummyRoom: ListeningRoom = {
+        id: 'room-1',
+        host_id: 'host-user-888',
+        name: 'Party',
+        code: 'XYZ',
+        is_active: true,
+        is_playing: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        song: {
+          localId: 'host-123',
+          title: 'Arbitrary Track',
+          artist: 'Some Artist',
+          duration: 200
+        } as any
+      }
+      useListeningStore.setState({
+        joinedRoom: dummyRoom,
+        isSyncLocked: false
+      })
+      setNeedsInitialSync(false) // Gate was closed early, but guest is lagging at 0.2s while host is at 25s
+
+      useListeningStore.getState().handleHostSyncPulse({
+        position: 25.0,
+        hostTimestamp: Date.now(),
+        isPlaying: true,
+        trackId: 'host-123',
+        title: 'Arbitrary Track',
+        artist: 'Some Artist'
+      })
+
+      // Must execute initial sync bootstrap seek to ~25s!
+      expect(mockAudio.currentTime).toBeGreaterThanOrEqual(24.5)
+      expect(usePlayerStore.getState().currentTime).toBeGreaterThanOrEqual(24.5)
+      expect(needsInitialSync()).toBe(false)
+    })
+
+    it('snaps playhead accurately to paused position when host pauses, even with sync lock active', () => {
+      const guestSong: Song = {
+        id: 'guest-local-db-123',
+        title: 'Arbitrary Track',
+        artist: 'Some Artist',
+        duration: 200,
+        filePath: 'C:/Music/Arbitrary.mp3'
+      }
+      usePlayerStore.setState({
+        queue: [guestSong],
+        currentSongIndex: 0,
+        isPlaying: true,
+        currentTime: 5.0
+      })
+      mockAudio.currentTime = 5.0
+      mockAudio.paused = false
+
+      const dummyRoom: ListeningRoom = {
+        id: 'room-1',
+        host_id: 'host-user-888',
+        name: 'Party',
+        code: 'XYZ',
+        is_active: true,
+        is_playing: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        song: {
+          localId: 'host-123',
+          title: 'Arbitrary Track',
+          artist: 'Some Artist',
+          duration: 200
+        } as any
+      }
+      useListeningStore.setState({
+        joinedRoom: dummyRoom,
+        isSyncLocked: true // Sync locked by previous operation
+      })
+
+      useListeningStore.getState().handleHostSyncPulse({
+        position: 32.5,
+        hostTimestamp: Date.now(),
+        isPlaying: false,
+        trackId: 'host-123',
+        title: 'Arbitrary Track',
+        artist: 'Some Artist'
+      })
+
+      // Audio must pause and snap position to 32.5s despite isSyncLocked
+      expect(usePlayerStore.getState().isPlaying).toBe(false)
+      expect(mockAudio.pause).toHaveBeenCalled()
+      expect(mockAudio.currentTime).toBe(32.5)
+      expect(usePlayerStore.getState().currentTime).toBe(32.5)
+    })
+
+    it('triggers room track download on arbitrary song change when !directUrl on desktop', async () => {
+      const triggerSpy = vi.fn().mockResolvedValue(undefined)
+      useListeningStore.setState({
+        triggerRoomTrackDownload: triggerSpy,
+        autoDownloadMissing: false // Disabled in settings, but !directUrl must still download!
+      })
+
+      const targetSong = {
+        title: 'Brand New Arbitrary Song',
+        artist: 'Surprise Artist',
+        duration: 180
+        // No localId, no audioUrl, no blobUrl, no lanUrl
+      }
+      const room: ListeningRoom = {
+        id: 'room-1',
+        host_id: 'host-user-888',
+        name: 'Party',
+        code: 'XYZ',
+        is_active: true,
+        is_playing: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        song: targetSong as any
+      }
+
+      // Mock desktop window.api
+      ;(window as any).api = {
+        getSongs: vi.fn().mockResolvedValue([])
+      }
+
+      await useListeningStore.getState().handleHostSongChange(room)
+
+      expect(useListeningStore.getState().syncStatus).toBe('missing_song')
+      expect(triggerSpy).toHaveBeenCalledWith(room, targetSong)
+    })
+
+    it('triggers room track download on arbitrary song change even when streamUrl exists for lossless quality parity', async () => {
+      const triggerSpy = vi.fn().mockResolvedValue(undefined)
+      useListeningStore.setState({
+        triggerRoomTrackDownload: triggerSpy,
+        autoDownloadMissing: false
+      })
+
+      const targetSong = {
+        localId: 'host-arbitrary-999',
+        title: 'Lossless Track',
+        artist: 'Hi-Res Artist',
+        duration: 210
+      }
+      const room: ListeningRoom = {
+        id: 'room-1',
+        host_id: 'host-user-888',
+        name: 'Party',
+        code: 'XYZ',
+        is_active: true,
+        is_playing: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        song: targetSong as any
+      }
+
+      ;(window as any).api = {
+        getSongs: vi.fn().mockResolvedValue([])
+      }
+
+      await useListeningStore.getState().handleHostSongChange(room)
+
+      expect(useListeningStore.getState().syncStatus).toBe('buffering')
+      expect(usePlayerStore.getState().isPlaying).toBe(true)
+      expect(triggerSpy).toHaveBeenCalledWith(room, targetSong)
+    })
+  })
 })

@@ -203,7 +203,7 @@ export function readInitialDiscordPriority(): boolean {
 export function readInitialAutoDownload(): boolean {
   try {
     const raw = localStorage.getItem(AUTO_DOWNLOAD_STORAGE_KEY)
-    if (raw === null) return false // Default disabled: stream in-RAM / WebRTC like public app
+    if (raw === null) return false
     return raw === 'true'
   } catch {
     return false

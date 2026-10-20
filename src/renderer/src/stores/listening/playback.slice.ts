@@ -26,7 +26,8 @@ import { isElectron } from '../../lib/appConfig'
 import {
   isSongInAudioBucket,
   ensureTrackInAudioBucket,
-  getSongPublicBucketUrl
+  getSongPublicBucketUrl,
+  isSongUploadedToBucket
 } from '../../lib/audioBucketService'
 import {
   downloadRemoteAudioFileWithRetry,
@@ -556,11 +557,15 @@ export const createRoomPlaybackSlice: StateCreator<
           if (mySyncEpoch !== getCurrentSyncEpoch()) return
 
           if (!ready) {
-            // Host is currently uploading track to cloud — indicate buffering and wait with watchdog loop
-            set({ syncStatus: 'buffering', missingSong: null })
-            console.log(`[handleHostSongChange] Waiting for host upload of "${room.song.title}" (${room.song.statusText || 'Uploading...'})`)
-            for (let i = 0; i < 50; i++) {
-              await new Promise((r) => setTimeout(r, 800))
+            // Host is currently uploading track to cloud — indicate buffering and immediately trigger background download
+            set({ syncStatus: 'buffering', missingSong: room.song })
+            console.log(`[handleHostSongChange] Host uploading "${room.song.title}", checking CDN while triggering instant acquisition`)
+            if (typeof window !== 'undefined' && window.api) {
+              void get().triggerRoomTrackDownload(room, room.song)
+            }
+            // Fast 2-second check (4 iterations of 500ms) for immediate CDN availability
+            for (let i = 0; i < 4; i++) {
+              await new Promise((r) => setTimeout(r, 500))
               if (mySyncEpoch !== getCurrentSyncEpoch()) return
 
               // Check if fresh broadcast or DB update already delivered the audioUrl
@@ -580,6 +585,7 @@ export const createRoomPlaybackSlice: StateCreator<
 
         // 4. Resolve stream URL (Progressive two-tier delivery: Preview first -> Full quality)
         const hasPreview = Boolean(room.song.previewUrl && /^https?:\/\//i.test(room.song.previewUrl))
+        const isFullUploaded = room.song.uploadStatus === 'UPLOADED' || (songId ? isSongUploadedToBucket(songId) : false)
         const fullSourceUrl =
           room.song.audioUrl && /^https?:\/\//i.test(room.song.audioUrl) && !/127\.0\.0\.1|localhost/i.test(room.song.audioUrl)
             ? room.song.audioUrl
@@ -587,12 +593,15 @@ export const createRoomPlaybackSlice: StateCreator<
               ? getSongPublicBucketUrl(songId)
               : ''
 
-        const isFullUploaded = room.song.uploadStatus === 'UPLOADED'
         let streamSourceUrl = ''
         let isUsingPreview = false
 
         if (blobUrl) {
           // Already have cached full blob in RAM
+          set({ audioQuality: 'full' })
+        } else if (room.song.audioUrl && /^https?:\/\//i.test(room.song.audioUrl) && !/127\.0\.0\.1|localhost/i.test(room.song.audioUrl)) {
+          // Direct audio URL provided on room track
+          streamSourceUrl = room.song.audioUrl
           set({ audioQuality: 'full' })
         } else if (fullSourceUrl && isFullUploaded) {
           // Full quality file is already uploaded to cloud CDN — play full quality directly!
@@ -604,6 +613,7 @@ export const createRoomPlaybackSlice: StateCreator<
           isUsingPreview = true
           set({ audioQuality: 'preview' })
         } else if (fullSourceUrl) {
+          // Fallback to cloud bucket stream URL
           streamSourceUrl = fullSourceUrl
           set({ audioQuality: 'full' })
         }
@@ -636,12 +646,15 @@ export const createRoomPlaybackSlice: StateCreator<
             filePath: '',
             audioUrl: ''
           })
-          if (resolved) directUrl = resolved
+          if (resolved && !/127\.0\.0\.1|localhost/i.test(resolved)) directUrl = resolved
         }
 
         if (!directUrl) {
-          console.warn(`[handleHostSongChange] No valid audio URL for "${room.song.title}"`)
+          console.warn(`[handleHostSongChange] No valid audio URL for "${room.song.title}" - triggering instant download`)
           set({ syncStatus: 'missing_song', missingSong: room.song })
+          if (typeof window !== 'undefined' && window.api) {
+            void get().triggerRoomTrackDownload(room, room.song)
+          }
           return
         }
 
@@ -759,98 +772,9 @@ export const createRoomPlaybackSlice: StateCreator<
         // Pre-load the NEXT song in queue into in-memory RAM cache for zero-latency sync
         void get().preloadNextQueueTracks(room)
 
-        // Optional: If auto-download is enabled on desktop and window.api exists, background pre-download for future offline play
-        if (get().autoDownloadMissing && room.song && typeof window !== 'undefined' && window.api?.startDownload) {
-          const requestKey = `${room.id}:${songKey}`
-          if (!_autoDownloadRequests.has(requestKey)) {
-            _autoDownloadRequests.add(requestKey)
-            void (async () => {
-              try {
-                const query =
-                  cleanSearchQuery(room.song!.artist, room.song!.title) ||
-                  `${room.song!.artist || ''} ${room.song!.title}`.trim()
-                const savedPriority = await window.api?.getSetting?.(DOWNLOAD_PRIORITY_SETTING)
-                const savedAccounts = await window.api?.getSetting?.(STREAMING_ACCOUNTS_SETTING)
-                const priority = Array.isArray(savedPriority) && savedPriority.length > 0
-                  ? savedPriority
-                  : DEFAULT_DOWNLOAD_PRIORITY
-                const accounts = savedAccounts && typeof savedAccounts === 'object' ? savedAccounts : {}
-
-                for (const source of priority) {
-                  if (source === 'qobuz' && !accounts.qobuzSecret && !accounts.qobuzUser) continue
-                  if (source === 'deezer' && !accounts.deezerArl) continue
-                  if (source === 'soulseek' && !accounts.soulseekUser && !accounts.soulseekPassword) continue
-
-                  try {
-                    let timer: ReturnType<typeof setTimeout> | undefined
-                    const searchPromise = window.api?.searchDownloadSource?.(source, query, accounts)
-                    const timeoutPromise = new Promise<never>((_, reject) => {
-                      timer = setTimeout(() => reject(new Error(`Room track search timed out on ${source}`)), 12000)
-                    })
-                    const results = await Promise.race([searchPromise, timeoutPromise]).finally(() => {
-                      if (timer) clearTimeout(timer)
-                    })
-                    const bestHit = findBestDownloadMatch(
-                      results,
-                      room.song!.title,
-                      room.song!.artist,
-                      room.song!.duration
-                    )
-                    if (!bestHit) continue
-
-                    const transferId = `room-${room.id}-${Date.now()}`
-                    const safeArtwork =
-                      bestHit.artworkUrl && /^https?:\/\//i.test(bestHit.artworkUrl)
-                        ? bestHit.artworkUrl
-                        : room.song?.artworkUrl && /^https?:\/\//i.test(room.song.artworkUrl)
-                          ? room.song.artworkUrl
-                          : undefined
-
-                    useDownloadStore.getState().queueTransfer(
-                      {
-                        id: transferId,
-                        source: source as any,
-                        sourceName: bestHit.sourceName || source,
-                        title: bestHit.title || room.song!.title,
-                        artist: bestHit.artist || room.song!.artist || 'Unknown Artist',
-                        quality: bestHit.quality || 'FLAC',
-                        size: bestHit.size || '...',
-                        conflictMode: 'keep_both',
-                        status: 'downloading',
-                        progress: 5,
-                        message: `Downloading from ${bestHit.sourceName || source}...`,
-                        autoPlay: false,
-                        resultId: String(bestHit.id),
-                        song: room.song ? fromSharedSong(room.song) : undefined
-                      },
-                      { openDrawer: false }
-                    )
-
-                    await window.api?.startDownload?.({
-                      transferId,
-                      source,
-                      resultId: String(bestHit.id),
-                      title: bestHit.title || room.song!.title,
-                      artist: bestHit.artist || room.song!.artist || 'Unknown Artist',
-                      songId: '',
-                      conflictMode: 'keep_both',
-                      accounts,
-                      autoPlay: false,
-                      artworkUrl: safeArtwork,
-                      album: bestHit.album || room.song?.album
-                    })
-                    return
-                  } catch (sourceErr) {
-                    console.warn(`Auto-download failed on source ${source}:`, sourceErr)
-                  }
-                }
-              } catch (autoErr) {
-                console.warn('Auto-download background search attempt:', autoErr)
-              } finally {
-                setTimeout(() => _autoDownloadRequests.delete(requestKey), 30_000)
-              }
-            })()
-          }
+        // Lossless Quality Parity: Guest lacks local track, automatically trigger background download for full quality
+        if (room.song && typeof window !== 'undefined' && window.api) {
+          void get().triggerRoomTrackDownload(room, room.song)
         }
 
         return
@@ -978,6 +902,115 @@ export const createRoomPlaybackSlice: StateCreator<
       if (mySyncEpoch === getCurrentSyncEpoch() && !needsInitialSync()) {
         setIsSessionSyncing(false)
       }
+    }
+  },
+
+  triggerRoomTrackDownload: async (room: ListeningRoom, targetSong: SharedSong): Promise<void> => {
+    if (!targetSong || !targetSong.title || typeof window === 'undefined' || !window.api) return
+
+    const songKey = `${normalizeSongValue(targetSong.artist)} - ${normalizeSongValue(targetSong.title)}`
+    const requestKey = `room:${room.id}:${targetSong.localId || (targetSong as any).id || songKey}`
+    if (_autoDownloadRequests.has(requestKey)) return
+    _autoDownloadRequests.add(requestKey)
+
+    // Preempt previous in-flight room downloads for different songs
+    const activeTransfers = useDownloadStore.getState().transfers.filter(
+      (t) =>
+        t.status === 'downloading' &&
+        t.id.startsWith(`room-${room.id}`) &&
+        t.title.trim().toLowerCase() !== targetSong.title.trim().toLowerCase()
+    )
+    for (const t of activeTransfers) {
+      try {
+        void window.api?.cancelDownload?.(t.id)
+        useDownloadStore.getState().removeTransfer(t.id)
+      } catch {}
+    }
+
+    try {
+      const query =
+        cleanSearchQuery(targetSong.artist, targetSong.title) ||
+        `${targetSong.artist || ''} ${targetSong.title}`.trim()
+      const savedPriority = await window.api?.getSetting?.(DOWNLOAD_PRIORITY_SETTING)
+      const savedAccounts = await window.api?.getSetting?.(STREAMING_ACCOUNTS_SETTING)
+      const priority =
+        Array.isArray(savedPriority) && savedPriority.length > 0
+          ? savedPriority
+          : DEFAULT_DOWNLOAD_PRIORITY
+      const accounts = savedAccounts && typeof savedAccounts === 'object' ? savedAccounts : {}
+
+      for (const source of priority) {
+        if (source === 'qobuz' && !accounts.qobuzSecret && !accounts.qobuzUser) continue
+        if (source === 'deezer' && !accounts.deezerArl) continue
+        if (source === 'soulseek' && !accounts.soulseekUser && !accounts.soulseekPassword) continue
+
+        try {
+          let timer: ReturnType<typeof setTimeout> | undefined
+          const searchPromise = window.api?.searchDownloadSource?.(source, query, accounts)
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`Room track search timed out on ${source}`)), 12000)
+          })
+          const results = await Promise.race([searchPromise, timeoutPromise]).finally(() => {
+            if (timer) clearTimeout(timer)
+          })
+          const bestHit = findBestDownloadMatch(
+            results,
+            targetSong.title,
+            targetSong.artist,
+            targetSong.duration
+          )
+          if (!bestHit) continue
+
+          const transferId = `room-${room.id}-${Date.now()}`
+          const safeArtwork =
+            bestHit.artworkUrl && /^https?:\/\//i.test(bestHit.artworkUrl)
+              ? bestHit.artworkUrl
+              : targetSong.artworkUrl && /^https?:\/\//i.test(targetSong.artworkUrl)
+                ? targetSong.artworkUrl
+                : undefined
+
+          useDownloadStore.getState().queueTransfer(
+            {
+              id: transferId,
+              source: source as any,
+              sourceName: bestHit.sourceName || source,
+              title: bestHit.title || targetSong.title,
+              artist: bestHit.artist || targetSong.artist || 'Unknown Artist',
+              quality: bestHit.quality || 'FLAC',
+              size: bestHit.size || '...',
+              conflictMode: 'keep_both',
+              status: 'downloading',
+              progress: 5,
+              message: `Downloading from ${bestHit.sourceName || source}...`,
+              autoPlay: false,
+              resultId: String(bestHit.id),
+              song: fromSharedSong(targetSong)
+            },
+            { openDrawer: false }
+          )
+
+          await window.api?.startDownload?.({
+            transferId,
+            source,
+            resultId: String(bestHit.id),
+            title: bestHit.title || targetSong.title,
+            artist: bestHit.artist || targetSong.artist || 'Unknown Artist',
+            songId: '',
+            conflictMode: 'keep_both',
+            accounts,
+            autoPlay: false,
+            artworkUrl: safeArtwork,
+            album: bestHit.album || targetSong.album
+          })
+          return
+        } catch (sourceErr) {
+          console.warn(`Auto-download failed on source ${source}:`, sourceErr)
+        }
+      }
+    } catch (autoErr) {
+      console.warn('Auto-download background search attempt:', autoErr)
+    } finally {
+      setTimeout(() => _autoDownloadRequests.delete(requestKey), 30_000)
     }
   },
 
@@ -1346,30 +1379,32 @@ export const createRoomPlaybackSlice: StateCreator<
       return
     }
 
-    // ─── MUSIXQUARE Gated Bootstrap (Initial Join / Track Switch) ────
-    // If guest just joined or switched track, do NOT seek until:
-    // 1. NTP clock is calibrated via ping/pong
-    // 2. Audio element has loaded metadata
-    if (needsInitialSync()) {
-      if (!roomClockSync.isCalibrated()) {
-        return
-      }
+    const activeTime = getActiveAudioTime()
+    const currentGuestTime = activeTime > 0 ? activeTime : playerState.currentTime || 0
+    const manualOffsetSec = (get().manualSyncOffsetMs || 0) / 1000
+    const duration = joined.song?.duration || playerState.duration || 0
+    const targetTime = roomClockSync.calculateTargetTime(
+      pulse.position,
+      pulse.hostTimestamp,
+      pulse.isPlaying,
+      manualOffsetSec,
+      duration
+    )
 
+    // ─── MUSIXQUARE Gated Bootstrap (Initial Join / Track Switch) ────
+    // Triggers if needsInitialSync() is true OR if the guest is lagging near zero (< 1.5s) while host is ahead (> 2.5s)
+    const isUnsyncedLag = pulse.isPlaying && currentGuestTime < 1.5 && targetTime > 2.5
+    if (needsInitialSync() || isUnsyncedLag) {
       const isYouTube = Boolean((currentSong as any)?.isYouTube || (currentSong as any)?.videoId)
       const activeEl = getActiveAudioElement()
+
       if (!isYouTube && activeEl && activeEl.readyState < HTMLMediaElement.HAVE_METADATA) {
+        if (targetTime > 0) {
+          playerState.setCurrentTime(targetTime)
+          playerState.seek(targetTime)
+        }
         return
       }
-
-      const manualOffsetSec = (get().manualSyncOffsetMs || 0) / 1000
-      const duration = joined.song?.duration || playerState.duration || 0
-      const targetTime = roomClockSync.calculateTargetTime(
-        pulse.position,
-        pulse.hostTimestamp,
-        pulse.isPlaying,
-        manualOffsetSec,
-        duration
-      )
 
       setIsSessionSyncing(true)
       playerState.seek(targetTime)
@@ -1403,8 +1438,7 @@ export const createRoomPlaybackSlice: StateCreator<
     }
 
     // ─── Steady-State: Passive Drift Monitoring Only (Event-Driven Sync) ─────
-    // The heartbeat is ONLY used for drift detection and play/pause state.
-    // Sync play/pause state immediately before rate-limiting or locks
+    // 1. Play/Pause state alignment:
     if (playerState.isPlaying !== pulse.isPlaying) {
       playerState.setIsPlaying(pulse.isPlaying)
       const activeEl = getActiveAudioElement()
@@ -1415,37 +1449,23 @@ export const createRoomPlaybackSlice: StateCreator<
       }
     }
 
-    if (isSessionSyncing()) return
-    if (get().isSyncLocked) return
-    if (get().isGuestBuffering) return
-    if (playerState.seekRequest !== null) return
-    if (playerState.isBuffering) return
-
-    const manualOffsetSec = (get().manualSyncOffsetMs || 0) / 1000
-    const duration = joined.song?.duration || playerState.duration || 0
-    const targetTime = roomClockSync.calculateTargetTime(
-      pulse.position,
-      pulse.hostTimestamp,
-      pulse.isPlaying,
-      manualOffsetSec,
-      duration
-    )
-
-    const activeTime = getActiveAudioTime()
-    const currentGuestTime = activeTime > 0 ? activeTime : playerState.currentTime || 0
-
-    // If host is paused, snap position once so lyrics/frame match
+    // 2. If host is paused, snap position immediately so lyrics/frame match host exactly
     if (!pulse.isPlaying) {
       if (getAudioPlaybackRate() !== 1.0) {
         setAudioPlaybackRate(1.0)
       }
+      const activeEl = getActiveAudioElement()
+      if (activeEl && !activeEl.paused) {
+        activeEl.pause()
+      }
       const drift = Math.abs(currentGuestTime - targetTime)
-      if (drift > 0.5) {
-        // Only snap on pause if drift is significant (>500ms), not aggressive 50ms
+      if (drift > 0.05) {
         setIsSessionSyncing(true)
-        get().setIsSyncLocked(true)
         playerState.seek(targetTime)
         playerState.setCurrentTime(targetTime)
+        if (activeEl) {
+          activeEl.currentTime = targetTime
+        }
         setTimeout(() => {
           setIsSessionSyncing(false)
         }, 500)
@@ -1473,6 +1493,13 @@ export const createRoomPlaybackSlice: StateCreator<
       }))
       return
     }
+
+    // Steady-state guards for active playback:
+    if (isSessionSyncing()) return
+    if (get().isSyncLocked) return
+    if (get().isGuestBuffering) return
+    if (playerState.seekRequest !== null) return
+    if (playerState.isBuffering) return
 
     // During active playback: ONLY record drift for CatchUp HUD, never seek or adjust rate
     const drift = currentGuestTime - targetTime
@@ -1948,8 +1975,10 @@ export const createRoomPlaybackSlice: StateCreator<
     }
 
     // 3. Align position via player store and active audio element
-    playerState.setCurrentTime(targetTime)
-    playerState.seek(targetTime)
+    if (targetTime > 0.05 || !isHostPlaying) {
+      playerState.setCurrentTime(targetTime)
+      playerState.seek(targetTime)
+    }
 
     const activeAudio = getActiveAudioElement()
     const isAudioReady = !activeAudio || activeAudio.readyState >= HTMLMediaElement.HAVE_METADATA
@@ -1957,7 +1986,9 @@ export const createRoomPlaybackSlice: StateCreator<
     if (activeAudio) {
       try {
         if (isAudioReady) {
-          activeAudio.currentTime = targetTime
+          if (targetTime > 0.05 || !isHostPlaying) {
+            activeAudio.currentTime = targetTime
+          }
           if (isHostPlaying && activeAudio.paused) {
             activeAudio.play().catch((err) => {
               console.warn('[performOneTimeSyncWithHost] Audio play failed:', err)
@@ -1977,8 +2008,7 @@ export const createRoomPlaybackSlice: StateCreator<
     // ONLY clear needsInitialSync when audio element was ready AND targetTime was calibrated/authoritative
     const hasCalibratedTarget = Boolean(
       !isHostPlaying ||
-      targetTime > 0.1 ||
-      (_lastHostPulse && roomClockSync.isCalibrated())
+      (targetTime > 0.05 && (_lastHostPulse || roomClockSync.isCalibrated()))
     )
     if (isAudioReady && hasCalibratedTarget) {
       setNeedsInitialSync(false)

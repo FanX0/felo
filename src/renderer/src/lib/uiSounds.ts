@@ -8,7 +8,6 @@
 import { audioDspEngine } from './audioDspEngine'
 
 const STORAGE_KEY = 'felo-ui-sounds-enabled'
-const SESSION_SOUND_COOLDOWN_MS = 300
 const ANNOUNCEMENT_LOW_FREQUENCY_HZ = 523.25
 const ANNOUNCEMENT_HIGH_FREQUENCY_HZ = 659.25
 const ATTENTION_OUTPUT_GAIN = 2.5
@@ -32,13 +31,8 @@ type ToneOptions = {
 let outputGraph: OutputGraph | null = null
 let enabledCache: boolean | null = null
 let preferenceRevision = 0
-let lastSessionSoundAt = Number.NEGATIVE_INFINITY
 let initialized = false
 let removeDomListeners: (() => void) | null = null
-
-function nowMs(): number {
-  return typeof performance !== 'undefined' ? performance.now() : Date.now()
-}
 
 export function isUiSoundsEnabled(): boolean {
   if (enabledCache !== null) return enabledCache
@@ -161,31 +155,6 @@ function scheduleTone(
   oscillator.stop(end + options.release + 0.01)
 }
 
-function scheduleMicroEcho(
-  context: AudioContext,
-  destination: AudioNode,
-  time: number,
-  frequency: number
-): void {
-  scheduleTone(context, destination, time, {
-    from: frequency,
-    duration: 0.18,
-    gain: 0.064,
-    attack: 0.003,
-    release: 0.14,
-    pan: -0.025
-  })
-  scheduleTone(context, destination, time, {
-    from: frequency,
-    delay: 0.13,
-    duration: 0.22,
-    gain: 0.026,
-    attack: 0.003,
-    release: 0.18,
-    pan: 0.04
-  })
-}
-
 /**
  * UI touch/click sound is disabled. Maintained as a no-op for backward compatibility.
  */
@@ -217,21 +186,6 @@ export function playAnnouncementSound(): void {
   }).catch(() => undefined)
 }
 
-function playSessionSound(frequency: number): void {
-  const now = nowMs()
-  if (now - lastSessionSoundAt < SESSION_SOUND_COOLDOWN_MS) return
-  lastSessionSoundAt = now
-  readyOutput().then((output) => {
-    if (!output) return
-    scheduleMicroEcho(
-      output.context,
-      output.attentionInput,
-      output.context.currentTime + 0.008,
-      frequency
-    )
-  }).catch(() => undefined)
-}
-
 /**
  * Participant join sound is disabled per user request. Maintained as a no-op for backward compatibility.
  */
@@ -239,8 +193,11 @@ export function playParticipantJoinSound(): void {
   // Join sound permanently disabled per user request
 }
 
+/**
+ * Participant leave sound is disabled per user request. Maintained as a no-op for backward compatibility.
+ */
 export function playParticipantLeaveSound(): void {
-  playSessionSound(ANNOUNCEMENT_LOW_FREQUENCY_HZ)
+  // Leave sound permanently disabled per user request
 }
 
 export function initUiSounds(): void {

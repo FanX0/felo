@@ -960,8 +960,11 @@ export default function AudioEngine() {
 
           if (inRoom) {
             const targetTime = useListeningStore.getState().calculateCurrentHostTargetTime()
-            pendingSeekRef.current = targetTime
-            setCurrentTime(targetTime)
+            const isHostPlaying = useListeningStore.getState().joinedRoom?.is_playing ?? true
+            if (targetTime > 0.05 || !isHostPlaying || pendingSeekRef.current === null) {
+              pendingSeekRef.current = targetTime
+              setCurrentTime(targetTime)
+            }
             setNeedsInitialSync(true)
           } else {
             audio.currentTime = 0

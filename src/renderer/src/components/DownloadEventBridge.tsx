@@ -71,11 +71,14 @@ export default function DownloadEventBridge(): null {
               setNeedsInitialSync(true)
               requestImmediateHostSyncPulse()
 
-              if (listeningState.syncStatus === 'missing_song') {
+              const currentQueueSong = usePlayerStore.getState().queue[usePlayerStore.getState().currentSongIndex]
+              const hasLoadedLocalAudio = Boolean(currentQueueSong && currentQueueSong.filePath === completedSong.filePath)
+
+              if (!hasLoadedLocalAudio || listeningState.syncStatus === 'missing_song') {
                 void listeningState.handleHostSongChange(joined).then(() => {
                   listeningState.performOneTimeSyncWithHost({
                     forceSeek: true,
-                    logReason: 'Download completed from missing_song'
+                    logReason: 'Download completed active room track'
                   })
                 })
               } else {
@@ -86,8 +89,8 @@ export default function DownloadEventBridge(): null {
                   forceSeek: true,
                   logReason: 'Active room song download completed'
                 })
-                void listeningState.preloadNextQueueTracks(joined)
               }
+              void listeningState.preloadNextQueueTracks(joined)
             } else {
               void listeningState.preloadNextQueueTracks(joined)
             }
