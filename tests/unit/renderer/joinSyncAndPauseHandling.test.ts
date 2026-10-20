@@ -9,6 +9,8 @@ import {
   setLastHostPulse
 } from '../../../src/renderer/src/stores/listening/helpers'
 import { registerActiveAudioElement } from '../../../src/renderer/src/lib/audioBridge'
+import { audioDspEngine } from '../../../src/renderer/src/lib/audioDspEngine'
+import { downloadWholeObjectWithWatchdog } from '../../../src/renderer/src/lib/jitAudioPipeline'
 import type { ListeningRoom } from '../../../src/renderer/src/types/listening'
 import type { Song } from '../../../src/renderer/src/pages/Library/Library'
 
@@ -665,6 +667,149 @@ describe('Join Sync, N+1 Track Transition & Bilateral Pause Handling Suite', () 
       expect(useListeningStore.getState().syncStatus).toBe('buffering')
       expect(usePlayerStore.getState().isPlaying).toBe(true)
       expect(triggerSpy).toHaveBeenCalledWith(room, targetSong)
+    })
+  })
+
+  // ─── 7. Unverified Bucket URL Guard, 88-Byte Error Rejection & Web Audio Buffer Sync ───
+
+  describe('7. Unverified Bucket URL Guard, 88-Byte Error Rejection & Web Audio Buffer Sync', () => {
+    it('sets queue with empty filePath and buffering status when host song is uploading (no unverified bucket URL)', async () => {
+      vi.useRealTimers()
+      try {
+        const uploadingSong = {
+          localId: 'song-crayola-123',
+          title: 'crayola',
+          artist: 'crayola artist',
+          duration: 230,
+          uploadStatus: 'UPLOADING'
+        }
+        const room: ListeningRoom = {
+          id: 'room-1',
+          host_id: 'host-user-888',
+          name: 'Party',
+          code: 'XYZ',
+          is_active: true,
+          is_playing: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          song: uploadingSong as any
+        }
+
+        await useListeningStore.getState().handleHostSongChange(room)
+
+        const listeningState = useListeningStore.getState()
+        const playerState = usePlayerStore.getState()
+        const currentTrack = playerState.queue[playerState.currentSongIndex]
+
+        // 1. syncStatus must be buffering (NOT stuck 100% or playing a 404 URL)
+        expect(listeningState.syncStatus).toBe('buffering')
+        // 2. Queue contains track with empty filePath so HTML audio doesn't attempt 404 download
+        expect(currentTrack).toBeDefined()
+        expect(currentTrack.title).toBe('crayola')
+        expect(currentTrack.filePath).toBe('')
+        expect(currentTrack.audioUrl).toBe('')
+        // 3. JIT status indicates buffering from host with 0 bytes (NOT 88 B / 88 B)
+        const jit = listeningState.jitStatus['song-crayola-123']
+        expect(jit).toBeDefined()
+        expect(jit.percent).toBe(0)
+        expect(jit.receivedBytes).toBe(0)
+        expect(jit.totalBytes).toBe(0)
+        expect(jit.statusText).toBe('Buffering stream from host...')
+      } finally {
+        vi.useFakeTimers()
+      }
+    })
+
+    it('rejects payloads under 512 bytes as invalid audio in downloadWholeObjectWithWatchdog and suppresses progress', async () => {
+      const origXHR = globalThis.XMLHttpRequest
+      let capturedOnProgress: any
+      let capturedOnLoad: any
+      let progressReported = false
+
+      class MockXHR {
+        open = vi.fn()
+        setRequestHeader = vi.fn()
+        abort = vi.fn()
+        status = 200
+        response = new ArrayBuffer(88) // 88-byte error JSON
+        set onprogress(fn: any) {
+          capturedOnProgress = fn
+        }
+        set onload(fn: any) {
+          capturedOnLoad = fn
+        }
+        send = vi.fn().mockImplementation(() => {
+          // Trigger progress with 88 bytes
+          capturedOnProgress?.({ loaded: 88, total: 88, lengthComputable: true })
+          // Trigger load
+          capturedOnLoad?.()
+        })
+      }
+
+      ;(globalThis as any).XMLHttpRequest = MockXHR
+
+      try {
+        await expect(
+          downloadWholeObjectWithWatchdog('https://example.com/missing.mp3', {
+            onProgress: () => {
+              progressReported = true
+            }
+          })
+        ).rejects.toThrow('REMOTE_SHARE_DOWNLOAD_INVALID_AUDIO')
+
+        // Progress must NOT be reported for < 512 bytes error payloads!
+        expect(progressReported).toBe(false)
+      } finally {
+        globalThis.XMLHttpRequest = origXHR
+      }
+    })
+
+    it('pauses and resumes audioDspEngine buffer channels in handleHostExplicitPlayPause', () => {
+      const pauseSpyA = vi.spyOn(audioDspEngine, 'pauseBuffer').mockReturnValue(10)
+      const isBufferActiveSpy = vi.spyOn(audioDspEngine, 'isBufferActive').mockReturnValue(true)
+      const isBufferPlayingSpy = vi.spyOn(audioDspEngine, 'isBufferPlaying').mockReturnValue(false)
+      const mockBuf = {} as any
+      const getBufferSpy = vi.spyOn(audioDspEngine, 'getCurrentAudioBuffer').mockReturnValue(mockBuf)
+      const playBufferSpy = vi.spyOn(audioDspEngine, 'playBuffer').mockImplementation(() => {})
+
+      const dummyRoom: ListeningRoom = {
+        id: 'room-1',
+        host_id: 'host-user-888',
+        name: 'Party',
+        code: 'XYZ',
+        is_active: true,
+        is_playing: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        song: { localId: 's1', title: 'Buffer Track', artist: 'Artist', duration: 200 } as any
+      }
+      useListeningStore.setState({ joinedRoom: dummyRoom })
+
+      // Host pauses:
+      useListeningStore.getState().handleHostExplicitPlayPause({
+        isPlaying: false,
+        position: 42.0,
+        hostTimestamp: Date.now()
+      })
+
+      expect(pauseSpyA).toHaveBeenCalledWith('A')
+      expect(usePlayerStore.getState().isPlaying).toBe(false)
+
+      // Host resumes:
+      useListeningStore.getState().handleHostExplicitPlayPause({
+        isPlaying: true,
+        position: 42.0,
+        hostTimestamp: Date.now()
+      })
+
+      expect(playBufferSpy).toHaveBeenCalledWith(mockBuf, 42.0, undefined, 'A')
+      expect(usePlayerStore.getState().isPlaying).toBe(true)
+
+      pauseSpyA.mockRestore()
+      isBufferActiveSpy.mockRestore()
+      isBufferPlayingSpy.mockRestore()
+      getBufferSpy.mockRestore()
+      playBufferSpy.mockRestore()
     })
   })
 })

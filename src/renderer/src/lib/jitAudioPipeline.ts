@@ -635,6 +635,11 @@ export function downloadWholeObjectWithWatchdog(
         xhrLifecycle.stall?.reset()
       }
 
+      // Do not report progress for error/non-audio payloads (e.g. 88-byte JSON error pages)
+      if (event.lengthComputable && event.total < 512) {
+        return
+      }
+
       if (event.lengthComputable && onProgress) {
         reportProgress(event.loaded / event.total, { loaded: event.loaded, total: event.total })
       } else if (expectedSize && expectedSize > 0 && onProgress) {
@@ -651,6 +656,10 @@ export function downloadWholeObjectWithWatchdog(
       ) {
         if (expectedSize && expectedSize > 0 && xhr.response.byteLength !== expectedSize) {
           rejectOnce(new Error('REMOTE_SHARE_DOWNLOAD_SIZE_MISMATCH'))
+          return
+        }
+        if (xhr.response.byteLength < 512) {
+          rejectOnce(new Error('REMOTE_SHARE_DOWNLOAD_INVALID_AUDIO'))
           return
         }
         reportProgress(1, { loaded: xhr.response.byteLength, total: xhr.response.byteLength })

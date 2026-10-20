@@ -400,7 +400,7 @@ export default function GuestRoomView({
                   Buffering Stream: "{displaySong?.title || joinedRoom.song?.title || 'Current Track'}"
                 </p>
                 <p className="text-[11px] text-text-muted truncate mt-0.5">
-                  {activeJit?.totalBytes
+                  {activeJit?.totalBytes && activeJit.totalBytes >= 512
                     ? `Receiving bit-perfect audio stream (${formatBytes(activeJit.receivedBytes)} / ${formatBytes(activeJit.totalBytes)}) in ephemeral RAM buffer.`
                     : (activeJit?.statusText || 'Receiving audio chunks from host directly into RAM...')}
                 </p>

@@ -1457,9 +1457,10 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
             const currentPlayingTrack = playerState.queue[playerState.currentSongIndex]
             const hasPlayableSource = Boolean(currentPlayingTrack && resolveSongAudioUrl(currentPlayingTrack))
             const isMissingSong = useListeningStore.getState().syncStatus === 'missing_song'
+            const isBuffering = useListeningStore.getState().syncStatus === 'buffering'
 
-            if (isSameSong && hasPlayableSource && !isMissingSong) {
-              if (payload.position === 0 || payload.isLoop) {
+            if (isSameSong && hasPlayableSource && !isMissingSong && !isBuffering) {
+              if (payload.isLoop) {
                 // Host looped the current track!
                 usePlayerStore.getState().seek(0)
                 usePlayerStore.getState().setCurrentTime(0)
@@ -1476,7 +1477,7 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
                 console.log('[track_change] Same song upload completion detected, updated room in-place')
               }
             } else {
-              // Actual song change OR resolving missing/unplayable song — full handleHostSongChange
+              // Actual song change OR resolving missing/unplayable/buffering song — full handleHostSongChange
               void useListeningStore.getState().handleHostSongChange(updatedRoom as any)
             }
           }
@@ -1493,7 +1494,19 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
           )
           if (isCurrentTrack) {
             console.log('[track_upgrade] Full audio quality available for active song, initiating seamless hot-swap:', payload.fullUrl)
-            void useListeningStore.getState().hotSwapToFullQuality(payload.fullUrl)
+            if (joinedRoom?.song) {
+              joinedRoom.song.audioUrl = payload.fullUrl
+              joinedRoom.song.uploadStatus = 'UPLOADED'
+            }
+            const hasPlayableSource = Boolean(currentSong && resolveSongAudioUrl(currentSong))
+            const isBuffering = useListeningStore.getState().syncStatus === 'buffering'
+            if (!hasPlayableSource || isBuffering) {
+              if (joinedRoom) {
+                void useListeningStore.getState().handleHostSongChange(joinedRoom as any)
+              }
+            } else {
+              void useListeningStore.getState().hotSwapToFullQuality(payload.fullUrl)
+            }
           } else {
             console.log('[track_upgrade] Full audio quality available for upcoming track:', payload.trackId)
             if (payload.trackId) {

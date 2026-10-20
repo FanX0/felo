@@ -19,6 +19,7 @@ import {
   getActiveAudioElement,
   getActiveAudioTime
 } from '../../lib/audioBridge'
+import { audioDspEngine } from '../../lib/audioDspEngine'
 import { roomClockSync, type SyncPulsePayload } from '../../lib/roomClockSync'
 import { resolveSongAudioUrl } from '../../lib/songAudioResolver'
 import { toMediaUrl } from '../../lib/media'
@@ -589,7 +590,7 @@ export const createRoomPlaybackSlice: StateCreator<
         const fullSourceUrl =
           room.song.audioUrl && /^https?:\/\//i.test(room.song.audioUrl) && !/127\.0\.0\.1|localhost/i.test(room.song.audioUrl)
             ? room.song.audioUrl
-            : songId
+            : songId && isFullUploaded
               ? getSongPublicBucketUrl(songId)
               : ''
 
@@ -612,10 +613,6 @@ export const createRoomPlaybackSlice: StateCreator<
           streamSourceUrl = room.song.previewUrl!
           isUsingPreview = true
           set({ audioQuality: 'preview' })
-        } else if (fullSourceUrl) {
-          // Fallback to cloud bucket stream URL
-          streamSourceUrl = fullSourceUrl
-          set({ audioQuality: 'full' })
         }
 
         if (!streamSourceUrl && room.song.lanUrl && typeof window !== 'undefined') {
@@ -651,7 +648,57 @@ export const createRoomPlaybackSlice: StateCreator<
 
         if (!directUrl) {
           console.warn(`[handleHostSongChange] No valid audio URL for "${room.song.title}" - triggering instant download`)
-          set({ syncStatus: 'missing_song', missingSong: room.song })
+          const pendingSyncStatus = isHostUploading || Boolean(songId) ? 'buffering' : 'missing_song'
+          set({ syncStatus: pendingSyncStatus, missingSong: room.song })
+          if (songId) {
+            get().setJitStatus(songId, 0, 'Buffering stream from host...', 0, 0)
+          }
+          usePlayerStore.getState().setIsPlaying(room.is_playing)
+          const targetPos = get().calculateCurrentHostTargetTime()
+          usePlayerStore.getState().setCurrentTime(targetPos)
+
+          const syncedSong: Song = {
+            id: songId || `synced-${Date.now()}`,
+            title: room.song.title,
+            artist: room.song.artist,
+            album: room.song.album || 'Listen Together',
+            duration: room.song.duration || 0,
+            artworkPath: room.song.artworkUrl || '',
+            artworkUrl: room.song.artworkUrl || '',
+            filePath: '',
+            audioUrl: '',
+            isOnline: true
+          }
+
+          let sessionQueue: Song[] = []
+          if (room.queue && room.queue.length > 0) {
+            sessionQueue = room.queue.map((shared, idx) => {
+              if (
+                (shared.localId && shared.localId === songId) ||
+                ((shared as any).id && (shared as any).id === songId) ||
+                (normalizeSongValue(shared.title) === normalizeSongValue(room.song!.title) &&
+                  normalizeSongValue(shared.artist) === normalizeSongValue(room.song!.artist))
+              ) {
+                return syncedSong
+              }
+              return {
+                id: shared.localId || (shared as any).id || `session-${idx}`,
+                localId: shared.localId,
+                title: shared.title,
+                artist: shared.artist,
+                album: shared.album || '',
+                duration: shared.duration || 0,
+                artworkPath: shared.artworkUrl || '',
+                filePath: shared.audioUrl || ''
+              } as Song
+            })
+          } else {
+            sessionQueue = [syncedSong]
+          }
+
+          const targetIndex = sessionQueue.findIndex((s) => s.id === syncedSong.id)
+          usePlayerStore.getState().setQueue(sessionQueue, targetIndex >= 0 ? targetIndex : 0, undefined, { isRoomSync: true, initialTime: targetPos })
+
           if (typeof window !== 'undefined' && window.api) {
             void get().triggerRoomTrackDownload(room, room.song)
           }
@@ -765,6 +812,9 @@ export const createRoomPlaybackSlice: StateCreator<
               }
             } catch (err) {
               console.warn('[handleHostSongChange] Background audio fetch/upgrade failed (progressive streaming remains active):', err)
+              if (songId) {
+                get().setJitStatus(songId, 0, 'Buffering stream...', 0, 0)
+              }
             }
           })()
         }
@@ -1639,6 +1689,12 @@ export const createRoomPlaybackSlice: StateCreator<
       if (activeAudio && !activeAudio.paused) {
         activeAudio.pause()
       }
+      if (audioDspEngine.isBufferActive('A')) {
+        audioDspEngine.pauseBuffer('A')
+      }
+      if (audioDspEngine.isBufferActive('B')) {
+        audioDspEngine.pauseBuffer('B')
+      }
       if (getAudioPlaybackRate() !== 1.0) {
         setAudioPlaybackRate(1.0)
       }
@@ -1653,6 +1709,12 @@ export const createRoomPlaybackSlice: StateCreator<
           if (activeAudio) {
             activeAudio.currentTime = payload.position
           }
+          if (audioDspEngine.isBufferActive('A')) {
+            audioDspEngine.seekBuffer(payload.position, 'A')
+          }
+          if (audioDspEngine.isBufferActive('B')) {
+            audioDspEngine.seekBuffer(payload.position, 'B')
+          }
           setTimeout(() => {
             setIsSessionSyncing(false)
           }, 500)
@@ -1663,6 +1725,20 @@ export const createRoomPlaybackSlice: StateCreator<
       if (activeAudio && activeAudio.paused) {
         activeAudio.play().catch(() => {})
       }
+      if (audioDspEngine.isBufferActive('A') && !audioDspEngine.isBufferPlaying('A')) {
+        const buf = audioDspEngine.getCurrentAudioBuffer('A')
+        if (buf) {
+          const pos = typeof payload.position === 'number' ? payload.position : audioDspEngine.getBufferPosition('A')
+          audioDspEngine.playBuffer(buf, pos, undefined, 'A')
+        }
+      }
+      if (audioDspEngine.isBufferActive('B') && !audioDspEngine.isBufferPlaying('B')) {
+        const buf = audioDspEngine.getCurrentAudioBuffer('B')
+        if (buf) {
+          const pos = typeof payload.position === 'number' ? payload.position : audioDspEngine.getBufferPosition('B')
+          audioDspEngine.playBuffer(buf, pos, undefined, 'B')
+        }
+      }
       if (typeof payload.position === 'number') {
         const activeTime = getActiveAudioTime()
         const currentGuestTime = activeTime > 0 ? activeTime : playerState.currentTime || 0
@@ -1672,6 +1748,12 @@ export const createRoomPlaybackSlice: StateCreator<
           playerState.setCurrentTime(payload.position)
           if (activeAudio) {
             activeAudio.currentTime = payload.position
+          }
+          if (audioDspEngine.isBufferActive('A')) {
+            audioDspEngine.seekBuffer(payload.position, 'A')
+          }
+          if (audioDspEngine.isBufferActive('B')) {
+            audioDspEngine.seekBuffer(payload.position, 'B')
           }
         }
       }

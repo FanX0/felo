@@ -633,10 +633,11 @@ export default function AudioEngine() {
               usePlayerStore.setState({ isBuffering: false, isAudioActive: true })
             }
 
+            const isListenTogetherGuest = Boolean(listeningState.joinedRoom && !listeningState.isReceivingDeviceStream)
+
             // Web environment: no PlaybackStreamBridge or DownloadEventBridge available,
-            // so virtual songs with no playable URL will never resolve. Clear buffering
-            // immediately and auto-advance to prevent infinite loading spinner.
-            if (!isElectron && state.isBuffering) {
+            // so virtual songs with no playable URL will never resolve outside a Listen Together room.
+            if (!isElectron && state.isBuffering && !isListenTogetherGuest) {
               usePlayerStore.setState({ isBuffering: false })
               if (!isYouTubeSong(song)) {
                 console.warn('[AudioEngine] Virtual song with no playback path on web:', song.title)
@@ -773,7 +774,12 @@ export default function AudioEngine() {
             scrobbledSongIdRef.current = null
             playTimeAccumulatedRef.current = 0
             lastPlayTickRef.current = performance.now()
-            setCurrentTime(0)
+
+            const inRoom = Boolean(useListeningStore.getState().joinedRoom && !useListeningStore.getState().isReceivingDeviceStream)
+            const targetTime = inRoom ? useListeningStore.getState().calculateCurrentHostTargetTime() : 0
+            const isHostPlaying = inRoom ? (useListeningStore.getState().joinedRoom?.is_playing ?? true) : usePlayerStore.getState().isPlaying
+
+            setCurrentTime(targetTime)
             setDuration(song.duration || 0)
 
             const decodeGen = ++decodeGenerationRef.current
@@ -811,21 +817,29 @@ export default function AudioEngine() {
                 if (decodeGen !== decodeGenerationRef.current) return
 
                 setDuration(decoded.duration)
-                setCurrentTime(0)
+                setCurrentTime(targetTime)
                 setIsBuffering(false)
 
-                const shouldPlayNow = usePlayerStore.getState().isPlaying && usePlayerStore.getState().isAudioActive
+                const shouldPlayNow = (inRoom ? isHostPlaying : usePlayerStore.getState().isPlaying) && usePlayerStore.getState().isAudioActive
                 if (shouldPlayNow) {
                   audioDspEngine.setCrossfadeMix(activeChannelRef.current === 'B' ? 1.0 : 0.0, 0.01)
                   audioDspEngine.playBuffer(
                     decoded,
-                    0,
+                    targetTime,
                     () => handleEnded(activeChannelRef.current),
                     activeChannelRef.current
                   )
                   safeSetPlaybackState('playing')
+                } else {
+                  safeSetPlaybackState('paused')
                 }
-                console.log(`[AudioEngine] Web Audio buffer playback ready for "${song.title}" (${decoded.duration.toFixed(1)}s)`)
+                if (inRoom) {
+                  useListeningStore.getState().performOneTimeSyncWithHost({
+                    forceSeek: true,
+                    logReason: 'Web Audio buffer playback ready'
+                  })
+                }
+                console.log(`[AudioEngine] Web Audio buffer playback ready for "${song.title}" (${decoded.duration.toFixed(1)}s, offset=${targetTime.toFixed(2)}s)`)
               } catch (decodeErr) {
                 console.warn('[AudioEngine] Web Audio buffer decode failed, falling back to HTMLAudioElement:', decodeErr)
                 setIsBuffering(false)
