@@ -291,7 +291,14 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
             item.artist?.toLowerCase() === song.artist?.toLowerCase())
       )
       if (existingQueueIndex >= 0) {
-        requestPlayQueue(queue, existingQueueIndex, playlistContext)
+        if (
+          song.filePath &&
+          !song.filePath.startsWith('virtual:') &&
+          (!queue[existingQueueIndex].filePath || queue[existingQueueIndex].filePath.startsWith('virtual:'))
+        ) {
+          usePlayerStore.getState().updateSong(song, queue[existingQueueIndex].id)
+        }
+        requestPlayQueue(usePlayerStore.getState().queue, existingQueueIndex, playlistContext)
         return
       }
     }

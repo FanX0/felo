@@ -404,12 +404,14 @@ export default function AudioEngine() {
 
     // Stop the inactive channel so two audio elements NEVER play simultaneously
     const otherAudio = audio === audioRefA.current ? audioRefB.current : audioRefA.current
-    if (otherAudio && !otherAudio.paused && !isCrossfadingRef.current) {
-      otherAudio.pause()
-      otherAudio.removeAttribute('src')
-      otherAudio.load()
+    if (otherAudio && !isCrossfadingRef.current) {
+      try {
+        if (!otherAudio.paused) otherAudio.pause()
+        otherAudio.removeAttribute('src')
+        otherAudio.load()
+      } catch {}
     }
-    audioDspEngine.stopBuffer(activeChannelRef.current === 'A' ? 'B' : 'A')
+    audioDspEngine.stopBuffer()
     window.dispatchEvent(new CustomEvent('felo:stop-youtube'))
 
     remoteClient.pauseMobileAudio()
@@ -743,12 +745,15 @@ export default function AudioEngine() {
         }
         if (isCrossfadingRef.current) {
           const other = getInactiveAudio()
-          if (other && !other.paused) {
-            other.pause()
-            other.removeAttribute('src')
-            other.load()
+          if (other) {
+            try {
+              if (!other.paused) other.pause()
+              other.removeAttribute('src')
+              other.load()
+            } catch {}
           }
           isCrossfadingRef.current = false
+          audioDspEngine.setCrossfadeMix(activeChannelRef.current === 'B' ? 1.0 : 0.0, 0.01)
         }
 
         const isLocalBrowserSong = !isElectron && Boolean(
@@ -922,8 +927,12 @@ export default function AudioEngine() {
           activeChannelRef.current = nextChannel
           registerActiveAudioElement(inactiveAudio)
           audioDspEngine.setCrossfadeMix(nextChannel === 'B' ? 1.0 : 0.0, 0.03)
-          if (audio && !audio.paused) {
-            audio.pause()
+          if (audio) {
+            try {
+              if (!audio.paused) audio.pause()
+              audio.removeAttribute('src')
+              audio.load()
+            } catch {}
           }
           currentSourceRef.current = sourceUrl
           retryCountRef.current = 0
@@ -951,9 +960,16 @@ export default function AudioEngine() {
           audioDspEngine.stopBuffer()
           const inactive = getInactiveAudio()
           if (inactive) {
-            if (!inactive.paused) inactive.pause()
-            inactive.removeAttribute('src')
-            inactive.load()
+            try {
+              if (!inactive.paused) inactive.pause()
+              inactive.removeAttribute('src')
+              inactive.load()
+            } catch {}
+          }
+          if (audio && !audio.paused) {
+            try {
+              audio.pause()
+            } catch {}
           }
           window.dispatchEvent(new CustomEvent('felo:stop-youtube'))
           currentSourceRef.current = sourceUrl
@@ -970,7 +986,7 @@ export default function AudioEngine() {
             audio.removeAttribute('crossOrigin')
           }
 
-          audioDspEngine.setCrossfadeMix(activeChannelRef.current === 'B' ? 1.0 : 0.0, 0.03)
+          audioDspEngine.setCrossfadeMix(activeChannelRef.current === 'B' ? 1.0 : 0.0, 0.01)
 
           audio.src = sourceUrl
           audio.playbackRate = 1.0

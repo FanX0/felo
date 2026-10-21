@@ -486,7 +486,13 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
             item.artist.toLowerCase() === track.artist.toLowerCase())
       )
       if (existingQueueIndex >= 0) {
-        requestPlayQueue(queue, existingQueueIndex, albumContext)
+        if (
+          track.localSong &&
+          (!queue[existingQueueIndex].filePath || queue[existingQueueIndex].filePath.startsWith('virtual:'))
+        ) {
+          usePlayerStore.getState().updateSong(track.localSong, queue[existingQueueIndex].id)
+        }
+        requestPlayQueue(usePlayerStore.getState().queue, existingQueueIndex, albumContext)
         return
       }
     }

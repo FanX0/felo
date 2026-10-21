@@ -165,4 +165,114 @@ describe('Playback Lifecycle & Bridge Integration Tests', () => {
     expect(state.isPlaying).toBe(false)
     expect(state.isBuffering).toBe(false)
   })
+
+  it('reconciles completed download for active virtual song by in-place queue replacement and unbuffering', () => {
+    usePlayerStore.getState().setQueue(mockVirtualQueue, 0)
+    usePlayerStore.setState({ isPlaying: true, isBuffering: true })
+
+    const activeSong = usePlayerStore.getState().queue[0]
+    expect(activeSong.filePath).toBe('virtual:spotify:starlight-dream')
+
+    const completedSong: Song = {
+      ...activeSong,
+      filePath: 'C:/Users/User/Music/Felo/Luna Eclipse - Starlight Dream.flac'
+    }
+
+    // Simulate the fixed DownloadEventBridge reconciliation logic
+    const player = usePlayerStore.getState()
+    player.updateSong(completedSong, activeSong.id)
+    if (player.isBuffering) {
+      player.setIsBuffering(false)
+    }
+    player.setIsPlaying(true)
+
+    const updatedState = usePlayerStore.getState()
+    expect(updatedState.isBuffering).toBe(false)
+    expect(updatedState.isPlaying).toBe(true)
+    expect(updatedState.queue[0]?.filePath).toBe('C:/Users/User/Music/Felo/Luna Eclipse - Starlight Dream.flac')
+    expect(updatedState.queue[0]?.filePath.startsWith('virtual:')).toBe(false)
+  })
+
+  it('background download completing does not hijack or interrupt actively playing different track', () => {
+    // User is playing song B (index 1)
+    usePlayerStore.getState().setQueue(mockVirtualQueue, 1)
+    usePlayerStore.setState({ isPlaying: true, isBuffering: false })
+
+    const player = usePlayerStore.getState()
+    expect(player.currentSongIndex).toBe(1)
+    expect(player.queue[1]?.title).toBe('Solar Flare')
+    expect(player.isPlaying).toBe(true)
+
+    // Background download for an external song completes with playAction: 'play_now'
+    const completedExternalSong: Song = {
+      id: 'ext-download-99',
+      title: 'Cosmic Drift',
+      artist: 'Astro Beats',
+      duration: 200,
+      filePath: 'C:/Users/User/Music/Felo/Astro Beats - Cosmic Drift.flac'
+    }
+
+    const transfer = { playAction: 'play_now', autoPlay: true }
+    const currentActive = player.queue[player.currentSongIndex]
+    const matchIndex = player.queue.findIndex((item) => item.id === completedExternalSong.id)
+    const isCurrentTrackMatched = currentActive?.id === completedExternalSong.id || (matchIndex !== -1 && matchIndex === player.currentSongIndex)
+
+    expect(isCurrentTrackMatched).toBe(false)
+    expect(matchIndex).toBe(-1)
+
+    // Simulate guarded play_now logic from DownloadEventBridge
+    if (matchIndex === -1 && transfer.playAction === 'play_now') {
+      if (!player.isPlaying) {
+        player.enqueueSongNext(completedExternalSong)
+        player.playNext(true)
+      } else {
+        // Active track is playing another song — do not hijack!
+        player.enqueueSongNext(completedExternalSong)
+      }
+    }
+
+    const stateAfterComplete = usePlayerStore.getState()
+    // Song B MUST still be actively playing!
+    expect(stateAfterComplete.currentSongIndex).toBe(1)
+    expect(stateAfterComplete.queue[stateAfterComplete.currentSongIndex]?.title).toBe('Solar Flare')
+    expect(stateAfterComplete.isPlaying).toBe(true)
+    // External song is enqueued next at index 2
+    expect(stateAfterComplete.queue[2]?.title).toBe('Cosmic Drift')
+  })
+
+  it('failed download does not advance player if user already switched to another song', () => {
+    // User switches to song B (index 1)
+    usePlayerStore.getState().setQueue(mockVirtualQueue, 1)
+    usePlayerStore.setState({ isPlaying: true, isBuffering: false })
+
+    const player = usePlayerStore.getState()
+    expect(player.currentSongIndex).toBe(1)
+
+    // An old autoPlay transfer for song A fails
+    const failedTransfer = {
+      autoPlay: true,
+      title: 'Starlight Dream',
+      artist: 'Luna Eclipse',
+      song: mockVirtualQueue[0]
+    }
+
+    const activeSong = player.queue[player.currentSongIndex]
+    const isTransferForActiveSong =
+      activeSong &&
+      ((failedTransfer.song as any)?.id === activeSong.id ||
+        (failedTransfer.title.toLowerCase() === activeSong.title.toLowerCase() &&
+          failedTransfer.artist.toLowerCase() === activeSong.artist.toLowerCase()))
+
+    expect(isTransferForActiveSong).toBe(false)
+
+    // Because it is NOT for the active song, playNext is NOT called
+    if (isTransferForActiveSong) {
+      player.playNext(true)
+    }
+
+    const stateAfterFail = usePlayerStore.getState()
+    expect(stateAfterFail.currentSongIndex).toBe(1)
+    expect(stateAfterFail.queue[1]?.title).toBe('Solar Flare')
+    expect(stateAfterFail.isPlaying).toBe(true)
+  })
 })

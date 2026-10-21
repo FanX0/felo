@@ -121,6 +121,43 @@ describe('Shared Core: ipcSchemas & Validation Security', () => {
       })
       expect(parsedWithString.resultId).toBe('track-identifier-str')
     })
+
+    it('gracefully handles nullish and non-url artworkUrl without throwing validation error', () => {
+      const parsedWithNull = StartDownloadRequestSchema.parse({
+        transferId: 'transfer-null-art',
+        source: 'youtube',
+        resultId: 'yt-12345',
+        conflictMode: 'keep_both',
+        artworkUrl: null,
+        album: null,
+        title: null,
+        artist: null,
+        songId: null
+      })
+      expect(parsedWithNull.artworkUrl).toBeUndefined()
+      expect(parsedWithNull.album).toBeUndefined()
+      expect(parsedWithNull.title).toBe('Unknown Track')
+      expect(parsedWithNull.artist).toBe('Unknown Artist')
+      expect(parsedWithNull.songId).toBe('')
+
+      const parsedWithInvalidUrl = StartDownloadRequestSchema.parse({
+        transferId: 'transfer-invalid-art',
+        source: 'deezer',
+        resultId: '987654',
+        conflictMode: 'keep_both',
+        artworkUrl: 'C:\\Users\\User\\Music\\cover.jpg'
+      })
+      expect(parsedWithInvalidUrl.artworkUrl).toBeUndefined()
+
+      const parsedWithValidUrl = StartDownloadRequestSchema.parse({
+        transferId: 'transfer-valid-art',
+        source: 'deezer',
+        resultId: '987654',
+        conflictMode: 'keep_both',
+        artworkUrl: 'https://e-cdns-images.dzcdn.net/images/cover/123/500x500.jpg'
+      })
+      expect(parsedWithValidUrl.artworkUrl).toBe('https://e-cdns-images.dzcdn.net/images/cover/123/500x500.jpg')
+    })
   })
 })
 

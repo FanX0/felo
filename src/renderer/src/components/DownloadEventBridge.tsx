@@ -113,57 +113,54 @@ export default function DownloadEventBridge(): null {
                   )
                 )))
 
-            if (isActiveMatch) {
+            const matchIndex = player.queue.findIndex((item) => {
+              if (item.id === completedSong!.id) return true
+              if (targetQueueId && item.id === targetQueueId) return true
+              const match = findMatchingLibrarySong(item.title, item.artist, [completedSong!])
+              return Boolean(match)
+            })
+
+            const isCurrentTrackMatched = isActiveMatch || (matchIndex !== -1 && matchIndex === player.currentSongIndex)
+
+            if (isCurrentTrackMatched) {
+              // Found active playing or buffering track - update queued track with real audio file path on disk
+              player.updateSong(completedSong, targetQueueId || activeSong?.id)
               if (player.isBuffering) {
                 player.setIsBuffering(false)
               }
-              if (transfer?.autoPlay) {
+              if (transfer?.autoPlay || player.isPlaying) {
                 player.claimAudioOwnership()
                 player.setIsPlaying(true)
               }
-            } else {
-              const matchIndex = player.queue.findIndex((item) => {
-                if (item.id === completedSong!.id) return true
-                if (targetQueueId && item.id === targetQueueId) return true
-                const match = findMatchingLibrarySong(item.title, item.artist, [completedSong!])
-                return Boolean(match)
-              })
-
-              if (matchIndex !== -1) {
-                // Found in active queue - update the queued track with real audio file path on disk
-                const matchedQueueItem = player.queue[matchIndex]
-                if (matchedQueueItem) {
-                  player.updateSong(completedSong, matchedQueueItem.id)
-                }
-                if (player.currentSongIndex === matchIndex) {
-                  if (player.isBuffering) {
-                    player.setIsBuffering(false)
-                  }
-                  if (transfer?.autoPlay) {
-                    player.claimAudioOwnership()
-                    player.setIsPlaying(true)
-                  }
-                }
-              } else if (transfer?.playAction === 'enqueue') {
-                player.enqueueSong(completedSong)
-              } else if (transfer?.playAction === 'play_next') {
-                player.enqueueSongNext(completedSong)
-              } else if (transfer?.playAction === 'play_now') {
-                if (player.queue.length === 0) {
-                  player.setQueue([completedSong], 0)
+            } else if (matchIndex !== -1) {
+              // Found in active queue at another position - update the queued track with real audio file path on disk
+              const matchedQueueItem = player.queue[matchIndex]
+              if (matchedQueueItem) {
+                player.updateSong(completedSong, matchedQueueItem.id)
+              }
+            } else if (transfer?.playAction === 'enqueue') {
+              player.enqueueSong(completedSong)
+            } else if (transfer?.playAction === 'play_next') {
+              player.enqueueSongNext(completedSong)
+            } else if (transfer?.playAction === 'play_now') {
+              if (player.queue.length === 0) {
+                player.setQueue([completedSong], 0)
+              } else {
+                const currentActive = player.queue[player.currentSongIndex]
+                const isCurrentVirtual = !currentActive?.filePath || currentActive.filePath.startsWith('virtual:')
+                if (isCurrentVirtual && player.isBuffering) {
+                  // Update the active track in-place rather than wiping the user's queue
+                  player.updateSong(completedSong, currentActive?.id)
+                  player.setIsBuffering(false)
+                  player.claimAudioOwnership()
+                  player.setIsPlaying(true)
+                } else if (!player.isPlaying) {
+                  // If player is idle/stopped, start playback safely
+                  player.enqueueSongNext(completedSong)
+                  player.playNext(true)
                 } else {
-                  const currentActive = player.queue[player.currentSongIndex]
-                  const isCurrentVirtual = !currentActive?.filePath || currentActive.filePath.startsWith('virtual:')
-                  if (isCurrentVirtual && player.isBuffering) {
-                    // Update the active track in-place rather than wiping the user's queue
-                    player.updateSong(completedSong, currentActive?.id)
-                    player.setIsBuffering(false)
-                    player.claimAudioOwnership()
-                    player.setIsPlaying(true)
-                  } else {
-                    player.enqueueSongNext(completedSong)
-                    player.playNext(true)
-                  }
+                  // User is already playing a different song — do NOT interrupt or hijack current playback!
+                  player.enqueueSongNext(completedSong)
                 }
               }
             }
@@ -194,14 +191,21 @@ export default function DownloadEventBridge(): null {
         )
 
         // Resilient recovery: if the failed transfer was autoPlay (active track being streamed),
-        // clear the buffering state and advance to the next track so player doesn't freeze
+        // clear the buffering state and advance to the next track only if it was the currently active song
         if (transfer?.autoPlay) {
           const player = usePlayerStore.getState()
           const activeSong = player.queue[player.currentSongIndex]
-          const isVirtual = !activeSong?.filePath || activeSong.filePath.startsWith('virtual:')
-          if (player.isBuffering || isVirtual) {
-            player.setIsBuffering(false)
-            player.playNext(true)
+          const isTransferForActiveSong =
+            activeSong &&
+            ((transfer.song as any)?.id === activeSong.id ||
+              (transfer.title?.toLowerCase() === activeSong.title?.toLowerCase() &&
+                transfer.artist?.toLowerCase() === activeSong.artist?.toLowerCase()))
+          if (isTransferForActiveSong) {
+            const isVirtual = !activeSong?.filePath || activeSong.filePath.startsWith('virtual:')
+            if (player.isBuffering || isVirtual) {
+              player.setIsBuffering(false)
+              player.playNext(true)
+            }
           }
         }
       }

@@ -119,25 +119,32 @@ export const StartDownloadRequestSchema = z.object({
   title: z
     .string()
     .max(300)
-    .optional()
+    .nullish()
     .default('Unknown Track')
-    .transform((v) => (v && v.trim().length > 0 ? v.trim() : 'Unknown Track')),
+    .transform((v) => (v && typeof v === 'string' && v.trim().length > 0 ? v.trim() : 'Unknown Track')),
   artist: z
     .string()
     .max(300)
-    .optional()
+    .nullish()
     .default('Unknown Artist')
-    .transform((v) => (v && v.trim().length > 0 ? v.trim() : 'Unknown Artist')),
-  songId: z.string().max(128).optional().default(''),
+    .transform((v) => (v && typeof v === 'string' && v.trim().length > 0 ? v.trim() : 'Unknown Artist')),
+  songId: z
+    .string()
+    .max(128)
+    .nullish()
+    .default('')
+    .transform((v) => (v && typeof v === 'string' ? v.trim() : '')),
   conflictMode: DownloadConflictModeSchema,
-  accounts: StreamingAccountsSchema.optional().default({}),
+  accounts: StreamingAccountsSchema.nullish()
+    .default({})
+    .transform((v) => (v && typeof v === 'object' ? v : {})),
   storageMode: DownloadStorageModeSchema,
-  skipIfExists: z.boolean().optional(),
-  autoPlay: z.boolean().optional(),
+  skipIfExists: z.boolean().nullish().transform((v) => (typeof v === 'boolean' ? v : undefined)),
+  autoPlay: z.boolean().nullish().transform((v) => (typeof v === 'boolean' ? v : undefined)),
   artworkUrl: z
     .string()
     .max(2048)
-    .optional()
+    .nullish()
     .transform((v) => {
       if (!v || typeof v !== 'string') return undefined
       const trimmed = v.trim()
@@ -145,7 +152,11 @@ export const StartDownloadRequestSchema = z.object({
       if (/^(https?:|data:)/i.test(trimmed)) return trimmed
       return undefined
     }),
-  album: z.string().max(300).optional()
+  album: z
+    .string()
+    .max(300)
+    .nullish()
+    .transform((v) => (v && typeof v === 'string' && v.trim().length > 0 ? v.trim() : undefined))
 })
 
 export type ValidatedStartDownloadRequest = z.infer<typeof StartDownloadRequestSchema>

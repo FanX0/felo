@@ -248,6 +248,12 @@ async function executeSingleTrackDownload(
       message: `Starting ${sourceName(chosenSource)} download...`
     })
 
+    const candidateArtwork = chosenResult.artworkUrl || song.artworkUrl
+    const validArtworkUrl =
+      candidateArtwork && typeof candidateArtwork === 'string' && /^(https?:|data:)/i.test(candidateArtwork)
+        ? candidateArtwork
+        : undefined
+
     const response = await window.api.startDownload({
       transferId,
       source: chosenSource,
@@ -260,7 +266,7 @@ async function executeSingleTrackDownload(
       storageMode,
       autoPlay,
       skipIfExists,
-      artworkUrl: chosenResult.artworkUrl || song.artworkUrl || song.artworkPath,
+      artworkUrl: validArtworkUrl,
       album: chosenResult.album || song.album
     })
 

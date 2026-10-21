@@ -117,6 +117,9 @@ export function usePlaybackArbitration() {
       const player = usePlayerStore.getState()
       // Resolve audio URLs for any virtual / remote songs when playing locally on web/mobile
       const preparedQueue = queue.map((s) => {
+        if (isElectron && s.filePath && !s.filePath.startsWith('virtual:') && !/^https?:/i.test(s.filePath)) {
+          return s
+        }
         const streamUrl = resolveSongAudioUrl(s)
         if (streamUrl && streamUrl !== s.filePath) {
           return { ...s, filePath: streamUrl }

@@ -10,6 +10,7 @@ import {
   SafeFolderPathSchema,
   SafeEntityIdSchema
 } from '../../shared/validators/ipcSchemas'
+import { resolveMediaPath } from '../protocols'
 
 let currentScanAbortController: AbortController | null = null
 
@@ -137,8 +138,10 @@ export function registerLibraryIpc(): void {
           return { success: false, error: 'File is virtual or missing' }
         }
 
-        // Strip file:// prefix if present
-        if (filePath.startsWith('file://')) {
+        // Strip media:// and file:// prefix if present
+        if (filePath.startsWith('media://')) {
+          filePath = resolveMediaPath(filePath)
+        } else if (filePath.startsWith('file://')) {
           filePath = filePath.replace(/^file:\/\/\/?/i, '')
         }
 
