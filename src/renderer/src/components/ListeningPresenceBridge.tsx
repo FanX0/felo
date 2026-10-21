@@ -1155,7 +1155,6 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
           )
           const sourceTypeChanged = prevIsYouTube !== newIsYouTube
 
-          const currentPlayingSong = usePlayerStore.getState().queue[usePlayerStore.getState().currentSongIndex]
           const isSongEffectivelyEqual = Boolean(
             !sourceTypeChanged &&
             currentRoom?.song &&
@@ -1187,18 +1186,6 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
 
           if (songChanged) {
             void useListeningStore.getState().handleHostSongChange(next)
-          } else if (
-            next.song &&
-            (next.position_seconds === 0 || next.song.hostPosition === 0) &&
-            ((getActiveAudioTime() || currentPlayingSong?.duration || 0) > 3)
-          ) {
-            // Host looped / replayed the same song from 0
-            useListeningStore.getState().handleHostExplicitSeek({
-              position: 0,
-              hostTimestamp: new Date(next.updated_at || Date.now()).getTime(),
-              trackId: next.song.localId || (next.song as any).id,
-              isLoop: true
-            })
           } else if (next.is_playing !== currentRoom?.is_playing) {
             useListeningStore.getState().handleHostPauseResume(next)
           }
@@ -1328,7 +1315,6 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
           )
           const sourceTypeChanged = prevIsYouTube !== newIsYouTube
 
-          const currentPlayingSong = usePlayerStore.getState().queue[usePlayerStore.getState().currentSongIndex]
           const isSongEffectivelyEqual = Boolean(
             !sourceTypeChanged &&
             currentRoom?.song &&
@@ -1351,18 +1337,6 @@ export default function ListeningPresenceBridge({ enabled }: ListeningPresenceBr
 
           if (songChanged) {
             void useListeningStore.getState().handleHostSongChange(latestRoom as any)
-          } else if (
-            latestRoom.song &&
-            (latestRoom.position_seconds === 0 || latestRoom.song.hostPosition === 0) &&
-            ((getActiveAudioTime() || currentPlayingSong?.duration || 0) > 3)
-          ) {
-            // Host looped / replayed the same song from 0
-            useListeningStore.getState().handleHostExplicitSeek({
-              position: 0,
-              hostTimestamp: new Date(latestRoom.updated_at || Date.now()).getTime(),
-              trackId: latestRoom.song.localId || (latestRoom.song as any).id,
-              isLoop: true
-            })
           } else if (latestRoom.is_playing !== currentRoom?.is_playing) {
             useListeningStore.getState().handleHostPauseResume(latestRoom as any)
           }

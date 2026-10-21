@@ -148,7 +148,7 @@ export function registerMediaProtocol(): void {
     const contentType = getContentType(filePath)
     if (contentType.startsWith('image/')) {
       try {
-        const imageBuffer = fs.readFileSync(filePath)
+        const imageBuffer = await fs.promises.readFile(filePath)
         return new Response(imageBuffer, {
           headers: {
             'Content-Type': contentType,
@@ -176,6 +176,9 @@ export function registerMediaProtocol(): void {
         'Access-Control-Allow-Headers': '*'
       }
 
+      // 2MB chunk window prevents backpressure deadlock in Node's Readable.toWeb stream
+      const MAX_CHUNK_SIZE = 2 * 1024 * 1024
+
       if (rangeHeader) {
         const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader)
         if (!match) {
@@ -188,10 +191,10 @@ export function registerMediaProtocol(): void {
         const requestedStart = match[1] ? parseInt(match[1], 10) : null
         const requestedEnd = match[2] ? parseInt(match[2], 10) : null
         const start = requestedStart ?? Math.max(0, fileSize - (requestedEnd ?? 0))
-        const end = Math.min(
-          requestedStart === null ? fileSize - 1 : (requestedEnd ?? fileSize - 1),
-          fileSize - 1
-        )
+        const end =
+          requestedEnd !== null
+            ? Math.min(requestedEnd, fileSize - 1)
+            : Math.min(fileSize - 1, start + MAX_CHUNK_SIZE - 1)
 
         if (
           !Number.isFinite(start) ||
@@ -222,14 +225,23 @@ export function registerMediaProtocol(): void {
         })
       }
 
-      const nodeStream = fs.createReadStream(filePath)
+      // When no Range header is sent, stream initial 2MB chunk with status 206 so
+      // Chromium HTMLMediaElement immediately recognizes byte-range seeking support
+      const start = 0
+      const end = Math.min(fileSize - 1, MAX_CHUNK_SIZE - 1)
+      const chunkSize = end - start + 1
+      const nodeStream = fs.createReadStream(filePath, { start, end })
       nodeStream.on('error', (err) => {
-        console.debug('[MediaProtocol] ReadStream full error ignored:', err?.message)
+        console.debug('[MediaProtocol] ReadStream initial chunk error ignored:', err?.message)
       })
       const stream = Readable.toWeb(nodeStream)
       return new Response(stream as BodyInit, {
-        status: 200,
-        headers: { ...commonHeaders, 'Content-Length': String(fileSize) }
+        status: 206,
+        headers: {
+          ...commonHeaders,
+          'Content-Length': String(chunkSize),
+          'Content-Range': `bytes ${start}-${end}/${fileSize}`
+        }
       })
     } catch (err) {
       console.error('[MediaProtocol] Stream error:', err)

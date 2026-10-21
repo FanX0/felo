@@ -6,7 +6,8 @@ import { roomClockSync } from '../../../src/renderer/src/lib/roomClockSync'
 import {
   setNeedsInitialSync,
   needsInitialSync,
-  setLastHostPulse
+  setLastHostPulse,
+  _autoDownloadRequests
 } from '../../../src/renderer/src/stores/listening/helpers'
 import { registerActiveAudioElement } from '../../../src/renderer/src/lib/audioBridge'
 import { audioDspEngine } from '../../../src/renderer/src/lib/audioDspEngine'
@@ -14,11 +15,14 @@ import { downloadWholeObjectWithWatchdog } from '../../../src/renderer/src/lib/j
 import type { ListeningRoom } from '../../../src/renderer/src/types/listening'
 import type { Song } from '../../../src/renderer/src/pages/Library/Library'
 
+const realTriggerRoomTrackDownload = useListeningStore.getState().triggerRoomTrackDownload
+
 describe('Join Sync, N+1 Track Transition & Bilateral Pause Handling Suite', () => {
   let mockAudio: any
 
   beforeEach(() => {
     vi.useFakeTimers()
+    _autoDownloadRequests.clear()
     useListeningStore.setState({
       joinedRoom: null,
       hostRoom: null,
@@ -26,7 +30,8 @@ describe('Join Sync, N+1 Track Transition & Bilateral Pause Handling Suite', () 
       isSyncLocked: false,
       isGuestBuffering: false,
       manualSyncOffsetMs: 0,
-      driftSeconds: 0
+      driftSeconds: 0,
+      triggerRoomTrackDownload: realTriggerRoomTrackDownload
     })
     usePlayerStore.setState({
       queue: [],
@@ -921,6 +926,114 @@ describe('Join Sync, N+1 Track Transition & Bilateral Pause Handling Suite', () 
       // isPlaying must be false because host is paused!
       expect(usePlayerStore.getState().isPlaying).toBe(false)
       expect(usePlayerStore.getState().queue[0].filePath).toBe('C:/Music/Save_Your_Tears.flac')
+    })
+  })
+
+  describe('Mid-Song Jumping Prevention & Niche Track Fallback', () => {
+    it('triggerRoomTrackDownload queries YouTube fallback when studio providers return no hits', async () => {
+      vi.useRealTimers()
+      try {
+        const room: ListeningRoom = {
+          id: 'room-niche-1',
+          host_id: 'host-1',
+          name: 'Room',
+          code: 'NICHE1',
+          is_active: true,
+          is_playing: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          song: {
+            localId: 'niche-song-1',
+            title: 'ライラック',
+            artist: 'BGM channel',
+            duration: 141
+          } as any
+        }
+
+        const searchDownloadSourceMock = vi.fn().mockImplementation((source: string) => {
+          if (source === 'qobuz' || source === 'deezer' || source === 'soulseek') {
+            return Promise.resolve([])
+          }
+          if (source === 'youtube') {
+            return Promise.resolve([
+              {
+                id: 'yt-lilac-123',
+                title: 'ライラック',
+                artist: 'BGM channel',
+                duration: 141,
+                source: 'youtube',
+                sourceName: 'YouTube'
+              }
+            ])
+          }
+          return Promise.resolve([])
+        })
+
+        const startDownloadMock = vi.fn().mockResolvedValue({ success: true })
+
+        ;(window as any).api = {
+          getSetting: vi.fn().mockImplementation((key: string) => {
+            if (key === 'download.priority') return Promise.resolve(['qobuz', 'deezer'])
+            return Promise.resolve({})
+          }),
+          searchDownloadSource: searchDownloadSourceMock,
+          startDownload: startDownloadMock
+        }
+
+        await useListeningStore.getState().triggerRoomTrackDownload(room, room.song!)
+
+        // Expect searchDownloadSource was called for youtube as guaranteed fallback
+        expect(searchDownloadSourceMock).toHaveBeenCalledWith('youtube', expect.any(String), expect.any(Object))
+        expect(startDownloadMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            source: 'youtube',
+            resultId: 'yt-lilac-123',
+            title: 'ライラック'
+          })
+        )
+      } finally {
+        vi.useFakeTimers()
+      }
+    })
+
+    it('transitions to missing_song when all download providers fail to find audio', async () => {
+      vi.useRealTimers()
+      try {
+        const room: ListeningRoom = {
+          id: 'room-niche-2',
+          host_id: 'host-1',
+          name: 'Room',
+          code: 'NICHE2',
+          is_active: true,
+          is_playing: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          song: {
+            localId: 'unfindable-song-1',
+            title: 'Totally Unknown Obscure Song',
+            artist: 'No One',
+            duration: 120
+          } as any
+        }
+
+        useListeningStore.setState({ syncStatus: 'buffering', joinedRoom: room })
+
+        ;(window as any).api = {
+          getSetting: vi.fn().mockImplementation((key: string) => {
+            if (key === 'download.priority') return Promise.resolve(['qobuz', 'youtube'])
+            return Promise.resolve({})
+          }),
+          searchDownloadSource: vi.fn().mockResolvedValue([]),
+          startDownload: vi.fn()
+        }
+
+        await useListeningStore.getState().triggerRoomTrackDownload(room, room.song!)
+
+        expect(useListeningStore.getState().syncStatus).toBe('missing_song')
+        expect(useListeningStore.getState().missingSong).toEqual(room.song)
+      } finally {
+        vi.useFakeTimers()
+      }
     })
   })
 })

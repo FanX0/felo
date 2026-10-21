@@ -782,7 +782,7 @@ interface QueuedDownloadItem {
 
 export class DownloadService {
   public static readonly emitter = new EventEmitter()
-  private static readonly MAX_CONCURRENT_DOWNLOADS = 2
+  private static readonly MAX_CONCURRENT_DOWNLOADS = 1
   private static activeDownloadCount = 0
   private static readonly pendingQueue: QueuedDownloadItem[] = []
   private static readonly activeDownloadKeys = new Set<string>()
@@ -1513,7 +1513,7 @@ export class DownloadService {
       const cleanAlbum = sanitized.album
 
       return {
-        id: item.id,
+        id: String(item.id),
         source: 'qobuz',
         mediaType: 'track',
         title: cleanTitle,
@@ -1571,7 +1571,7 @@ export class DownloadService {
       const cleanAlbum = sanitized.album
 
       return {
-        id: item.id,
+        id: String(item.id),
         source: 'deezer',
         mediaType: 'track',
         title: cleanTitle,

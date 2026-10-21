@@ -334,8 +334,11 @@ export default function AudioEngine() {
 
       const duration = Number.isFinite(audio.duration) ? audio.duration : time
       const wasEnded = audio.ended
-      audio.currentTime = Math.max(0, Math.min(time, duration))
-      setCurrentTime(audio.currentTime)
+      const targetTime = Math.max(0, Math.min(time, duration))
+      if (Math.abs(audio.currentTime - targetTime) > 0.05 || wasEnded) {
+        audio.currentTime = targetTime
+      }
+      setCurrentTime(targetTime)
 
       const shouldResume = resumeAfterSeekRef.current || (inRoom && usePlayerStore.getState().isPlaying)
       if ((wasEnded || audio.paused) && shouldResume) {
@@ -981,7 +984,9 @@ export default function AudioEngine() {
             }
             setNeedsInitialSync(true)
           } else {
-            audio.currentTime = 0
+            if (audio.currentTime !== 0) {
+              audio.currentTime = 0
+            }
             setCurrentTime(0)
           }
           setDuration(song.duration || 0)

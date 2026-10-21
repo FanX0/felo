@@ -22,7 +22,11 @@ import { usePlayerStore, type PlaybackContext } from '../../hooks/usePlayerStore
 import { useShallow } from 'zustand/react/shallow'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
 import { toMediaUrl } from '../../lib/media'
-import { downloadTrackInBackground } from '../../lib/backgroundDownloader'
+import {
+  downloadTrackInBackground,
+  downloadTracksBatch,
+  cancelBatchDownloads
+} from '../../lib/backgroundDownloader'
 import type { Song } from '../Library/Library'
 import type { DownloadTarget } from '../../components/DownloadPanel/DownloadPanel'
 import ArtistLinks from '../../components/Common/ArtistLinks'
@@ -521,18 +525,11 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
     )
   }, [missingTracks, transfers])
 
-  const abortAlbumDownloadRef = useRef(false)
-
-  useEffect(() => {
-    return () => {
-      abortAlbumDownloadRef.current = true
-    }
-  }, [])
-
   const handleDownloadAlbum = async () => {
     if (isDownloadingAlbum || albumActiveTransfers.length > 0) {
-      abortAlbumDownloadRef.current = true
       setIsDownloadingAlbum(false)
+      const idsToCancel = albumActiveTransfers.map((t) => t.id)
+      cancelBatchDownloads(idsToCancel)
       for (const t of albumActiveTransfers) {
         try {
           await window.api?.cancelDownload?.(t.id)
@@ -543,27 +540,22 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
     }
     if (tracks.length === 0 || missingTracks.length === 0) return
 
-    abortAlbumDownloadRef.current = false
     setIsDownloadingAlbum(true)
 
     try {
-      for (const track of missingTracks) {
-        if (abortAlbumDownloadRef.current) break
-        const parsedSec = track.duration
-          ? track.duration.split(':').reduce((total, part) => total * 60 + Number(part), 0)
-          : 0
-        await downloadTrackInBackground(
-          {
-            id: track.id,
-            title: track.title,
-            artist: track.artist || albumArtist,
-            album: track.album || albumTitle,
-            duration: parsedSec,
-            artworkUrl: track.thumbnail || artwork
-          },
-          { openDrawer: false }
-        )
-      }
+      await downloadTracksBatch(
+        missingTracks.map((track) => ({
+          id: track.id,
+          title: track.title,
+          artist: track.artist || albumArtist,
+          album: track.album || albumTitle,
+          duration: track.duration
+            ? track.duration.split(':').reduce((total, part) => total * 60 + Number(part), 0)
+            : 0,
+          artworkUrl: track.thumbnail || artwork
+        })),
+        { openDrawer: false }
+      )
     } finally {
       setIsDownloadingAlbum(false)
     }

@@ -233,3 +233,103 @@ export async function fetchYouTubeMetadata(urlOrId: string): Promise<YouTubeMeta
 
   return resolved
 }
+
+export interface YouTubeSearchResultItem {
+  id: string
+  title: string
+  channel: string
+  thumbnailUrl: string
+  duration?: string
+  url: string
+}
+
+const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000
+const SEARCH_CACHE_MAX_ENTRIES = 50
+const searchResultsCache = new Map<string, { data: YouTubeSearchResultItem[]; ts: number }>()
+
+export function clearYouTubeSearchCache(): void {
+  searchResultsCache.clear()
+}
+
+/**
+ * High-performance YouTube search resolver.
+ * Handles both keyword queries (via desktop IPC) and direct YouTube URLs/IDs (via oEmbed/metadata resolver).
+ * Results are cached in an in-memory LRU map for 5 minutes.
+ */
+export async function searchYouTubeVideos(
+  query: string,
+  _signal?: AbortSignal
+): Promise<YouTubeSearchResultItem[]> {
+  const trimmed = query.trim()
+  if (!trimmed) return []
+
+  // 1. Direct YouTube link or 11-char ID detection
+  const directId = extractYouTubeVideoId(trimmed)
+  if (directId) {
+    const meta = await fetchYouTubeMetadata(directId)
+    if (meta) {
+      return [
+        {
+          id: directId,
+          title: meta.title,
+          channel: meta.channel,
+          thumbnailUrl: meta.thumbnailUrl,
+          url: meta.url
+        }
+      ]
+    }
+    return [
+      {
+        id: directId,
+        title: 'YouTube Track',
+        channel: 'YouTube',
+        thumbnailUrl: `https://img.youtube.com/vi/${directId}/hqdefault.jpg`,
+        url: `https://www.youtube.com/watch?v=${directId}`
+      }
+    ]
+  }
+
+  // 2. Check query in cache
+  const normalizedQuery = trimmed.toLowerCase()
+  const cached = searchResultsCache.get(normalizedQuery)
+  if (cached && Date.now() - cached.ts < SEARCH_CACHE_TTL_MS) {
+    return cached.data
+  }
+
+  // 3. Keyword Search via Electron desktop IPC
+  if (typeof window !== 'undefined' && window.api?.searchDownloadSource) {
+    try {
+      const raw = await window.api.searchDownloadSource('youtube', trimmed, {})
+      if (Array.isArray(raw) && raw.length > 0) {
+        const parsed: YouTubeSearchResultItem[] = raw.map((item: any) => {
+          const rawDuration = item.meta ? item.meta.split('·')[0].trim() : ''
+          const duration = /^\d+:\d+(?::\d+)?$/.test(rawDuration)
+            ? rawDuration
+            : rawDuration === 'YouTube Audio'
+              ? ''
+              : rawDuration
+          return {
+            id: item.id,
+            title: decodeHtmlEntities(item.title || 'YouTube Track'),
+            channel: decodeHtmlEntities(item.artist || 'YouTube'),
+            duration,
+            thumbnailUrl: item.artworkUrl || `https://img.youtube.com/vi/${item.id}/hqdefault.jpg`,
+            url: `https://www.youtube.com/watch?v=${item.id}`
+          }
+        })
+
+        if (searchResultsCache.size >= SEARCH_CACHE_MAX_ENTRIES) {
+          const oldestKey = searchResultsCache.keys().next().value
+          if (oldestKey !== undefined) searchResultsCache.delete(oldestKey)
+        }
+        searchResultsCache.set(normalizedQuery, { data: parsed, ts: Date.now() })
+
+        return parsed
+      }
+    } catch (err) {
+      console.warn('[youtubeService] Desktop YouTube search failed:', err)
+    }
+  }
+
+  return []
+}

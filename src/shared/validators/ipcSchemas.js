@@ -102,16 +102,42 @@ export const DownloadStorageModeSchema = z.enum(['stream', 'download']).optional
 export const StartDownloadRequestSchema = z.object({
     transferId: TransferIdSchema,
     source: StreamingSourceSchema,
-    resultId: z.string().min(1).max(512),
-    title: z.string().min(1).max(300),
-    artist: z.string().min(1).max(300),
+    resultId: z
+        .union([z.string(), z.number()])
+        .transform((v) => String(v))
+        .pipe(z.string().min(1).max(512)),
+    title: z
+        .string()
+        .max(300)
+        .optional()
+        .default('Unknown Track')
+        .transform((v) => (v && v.trim().length > 0 ? v.trim() : 'Unknown Track')),
+    artist: z
+        .string()
+        .max(300)
+        .optional()
+        .default('Unknown Artist')
+        .transform((v) => (v && v.trim().length > 0 ? v.trim() : 'Unknown Artist')),
     songId: z.string().max(128).optional().default(''),
     conflictMode: DownloadConflictModeSchema,
     accounts: StreamingAccountsSchema.optional().default({}),
     storageMode: DownloadStorageModeSchema,
     skipIfExists: z.boolean().optional(),
     autoPlay: z.boolean().optional(),
-    artworkUrl: z.string().url().max(2048).optional(),
+    artworkUrl: z
+        .string()
+        .max(2048)
+        .optional()
+        .transform((v) => {
+        if (!v || typeof v !== 'string')
+            return undefined;
+        const trimmed = v.trim();
+        if (trimmed.length === 0)
+            return undefined;
+        if (/^(https?:|data:)/i.test(trimmed))
+            return trimmed;
+        return undefined;
+    }),
     album: z.string().max(300).optional()
 });
 // ─────────────────────────────────────────────────────────────

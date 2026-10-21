@@ -35,6 +35,7 @@ import RoomChat from '../../../components/RoomChat/RoomChat'
 import SettingsSyncSection from '../../../components/Online/SettingsSyncSection'
 import Slider from '../../../components/Common/Slider'
 import Avatar from '../../../components/Common/Avatar'
+import { normalizeSongValue } from '../../../stores/listening/helpers'
 
 interface GuestRoomViewProps {
   joinedRoom: ListeningRoom
@@ -117,6 +118,7 @@ export default function GuestRoomView({
   setMessage,
   listenerQueueTab,
   setListenerQueueTab,
+  transfers,
   showReplaceModal,
   setShowReplaceModal,
   replaceSearchQuery,
@@ -137,6 +139,12 @@ export default function GuestRoomView({
   const activeJit = (activeTrackKey ? jitStatus[activeTrackKey] : null) ||
     Object.values(jitStatus).find((j) => j.percent < 100) ||
     (activeTrackKey ? jitStatus[activeTrackKey] : null)
+  const activeTransfer = transfers?.find(
+    (t) =>
+      t.status === 'downloading' &&
+      (normalizeSongValue(t.title) === normalizeSongValue(displaySong?.title || '') ||
+        t.id?.startsWith(`room-${joinedRoom.id}`))
+  )
   const playerQueue = usePlayerStore((state) => state.queue)
   const myRole = useListeningStore((state) => state.myRole)
   const audioQuality = useListeningStore((state) => state.audioQuality)
@@ -397,19 +405,23 @@ export default function GuestRoomView({
               <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
               <div className="min-w-0">
                 <p className="text-xs font-bold text-text truncate">
-                  Buffering Stream: "{displaySong?.title || joinedRoom.song?.title || 'Current Track'}"
+                  {activeTransfer
+                    ? `Acquiring Audio: "${displaySong?.title || joinedRoom.song?.title || 'Current Track'}"`
+                    : `Buffering Stream: "${displaySong?.title || joinedRoom.song?.title || 'Current Track'}"`}
                 </p>
                 <p className="text-[11px] text-text-muted truncate mt-0.5">
-                  {activeJit?.totalBytes && activeJit.totalBytes >= 512
-                    ? `Receiving bit-perfect audio stream (${formatBytes(activeJit.receivedBytes)} / ${formatBytes(activeJit.totalBytes)}) in ephemeral RAM buffer.`
-                    : (activeJit?.statusText || 'Receiving audio chunks from host directly into RAM...')}
+                  {activeTransfer
+                    ? (activeTransfer.message || `Downloading bit-perfect audio from ${activeTransfer.sourceName || activeTransfer.source}... (${activeTransfer.progress || 0}%)`)
+                    : activeJit?.totalBytes && activeJit.totalBytes >= 512
+                      ? `Receiving bit-perfect audio stream (${formatBytes(activeJit.receivedBytes)} / ${formatBytes(activeJit.totalBytes)}) in ephemeral RAM buffer.`
+                      : (activeJit?.statusText || 'Buffering audio from host...')}
                 </p>
               </div>
             </div>
 
             <div className="text-right shrink-0">
               <span className="text-xs font-mono font-bold text-primary">
-                {activeJit?.percent ?? 0}%
+                {activeTransfer ? (activeTransfer.progress || 0) : (activeJit?.percent ?? 0)}%
               </span>
             </div>
           </div>
@@ -417,7 +429,9 @@ export default function GuestRoomView({
           <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-surface border border-border">
             <div
               className="h-full rounded-full bg-primary transition-all duration-150 ease-out"
-              style={{ width: `${Math.max(2, activeJit?.percent ?? 0)}%` }}
+              style={{
+                width: `${Math.max(2, activeTransfer ? (activeTransfer.progress || 0) : (activeJit?.percent ?? 0))}%`
+              }}
             />
           </div>
         </div>

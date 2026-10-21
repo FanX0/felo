@@ -1,4 +1,4 @@
-import { ReactNode } from 'react'
+import { ReactNode, useEffect, useRef } from 'react'
 import { Music2 } from 'lucide-react'
 import { useResolvedArtwork } from '../../../lib/artworkResolver'
 
@@ -27,6 +27,14 @@ export function ArtworkImage({
     artist
   })
 
+  const imgRef = useRef<HTMLImageElement | null>(null)
+
+  useEffect(() => {
+    if (imgRef.current && imgRef.current.complete && imgRef.current.naturalWidth > 0) {
+      handleLoad()
+    }
+  }, [artworkUrl, handleLoad])
+
   if (hasFailed && !isLoading) {
     return (
       <div className="flex h-full w-full items-center justify-center bg-surface-elevated/70">
@@ -42,9 +50,10 @@ export function ArtworkImage({
       )}
       {artworkUrl && (
         <img
+          ref={imgRef}
           src={artworkUrl}
           alt={alt || title}
-          className={`${className} relative transition-opacity duration-300 ${
+          className={`${className} relative transition-opacity duration-200 ${
             isLoading ? 'opacity-0' : 'opacity-100'
           }`}
           loading={loading}

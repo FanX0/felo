@@ -22,9 +22,13 @@ import {
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useDownloadStore, type TransferItem } from '../../hooks/useDownloadStore'
+import {
+  downloadTrackInBackground,
+  cancelQueuedDownload,
+  cancelBatchDownloads
+} from '../../lib/backgroundDownloader'
 import { usePlaybackArbitration } from '../../hooks/usePlaybackArbitration'
 import { toMediaUrl } from '../../lib/media'
-import { STREAMING_ACCOUNTS_SETTING } from '../../lib/downloadConfig'
 import type { Playlist } from '../../pages/Playlists/types'
 import type { DownloadTarget } from '../DownloadPanel/DownloadPanel'
 import CreatePlaylistModal from '../../pages/Playlists/CreatePlaylistModal'
@@ -249,6 +253,7 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
       transfer.status === 'waiting_connector'
 
     if (isActive) {
+      cancelQueuedDownload(transfer.id)
       try {
         await window.api?.cancelDownload?.(transfer.id)
       } catch (err) {
@@ -260,6 +265,7 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
         message: 'Cancelled'
       })
     } else {
+      cancelQueuedDownload(transfer.id)
       removeTransfer(transfer.id)
     }
   }
@@ -268,6 +274,7 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
     const activeTransfers = transfers.filter(
       (t) => t.status === 'downloading' || t.status === 'queued' || t.status === 'waiting_connector'
     )
+    cancelBatchDownloads(activeTransfers.map((t) => t.id))
     for (const t of activeTransfers) {
       try {
         await window.api?.cancelDownload?.(t.id)
@@ -281,33 +288,25 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
   const handleRetryTransfer = async (transfer: TransferItem) => {
     updateTransfer(transfer.id, {
       status: 'queued',
-      progress: 2,
-      message: `Retrying ${transfer.sourceName} download...`
+      progress: 0,
+      message: `Queued for retry...`
     })
     try {
-      const savedAccounts = await window.api?.getSetting?.(STREAMING_ACCOUNTS_SETTING)
-      const accounts = savedAccounts && typeof savedAccounts === 'object' ? savedAccounts : {}
-      const res = await window.api?.startDownload?.({
-        transferId: transfer.id,
-        source: transfer.source,
-        resultId: transfer.resultId || '',
-        title: transfer.title,
-        artist: transfer.artist,
-        songId: (transfer.song as any)?.id || '',
-        conflictMode: transfer.conflictMode,
-        accounts,
-        artworkUrl: (transfer as any).artworkUrl || (transfer.song as any)?.artworkUrl || (transfer.song as any)?.artworkPath,
-        album: (transfer as any).album || transfer.song?.album
-      })
-      if (res?.alreadyExists) {
-        updateTransfer(transfer.id, {
-          status: 'completed',
-          progress: 100,
-          message: 'Already downloaded'
-        })
-        window.dispatchEvent(new CustomEvent('felo:library-updated'))
-        window.dispatchEvent(new CustomEvent('fanxmusic:library-updated'))
-      }
+      await downloadTrackInBackground(
+        {
+          id: (transfer.song as any)?.id || transfer.id,
+          title: transfer.title,
+          artist: transfer.artist,
+          album: (transfer.song as any)?.album,
+          artworkUrl: (transfer as any).artworkUrl || (transfer.song as any)?.artworkUrl,
+          artworkPath: (transfer.song as any)?.artworkPath
+        },
+        {
+          conflictMode: transfer.conflictMode,
+          openDrawer: false,
+          skipIfExists: false
+        }
+      )
     } catch (error) {
       updateTransfer(transfer.id, {
         status: 'failed',

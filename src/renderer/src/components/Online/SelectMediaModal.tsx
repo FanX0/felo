@@ -1,9 +1,23 @@
-import { useState, useRef, useEffect, type ReactElement, type FormEvent } from 'react'
-import { Upload, Volume2, X, Play, Loader2, FolderOpen, ChevronRight, ClipboardPaste } from 'lucide-react'
+import { useState, useRef, useEffect, useCallback, type ReactElement, type FormEvent } from 'react'
+import {
+  Upload,
+  Volume2,
+  X,
+  Play,
+  Loader2,
+  FolderOpen,
+  ChevronRight,
+  ClipboardPaste,
+  Search,
+  ArrowLeft,
+  Sparkles
+} from 'lucide-react'
+import YouTubeIcon from '../Common/YouTubeIcon'
 import {
   extractYouTubeVideoId,
   fetchYouTubeMetadata,
-  type YouTubeMetadata
+  searchYouTubeVideos,
+  type YouTubeSearchResultItem
 } from '../../lib/youtubeService'
 
 interface SelectMediaModalProps {
@@ -15,6 +29,14 @@ interface SelectMediaModalProps {
   onOpenLibrary?: () => void
 }
 
+const DISCOVERY_TAGS = [
+  'Lofi Hip Hop',
+  'Synthwave',
+  'Chill Beats',
+  'Jazz Piano',
+  'Top Hits 2026'
+]
+
 export default function SelectMediaModal({
   isOpen,
   onClose,
@@ -25,64 +47,122 @@ export default function SelectMediaModal({
 }: SelectMediaModalProps): ReactElement | null {
   const [activeTab, setActiveTab] = useState<'picker' | 'youtube'>('picker')
   const [youtubeInput, setYoutubeInput] = useState('')
-  const [previewData, setPreviewData] = useState<YouTubeMetadata | null>(null)
-  const [isPreviewLoading, setIsPreviewLoading] = useState(false)
+  const [searchResults, setSearchResults] = useState<YouTubeSearchResultItem[]>([])
+  const [directMatch, setDirectMatch] = useState<YouTubeSearchResultItem | null>(null)
+  const [isSearching, setIsSearching] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const debounceTimerRef = useRef<any>(null)
+  const searchRequestIdRef = useRef<number>(0)
 
   // Reset state when closed
   useEffect(() => {
     if (!isOpen) {
       setActiveTab('picker')
       setYoutubeInput('')
-      setPreviewData(null)
-      setIsPreviewLoading(false)
+      setSearchResults([])
+      setDirectMatch(null)
+      setIsSearching(false)
       setIsSubmitting(false)
+      setSelectedVideoId(null)
       setErrorMessage('')
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
     }
   }, [isOpen])
 
-  // Live debounced preview resolution (matches MUSIXQUARE UX)
-  useEffect(() => {
-    if (!isOpen || activeTab !== 'youtube' || !youtubeInput.trim()) {
-      setPreviewData(null)
-      setIsPreviewLoading(false)
+  // Execute search with race-condition protection
+  const executeSearch = useCallback(async (query: string) => {
+    const trimmed = query.trim()
+    if (!trimmed) {
+      setSearchResults([])
+      setDirectMatch(null)
+      setIsSearching(false)
       return
     }
 
-    const videoId = extractYouTubeVideoId(youtubeInput)
-    if (!videoId) {
-      setPreviewData(null)
-      setIsPreviewLoading(false)
-      return
-    }
-
-    let isCurrent = true
-    setIsPreviewLoading(true)
+    const currentRequestId = ++searchRequestIdRef.current
+    setIsSearching(true)
     setErrorMessage('')
 
-    const timer = setTimeout(async () => {
-      try {
+    try {
+      // 1. Direct YouTube link or 11-char ID check
+      const videoId = extractYouTubeVideoId(trimmed)
+      if (videoId) {
         const meta = await fetchYouTubeMetadata(videoId)
-        if (!isCurrent) return
-        if (meta) {
-          setPreviewData(meta)
-        } else {
-          setPreviewData(null)
-        }
-      } catch {
-        if (isCurrent) setPreviewData(null)
-      } finally {
-        if (isCurrent) setIsPreviewLoading(false)
+        if (currentRequestId !== searchRequestIdRef.current) return
+
+        const item: YouTubeSearchResultItem = meta
+          ? {
+              id: videoId,
+              title: meta.title,
+              channel: meta.channel,
+              thumbnailUrl: meta.thumbnailUrl,
+              url: meta.url
+            }
+          : {
+              id: videoId,
+              title: 'YouTube Track',
+              channel: 'YouTube',
+              thumbnailUrl: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+              url: `https://www.youtube.com/watch?v=${videoId}`
+            }
+
+        setDirectMatch(item)
+        setSearchResults([item])
+        setIsSearching(false)
+        return
       }
-    }, 250)
+
+      setDirectMatch(null)
+
+      // 2. Keyword Search
+      const results = await searchYouTubeVideos(trimmed)
+      if (currentRequestId !== searchRequestIdRef.current) return
+
+      setSearchResults(results)
+      if (results.length === 0 && typeof window !== 'undefined' && !window.api?.searchDownloadSource) {
+        setErrorMessage('Keyword search is enabled in the desktop app. You can also paste any direct YouTube link.')
+      }
+    } catch (err: any) {
+      if (currentRequestId === searchRequestIdRef.current) {
+        setErrorMessage(err?.message || 'Failed to search YouTube videos.')
+        setSearchResults([])
+      }
+    } finally {
+      if (currentRequestId === searchRequestIdRef.current) {
+        setIsSearching(false)
+      }
+    }
+  }, [])
+
+  // Debounced search on input change
+  useEffect(() => {
+    if (!isOpen || activeTab !== 'youtube') return
+
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+    }
+
+    const trimmed = youtubeInput.trim()
+    if (!trimmed) {
+      setSearchResults([])
+      setDirectMatch(null)
+      setIsSearching(false)
+      return
+    }
+
+    // Direct link matches resolve faster (200ms) than general keywords (350ms)
+    const isDirectLink = Boolean(extractYouTubeVideoId(trimmed))
+    debounceTimerRef.current = setTimeout(() => {
+      void executeSearch(trimmed)
+    }, isDirectLink ? 200 : 350)
 
     return () => {
-      isCurrent = false
-      clearTimeout(timer)
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
     }
-  }, [isOpen, youtubeInput, activeTab])
+  }, [isOpen, activeTab, youtubeInput, executeSearch])
 
   const handleLocalClick = () => {
     fileInputRef.current?.click()
@@ -103,39 +183,66 @@ export default function SelectMediaModal({
     }
   }
 
-  const handleYouTubeSubmit = async (e: FormEvent) => {
-    e.preventDefault()
-    if (!youtubeInput.trim()) return
-
-    const videoId = previewData?.videoId || extractYouTubeVideoId(youtubeInput)
-    if (!videoId) {
-      setErrorMessage('Please enter a valid YouTube video link or 11-character video ID.')
-      return
-    }
-
+  const handlePlayVideo = async (item: { id: string; title: string; channel: string }) => {
+    setSelectedVideoId(item.id)
     setIsSubmitting(true)
     setErrorMessage('')
 
     try {
-      let title = previewData?.title
-      let channel = previewData?.channel
-
-      // If preview is still resolving, wait for metadata
-      if (!title || title === 'YouTube Track') {
-        const meta = await fetchYouTubeMetadata(videoId)
-        if (meta) {
-          title = meta.title
-          channel = meta.channel
-        }
-      }
-
-      await onSelectYouTube(videoId, title || 'YouTube Track', channel || 'YouTube')
+      await onSelectYouTube(item.id, item.title, item.channel)
       onClose()
     } catch (err: any) {
       setErrorMessage(err?.message || 'Failed to load YouTube stream.')
     } finally {
       setIsSubmitting(false)
+      setSelectedVideoId(null)
     }
+  }
+
+  const handleSearchSubmit = (e: FormEvent) => {
+    e.preventDefault()
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+
+    // If we already have a direct match or search results, play the top item immediately
+    if (directMatch) {
+      void handlePlayVideo(directMatch)
+      return
+    }
+    if (searchResults.length > 0) {
+      void handlePlayVideo(searchResults[0])
+      return
+    }
+
+    if (youtubeInput.trim()) {
+      void executeSearch(youtubeInput.trim())
+    }
+  }
+
+  const handleClearInput = () => {
+    setYoutubeInput('')
+    setSearchResults([])
+    setDirectMatch(null)
+    setErrorMessage('')
+    setIsSearching(false)
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+  }
+
+  const handlePasteClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText()
+      if (text) {
+        const trimmed = text.trim()
+        setYoutubeInput(trimmed)
+        void executeSearch(trimmed)
+      }
+    } catch {
+      // Ignore clipboard read errors
+    }
+  }
+
+  const handleSearchTag = (tag: string) => {
+    setYoutubeInput(tag)
+    void executeSearch(tag)
   }
 
   const handleSystemAudioClick = async () => {
@@ -151,43 +258,68 @@ export default function SelectMediaModal({
     }
   }
 
-  const handlePasteClipboard = async () => {
-    try {
-      const text = await navigator.clipboard.readText()
-      if (text) {
-        setYoutubeInput(text.trim())
-      }
-    } catch {}
-  }
-
   if (!isOpen) return null
+
+  const isYouTubeTab = activeTab === 'youtube'
 
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby="select-media-dialog-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
       onClick={(e) => {
         if (e.target === e.currentTarget && !isSubmitting) onClose()
       }}
     >
-      <div className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-white/[0.12] bg-gradient-to-b from-[#18191d] via-[#121316] to-[#0c0d0f] p-6 sm:p-7 shadow-2xl animate-in zoom-in-95 duration-200">
+      <div
+        className={`relative w-full overflow-hidden rounded-3xl border border-white/[0.12] bg-gradient-to-b from-[#18191d] via-[#121316] to-[#0c0d0f] p-5 sm:p-7 shadow-2xl animate-in zoom-in-95 duration-200 transition-all ${
+          isYouTubeTab
+            ? 'max-w-2xl h-[580px] max-h-[88vh] flex flex-col'
+            : 'max-w-lg'
+        }`}
+      >
         {/* Header */}
-        <div className="flex items-start justify-between mb-5">
-          <div>
-            <h2 id="select-media-dialog-title" className="text-xl font-bold text-white tracking-tight">
-              Select Media to Play
-            </h2>
-            <p className="text-xs text-text-muted mt-1 leading-relaxed">
-              The selected media plays simultaneously on all connected devices.
-            </p>
+        <div className="flex items-start justify-between mb-4 shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            {isYouTubeTab && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('picker')
+                  setErrorMessage('')
+                }}
+                disabled={isSubmitting}
+                className="p-1.5 -ml-1 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-all cursor-pointer shrink-0"
+                title="Back to media options"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+            )}
+            <div className="min-w-0">
+              <h2 id="select-media-dialog-title" className="text-lg sm:text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                {isYouTubeTab ? (
+                  <>
+                    <YouTubeIcon className="h-5 w-5 text-red-500 shrink-0" />
+                    <span>Search YouTube</span>
+                  </>
+                ) : (
+                  'Select Media to Play'
+                )}
+              </h2>
+              <p className="text-xs text-text-muted mt-0.5 truncate leading-relaxed">
+                {isYouTubeTab
+                  ? 'Search by keyword or paste any YouTube link to stream together.'
+                  : 'The selected media plays simultaneously on all connected devices.'}
+              </p>
+            </div>
           </div>
+
           <button
             type="button"
             onClick={onClose}
             disabled={isSubmitting}
-            className="p-2 rounded-full bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-all cursor-pointer"
+            className="p-2 rounded-full bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-all cursor-pointer shrink-0 ml-2"
             title="Close dialog"
           >
             <X className="h-4 w-4" />
@@ -195,7 +327,7 @@ export default function SelectMediaModal({
         </div>
 
         {errorMessage && (
-          <div className="mb-4 p-3 rounded-xl bg-red-500/15 border border-red-500/30 text-xs text-red-300 font-medium animate-fade-in">
+          <div className="mb-3 p-3 rounded-xl bg-red-500/15 border border-red-500/30 text-xs text-red-300 font-medium animate-fade-in shrink-0">
             {errorMessage}
           </div>
         )}
@@ -211,6 +343,7 @@ export default function SelectMediaModal({
         />
 
         {activeTab === 'picker' ? (
+          /* ================= MEDIA PICKER TAB ================= */
           <div className="space-y-2.5">
             {/* 1. Load Local File Option */}
             <button
@@ -263,7 +396,7 @@ export default function SelectMediaModal({
               </button>
             )}
 
-            {/* 3. YouTube Option */}
+            {/* 3. YouTube Stream Option */}
             <button
               type="button"
               onClick={() => {
@@ -282,7 +415,7 @@ export default function SelectMediaModal({
                     YouTube Stream
                   </span>
                   <p className="text-xs text-text-muted mt-0.5 leading-snug">
-                    Paste any YouTube video link to stream synchronized audio & video
+                    Search videos or paste links to stream synchronized audio & video
                   </p>
                 </div>
               </div>
@@ -318,112 +451,253 @@ export default function SelectMediaModal({
             </button>
           </div>
         ) : (
-          /* YouTube Input View */
-          <form onSubmit={handleYouTubeSubmit} className="space-y-4 animate-fade-in">
-            <div>
-              <label htmlFor="youtube-input-field" className="block text-xs font-bold text-white/90 mb-1.5">
-                Watch YouTube Together
-              </label>
-              <p className="text-[11px] text-text-muted mb-3">
-                Paste any public YouTube video link or 11-character video ID.
-              </p>
-              <div className="relative flex items-center">
-                <input
-                  id="youtube-input-field"
-                  type="text"
-                  value={youtubeInput}
-                  onChange={(e) => setYoutubeInput(e.target.value)}
-                  placeholder="https://www.youtube.com/watch?v=... or Video ID"
-                  disabled={isSubmitting}
-                  autoFocus
-                  className="w-full rounded-2xl border border-white/20 bg-black/60 pl-4 pr-24 py-3 text-sm text-white placeholder-text-muted/60 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition-all font-mono text-xs"
-                />
+          /* ================= YOUTUBE SEARCH & RESULTS VIEW ================= */
+          <div className="flex flex-col flex-1 min-h-0 animate-fade-in">
+            {/* Search Input Bar */}
+            <form onSubmit={handleSearchSubmit} className="relative flex items-center mb-3 shrink-0">
+              <Search className="absolute left-3.5 h-4 w-4 text-zinc-400 pointer-events-none" />
+              <input
+                type="text"
+                value={youtubeInput}
+                onChange={(e) => setYoutubeInput(e.target.value)}
+                placeholder="Search songs, artists, or paste YouTube link..."
+                disabled={isSubmitting}
+                autoFocus
+                className="w-full rounded-2xl border border-white/20 bg-black/60 pl-10 pr-24 py-2.5 text-xs sm:text-sm text-white placeholder-text-muted/60 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition-all"
+              />
+              <div className="absolute right-2 flex items-center gap-1.5">
+                {youtubeInput ? (
+                  <button
+                    type="button"
+                    onClick={handleClearInput}
+                    disabled={isSubmitting}
+                    className="p-1 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer"
+                    title="Clear search"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handlePasteClipboard}
+                    disabled={isSubmitting}
+                    className="px-2.5 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-white text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                    title="Paste from clipboard"
+                  >
+                    <ClipboardPaste className="h-3 w-3" />
+                    <span className="hidden sm:inline">Paste</span>
+                  </button>
+                )}
                 <button
-                  type="button"
-                  onClick={handlePasteClipboard}
-                  className="absolute right-2 px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
-                  title="Paste from clipboard"
+                  type="submit"
+                  disabled={isSubmitting || !youtubeInput.trim() || isSearching}
+                  className="px-3 py-1 rounded-xl bg-primary hover:bg-primary-hover text-primary-foreground text-xs font-bold transition-all shadow-sm active:scale-95 cursor-pointer disabled:opacity-40"
                 >
-                  <ClipboardPaste className="h-3.5 w-3.5" />
-                  <span>Paste</span>
+                  Search
                 </button>
               </div>
+            </form>
+
+            {/* Scrollable Results Area */}
+            <div className="flex-1 overflow-y-auto min-h-0 pr-1 -mr-1 scrollbar-thin">
+              {/* 1. Loading Skeletons */}
+              {isSearching && (
+                <div className="space-y-2.5 animate-pulse">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div
+                      key={i}
+                      className="flex items-center gap-3.5 p-2.5 rounded-2xl bg-white/5 border border-white/[0.08]"
+                    >
+                      <div className="w-24 sm:w-28 h-14 sm:h-16 rounded-xl bg-white/10 shrink-0 aspect-video" />
+                      <div className="flex-1 space-y-2 min-w-0">
+                        <div className="h-3.5 bg-white/10 rounded-md w-3/4" />
+                        <div className="h-2.5 bg-white/5 rounded-md w-1/3" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 2. Direct Match Banner Card (when user enters URL or video ID) */}
+              {!isSearching && directMatch && (
+                <div className="mb-3 p-3.5 rounded-2xl bg-gradient-to-r from-red-500/10 via-primary/10 to-transparent border border-primary/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in duration-200">
+                  <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                    <div className="relative w-24 sm:w-28 h-14 sm:h-16 rounded-xl overflow-hidden shrink-0 aspect-video bg-black/60 border border-white/10">
+                      <img
+                        src={directMatch.thumbnailUrl}
+                        alt={directMatch.title}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          ;(e.target as HTMLImageElement).src = `https://img.youtube.com/vi/${directMatch.id}/hqdefault.jpg`
+                        }}
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="inline-flex items-center gap-1 rounded-md bg-primary/20 border border-primary/30 px-1.5 py-0.5 text-[9px] font-bold text-primary uppercase tracking-wider mb-1">
+                        <Play className="h-2.5 w-2.5 fill-current" />
+                        Direct Link Match
+                      </span>
+                      <h4 className="text-xs sm:text-sm font-bold text-white line-clamp-1" title={directMatch.title}>
+                        {directMatch.title}
+                      </h4>
+                      <p className="text-[11px] text-text-muted mt-0.5 truncate">{directMatch.channel}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handlePlayVideo(directMatch)}
+                    disabled={isSubmitting}
+                    className="w-full sm:w-auto shrink-0 flex items-center justify-center gap-2 rounded-xl bg-primary hover:bg-primary-hover text-primary-foreground font-bold px-4 py-2 text-xs transition-all shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
+                  >
+                    {isSubmitting && selectedVideoId === directMatch.id ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>Starting...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-3.5 w-3.5 fill-current" />
+                        <span>Play Video</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {/* 3. Search Results List */}
+              {!isSearching && searchResults.length > 0 && (
+                <div className="space-y-2">
+                  {searchResults.map((item) => {
+                    const isCurrentLoading = isSubmitting && selectedVideoId === item.id
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => !isSubmitting && handlePlayVideo(item)}
+                        className="group flex items-center justify-between gap-3 p-2.5 sm:p-3 rounded-2xl border border-white/[0.06] bg-[#141519] hover:bg-[#1a1c22] hover:border-white/20 transition-all duration-150 cursor-pointer shadow-sm active:scale-[0.995]"
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          {/* Thumbnail with duration badge */}
+                          <div className="relative w-24 sm:w-28 h-14 sm:h-16 rounded-xl overflow-hidden shrink-0 aspect-video bg-black/60 border border-white/10 group-hover:border-primary/40 transition-colors">
+                            <img
+                              src={item.thumbnailUrl}
+                              alt={item.title}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              onError={(e) => {
+                                ;(e.target as HTMLImageElement).src = `https://img.youtube.com/vi/${item.id}/hqdefault.jpg`
+                              }}
+                            />
+                            {item.duration && (
+                              <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded-md bg-black/85 text-[10px] font-mono font-medium text-white shadow-xs">
+                                {item.duration}
+                              </span>
+                            )}
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                              <div className="p-1.5 rounded-full bg-primary text-primary-foreground shadow-md">
+                                <Play className="h-3.5 w-3.5 fill-current ml-0.5" />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Video Info */}
+                          <div className="min-w-0 flex-1 pr-1">
+                            <h4
+                              className="text-xs sm:text-sm font-semibold text-white/95 group-hover:text-primary transition-colors line-clamp-2 leading-snug"
+                              title={item.title}
+                            >
+                              {item.title}
+                            </h4>
+                            <p className="text-[11px] text-text-muted mt-1 truncate">
+                              {item.channel}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Play Button */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void handlePlayVideo(item)
+                          }}
+                          disabled={isSubmitting}
+                          className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 group-hover:bg-primary group-hover:text-primary-foreground text-zinc-300 text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
+                        >
+                          {isCurrentLoading ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              <span className="hidden sm:inline">Starting...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Play className="h-3.5 w-3.5 fill-current" />
+                              <span className="hidden sm:inline">Play</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* 4. Initial Discovery Suggestions (empty input) */}
+              {!isSearching && !youtubeInput.trim() && (
+                <div className="flex flex-col items-center justify-center py-8 text-center px-4">
+                  <div className="h-12 w-12 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-500 flex items-center justify-center mb-3">
+                    <YouTubeIcon className="h-6 w-6" />
+                  </div>
+                  <h3 className="text-sm font-bold text-white mb-1">
+                    Search YouTube or Paste a Link
+                  </h3>
+                  <p className="text-xs text-text-muted max-w-sm mb-4 leading-relaxed">
+                    Stream synchronized audio & video to everyone in this room. Search for songs, podcasts, or music videos.
+                  </p>
+
+                  {/* Suggestion Chips */}
+                  <div className="flex flex-wrap items-center justify-center gap-2 max-w-md">
+                    {DISCOVERY_TAGS.map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => handleSearchTag(tag)}
+                        disabled={isSubmitting}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.08] text-xs font-medium text-zinc-300 hover:text-white transition-all cursor-pointer active:scale-95"
+                      >
+                        <Sparkles className="h-3 w-3 text-primary" />
+                        <span>{tag}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 5. Zero Results State */}
+              {!isSearching && youtubeInput.trim() && searchResults.length === 0 && !directMatch && (
+                <div className="flex flex-col items-center justify-center py-10 text-center px-4">
+                  <div className="h-12 w-12 rounded-2xl bg-white/5 border border-white/10 text-zinc-400 flex items-center justify-center mb-3">
+                    <Search className="h-5 w-5" />
+                  </div>
+                  <h3 className="text-sm font-bold text-white mb-1">No videos found</h3>
+                  <p className="text-xs text-text-muted max-w-sm mb-4">
+                    We couldn&apos;t find any results for &ldquo;{youtubeInput}&rdquo;. Try different keywords or paste a direct YouTube video link.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleClearInput}
+                    className="px-4 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-white transition-all cursor-pointer"
+                  >
+                    Clear Search
+                  </button>
+                </div>
+              )}
             </div>
-
-            {/* Live Preview Card */}
-            {isPreviewLoading && (
-              <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-white/5 border border-white/10 animate-pulse">
-                <div className="w-24 h-14 rounded-xl bg-white/10 shrink-0 flex items-center justify-center">
-                  <Loader2 className="h-4 w-4 animate-spin text-white/50" />
-                </div>
-                <div className="flex-1 min-w-0 space-y-2">
-                  <div className="h-3.5 bg-white/10 rounded w-3/4" />
-                  <div className="h-2.5 bg-white/5 rounded w-1/3" />
-                </div>
-              </div>
-            )}
-
-            {!isPreviewLoading && previewData && (
-              <div className="flex items-center gap-3.5 p-3.5 rounded-2xl bg-white/5 border border-white/15 animate-in fade-in duration-200">
-                <img
-                  src={previewData.thumbnailUrl}
-                  alt={previewData.title}
-                  className="w-24 h-14 rounded-xl object-cover border border-white/10 shrink-0 bg-black/40"
-                  onError={(e) => {
-                    ;(e.target as HTMLImageElement).src = `https://img.youtube.com/vi/${previewData.videoId}/hqdefault.jpg`
-                  }}
-                />
-                <div className="flex-1 min-w-0">
-                  <span className="inline-flex items-center gap-1 rounded-md bg-primary/20 border border-primary/30 px-1.5 py-0.5 text-[9px] font-bold text-primary uppercase tracking-wider mb-1">
-                    <Play className="h-2.5 w-2.5 fill-current" />
-                    Ready to Stream
-                  </span>
-                  <h4 className="text-xs font-bold text-white line-clamp-1" title={previewData.title}>
-                    {previewData.title}
-                  </h4>
-                  <p className="text-[11px] text-text-muted line-clamp-1 mt-0.5">{previewData.channel}</p>
-                </div>
-              </div>
-            )}
-
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('picker')
-                  setErrorMessage('')
-                  setPreviewData(null)
-                }}
-                disabled={isSubmitting}
-                className="rounded-xl px-4 py-2 text-xs font-bold text-white/70 hover:text-white hover:bg-white/10 transition-all cursor-pointer"
-              >
-                Back
-              </button>
-              <button
-                type="submit"
-                disabled={isSubmitting || !youtubeInput.trim() || isPreviewLoading}
-                className="flex items-center gap-2 rounded-xl bg-primary hover:bg-primary-hover text-primary-foreground font-bold px-5 py-2 text-xs transition-all shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Loading Video...</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4 fill-current" />
-                    <span>Play Video</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </form>
+          </div>
         )}
 
         {/* Modal Footer */}
-        <div className="mt-6 pt-4 border-t border-white/[0.08] flex items-center justify-between text-xs">
+        <div className="mt-4 pt-3.5 border-t border-white/[0.08] flex items-center justify-between text-xs shrink-0">
           <span className="text-[11px] text-text-muted">
-            {isSubmitting ? 'Processing media...' : 'Audio streams synchronously to all connected peers.'}
+            {isSubmitting ? 'Starting stream...' : 'Audio streams synchronously to all connected peers.'}
           </span>
           <button
             type="button"
@@ -438,4 +712,3 @@ export default function SelectMediaModal({
     </div>
   )
 }
-

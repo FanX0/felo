@@ -93,25 +93,7 @@ export async function resolveArtworkOnline(
   }
 
   const promise = (async (): Promise<string | null> => {
-    // 1. Try search via window.api.searchAppleMusic if running in desktop Electron
-    try {
-      if (typeof window !== 'undefined' && window.api?.searchAppleMusic) {
-        const query = [cleanArtist, cleanTitle].filter(Boolean).join(' ').trim()
-        const res = await window.api.searchAppleMusic(query)
-        const match =
-          res?.Songs?.find((s: { thumbnail?: string }) => Boolean(s.thumbnail))?.thumbnail ||
-          res?.['Top Results']?.find((s: { thumbnail?: string }) => Boolean(s.thumbnail))?.thumbnail ||
-          res?.Albums?.find((s: { thumbnail?: string }) => Boolean(s.thumbnail))?.thumbnail
-        if (match) {
-          setCachedArtwork(cleanTitle, cleanArtist, match)
-          return match
-        }
-      }
-    } catch {
-      // Fall through to public web APIs
-    }
-
-    // 2. Direct iTunes Search API with full query and primary artist fallback
+    // 1. Direct iTunes Search API with full query and primary artist fallback (ultra-fast JSON, ~150ms)
     const primaryArtist = cleanArtist.split(/[,&/]|feat\.|ft\./i)[0].trim()
     const queries = [
       [cleanArtist, cleanTitle].filter(Boolean).join(' ').trim(),
@@ -121,7 +103,7 @@ export async function resolveArtworkOnline(
     for (const q of queries) {
       try {
         const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=3`
-        const res = await fetch(itunesUrl)
+        const res = await fetch(itunesUrl, { signal: AbortSignal.timeout(3000) })
         if (res.ok) {
           const data = (await res.json()) as any
           const results = Array.isArray(data?.results) ? data.results : []
@@ -139,11 +121,11 @@ export async function resolveArtworkOnline(
       }
     }
 
-    // 3. Fallback to Deezer public search
+    // 2. Fallback to Deezer public search (~200ms)
     for (const q of queries) {
       try {
         const deezerUrl = `https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=3`
-        const res = await fetch(deezerUrl)
+        const res = await fetch(deezerUrl, { signal: AbortSignal.timeout(3000) })
         if (res.ok) {
           const data = (await res.json()) as any
           const list = Array.isArray(data?.data) ? data.data : []
@@ -159,6 +141,24 @@ export async function resolveArtworkOnline(
       } catch {
         // Deezer unavailable
       }
+    }
+
+    // 3. Fallback: try Apple Music desktop search only as last resort
+    try {
+      if (typeof window !== 'undefined' && window.api?.searchAppleMusic) {
+        const query = [cleanArtist, cleanTitle].filter(Boolean).join(' ').trim()
+        const res = await window.api.searchAppleMusic(query)
+        const match =
+          res?.Songs?.find((s: { thumbnail?: string }) => Boolean(s.thumbnail))?.thumbnail ||
+          res?.['Top Results']?.find((s: { thumbnail?: string }) => Boolean(s.thumbnail))?.thumbnail ||
+          res?.Albums?.find((s: { thumbnail?: string }) => Boolean(s.thumbnail))?.thumbnail
+        if (match) {
+          setCachedArtwork(cleanTitle, cleanArtist, match)
+          return match
+        }
+      }
+    } catch {
+      // Fall through
     }
 
     // Cache negative lookup so we do not spam failing requests
@@ -190,7 +190,7 @@ export function useResolvedArtwork({
   const effectiveInitial = src || initialCached || ''
 
   const [artworkUrl, setArtworkUrl] = useState<string>(effectiveInitial)
-  const [isLoading, setIsLoading] = useState<boolean>(Boolean(src) || (!effectiveInitial && Boolean(title || artist)))
+  const [isLoading, setIsLoading] = useState<boolean>(!effectiveInitial && Boolean(title || artist))
   const [hasFailed, setHasFailed] = useState<boolean>(!effectiveInitial && !title && !artist)
   const attemptedOnline = useRef<boolean>(false)
 
@@ -200,8 +200,12 @@ export function useResolvedArtwork({
     setArtworkUrl(nextSrc)
     attemptedOnline.current = false
 
+    if (src && !cached && title) {
+      setCachedArtwork(title, artist, src)
+    }
+
     if (nextSrc) {
-      setIsLoading(true)
+      setIsLoading(false)
       setHasFailed(false)
     } else if (title || artist) {
       setIsLoading(true)

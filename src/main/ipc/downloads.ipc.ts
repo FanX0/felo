@@ -27,9 +27,18 @@ export function registerDownloadsIpc(): void {
     }
   )
 
-  ipcMain.handle('downloads:start', (_, request: any) => {
-    const validatedRequest = validateWith(StartDownloadRequestSchema, request)
-    return DownloadService.start(validatedRequest)
+  ipcMain.handle('downloads:start', async (_, request: any) => {
+    try {
+      const validatedRequest = validateWith(StartDownloadRequestSchema, request)
+      return await DownloadService.start(validatedRequest)
+    } catch (err: any) {
+      console.error('[downloads:start] Failed to start download:', err)
+      return {
+        started: false,
+        transferId: request?.transferId,
+        error: err?.message || 'Download failed to start'
+      }
+    }
   })
 
   ipcMain.handle('downloads:cancel', (_, transferId: string) => {

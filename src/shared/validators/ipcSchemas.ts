@@ -112,7 +112,10 @@ export const DownloadStorageModeSchema = z.enum(['stream', 'download']).optional
 export const StartDownloadRequestSchema = z.object({
   transferId: TransferIdSchema,
   source: StreamingSourceSchema,
-  resultId: z.string().min(1).max(512),
+  resultId: z
+    .union([z.string(), z.number()])
+    .transform((v) => String(v))
+    .pipe(z.string().min(1).max(512)),
   title: z
     .string()
     .max(300)

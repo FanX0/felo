@@ -268,7 +268,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         isPlaying: true,
         isBuffering: isVirtual,
         currentTime: 0,
-        seekRequest: 0,
+        seekRequest: null,
         playbackContext: contextToSet,
         isAudioActive: true,
         activeInstanceId: tabId
@@ -286,7 +286,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         isPlaying: true,
         isBuffering: isVirtual,
         currentTime: 0,
-        seekRequest: 0,
+        seekRequest: null,
         playbackContext: contextToSet,
         isAudioActive: true,
         activeInstanceId: tabId

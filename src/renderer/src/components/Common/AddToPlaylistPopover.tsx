@@ -280,7 +280,7 @@ export default function AddToPlaylistPopover({
               className={cn(
                 'h-6 w-6 rounded-md border flex items-center justify-center shrink-0 transition-all',
                 isFav
-                  ? 'border-emerald-500 bg-emerald-500 text-black'
+                  ? 'border-[#1ed760] bg-[#1ed760] text-black'
                   : 'border-white/20 group-hover:border-white/40'
               )}
             >
@@ -339,7 +339,7 @@ export default function AddToPlaylistPopover({
                     className={cn(
                       'h-6 w-6 rounded-md border flex items-center justify-center shrink-0 transition-all',
                       isIn
-                        ? 'border-emerald-500 bg-emerald-500 text-black'
+                        ? 'border-[#1ed760] bg-[#1ed760] text-black'
                         : 'border-white/20 group-hover:border-white/40'
                     )}
                   >

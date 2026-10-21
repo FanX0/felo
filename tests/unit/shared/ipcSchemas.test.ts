@@ -6,7 +6,8 @@ import {
   validateWith,
   ValidationError,
   StreamingSourceSchema,
-  TransferIdSchema
+  TransferIdSchema,
+  StartDownloadRequestSchema
 } from '../../../src/shared/validators/ipcSchemas'
 
 describe('Shared Core: ipcSchemas & Validation Security', () => {
@@ -99,4 +100,27 @@ describe('Shared Core: ipcSchemas & Validation Security', () => {
       expect(() => validateWith(StreamingSourceSchema, 'invalid')).toThrow(ValidationError)
     })
   })
+
+  describe('StartDownloadRequestSchema', () => {
+    it('accepts string and numeric resultId and converts to string', () => {
+      const parsedWithNumber = StartDownloadRequestSchema.parse({
+        transferId: 'deezer-123456',
+        source: 'deezer',
+        resultId: 110972412,
+        conflictMode: 'keep_both'
+      })
+      expect(parsedWithNumber.resultId).toBe('110972412')
+      expect(parsedWithNumber.title).toBe('Unknown Track')
+      expect(parsedWithNumber.artist).toBe('Unknown Artist')
+
+      const parsedWithString = StartDownloadRequestSchema.parse({
+        transferId: 'slsk-654321',
+        source: 'soulseek',
+        resultId: 'track-identifier-str',
+        conflictMode: 'replace'
+      })
+      expect(parsedWithString.resultId).toBe('track-identifier-str')
+    })
+  })
 })
+

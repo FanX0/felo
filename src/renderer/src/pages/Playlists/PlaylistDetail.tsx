@@ -7,7 +7,11 @@ import { useShallow } from 'zustand/react/shallow'
 import { useDownloadStore } from '../../hooks/useDownloadStore'
 import { toMediaUrl } from '../../lib/media'
 import { publishLocalPlaylist } from '../../lib/onlinePlaylists'
-import { downloadTrackInBackground } from '../../lib/backgroundDownloader'
+import {
+  downloadTrackInBackground,
+  downloadTracksBatch,
+  cancelBatchDownloads
+} from '../../lib/backgroundDownloader'
 import type { Song } from '../Library/Library'
 import type { Playlist } from './types'
 import SongCreditsModal from '../../components/Common/SongCreditsModal'
@@ -337,6 +341,8 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     if (isDownloadingActive) {
       abortDownloadMissingRef.current = true
       setIsDownloadingMissing(false)
+      const idsToCancel = playlistActiveTransfers.map((t) => t.id)
+      cancelBatchDownloads(idsToCancel)
       for (const t of playlistActiveTransfers) {
         try {
           await window.api?.cancelDownload?.(t.id)
@@ -355,10 +361,18 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
     setIsDownloadingMissing(true)
 
     try {
-      for (const song of missingSongs) {
-        if (abortDownloadMissingRef.current) break
-        await downloadTrackInBackground(song, { openDrawer: false })
-      }
+      await downloadTracksBatch(
+        missingSongs.map((song) => ({
+          id: song.id,
+          title: song.title,
+          artist: song.artist,
+          album: song.album,
+          duration: song.duration,
+          artworkUrl: song.artworkUrl,
+          artworkPath: song.artworkPath
+        })),
+        { openDrawer: false }
+      )
     } finally {
       setIsDownloadingMissing(false)
     }

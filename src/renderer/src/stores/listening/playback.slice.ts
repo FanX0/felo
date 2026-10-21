@@ -653,12 +653,43 @@ export const createRoomPlaybackSlice: StateCreator<
         }
 
         if (!directUrl) {
-          console.warn(`[handleHostSongChange] No valid audio URL for "${room.song.title}" - triggering instant download`)
+          console.warn(`[handleHostSongChange] No valid audio URL for "${room.song.title}" - triggering instant acquisition`)
           const pendingSyncStatus = isHostUploading || Boolean(songId) ? 'buffering' : 'missing_song'
           set({ syncStatus: pendingSyncStatus, missingSong: room.song })
           if (songId) {
-            get().setJitStatus(songId, 0, 'Buffering stream from host...', 0, 0)
+            get().setJitStatus(
+              songId,
+              0,
+              'Buffering stream from host...',
+              0,
+              0
+            )
           }
+
+          // Buffering Watchdog: If host upload is stalled or provider search fails to find audio within 8s,
+          // gracefully transition to 'missing_song' so guest sees clear UI options rather than hanging at 0%
+          setTimeout(() => {
+            if (mySyncEpoch !== getCurrentSyncEpoch()) return
+            const currentRoom = get().joinedRoom
+            const hasAudio = Boolean(
+              get().losslessStreamBlobUrl ||
+              (currentRoom?.song?.audioUrl && /^https?:\/\//i.test(currentRoom.song.audioUrl))
+            )
+            const hasActiveDownload = useDownloadStore.getState().transfers.some(
+              (t) =>
+                t.status === 'downloading' &&
+                (t.id.startsWith(`room-${room.id}`) ||
+                  normalizeSongValue(t.title) === normalizeSongValue(room.song!.title))
+            )
+            if (!hasAudio && !hasActiveDownload && get().syncStatus === 'buffering') {
+              console.warn(`[handleHostSongChange] Buffering watchdog timed out for "${room.song!.title}" - transitioning to missing_song`)
+              set({ syncStatus: 'missing_song', missingSong: room.song })
+              if (songId) {
+                get().setJitStatus(songId, 0, '', 0, 0)
+              }
+            }
+          }, 8000)
+
           usePlayerStore.getState().setIsPlaying(room.is_playing)
           const targetPos = get().calculateCurrentHostTargetTime()
           usePlayerStore.getState().setCurrentTime(targetPos)
@@ -1015,9 +1046,13 @@ export const createRoomPlaybackSlice: StateCreator<
         Array.isArray(savedPriority) && savedPriority.length > 0
           ? savedPriority
           : DEFAULT_DOWNLOAD_PRIORITY
+      const priorityList = [...priority] as (typeof DEFAULT_DOWNLOAD_PRIORITY[number])[]
+      if (!priorityList.includes('youtube')) {
+        priorityList.push('youtube')
+      }
       const accounts = savedAccounts && typeof savedAccounts === 'object' ? savedAccounts : {}
 
-      for (const source of priority) {
+      for (const source of priorityList) {
         if (source === 'qobuz' && !accounts.qobuzSecret && !accounts.qobuzUser) continue
         if (source === 'deezer' && !accounts.deezerArl) continue
         if (source === 'soulseek' && !accounts.soulseekUser && !accounts.soulseekPassword) continue
@@ -1031,12 +1066,24 @@ export const createRoomPlaybackSlice: StateCreator<
           const results = await Promise.race([searchPromise, timeoutPromise]).finally(() => {
             if (timer) clearTimeout(timer)
           })
-          const bestHit = findBestDownloadMatch(
+          let bestHit = findBestDownloadMatch(
             results,
             targetSong.title,
             targetSong.artist,
             targetSong.duration
           )
+          if (!bestHit && source === 'youtube' && targetSong.artist) {
+            // Niche / BGM track fallback: if combined "Artist Title" yielded no match, search by Title alone on YouTube
+            try {
+              const fallbackResults = await window.api?.searchDownloadSource?.('youtube', targetSong.title.trim(), accounts)
+              bestHit = findBestDownloadMatch(
+                fallbackResults,
+                targetSong.title,
+                targetSong.artist,
+                targetSong.duration
+              )
+            } catch {}
+          }
           if (!bestHit) continue
 
           const transferId = `room-${room.id}-${Date.now()}`
@@ -1046,6 +1093,10 @@ export const createRoomPlaybackSlice: StateCreator<
               : targetSong.artworkUrl && /^https?:\/\//i.test(targetSong.artworkUrl)
                 ? targetSong.artworkUrl
                 : undefined
+
+          set({ syncStatus: 'buffering', missingSong: null })
+          const targetKey = targetSong.localId || (targetSong as any).id || songKey
+          get().setJitStatus(targetKey, 5, `Downloading from ${bestHit.sourceName || source}...`, 0, 0)
 
           useDownloadStore.getState().queueTransfer(
             {
@@ -1085,8 +1136,29 @@ export const createRoomPlaybackSlice: StateCreator<
           console.warn(`Auto-download failed on source ${source}:`, sourceErr)
         }
       }
+
+      // If all download sources failed to locate an acceptable hit, transition cleanly to missing_song
+      const currentTransfers = useDownloadStore.getState().transfers
+      const hasActiveDownload = currentTransfers.some(
+        (t) =>
+          t.status === 'downloading' &&
+          (t.id.startsWith(`room-${room.id}`) ||
+            normalizeSongValue(t.title) === normalizeSongValue(targetSong.title))
+      )
+      const isHostStillUploading = get().joinedRoom?.song?.uploadStatus === 'UPLOADING'
+      if (!hasActiveDownload && !isHostStillUploading && !get().losslessStreamBlobUrl) {
+        set({ syncStatus: 'missing_song', missingSong: targetSong })
+        const targetKey = targetSong.localId || (targetSong as any).id || songKey
+        get().setJitStatus(targetKey, 0, '', 0, 0)
+      }
     } catch (autoErr) {
       console.warn('Auto-download background search attempt:', autoErr)
+      const isHostStillUploading = get().joinedRoom?.song?.uploadStatus === 'UPLOADING'
+      if (!isHostStillUploading && !get().losslessStreamBlobUrl) {
+        set({ syncStatus: 'missing_song', missingSong: targetSong })
+        const targetKey = targetSong.localId || (targetSong as any).id || songKey
+        get().setJitStatus(targetKey, 0, '', 0, 0)
+      }
     } finally {
       setTimeout(() => _autoDownloadRequests.delete(requestKey), 30_000)
     }

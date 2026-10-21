@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { Check, Plus } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { Song } from '../../types'
 import AddToPlaylistPopover from './AddToPlaylistPopover'
@@ -10,6 +9,51 @@ interface SongAddButtonProps {
   size?: 'sm' | 'md' | 'lg'
   alwaysVisible?: boolean
   onToggle?: (isFav: boolean) => void
+}
+
+/**
+ * Spotify Encore-style Checked / In Library icon.
+ * Pure vector with Spotify green (#1ed760) and high-contrast deep black (#121212) checkmark.
+ */
+function CheckedIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className={cn('shrink-0 fill-none', className)}
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <circle
+        cx="8"
+        cy="8"
+        r="8"
+        fill="#1ed760"
+        className="transition-colors duration-150 group-hover/add-btn:fill-[#1fdf64]"
+      />
+      <path
+        d="M11.748 6.205a.75.75 0 0 0-1.06-1.06L7.427 8.406 5.86 6.84a.75.75 0 1 0-1.06 1.06l2.096 2.096a.75.75 0 0 0 1.06 0l3.792-3.791z"
+        fill="#121212"
+      />
+    </svg>
+  )
+}
+
+/**
+ * Spotify Encore-style Add / Save to Library icon.
+ * Circular outline with a plus sign, rendered with currentColor for smooth gray-to-white hover transition.
+ */
+function PlusCircleIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className={cn('shrink-0 fill-current', className)}
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zM0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8z" />
+      <path d="M11.75 8a.75.75 0 0 1-.75.75H8.75V11a.75.75 0 0 1-1.5 0V8.75H5a.75.75 0 0 1 0-1.5h2.25V5a.75.75 0 0 1 1.5 0v2.25H11c.414 0 .75.336.75.75z" />
+    </svg>
+  )
 }
 
 export default function SongAddButton({
@@ -77,16 +121,16 @@ export default function SongAddButton({
     setIsPopoverOpen(true)
   }
 
-  const sizeClasses = {
-    sm: 'w-5 h-5 text-[10px]',
-    md: 'w-6 h-6 text-xs',
-    lg: 'w-8 h-8 text-sm'
+  const buttonSizes = {
+    sm: 'w-7 h-7',
+    md: 'w-8 h-8',
+    lg: 'w-10 h-10'
   }[size]
 
   const iconSizes = {
-    sm: 'w-3 h-3',
-    md: 'w-3.5 h-3.5',
-    lg: 'w-4 h-4'
+    sm: 'w-4 h-4',
+    md: 'w-5 h-5',
+    lg: 'w-7 h-7'
   }[size]
 
   return (
@@ -96,23 +140,24 @@ export default function SongAddButton({
         onClick={handleClick}
         onContextMenu={handleContextMenu}
         title={isFav ? 'Added to Liked Songs (Click to edit playlists)' : 'Save to Liked Songs'}
+        aria-label={isFav ? 'Added to Liked Songs (Click to edit playlists)' : 'Save to Liked Songs'}
         className={cn(
-          'relative flex items-center justify-center rounded-full transition-all cursor-pointer select-none shrink-0 outline-none',
-          sizeClasses,
+          'group/add-btn relative inline-flex items-center justify-center rounded-full transition-transform duration-150 cursor-pointer select-none shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-white/50',
+          buttonSizes,
           isFav
-            ? 'bg-emerald-500 text-black border border-emerald-400 hover:scale-110 active:scale-95 shadow-sm'
+            ? 'hover:scale-105 active:scale-95'
             : cn(
-                'border border-white/30 text-white/70 hover:border-white hover:text-white hover:scale-105 active:scale-95 bg-black/20',
-                !alwaysVisible && 'opacity-0 group-hover:opacity-100 focus:opacity-100'
+                'text-text-muted hover:text-white hover:scale-105 active:scale-95',
+                !alwaysVisible && 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
               ),
-          justToggled && 'animate-in zoom-in-75 duration-200',
+          justToggled && 'scale-115 duration-200 ease-out',
           className
         )}
       >
         {isFav ? (
-          <Check className={cn(iconSizes, 'stroke-[3]')} />
+          <CheckedIcon className={iconSizes} />
         ) : (
-          <Plus className={cn(iconSizes, 'stroke-[2.5]')} />
+          <PlusCircleIcon className={iconSizes} />
         )}
       </button>
 
@@ -131,3 +176,4 @@ export default function SongAddButton({
     </>
   )
 }
+

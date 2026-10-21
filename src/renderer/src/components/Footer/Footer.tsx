@@ -389,7 +389,7 @@ export default function Footer({
   const artworkUrl =
     isRemoteActive && activeRemote?.song?.artworkUrl
       ? activeRemote.song.artworkUrl
-      : toMediaUrl(currentSong?.artworkPath) || currentSong?.artworkUrl
+      : toMediaUrl(displaySong?.artworkPath) || displaySong?.artworkUrl
 
   const toggleLyrics = () => {
     if (isLyricsActive) {
@@ -610,6 +610,7 @@ export default function Footer({
               src={artworkUrl}
               title={displaySong.title}
               artist={displaySong.artist}
+              loading="eager"
               className="absolute inset-0 h-full w-full object-cover"
               fallbackIcon={
                 <div className="w-full h-full bg-gradient-to-br from-indigo-900/60 to-purple-900/60 flex items-center justify-center text-[10px] font-bold text-text-muted uppercase">
@@ -724,7 +725,7 @@ export default function Footer({
             song={displaySong}
             size="md"
             alwaysVisible={true}
-            className="no-drag ml-1 text-text-muted hover:text-white"
+            className="no-drag ml-1"
           />
         )}
 

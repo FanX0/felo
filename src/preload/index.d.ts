@@ -265,6 +265,7 @@ declare global {
               transferId: string
               alreadyExists?: boolean
               duplicateRequest?: boolean
+              error?: string
             }>
       cancelDownload: (transferId: string) => Promise<boolean>
       onDownloadProgress: (listener: (event: any) => void) => () => void
