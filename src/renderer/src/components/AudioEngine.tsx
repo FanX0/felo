@@ -1065,7 +1065,10 @@ export default function AudioEngine() {
           currentActiveAudio.pause()
         }
 
-        schedulePreload()
+        // Defer preload if current active audio is still buffering its initial frames
+        if (currentActiveAudio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+          schedulePreload()
+        }
       } catch (syncErr) {
         console.warn('[AudioEngine syncAudio caught error]:', syncErr)
       }

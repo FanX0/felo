@@ -176,9 +176,6 @@ export function registerMediaProtocol(): void {
         'Access-Control-Allow-Headers': '*'
       }
 
-      // 2MB chunk window prevents backpressure deadlock in Node's Readable.toWeb stream
-      const MAX_CHUNK_SIZE = 2 * 1024 * 1024
-
       if (rangeHeader) {
         const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader)
         if (!match) {
@@ -191,10 +188,7 @@ export function registerMediaProtocol(): void {
         const requestedStart = match[1] ? parseInt(match[1], 10) : null
         const requestedEnd = match[2] ? parseInt(match[2], 10) : null
         const start = requestedStart ?? Math.max(0, fileSize - (requestedEnd ?? 0))
-        const end =
-          requestedEnd !== null
-            ? Math.min(requestedEnd, fileSize - 1)
-            : Math.min(fileSize - 1, start + MAX_CHUNK_SIZE - 1)
+        const end = requestedEnd !== null ? Math.min(requestedEnd, fileSize - 1) : fileSize - 1
 
         if (
           !Number.isFinite(start) ||
@@ -225,22 +219,17 @@ export function registerMediaProtocol(): void {
         })
       }
 
-      // When no Range header is sent, stream initial 2MB chunk with status 206 so
-      // Chromium HTMLMediaElement immediately recognizes byte-range seeking support
-      const start = 0
-      const end = Math.min(fileSize - 1, MAX_CHUNK_SIZE - 1)
-      const chunkSize = end - start + 1
-      const nodeStream = fs.createReadStream(filePath, { start, end })
+      // When no Range header is sent, stream full file with standard HTTP 200 and Accept-Ranges: bytes
+      const nodeStream = fs.createReadStream(filePath)
       nodeStream.on('error', (err) => {
-        console.debug('[MediaProtocol] ReadStream initial chunk error ignored:', err?.message)
+        console.debug('[MediaProtocol] ReadStream full error ignored:', err?.message)
       })
       const stream = Readable.toWeb(nodeStream)
       return new Response(stream as BodyInit, {
-        status: 206,
+        status: 200,
         headers: {
           ...commonHeaders,
-          'Content-Length': String(chunkSize),
-          'Content-Range': `bytes ${start}-${end}/${fileSize}`
+          'Content-Length': String(fileSize)
         }
       })
     } catch (err) {

@@ -463,7 +463,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       isPlaying: true,
       isBuffering: isVirtual,
       currentTime: 0,
-      seekRequest: 0,
+      seekRequest: null,
       isAudioActive: true,
       activeInstanceId: tabId
     })
@@ -524,7 +524,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         isPlaying: true,
         isBuffering: isVirtual,
         currentTime: 0,
-        seekRequest: 0,
+        seekRequest: null,
         ...audioActiveUpdates
       })
     } else if (repeatMode === 'all') {
@@ -540,7 +540,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           isPlaying: true,
           isBuffering: isVirtual,
           currentTime: 0,
-          seekRequest: 0,
+          seekRequest: null,
           ...audioActiveUpdates
         })
       } else {
@@ -552,7 +552,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           isPlaying: true,
           isBuffering: isVirtual,
           currentTime: 0,
-          seekRequest: 0,
+          seekRequest: null,
           ...audioActiveUpdates
         })
       }
@@ -594,7 +594,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
                 isPlaying: true,
                 isBuffering: isVirtual,
                 currentTime: 0,
-                seekRequest: 0,
+                seekRequest: null,
                 playbackContext: {
                   type: 'radio',
                   title: `Autoplay · ${lastSong.title}`
@@ -637,7 +637,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         isPlaying: true,
         isBuffering: isVirtual,
         currentTime: 0,
-        seekRequest: 0,
+        seekRequest: null,
         isAudioActive: true,
         activeInstanceId: tabId
       })
@@ -653,7 +653,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           isPlaying: true,
           isBuffering: isVirtual,
           currentTime: 0,
-          seekRequest: 0,
+          seekRequest: null,
           isAudioActive: true,
           activeInstanceId: tabId
         })
@@ -796,7 +796,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           isPlaying: false,
           isBuffering: false,
           currentTime: 0,
-          seekRequest: 0
+          seekRequest: null
         }
       }
 
@@ -811,7 +811,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         const isVirtual = !nextSong?.filePath || nextSong.filePath.startsWith('virtual:')
         isBuffering = isVirtual
         currentTime = 0
-        seekRequest = 0
+        seekRequest = null
         rememberPlayedSong(nextSong)
       } else {
         const foundIdx = currentSong ? queue.findIndex((s) => s.id === currentSong.id) : -1
@@ -852,7 +852,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           isPlaying: false,
           isBuffering: false,
           currentTime: 0,
-          seekRequest: 0
+          seekRequest: null
         }
       }
 
@@ -867,7 +867,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         const isVirtual = !nextSong?.filePath || nextSong.filePath.startsWith('virtual:')
         isBuffering = isVirtual
         currentTime = 0
-        seekRequest = 0
+        seekRequest = null
         rememberPlayedSong(nextSong)
       } else if (index < state.currentSongIndex) {
         newIndex = state.currentSongIndex - 1
