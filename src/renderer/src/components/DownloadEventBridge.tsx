@@ -6,6 +6,7 @@ import { useConnectedDeviceStore } from '../stores/useConnectedDeviceStore'
 import { setNeedsInitialSync } from '../stores/listening/helpers'
 import { requestImmediateHostSyncPulse } from './ListeningPresenceBridge'
 import { findMatchingLibrarySong } from '../lib/songMatching'
+import { toMediaUrl } from '../lib/media'
 import type { Song } from '../pages/Library/Library'
 
 interface DownloadProgressEvent {
@@ -128,7 +129,24 @@ export default function DownloadEventBridge(): null {
               if (player.isBuffering) {
                 player.setIsBuffering(false)
               }
-              if (transfer?.autoPlay || player.isPlaying) {
+              const wasPlaying = player.isPlaying
+              if (wasPlaying && completedSong.filePath) {
+                const mediaUrl = toMediaUrl(completedSong.filePath)
+                if (mediaUrl) {
+                  const hotSwapUrl = `${mediaUrl}?t=${Date.now()}`
+                  window.dispatchEvent(
+                    new CustomEvent('felo:hot-swap-quality', {
+                      detail: {
+                        fullUrl: hotSwapUrl,
+                        targetPosition: player.currentTime || 0,
+                        songId: completedSong.id,
+                        wasPlaying: true
+                      }
+                    })
+                  )
+                }
+              }
+              if (transfer?.autoPlay || wasPlaying) {
                 player.claimAudioOwnership()
                 player.setIsPlaying(true)
               }
@@ -166,6 +184,28 @@ export default function DownloadEventBridge(): null {
             }
           }
         }
+
+        if (completedSong) {
+          const updatedSongDetail = {
+            song: completedSong,
+            songId: targetQueueId || completedSong.id,
+            replaced: Boolean(
+              (transfer as any)?.conflictMode === 'replace' ||
+                event.message?.toLowerCase().includes('replaced')
+            )
+          }
+          window.dispatchEvent(
+            new CustomEvent('felo:song-updated', {
+              detail: updatedSongDetail
+            })
+          )
+          window.dispatchEvent(
+            new CustomEvent('fanxmusic:song-updated', {
+              detail: updatedSongDetail
+            })
+          )
+        }
+
         // Refresh every library view after an import or replacement. Newly
         // downloaded tracks may not have an id in the progress payload yet.
         window.dispatchEvent(new CustomEvent('felo:library-updated'))

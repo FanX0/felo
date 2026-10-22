@@ -38,6 +38,7 @@ import { useListeningStore } from '../../hooks/useListeningStore'
 import { getSupabase } from '../../lib/supabase'
 import { toMediaUrl } from '../../lib/media'
 import { validateAvatarFile, extractImageFromClipboard } from '../../lib/avatar'
+import { readFromClipboard } from '../../lib/clipboard'
 import type {
   FriendRequest,
   ListeningRoom,
@@ -323,8 +324,7 @@ function ProfileEditor({
         }
       }
 
-      if (navigator.clipboard?.readText) {
-        const text = (await navigator.clipboard.readText()).trim()
+      const text = (await readFromClipboard()).trim()
         if (
           text &&
           (text.startsWith('http://') ||
@@ -340,7 +340,6 @@ function ProfileEditor({
           }
           return
         }
-      }
 
       setUploadError('No image found in clipboard. Copy an image or screenshot first, or press Ctrl+V.')
     } catch {

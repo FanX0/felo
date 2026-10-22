@@ -1704,9 +1704,15 @@ export class DownloadService {
       return
     }
 
-    const song = request.songId
+    let song = request.songId
       ? (getDb().prepare('SELECT * FROM songs WHERE id = ?').get(request.songId) as any)
       : null
+    if (!song && request.title) {
+      song = findExistingLibrarySong(request.title, request.artist)
+      if (song && !request.songId) {
+        request.songId = song.id
+      }
+    }
     const isPhysicalReplace =
       request.conflictMode === 'replace' &&
       song?.filePath &&
@@ -1965,8 +1971,8 @@ export class DownloadService {
               ...request,
               source: 'youtube',
               resultId: bestYtResult.id,
-              title: bestYtResult.title,
-              artist: bestYtResult.artist,
+              title: request.title || bestYtResult.title,
+              artist: request.artist || bestYtResult.artist,
               artworkUrl: bestYtResult.artworkUrl || request.artworkUrl
             }
             await this.executeYoutube(ytRequest, stagingDirectory, song, signal)
@@ -2072,8 +2078,8 @@ export class DownloadService {
               ...request,
               source: 'youtube',
               resultId: bestYtResult.id,
-              title: bestYtResult.title,
-              artist: bestYtResult.artist,
+              title: request.title || bestYtResult.title,
+              artist: request.artist || bestYtResult.artist,
               artworkUrl: bestYtResult.artworkUrl || request.artworkUrl
             }
             await this.executeYoutube(ytRequest, stagingDirectory, song, signal)

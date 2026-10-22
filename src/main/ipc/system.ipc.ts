@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, desktopCapturer, ipcMain, net, shell } from 'electron'
+import { app, BrowserWindow, dialog, desktopCapturer, ipcMain, net, shell, clipboard } from 'electron'
 import fs from 'fs'
 import { join, resolve } from 'path'
 import { DownloadService } from '../services/DownloadService'
@@ -219,5 +219,28 @@ export function registerSystemIpc(): void {
   ipcMain.handle('system:relaunchApp', () => {
     app.relaunch()
     app.exit(0)
+  })
+
+  // System: Clipboard IPC
+  ipcMain.handle('clipboard:writeText', (_, text: string) => {
+    try {
+      if (typeof text === 'string') {
+        clipboard.writeText(text)
+        return true
+      }
+      return false
+    } catch (err) {
+      console.error('[System] Failed to write clipboard:', err)
+      return false
+    }
+  })
+
+  ipcMain.handle('clipboard:readText', () => {
+    try {
+      return clipboard.readText()
+    } catch (err) {
+      console.error('[System] Failed to read clipboard:', err)
+      return ''
+    }
   })
 }

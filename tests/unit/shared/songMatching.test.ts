@@ -127,6 +127,19 @@ describe('Shared Core: songMatching', () => {
       expect(result.score).toBeLessThan(50)
       expect(result.isAcceptable).toBe(false)
     })
+
+    it('accurately scores featured artists and YouTube candidate titles with Artist - Title format', () => {
+      const target = { title: 'Raindance (feat. Tems)', artist: 'Dave', duration: 215 }
+      const cand = {
+        title: 'Dave - Raindance ft Tems (Official Video)',
+        artist: 'Dave',
+        duration: 215
+      }
+
+      const result = scoreProviderMatch(target, cand)
+      expect(result.score).toBeGreaterThanOrEqual(85)
+      expect(result.isAcceptable).toBe(true)
+    })
   })
 
   describe('parseSmartQuery', () => {

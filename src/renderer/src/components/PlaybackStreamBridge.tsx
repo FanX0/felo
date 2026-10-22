@@ -15,6 +15,7 @@ import { getLocalSlotPoolFile, getCachedAudioBlobUrl } from '../lib/jitAudioPipe
 import { useConnectedDeviceStore } from '../hooks/useConnectedDeviceStore'
 import { isElectron } from '../lib/appConfig'
 import { isYouTubeSong } from '../lib/youtubeService'
+import { promoteDownloadTaskToUrgent } from '../lib/backgroundDownloader'
 
 export default function PlaybackStreamBridge(): null {
   const playbackTarget = useConnectedDeviceStore((s) => s.playbackTarget)
@@ -196,15 +197,29 @@ export default function PlaybackStreamBridge(): null {
         })
 
         if (existingTransfer) {
-          // Promote transfer to autoPlay: true if it was queued as prefetch
-          if (!existingTransfer.autoPlay) {
-            useDownloadStore.getState().updateTransfer(existingTransfer.id, {
-              autoPlay: true,
-              message: `Streaming "${currentSong.title}"...`
-            })
+          if (existingTransfer.status === 'downloading') {
+            if (!existingTransfer.autoPlay) {
+              useDownloadStore.getState().updateTransfer(existingTransfer.id, {
+                autoPlay: true,
+                message: `Streaming "${currentSong.title}"...`
+              })
+            }
+            activeTransferIdRef.current = existingTransfer.id
+            activeInFlightRef.current = false
+            return
           }
-          activeInFlightRef.current = false
-          return
+
+          if (existingTransfer.status === 'queued') {
+            // Attempt promoting background queued task to urgent immediate download
+            const promoted = promoteDownloadTaskToUrgent(existingTransfer.id, currentSong.artist)
+            if (promoted) {
+              activeTransferIdRef.current = existingTransfer.id
+              activeInFlightRef.current = false
+              return
+            }
+            // If not found in queue (stale transfer), remove it and proceed to fresh acquire
+            useDownloadStore.getState().removeTransfer(existingTransfer.id)
+          }
         }
 
         // 3. Load user accounts and source priority
@@ -261,10 +276,13 @@ export default function PlaybackStreamBridge(): null {
                   _rejectReason: match.rejectReason
                 }
               })
-              .filter((item: any) => item._isAcceptable && item._score >= 60)
+              .filter((item: any) => item._isAcceptable)
               .sort((a: any, b: any) => b._score - a._score)
 
-            const topResult = scored[0]
+            const topResult =
+              scored.find((item: any) => item._score >= 60) ||
+              scored.find((item: any) => item._score >= 50)
+
             if (topResult) {
               chosenSource = source
               chosenResult = topResult

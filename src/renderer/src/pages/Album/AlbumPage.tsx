@@ -195,7 +195,33 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
     }
 
     void loadLibrarySongs()
+    const handleSongUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent<{ song: Song; songId?: string }>
+      const updated = customEvent.detail?.song
+      if (!updated) return
+      const targetId = customEvent.detail?.songId || updated.id
+      const isMatch = (s: Song) =>
+        s.id === targetId ||
+        s.id === updated.id ||
+        (Boolean(s.title && updated.title) &&
+          s.title.trim().toLowerCase() === updated.title.trim().toLowerCase() &&
+          (!s.artist || !updated.artist || s.artist.trim().toLowerCase() === updated.artist.trim().toLowerCase()))
+
+      setLibrarySongs((prev) => {
+        const idx = prev.findIndex(isMatch)
+        if (idx >= 0) {
+          const next = [...prev]
+          next[idx] = { ...next[idx], ...updated }
+          return next
+        }
+        return [updated, ...prev]
+      })
+    }
+
     window.addEventListener('felo:library-updated', loadLibrarySongs)
+    window.addEventListener('felo:song-updated', handleSongUpdated)
+    window.addEventListener('fanxmusic:song-updated', handleSongUpdated)
+
     const unsub = useConnectedDeviceStore.subscribe((state) => {
       if (!window.api?.getSongs && state.pcLibrarySongs.length > 0) {
         setLibrarySongs(state.pcLibrarySongs)
@@ -203,6 +229,8 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
     })
     return () => {
       window.removeEventListener('felo:library-updated', loadLibrarySongs)
+      window.removeEventListener('felo:song-updated', handleSongUpdated)
+      window.removeEventListener('fanxmusic:song-updated', handleSongUpdated)
       unsub()
     }
   }, [])
@@ -233,7 +261,15 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
         const local =
           exactMatches.get(`${normalizeTrack(t.title)}::${normalizeTrack(t.artist || '')}`) ||
           titleMatches.get(normalizeTrack(t.title))
-        if (local && (!t.localSong || t.localSong.id !== local.id)) {
+        const isDifferent =
+          !t.localSong ||
+          t.localSong.id !== local?.id ||
+          t.localSong.filePath !== local?.filePath ||
+          t.localSong.size !== local?.size ||
+          t.localSong.bitDepth !== local?.bitDepth ||
+          t.localSong.sampleRate !== local?.sampleRate ||
+          t.localSong.codec !== local?.codec
+        if (local && isDifferent) {
           hasChanges = true
           return {
             ...t,
@@ -469,6 +505,10 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
     if (isCurrentPlaying) {
       togglePlay()
       return
+    }
+
+    if (!track.localSong) {
+      usePlayerStore.getState().setIsBuffering(true)
     }
 
     // Same-context stability: if this album is already playing, jump to the track in queue
@@ -767,19 +807,11 @@ export default function AlbumPage({ onOpenDownloadPanel }: AlbumPageProps) {
                 role="button"
                 tabIndex={0}
                 onClick={() => {
-                  if (!track.localSong && AppCapabilities.downloads) {
-                    handleDownloadTrack(track)
-                    return
-                  }
                   handlePlayTrack(track, index)
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
-                    if (!track.localSong && AppCapabilities.downloads) {
-                      handleDownloadTrack(track)
-                      return
-                    }
                     handlePlayTrack(track, index)
                   }
                 }}

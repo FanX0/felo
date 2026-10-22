@@ -23,6 +23,7 @@ import type { ListeningRoom, SpeakerRole } from '../../online/types'
 import type { Song } from '../../types'
 import type { ListenTogetherPageProps, RoomMemberInfo, LiveFriendSession, QueueTab } from './types'
 import { isYouTubeSong } from '../../lib/youtubeService'
+import { copyToClipboard } from '../../lib/clipboard'
 import { getSongKey, sanitizeCodeInput } from './utils'
 import {
   GuestRoomView,
@@ -252,27 +253,17 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   const handleSelectYouTube = async (videoId: string, title?: string, channel?: string) => {
     setBusy(true)
     try {
-      const ytSong: Song = {
-        id: `yt-${videoId}`,
-        title: title || 'YouTube Track',
-        artist: channel || 'YouTube',
-        album: 'YouTube Stream',
-        duration: 0,
-        artworkPath: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-        artworkUrl: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-        filePath: `https://www.youtube.com/watch?v=${videoId}`,
-        audioUrl: `https://www.youtube.com/watch?v=${videoId}`,
-        isOnline: true,
-        isYouTube: true,
-        videoId: videoId
-      } as any
-
-      const updatedQueue = [...queue, ytSong]
-      usePlayerStore.getState().setQueue(updatedQueue, updatedQueue.length - 1)
-      usePlayerStore.getState().setIsPlaying(true)
-      usePlayerStore.setState({ isBuffering: false, isAudioActive: true })
+      const addYouTubeTrackToQueue = useListeningStore.getState().addYouTubeTrackToQueue
+      await addYouTubeTrackToQueue(
+        videoId,
+        title || 'YouTube Track',
+        channel || 'YouTube',
+        undefined,
+        false,
+        true // playNow
+      )
       await ensureHostRoom(true, false)
-      setMessage(`Playing YouTube: "${ytSong.title}"`)
+      setMessage(`Playing YouTube: "${title || 'YouTube Track'}"`)
       setTimeout(() => setMessage(''), 3000)
     } catch (err: any) {
       console.error('[handleSelectYouTube] Failed:', err)
@@ -1082,12 +1073,18 @@ function ListenTogetherWorkspace({ onOpenDownloadPanel }: ListenTogetherPageProp
   }
 
   const handleCopyCode = async (code: string) => {
-    try {
-      await navigator.clipboard.writeText(code)
+    if (!code) return
+    const success = await copyToClipboard(code)
+    if (success) {
       setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // fallback
+      setMessage(`Room code ${code} copied to clipboard!`)
+      setTimeout(() => {
+        setCopied(false)
+        setMessage('')
+      }, 2500)
+    } else {
+      setMessage('Failed to copy room code.')
+      setTimeout(() => setMessage(''), 3000)
     }
   }
 

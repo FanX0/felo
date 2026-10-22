@@ -17,6 +17,7 @@ import {
   Music2,
   ListMusic,
   RotateCcw,
+  Search,
   Trash2,
   X
 } from 'lucide-react'
@@ -777,6 +778,29 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
                                 {progress}%
                               </span>
                             </div>
+                            {transfer.status === 'failed' && (
+                              <div className="mt-2 flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onOpenDownloadPanel?.({
+                                      id: (transfer.song as any)?.id || '',
+                                      title: transfer.title,
+                                      artist: transfer.artist,
+                                      album: (transfer.song as any)?.album || '',
+                                      duration: (transfer.song as any)?.duration || 0,
+                                      artworkPath: (transfer.song as any)?.artworkPath,
+                                      isOnline: true,
+                                      autoDownload: false
+                                    })
+                                  }}
+                                  className="inline-flex items-center gap-1.5 rounded-full bg-primary-amber/15 hover:bg-primary-amber/25 px-2.5 py-1 text-[11px] font-semibold text-primary-amber border border-primary-amber/30 transition-all hover:scale-105 cursor-pointer shadow-sm"
+                                >
+                                  <Search className="h-3 w-3 stroke-[2.5]" />
+                                  <span>Choose Source Manually</span>
+                                </button>
+                              </div>
+                            )}
                             <div className="mt-2 h-1 overflow-hidden rounded-full bg-black/30">
                               <div
                                 className="h-full bg-white transition-[width]"
@@ -796,14 +820,35 @@ export default function Sidebar({ isOpen = true, onToggle, onOpenDownloadPanel }
                               </button>
                             )}
                             {transfer.status === 'failed' && (
-                              <button
-                                type="button"
-                                onClick={() => handleRetryTransfer(transfer)}
-                                title="Retry download"
-                                className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white transition-all hover:scale-105 hover:bg-white/20"
-                              >
-                                <RotateCcw className="h-3 w-3" />
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRetryTransfer(transfer)}
+                                  title="Retry automatic search"
+                                  className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white transition-all hover:scale-105 hover:bg-white/20"
+                                >
+                                  <RotateCcw className="h-3 w-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onOpenDownloadPanel?.({
+                                      id: (transfer.song as any)?.id || '',
+                                      title: transfer.title,
+                                      artist: transfer.artist,
+                                      album: (transfer.song as any)?.album || '',
+                                      duration: (transfer.song as any)?.duration || 0,
+                                      artworkPath: (transfer.song as any)?.artworkPath,
+                                      isOnline: true,
+                                      autoDownload: false
+                                    })
+                                  }}
+                                  title="Choose source manually..."
+                                  className="flex h-7 w-7 items-center justify-center rounded-full bg-primary-amber/20 text-primary-amber transition-all hover:scale-105 hover:bg-primary-amber/30"
+                                >
+                                  <Search className="h-3.5 w-3.5 stroke-[2.5]" />
+                                </button>
+                              </>
                             )}
                             <button
                               type="button"

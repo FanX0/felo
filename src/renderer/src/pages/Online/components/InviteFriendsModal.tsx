@@ -11,6 +11,7 @@ import {
   MessageSquare
 } from 'lucide-react'
 import type { RoomMemberInfo } from '../types'
+import { copyToClipboard } from '../../../lib/clipboard'
 import Avatar from '../../../components/Common/Avatar'
 
 interface FriendItem {
@@ -56,12 +57,11 @@ export default function InviteFriendsModal({
   if (!isOpen || !roomCode) return null
 
   const handleCopyCode = async (code: string) => {
-    try {
-      await navigator.clipboard.writeText(code)
+    if (!code) return
+    const success = await copyToClipboard(code)
+    if (success) {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // ignore
     }
   }
 
@@ -254,10 +254,12 @@ export default function InviteFriendsModal({
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  void navigator.clipboard.writeText(shareUrl)
-                  setCopiedLink(true)
-                  setTimeout(() => setCopiedLink(false), 2500)
+                onClick={async () => {
+                  const success = await copyToClipboard(shareUrl)
+                  if (success) {
+                    setCopiedLink(true)
+                    setTimeout(() => setCopiedLink(false), 2500)
+                  }
                 }}
                 className="flex h-10 min-h-[40px] flex-1 items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-elevated text-xs font-bold text-text hover:bg-hover transition-all cursor-pointer"
               >
@@ -268,11 +270,13 @@ export default function InviteFriendsModal({
 
             <button
               type="button"
-              onClick={() => {
+              onClick={async () => {
                 const discordMsg = `**Listen together with me on Felo!**\n**Room Code:** \`${roomCode}\`\n**Web Join:** ${shareUrl}`
-                void navigator.clipboard.writeText(discordMsg)
-                setCopiedDiscord(true)
-                setTimeout(() => setCopiedDiscord(false), 2500)
+                const success = await copyToClipboard(discordMsg)
+                if (success) {
+                  setCopiedDiscord(true)
+                  setTimeout(() => setCopiedDiscord(false), 2500)
+                }
               }}
               className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-xl border border-border/80 bg-surface-elevated/70 text-xs font-bold text-text hover:bg-hover transition-all cursor-pointer"
             >

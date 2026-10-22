@@ -299,6 +299,7 @@ export function normalizeForMatching(value?: string): string {
   const cleaned = stripJunkTags(value)
   return cleaned
     .toLowerCase()
+    .replace(/\b(?:ft|featuring)\b/gi, 'feat')
     .replace(/\b(?:unknown\s+artist|various\s+artists|unknown)\b/gi, '')
     .replace(/\s*\(\d+\)\s*$/g, '')
     .replace(TRACK_NUM_PREFIX_REGEX, '')
@@ -681,11 +682,22 @@ export function scoreProviderMatch(
   let candTitle = candidate.title
   let candArtist = cleanProviderArtist(candidate.artist || '')
 
-  if (candTitle.includes(' - ') && (!candArtist || candArtist.startsWith('Peer:'))) {
+  if (candTitle.includes(' - ')) {
     const sub = candTitle.split(' - ')
     if (sub.length === 2) {
-      candArtist = cleanProviderArtist(sub[0].trim())
-      candTitle = sub[1].trim()
+      const leftPart = sub[0].trim()
+      const rightPart = sub[1].trim()
+      const normLeft = normalizeForMatching(cleanProviderArtist(leftPart))
+      const leftMatchesArtist =
+        normTargetArtist &&
+        (normLeft === normTargetArtist ||
+          normLeft.includes(normTargetArtist) ||
+          normTargetArtist.includes(normLeft))
+
+      if (leftMatchesArtist || !candArtist || candArtist.startsWith('Peer:')) {
+        candArtist = cleanProviderArtist(leftPart)
+        candTitle = rightPart
+      }
     }
   }
 
@@ -874,7 +886,7 @@ export function scoreProviderMatch(
   return {
     score,
     confidence,
-    isAcceptable: score >= 60 && !rejectReason,
+    isAcceptable: score >= 50 && !rejectReason,
     durationDelta,
     isStudioMatch,
     rejectReason

@@ -87,7 +87,7 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
   const artworkUrl = targetSong?.artworkUrl || toMediaUrl(panelSong?.artworkPath)
   const isLibraryTrack = Boolean(panelSong?.filePath && !targetSong?.isOnline)
   const [existingLibrarySong, setExistingLibrarySong] = useState<any | null>(null)
-  const replaceTargetSong = isLibraryTrack ? panelSong : existingLibrarySong
+  const replaceTargetSong = existingLibrarySong || (isLibraryTrack ? panelSong : null)
   const hasLibraryCopy = Boolean(replaceTargetSong?.filePath)
   const [query, setQuery] = useState('')
   const [activeSource, setActiveSource] = useState<DownloadSourceId>('qobuz')
@@ -172,6 +172,32 @@ export default function DownloadPanel({ onClose, targetSong }: DownloadPanelProp
       cancelled = true
     }
   }, [panelSong?.id, panelSong?.title, panelSong?.artist, isLibraryTrack])
+
+  useEffect(() => {
+    const handleSongUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent<{ song: any; songId?: string }>
+      const updated = customEvent.detail?.song
+      if (!updated || !panelSong) return
+      const targetId = customEvent.detail?.songId || updated.id
+      const matches =
+        panelSong.id === targetId ||
+        panelSong.id === updated.id ||
+        (Boolean(panelSong.title && updated.title) &&
+          panelSong.title.trim().toLowerCase() === updated.title.trim().toLowerCase() &&
+          (!panelSong.artist ||
+            !updated.artist ||
+            panelSong.artist.trim().toLowerCase() === updated.artist.trim().toLowerCase()))
+      if (matches) {
+        setExistingLibrarySong(updated)
+      }
+    }
+    window.addEventListener('felo:song-updated', handleSongUpdated)
+    window.addEventListener('fanxmusic:song-updated', handleSongUpdated)
+    return () => {
+      window.removeEventListener('felo:song-updated', handleSongUpdated)
+      window.removeEventListener('fanxmusic:song-updated', handleSongUpdated)
+    }
+  }, [panelSong?.id, panelSong?.title, panelSong?.artist])
 
   useEffect(() => {
     const loadSettings = async () => {

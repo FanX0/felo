@@ -17,6 +17,7 @@ import {
   CheckCircle2
 } from 'lucide-react'
 import { Toggle } from '../components/Toggle'
+import { copyToClipboard } from '../../../lib/clipboard'
 import type { ExternalPlayerClientConfigs, McpTab } from '../types'
 
 type CapabilityTab = 'environment' | 'privacy'
@@ -274,34 +275,37 @@ export function McpSection() {
   }
 
   const handleCopyApiKey = async () => {
-    try {
-      await navigator.clipboard.writeText(externalPlayerApiKey)
+    if (!externalPlayerApiKey) return
+    const success = await copyToClipboard(externalPlayerApiKey)
+    if (success) {
       setCopiedKey(true)
       setTimeout(() => setCopiedKey(false), 2000)
-    } catch {
-      // fallback
     }
   }
 
   const handleCopyClientConfig = async (format: McpTab) => {
-    try {
-      let text = ''
-      if (format === 'claude') text = externalPlayerClientConfigs?.claudeDesktop || ''
-      else if (format === 'hermes') text = externalPlayerClientConfigs?.hermes || ''
-      else text = externalPlayerClientConfigs?.cursor || ''
+    let text = ''
+    if (format === 'claude') text = externalPlayerClientConfigs?.claudeDesktop || ''
+    else if (format === 'hermes') text = externalPlayerClientConfigs?.hermes || ''
+    else text = externalPlayerClientConfigs?.cursor || ''
 
-      if (!text && window.api?.copyHermesConfig) {
+    if (!text && window.api?.copyHermesConfig) {
+      try {
         text = await window.api.copyHermesConfig()
+      } catch {
+        // ignore
       }
-      if (text) {
-        await navigator.clipboard.writeText(text)
+    }
+    if (text) {
+      const success = await copyToClipboard(text)
+      if (success) {
         setCopiedConfig(true)
         setTimeout(() => setCopiedConfig(false), 2000)
         const name = format === 'claude' ? 'Claude Desktop' : format === 'hermes' ? 'Hermes' : 'Cursor'
         setExternalPlayerMessage(`Configuration for ${name} copied to clipboard!`)
+      } else {
+        setExternalPlayerMessage('Failed to copy configuration.')
       }
-    } catch {
-      setExternalPlayerMessage('Failed to copy configuration.')
     }
   }
 

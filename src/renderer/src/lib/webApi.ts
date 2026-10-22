@@ -1795,6 +1795,27 @@ async function transformBrowserLyrics(
 }
 
 const webApi: Window['api'] = {
+  writeClipboard: async (text: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+        return true
+      }
+      return false
+    } catch {
+      return false
+    }
+  },
+  readClipboard: async () => {
+    try {
+      if (navigator.clipboard?.readText) {
+        return await navigator.clipboard.readText()
+      }
+      return ''
+    } catch {
+      return ''
+    }
+  },
   setExternalPlayerEnabled: async () => desktopOnly(),
   getExternalPlayerSettings: async () => ({ enabled: false, running: false, port: 0, apiKey: '' }),
   getExternalPlayerApiKey: async () => ({ apiKey: '' }),

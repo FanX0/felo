@@ -247,29 +247,70 @@ export default function YouTubePlayerBridge(): ReactElement | null {
     )
   }, [isCurrentYouTube, currentSong])
 
+  // Teardown stale player on portal target change (e.g. moving into #youtube-stage-dock)
+  useEffect(() => {
+    if (playerRef.current) {
+      try {
+        playerRef.current.destroy?.()
+      } catch {}
+      playerRef.current = null
+      setIsPlayerReady(false)
+      activeVideoIdRef.current = null
+    }
+  }, [portalTarget])
+
+  // Fallback watchdog: If YouTube API player doesn't mount an active iframe within 1.5s,
+  // switch to direct iframe embed so user never gets stuck on an empty black screen
+  useEffect(() => {
+    if (!isCurrentYouTube || !currentVideoId || isFallbackIframe) return
+
+    const timer = setTimeout(() => {
+      const hasIframe = Boolean(containerRef.current?.querySelector('iframe'))
+      if (!isPlayerReady || !hasIframe) {
+        console.warn('[YouTubePlayerBridge] IFrame API initialization timed out, activating direct embed fallback')
+        setIsFallbackIframe(true)
+      }
+    }, 1500)
+
+    return () => clearTimeout(timer)
+  }, [isCurrentYouTube, currentVideoId, isPlayerReady, isFallbackIframe, portalTarget])
+
   // 1. Initialize YouTube Player Iframe API
   useEffect(() => {
     let unmounted = false
     void loadYouTubeIframeApi().then(() => {
-      if (unmounted || !containerRef.current || playerRef.current) return
+      if (unmounted || !containerRef.current) return
+
+      // If an active iframe already exists and player is ready, do not duplicate
+      if (playerRef.current && containerRef.current.querySelector('iframe')) {
+        return
+      }
+
+      // Stale player cleanup if container was re-created by portal
+      if (playerRef.current) {
+        try {
+          playerRef.current.destroy?.()
+        } catch {}
+        playerRef.current = null
+        setIsPlayerReady(false)
+        activeVideoIdRef.current = null
+      }
 
       try {
-        const playerId = 'felo-youtube-iframe-player'
-        let playerContainer = document.getElementById(playerId)
-        if (!playerContainer) {
-          playerContainer = document.createElement('div')
-          playerContainer.id = playerId
-          containerRef.current.appendChild(playerContainer)
-        }
+        const playerId = `felo-yt-${Math.random().toString(36).slice(2, 8)}`
+        const playerContainer = document.createElement('div')
+        playerContainer.id = playerId
+        containerRef.current.innerHTML = ''
+        containerRef.current.appendChild(playerContainer)
 
         const state = usePlayerStore.getState()
         const initialSong = state.queue[state.currentSongIndex]
-        const initialVid = isYouTubeSong(initialSong)
+        const initialVid = currentVideoId || (isYouTubeSong(initialSong)
           ? (initialSong as any)?.videoId ||
             extractYouTubeVideoId(initialSong?.id?.replace(/^yt-/, '')) ||
             extractYouTubeVideoId(initialSong?.audioUrl) ||
             extractYouTubeVideoId(initialSong?.filePath)
-          : null
+          : null)
 
         const playerVars: Record<string, string | number> = {
           autoplay: 1,
@@ -432,13 +473,14 @@ export default function YouTubePlayerBridge(): ReactElement | null {
         playerRef.current = new window.YT.Player(playerId, playerOptions)
       } catch (err) {
         console.warn('[YouTubePlayerBridge] Initialization error:', err)
+        setIsFallbackIframe(true)
       }
     })
 
     return () => {
       unmounted = true
     }
-  }, [playNext, isListener])
+  }, [playNext, isListener, portalTarget, currentVideoId, isCurrentYouTube])
 
   // 2. React to Track Changes
   useEffect(() => {
@@ -1019,10 +1061,11 @@ export default function YouTubePlayerBridge(): ReactElement | null {
           {/* Underlying YouTube Iframe Target or Direct Embed Fallback */}
           {isFallbackIframe && currentVideoId ? (
             <iframe
-              src={`https://www.youtube.com/embed/${currentVideoId}?autoplay=1&playsinline=1&modestbranding=1&rel=0`}
+              key={currentVideoId}
+              src={`https://www.youtube.com/embed/${currentVideoId}?autoplay=1&playsinline=1&modestbranding=1&rel=0&enablejsapi=1`}
               title="YouTube Video Stream"
               className="w-full h-full border-0 absolute inset-0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               allowFullScreen
             />
           ) : (

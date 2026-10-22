@@ -57,6 +57,39 @@ export function cancelQueuedDownload(transferId: string): void {
   }
 }
 
+/**
+ * Promotes a queued background task to urgent status so it executes immediately
+ * in parallel using DownloadService's dedicated autoPlay slot.
+ */
+export function promoteDownloadTaskToUrgent(
+  identifier: string,
+  artist?: string
+): boolean {
+  const index = downloadQueue.findIndex(
+    (t) =>
+      t.transferId === identifier ||
+      (t.song.title.toLowerCase() === identifier.toLowerCase() &&
+        (!artist || !t.song.artist || t.song.artist.toLowerCase() === artist.toLowerCase()))
+  )
+
+  if (index === -1) {
+    return false
+  }
+
+  // Splice task out of sequential background queue
+  const [task] = downloadQueue.splice(index, 1)
+  task.options.autoPlay = true
+
+  useDownloadStore.getState().updateTransfer(task.transferId, {
+    autoPlay: true,
+    message: `Streaming "${task.song.title}"...`
+  })
+
+  // Execute immediately in parallel (DownloadService provides an extra slot for autoPlay)
+  void executeSingleTrackDownload(task).then((res) => task.resolve?.(res))
+  return true
+}
+
 export function cancelBatchDownloads(transferIds: string[]): void {
   const set = new Set(transferIds)
   for (let i = downloadQueue.length - 1; i >= 0; i--) {
@@ -200,12 +233,16 @@ async function executeSingleTrackDownload(
               _rejectReason: match.rejectReason
             }
           })
-          .filter((item: any) => item._isAcceptable && item._score >= 60)
+          .filter((item: any) => item._isAcceptable)
           .sort((a: any, b: any) => b._score - a._score)
 
-        if (scored[0]) {
+        const bestCandidate =
+          scored.find((item: any) => item._score >= 60) ||
+          scored.find((item: any) => item._score >= 50)
+
+        if (bestCandidate) {
           chosenSource = source
-          chosenResult = scored[0]
+          chosenResult = bestCandidate
           break
         }
       } catch (searchErr) {

@@ -20,6 +20,7 @@ import { SettingsSection } from '../components/SettingsSection'
 import DiscordIcon from '../../../components/Common/DiscordIcon'
 import musicPresencePreview from '../../../assets/music-presence-preview.png'
 import { FELO_DISCORD_BOT_INVITE_URL, DEFAULT_SUPPORT_CONFIG } from '../../../lib/supportConfig'
+import { copyToClipboard } from '../../../lib/clipboard'
 import type { DiscordBinding, PresenceStatus } from '../types'
 
 export function DiscordSection() {
@@ -650,10 +651,12 @@ export function DiscordSection() {
                 <>
                   <button
                     type="button"
-                    onClick={() => {
-                      void navigator.clipboard.writeText(`/connect ${hostRoom.code}`)
-                      setCopiedConnectCmd(true)
-                      setTimeout(() => setCopiedConnectCmd(false), 2000)
+                    onClick={async () => {
+                      const success = await copyToClipboard(`/connect ${hostRoom.code}`)
+                      if (success) {
+                        setCopiedConnectCmd(true)
+                        setTimeout(() => setCopiedConnectCmd(false), 2000)
+                      }
                     }}
                     className="px-3.5 py-1.5 rounded-lg bg-[#5865F2]/15 border border-[#5865F2]/30 hover:bg-[#5865F2]/25 text-white text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
                   >
@@ -662,10 +665,12 @@ export function DiscordSection() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      void navigator.clipboard.writeText(hostRoom.code)
-                      setCopiedRoomCode(true)
-                      setTimeout(() => setCopiedRoomCode(false), 2000)
+                    onClick={async () => {
+                      const success = await copyToClipboard(hostRoom.code)
+                      if (success) {
+                        setCopiedRoomCode(true)
+                        setTimeout(() => setCopiedRoomCode(false), 2000)
+                      }
                     }}
                     className="px-3 py-1.5 rounded-lg bg-surface-elevated hover:bg-hover border border-border text-text text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
                   >

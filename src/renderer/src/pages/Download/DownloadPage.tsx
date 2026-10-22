@@ -21,6 +21,7 @@ import {
 import QRCode from 'qrcode'
 import { usePwaInstallPrompt } from '../../hooks/usePwaInstallPrompt'
 import { isNativeApp } from '../../lib/appConfig'
+import { copyToClipboard } from '../../lib/clipboard'
 import {
   FELO_APP_SETUP_URL,
   FELO_GITHUB_RELEASES_URL,
@@ -102,12 +103,10 @@ export default function DownloadPage() {
           ? `${window.location.origin}/#/download`
           : 'https://felo.feloapp.workers.dev/#/download'
 
-    try {
-      await navigator.clipboard.writeText(url)
+    const success = await copyToClipboard(url)
+    if (success) {
       setCopiedType(type)
       setTimeout(() => setCopiedType(null), 2500)
-    } catch {
-      // fallback
     }
   }, [])
 

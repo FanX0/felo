@@ -614,6 +614,28 @@ export default function AudioEngine() {
         const audio = getActiveAudio()
         if (!audio) return
 
+        if (song && isYouTubeSong(song)) {
+          currentSourceRef.current = null
+          if (audio && audio.src) {
+            try {
+              audio.pause()
+              audio.removeAttribute('src')
+              audio.load()
+            } catch {}
+          }
+          const otherAudio = getInactiveAudio()
+          if (otherAudio && otherAudio.src) {
+            try {
+              otherAudio.pause()
+              otherAudio.removeAttribute('src')
+              otherAudio.load()
+            } catch {}
+          }
+          audioDspEngine.stopBuffer()
+          usePlayerStore.setState({ isBuffering: false, isAudioActive: true })
+          return
+        }
+
         if (isDeviceStreamActive) {
           if (audio.src) {
             audio.pause()

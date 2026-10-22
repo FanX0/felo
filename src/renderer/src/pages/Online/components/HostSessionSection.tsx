@@ -28,6 +28,7 @@ import type { ListeningRoom } from '../../../online/types'
 import type { RoomMemberInfo, QueueTab } from '../types'
 import { formatBytes, formatTime } from '../utils'
 import { cn } from '../../../lib/utils'
+import { copyToClipboard } from '../../../lib/clipboard'
 import { isYouTubeSong } from '../../../lib/youtubeService'
 import YouTubeIcon from '../../../components/Common/YouTubeIcon'
 import YouTubeQueueTab from '../../../components/Online/YouTubeQueueTab'
@@ -118,6 +119,21 @@ export default function HostSessionSection({
   setMessage
 }: HostSessionSectionProps): ReactElement {
   const [isYouTubeFullscreen, setIsYouTubeFullscreen] = useState(false)
+  const [localCopied, setLocalCopied] = useState(false)
+  const isCopied = copied || localCopied
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const success = await copyToClipboard(hostRoom.code)
+    if (success) {
+      setLocalCopied(true)
+      setTimeout(() => setLocalCopied(false), 2000)
+    }
+    if (handleCopyCode) {
+      handleCopyCode(hostRoom.code)
+    }
+  }
 
   useEffect(() => {
     const handleStatus = (e: Event) => {
@@ -152,7 +168,7 @@ export default function HostSessionSection({
             {/* Click-to-Copy Room Code Pill */}
             <button
               type="button"
-              onClick={() => handleCopyCode(hostRoom.code)}
+              onClick={handleCopy}
               className="group flex items-center gap-2 rounded-xl bg-surface border border-white/10 hover:border-white/25 px-3 py-1.5 transition-all cursor-pointer shadow-sm active:scale-95"
               title="Click to copy Room Code"
             >
@@ -161,7 +177,7 @@ export default function HostSessionSection({
                 {hostRoom.code}
               </span>
               <div className="pl-1 border-l border-white/10 text-text-muted group-hover:text-white">
-                {copied ? (
+                {isCopied ? (
                   <span className="flex items-center gap-1 text-[11px] font-bold text-primary">
                     <Check className="h-3.5 w-3.5" />
                     <span>Copied</span>

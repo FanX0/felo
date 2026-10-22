@@ -19,6 +19,7 @@ import {
   searchYouTubeVideos,
   type YouTubeSearchResultItem
 } from '../../lib/youtubeService'
+import { readFromClipboard } from '../../lib/clipboard'
 
 interface SelectMediaModalProps {
   isOpen: boolean
@@ -229,7 +230,7 @@ export default function SelectMediaModal({
 
   const handlePasteClipboard = async () => {
     try {
-      const text = await navigator.clipboard.readText()
+      const text = await readFromClipboard()
       if (text) {
         const trimmed = text.trim()
         setYoutubeInput(trimmed)

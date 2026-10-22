@@ -289,6 +289,8 @@ declare global {
       openExternal: (url: string) => Promise<void>
       onAuthCallback: (listener: (url: string) => void) => () => void
       revealInExplorer: (filePath: string) => Promise<void>
+      writeClipboard: (text: string) => Promise<boolean>
+      readClipboard: () => Promise<string>
 
       // External Player & Remote Control
       setExternalPlayerEnabled: (enabled: boolean) => Promise<{ enabled: boolean; running: boolean }>

@@ -58,15 +58,11 @@ export function PlaylistTrackRow({
         }`}
       >
         <span className="group-hover:hidden">{index + 1}</span>
-        {isDownloaded ? (
-          <Play
-            className={`hidden h-4 w-4 fill-current group-hover:block ${
-              isPlayingSong ? 'text-primary' : 'text-white'
-            }`}
-          />
-        ) : (
-          <Download className="hidden h-4 w-4 text-white group-hover:block" />
-        )}
+        <Play
+          className={`hidden h-4 w-4 fill-current group-hover:block ${
+            isPlayingSong ? 'text-primary' : 'text-white'
+          }`}
+        />
       </button>
 
       <div className="flex min-w-0 items-center gap-3">

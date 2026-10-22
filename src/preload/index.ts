@@ -263,6 +263,8 @@ const api = {
   },
   revealInExplorer: (filePath: string): Promise<void> =>
     ipcRenderer.invoke('system:revealFile', filePath),
+  writeClipboard: (text: string): Promise<boolean> => ipcRenderer.invoke('clipboard:writeText', text),
+  readClipboard: (): Promise<string> => ipcRenderer.invoke('clipboard:readText'),
 
   // Desktop Audio Loopback
   getDesktopSources: (): Promise<Array<{ id: string; name: string; thumbnail: string | null; appIcon: string | null }>> =>

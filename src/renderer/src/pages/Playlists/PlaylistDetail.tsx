@@ -21,7 +21,6 @@ import { remoteLibraryService } from '../../services/RemoteLibraryService'
 import { useConnectedDeviceStore } from '../../hooks/useConnectedDeviceStore'
 import { findMatchingLibrarySong } from '../../lib/songMatching'
 import type { DownloadTarget } from '../../components/DownloadPanel/DownloadPanel'
-import { AppCapabilities } from '../../lib/appConfig'
 
 import { PlaylistDetailHeader } from './components/PlaylistDetailHeader'
 import { PlaylistTrackRow } from './components/PlaylistTrackRow'
@@ -165,14 +164,61 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
       return { nextPlaylist, nextSongs: (nextSongs || []) as Song[] }
     }
     const handleUpdate = () => void refreshPlaylistAndLibrary().catch(console.error)
+    const handleSongUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent<{ song: Song; songId?: string }>
+      const updated = customEvent.detail?.song
+      if (!updated) return
+      const targetId = customEvent.detail?.songId || updated.id
+      const isMatch = (s: Song) =>
+        s.id === targetId ||
+        s.id === updated.id ||
+        (Boolean(s.title && updated.title) &&
+          s.title.trim().toLowerCase() === updated.title.trim().toLowerCase() &&
+          (!s.artist || !updated.artist || s.artist.trim().toLowerCase() === updated.artist.trim().toLowerCase()))
+
+      setLibrarySongs((prev) => {
+        const idx = prev.findIndex(isMatch)
+        if (idx >= 0) {
+          const next = [...prev]
+          next[idx] = { ...next[idx], ...updated }
+          return next
+        }
+        return [updated, ...prev]
+      })
+
+      setPlaylist((prev) => {
+        if (!prev || !prev.songs) return prev
+        const hasMatch = prev.songs.some(isMatch)
+        if (!hasMatch) return prev
+        return {
+          ...prev,
+          songs: prev.songs.map((s) =>
+            isMatch(s)
+              ? {
+                  ...s,
+                  ...updated,
+                  id: updated.id,
+                  playlistDateAdded: s.playlistDateAdded,
+                  playlistSortOrder: s.playlistSortOrder
+                }
+              : s
+          )
+        }
+      })
+    }
+
     window.addEventListener('felo:library-updated', handleUpdate)
     window.addEventListener('fanxmusic:library-updated', handleUpdate)
     window.addEventListener('felo:favorites-updated', handleUpdate)
+    window.addEventListener('felo:song-updated', handleSongUpdated)
+    window.addEventListener('fanxmusic:song-updated', handleSongUpdated)
 
     return () => {
       window.removeEventListener('felo:library-updated', handleUpdate)
       window.removeEventListener('fanxmusic:library-updated', handleUpdate)
       window.removeEventListener('felo:favorites-updated', handleUpdate)
+      window.removeEventListener('felo:song-updated', handleSongUpdated)
+      window.removeEventListener('fanxmusic:song-updated', handleSongUpdated)
     }
   }, [id])
 
@@ -190,9 +236,18 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   const songs = useMemo(
     () =>
       playlistSongs.map((song) => {
-        if (song.filePath && !song.filePath.startsWith('virtual:')) return song
-        const localMatch = findMatchingLibrarySong(song.title || '', song.artist || '', librarySongs)
-        return localMatch ? { ...song, ...localMatch, id: localMatch.id } : song
+        const localMatch =
+          librarySongs.find((ls) => ls.id === song.id) ||
+          findMatchingLibrarySong(song.title || '', song.artist || '', librarySongs)
+        return localMatch
+          ? {
+              ...song,
+              ...localMatch,
+              id: localMatch.id,
+              playlistDateAdded: song.playlistDateAdded,
+              playlistSortOrder: song.playlistSortOrder
+            }
+          : song
       }),
     [librarySongs, playlistSongs]
   )
@@ -255,13 +310,9 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
   }
 
   const handleTrackClick = (song: Song) => {
-    abortDownloadMissingRef.current = true
-    setIsDownloadingMissing(false)
-
     const isDownloaded = Boolean(song.filePath && !song.filePath.startsWith('virtual:'))
-    if (!isDownloaded && AppCapabilities.downloads) {
-      handleChooseSource(song)
-      return
+    if (!isDownloaded) {
+      usePlayerStore.getState().setIsBuffering(true)
     }
 
     const songIndex = allPlaylistSongs.findIndex((item) => item.id === song.id)
@@ -591,12 +642,7 @@ export default function PlaylistDetail({ onOpenDownloadPanel }: PlaylistDetailPr
                   downloadTransfer={transfer}
                   onTrackClick={handleTrackClick}
                   onPlayOrDownload={(s) => {
-                    if (isDownloaded) {
-                      const dlIndex = downloadedSongs.findIndex((item) => item.id === s.id)
-                      if (dlIndex >= 0) requestPlayQueue(downloadedSongs, dlIndex, playlistContext)
-                    } else {
-                      handleDownloadTrack(s)
-                    }
+                    handleTrackClick(s)
                   }}
                   onDownloadTrack={(s) => handleDownloadTrack(s, false)}
                   onOpenMenu={(s, rect) => {

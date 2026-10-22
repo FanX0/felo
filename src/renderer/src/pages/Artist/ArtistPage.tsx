@@ -264,10 +264,37 @@ export default function ArtistPage({ onOpenDownloadPanel }: ArtistPageProps) {
     }
 
     void loadSongs()
+    const handleSongUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent<{ song: Song; songId?: string }>
+      const updated = customEvent.detail?.song
+      if (!updated) return
+      const targetId = customEvent.detail?.songId || updated.id
+      const isMatch = (s: Song) =>
+        s.id === targetId ||
+        s.id === updated.id ||
+        (Boolean(s.title && updated.title) &&
+          s.title.trim().toLowerCase() === updated.title.trim().toLowerCase() &&
+          (!s.artist || !updated.artist || s.artist.trim().toLowerCase() === updated.artist.trim().toLowerCase()))
+
+      setSongs((prev) => {
+        const idx = prev.findIndex(isMatch)
+        if (idx >= 0) {
+          const next = [...prev]
+          next[idx] = { ...next[idx], ...updated }
+          return next
+        }
+        return prev
+      })
+    }
+
     window.addEventListener('felo:library-updated', loadSongs)
+    window.addEventListener('felo:song-updated', handleSongUpdated)
+    window.addEventListener('fanxmusic:song-updated', handleSongUpdated)
     return () => {
       mounted = false
       window.removeEventListener('felo:library-updated', loadSongs)
+      window.removeEventListener('felo:song-updated', handleSongUpdated)
+      window.removeEventListener('fanxmusic:song-updated', handleSongUpdated)
     }
   }, [decodedName, isRemoteConnected])
 

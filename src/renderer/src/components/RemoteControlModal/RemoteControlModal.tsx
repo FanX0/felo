@@ -24,6 +24,7 @@ import {
   useConnectedDeviceStore,
   sendDeviceCommand
 } from '../../hooks/useConnectedDeviceStore'
+import { copyToClipboard } from '../../lib/clipboard'
 import { getSupabase, isSupabaseConfigured } from '../../lib/supabase'
 import {
   detectDeviceInfo,
@@ -313,12 +314,10 @@ export default function RemoteControlModal({ isOpen, onClose }: RemoteControlMod
   const handleCopy = async (textToCopy?: string) => {
     const text = textToCopy || activeUrl
     if (!text) return
-    try {
-      await navigator.clipboard.writeText(text)
+    const success = await copyToClipboard(text)
+    if (success) {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // ignore
     }
   }
 

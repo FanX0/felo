@@ -12,6 +12,7 @@ import {
 import YouTubeIcon from '../Common/YouTubeIcon'
 import { useListeningStore } from '../../hooks/useListeningStore'
 import { extractYouTubeVideoId, fetchYouTubeMetadata } from '../../lib/youtubeService'
+import { readFromClipboard } from '../../lib/clipboard'
 
 interface YouTubeSearchResult {
   id: string
@@ -125,7 +126,7 @@ export default function YouTubeQueueTab({ onSongAdded }: YouTubeQueueTabProps): 
 
   const handlePasteClipboard = async () => {
     try {
-      const text = await navigator.clipboard.readText()
+      const text = await readFromClipboard()
       if (text) {
         setQuery(text.trim())
       }

@@ -22,6 +22,7 @@ import {
 } from '../../../lib/supportConfig'
 import DiscordIcon from '../../../components/Common/DiscordIcon'
 import SupportAboutModal from '../../../components/Common/SupportAboutModal'
+import { copyToClipboard } from '../../../lib/clipboard'
 
 interface AboutSectionProps {
   version: string
@@ -59,21 +60,10 @@ export function AboutSection({ version }: AboutSectionProps) {
   }
 
   const handleCopySolana = async () => {
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(DEFAULT_SUPPORT_CONFIG.solanaAddress)
-      } else {
-        const textarea = document.createElement('textarea')
-        textarea.value = DEFAULT_SUPPORT_CONFIG.solanaAddress
-        document.body.appendChild(textarea)
-        textarea.select()
-        document.execCommand('copy')
-        document.body.removeChild(textarea)
-      }
+    const success = await copyToClipboard(DEFAULT_SUPPORT_CONFIG.solanaAddress)
+    if (success) {
       setCopiedSol(true)
       setTimeout(() => setCopiedSol(false), 2500)
-    } catch (err) {
-      console.error('Failed to copy Solana address:', err)
     }
   }
 

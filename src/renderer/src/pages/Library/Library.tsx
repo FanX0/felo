@@ -409,8 +409,37 @@ export default function Library({ onOpenDownloadPanel }: LibraryProps) {
     const handleLibraryUpdate = () => {
       void loadSongs(librarySourceRef.current)
     }
+    const handleSongUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent<{ song: Song; songId?: string }>
+      const updated = customEvent.detail?.song
+      if (!updated) return
+      const targetId = customEvent.detail?.songId || updated.id
+      const isMatch = (s: Song) =>
+        s.id === targetId ||
+        s.id === updated.id ||
+        (Boolean(s.title && updated.title) &&
+          s.title.trim().toLowerCase() === updated.title.trim().toLowerCase() &&
+          (!s.artist || !updated.artist || s.artist.trim().toLowerCase() === updated.artist.trim().toLowerCase()))
+
+      setSongs((prev) => {
+        const idx = prev.findIndex(isMatch)
+        if (idx >= 0) {
+          const next = [...prev]
+          next[idx] = { ...next[idx], ...updated }
+          return next
+        }
+        return [updated, ...prev]
+      })
+    }
+
     window.addEventListener('felo:library-updated', handleLibraryUpdate)
-    return () => window.removeEventListener('felo:library-updated', handleLibraryUpdate)
+    window.addEventListener('felo:song-updated', handleSongUpdated)
+    window.addEventListener('fanxmusic:song-updated', handleSongUpdated)
+    return () => {
+      window.removeEventListener('felo:library-updated', handleLibraryUpdate)
+      window.removeEventListener('felo:song-updated', handleSongUpdated)
+      window.removeEventListener('fanxmusic:song-updated', handleSongUpdated)
+    }
   }, [])
 
   useEffect(() => {

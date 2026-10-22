@@ -29,6 +29,7 @@ import QRCode from 'qrcode'
 import SettingsSyncSection from '../Online/SettingsSyncSection'
 import SpatialRoomVisualizer from './SpatialRoomVisualizer'
 import EmeraldVisualizer from './EmeraldVisualizer'
+import { copyToClipboard as clipboardCopy } from '../../lib/clipboard'
 import {
   useDspStore,
   type SpeakerRole,
@@ -175,8 +176,9 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
   }, [inviteUrl, qrDarkColor])
 
   const copyToClipboard = async (text: string, type: 'code' | 'link') => {
-    try {
-      await navigator.clipboard.writeText(text)
+    if (!text) return
+    const success = await clipboardCopy(text)
+    if (success) {
       if (type === 'code') {
         setCopiedCode(true)
         setTimeout(() => setCopiedCode(false), 2000)
@@ -184,8 +186,6 @@ export default function AudioSettingsPanel({ onClose, isModal: _isModal = false 
         setCopiedLink(true)
         setTimeout(() => setCopiedLink(false), 2000)
       }
-    } catch (e) {
-      console.warn('Failed to copy text:', e)
     }
   }
 

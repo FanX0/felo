@@ -8,6 +8,7 @@ import {
   Play
 } from 'lucide-react'
 import { sanitizeCodeInput } from '../utils'
+import { readFromClipboard } from '../../../lib/clipboard'
 
 interface LobbyBentoGridProps {
   handleCreateRoom: () => void
@@ -124,7 +125,7 @@ export default function LobbyBentoGrid({
                   type="button"
                   onClick={async () => {
                     try {
-                      const text = await navigator.clipboard.readText()
+                      const text = await readFromClipboard()
                       if (text) {
                         setJoinCodeInput(sanitizeCodeInput(text))
                       }

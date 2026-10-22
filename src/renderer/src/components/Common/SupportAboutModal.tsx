@@ -24,6 +24,7 @@ import {
   buildSolscanUrl,
   buildDiscordInviteUrl
 } from '../../lib/supportConfig'
+import { copyToClipboard } from '../../lib/clipboard'
 
 interface SupportAboutModalProps {
   isOpen: boolean
@@ -59,21 +60,10 @@ export default function SupportAboutModal({
   if (!isOpen) return null
 
   const handleCopySolana = async () => {
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(DEFAULT_SUPPORT_CONFIG.solanaAddress)
-      } else {
-        const textarea = document.createElement('textarea')
-        textarea.value = DEFAULT_SUPPORT_CONFIG.solanaAddress
-        document.body.appendChild(textarea)
-        textarea.select()
-        document.execCommand('copy')
-        document.body.removeChild(textarea)
-      }
+    const success = await copyToClipboard(DEFAULT_SUPPORT_CONFIG.solanaAddress)
+    if (success) {
       setCopiedSol(true)
       setTimeout(() => setCopiedSol(false), 2500)
-    } catch (err) {
-      console.error('Failed to copy Solana address:', err)
     }
   }
 

@@ -1,6 +1,7 @@
 import { FormEvent, type ReactElement } from 'react'
 import { X, ClipboardPaste, Loader2, AlertCircle } from 'lucide-react'
 import { sanitizeCodeInput } from '../utils'
+import { readFromClipboard } from '../../../lib/clipboard'
 
 interface JoinCodeModalProps {
   isOpen: boolean
@@ -61,7 +62,7 @@ export default function JoinCodeModal({
             type="button"
             onClick={async () => {
               try {
-                const text = await navigator.clipboard.readText()
+                const text = await readFromClipboard()
                 if (text) {
                   setJoinCodeInput(sanitizeCodeInput(text))
                 }
